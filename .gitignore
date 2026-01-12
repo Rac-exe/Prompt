@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+python-service/venv/
+python-service/__pycache__/
+python-service/**/__pycache__/
+
+# Build outputs
+dist/
+build/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Environment
+.env
+.env.local
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Electron
+out/
+release/

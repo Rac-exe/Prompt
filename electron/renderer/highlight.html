@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      background: transparent;
+      overflow: hidden;
+    }
+    
+    .highlight {
+      width: 100%;
+      height: 100%;
+      background: rgba(100, 200, 255, 0.25);
+      border-bottom: 2px solid #64C8FF;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+    }
+    
+    .highlight.loading::after {
+      content: "Optimizing...";
+      color: #64C8FF;
+      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    .highlight.ready {
+      background: rgba(100, 255, 150, 0.25);
+      border-bottom-color: #64FF96;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    
+    .highlight.ready::after {
+      content: "Hover to see optimization";
+      color: #64FF96;
+      font-size: 11px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div id="highlight" class="highlight"></div>
+  
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const highlight = document.getElementById("highlight");
+    
+    if (params.get("loading") === "true") {
+      highlight.classList.add("loading");
+    }
+    
+    // Listen for state updates from main process
+    if (window.electronAPI) {
+      window.electronAPI.onStateUpdate = (state) => {
+        if (state.ready) {
+          highlight.classList.remove("loading");
+          highlight.classList.add("ready");
+        }
+      };
+    }
+  </script>
+</body>
+</html>
