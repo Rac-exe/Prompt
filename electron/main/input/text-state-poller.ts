@@ -13,8 +13,7 @@ export class TextStatePoller extends EventEmitter {
   private readonly MAX_BUFFER_SIZE = 1000;
   private shiftPressed: boolean = false;
   private isRunning: boolean = false;
-  private lastEmittedPromptText: string = "";
-  private lastEmittedState: "found" | "not-found" | "partial" = "not-found";
+  private trackedInstances = new Map<string, { promptText: string; triggerIndex: number }>();
 
   constructor() {
     super();
@@ -73,6 +72,9 @@ export class TextStatePoller extends EventEmitter {
   getCurrentText(): string {
     return this.textBuffer;
   }
+
+  // REMOVED: resetState() method
+  // No longer needed - session stays alive in SHOWING phase to prevent re-optimization
 
   /**
    * Start capturing keystrokes to build text buffer
@@ -181,46 +183,84 @@ export class TextStatePoller extends EventEmitter {
 
   /**
    * Check current text state for trigger
+   * Finds ALL @prompt instances in buffer and tracks them independently
    */
   private checkTextState() {
     const currentText = this.textBuffer;
 
-    // Look for @prompt trigger - match everything after @prompt until end or newline
-    // Use greedy matching to capture the full prompt text
-    const triggerMatch = currentText.match(/@prompt\s+(.+)/i);
+    // Multi-line regex: [\s\S] matches ANY character including newlines
+    // +? = non-greedy (stop at earliest match)
+    // (?=\n@prompt|$) = lookahead: stop before next @prompt or end of buffer
+    // Use matchAll with 'g' flag to find ALL instances
+    const regex = /@prompt\s+([\s\S]+?)(?=\n@prompt|$)/gi;
+    const matches = Array.from(currentText.matchAll(regex));
 
-    if (triggerMatch) {
-      const promptText = triggerMatch[1].trim();
-      const triggerIndex = triggerMatch.index!;
+    // Track current instances found in this scan
+    const currentInstances = new Map<string, { promptText: string; triggerIndex: number }>();
 
-      // Only emit if prompt text actually changed
-      if (promptText !== this.lastEmittedPromptText || this.lastEmittedState !== "found") {
-        this.lastEmittedPromptText = promptText;
-        this.lastEmittedState = "found";
+    // Process each match
+    matches.forEach((match) => {
+      const promptText = match[1].trim();
+      const triggerIndex = match.index!;
 
-        const eventData = {
+      // Generate hash for this instance (content + approximate position)
+      const instanceHash = this.generateInstanceHash(promptText, triggerIndex);
+
+      // Store in current scan
+      currentInstances.set(instanceHash, { promptText, triggerIndex });
+
+      // Check if this is a new or updated instance
+      const tracked = this.trackedInstances.get(instanceHash);
+
+      if (!tracked || tracked.promptText !== promptText) {
+        // New or updated instance - emit event
+        const lineCount = promptText.split('\n').length;
+
+        console.log(
+          `[TextStatePoller] Instance detected at ${triggerIndex}:`,
+          `${lineCount} line(s),`,
+          `${promptText.length} chars,`,
+          `preview: "${promptText.substring(0, 50)}..."`
+        );
+
+        this.emit("trigger-found", {
           promptText,
           triggerIndex,
+          instanceHash,
           fullText: currentText
-        };
+        });
+      }
+    });
 
-        this.emit("trigger-found", eventData);
+    // Check for removed instances (were tracked, now gone)
+    this.trackedInstances.forEach((instance, hash) => {
+      if (!currentInstances.has(hash)) {
+        console.log(`[TextStatePoller] Instance removed at ${instance.triggerIndex}`);
+        this.emit("trigger-removed", { instanceHash: hash });
       }
-    } else {
-      // Check if @prompt exists but no space after it yet
-      const partialMatch = currentText.match(/@prompt\s*$/i);
-      if (partialMatch) {
-        if (this.lastEmittedState !== "partial") {
-          this.lastEmittedState = "partial";
-          this.emit("trigger-partial");
-        }
-      } else {
-        if (this.lastEmittedState !== "not-found") {
-          this.lastEmittedPromptText = "";
-          this.lastEmittedState = "not-found";
-          this.emit("trigger-not-found");
-        }
-      }
+    });
+
+    // Update tracked instances
+    this.trackedInstances = currentInstances;
+
+    // Emit trigger-not-found only if NO instances exist
+    if (matches.length === 0 && this.trackedInstances.size > 0) {
+      console.log("[TextStatePoller] All triggers removed");
+      this.emit("trigger-not-found");
     }
+  }
+
+  /**
+   * Generate unique hash for a prompt instance
+   * Based on content (first 100 chars) + approximate position
+   */
+  private generateInstanceHash(promptText: string, triggerIndex: number): string {
+    // Use first 100 chars for content identity
+    const contentKey = promptText.substring(0, 100).replace(/\s+/g, '_');
+
+    // Bucket position to groups of 50 chars (handles small position drift)
+    const positionBucket = Math.floor(triggerIndex / 50);
+
+    return `${contentKey}_pos${positionBucket}`;
   }
 }

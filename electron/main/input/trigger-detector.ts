@@ -50,12 +50,17 @@ export class TriggerDetector extends EventEmitter {
   }
 
   private setupListeners() {
-    // Listen for trigger events from text poller
+    // Listen for trigger events from text poller (now supports multiple instances)
     this.textPoller.on("trigger-found", (data: any) => {
       this.continuousOptimizer.onTextChanged(
         data.promptText,
-        data.triggerIndex
+        data.triggerIndex,
+        data.instanceHash
       );
+    });
+
+    this.textPoller.on("trigger-removed", (data: any) => {
+      this.continuousOptimizer.onInstanceRemoved(data.instanceHash);
     });
 
     this.textPoller.on("trigger-not-found", () => {
@@ -87,6 +92,9 @@ export class TriggerDetector extends EventEmitter {
       console.error("[TriggerDetector] Optimization failed:", error);
       this.emit("optimization-failed", error);
     });
+
+    // REMOVED: session-auto-reset listener
+    // Session now stays alive in SHOWING phase to prevent re-optimization
   }
 
   start() {

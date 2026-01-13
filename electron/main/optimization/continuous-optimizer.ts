@@ -21,7 +21,13 @@ import { WindowTracker } from "../context/window-tracker";
  * Manages the prompt optimization lifecycle with state machine
  */
 export class ContinuousOptimizer extends EventEmitter {
-  private session: PromptSession | null = null;
+  // Multi-instance support: Track multiple prompt instances by hash
+  private promptInstances = new Map<string, {
+    instanceHash: string;
+    session: PromptSession;
+    isOptimized: boolean;
+  }>();
+
   private orchestrationTimer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
 
@@ -84,146 +90,193 @@ export class ContinuousOptimizer extends EventEmitter {
   }
 
   /**
-   * Main orchestration loop - runs state machine transitions
+   * Main orchestration loop - runs state machine transitions for ALL instances
    */
   private orchestrationLoop() {
-    if (!this.session) {
+    if (this.promptInstances.size === 0) {
       return;
     }
 
     const now = Date.now();
 
-    // Update stability duration
-    this.session = updateStability(this.session, now);
+    // Process each prompt instance independently
+    this.promptInstances.forEach((instance, hash) => {
+      // Skip if already optimized
+      if (instance.isOptimized) {
+        return;
+      }
 
-    // PHASE TRANSITION: DETECTING → STABLE
-    if (
-      this.session.phase === SessionPhase.DETECTING &&
-      this.stabilityTracker.isStable(this.session, now)
-    ) {
-      console.log(
-        `[ContinuousOptimizer] Prompt stabilized after ${this.session.stableFor}ms`,
-        `"${this.session.promptText.substring(0, 50)}..."`
-      );
-      this.session = markStable(this.session, now);
-      this.emit("session-stable", this.session);
-    }
+      // Update stability duration
+      instance.session = updateStability(instance.session, now);
 
-    // PHASE TRANSITION: STABLE → OPTIMIZING
-    if (this.session.phase === SessionPhase.STABLE) {
-      this.attemptOptimization();
-    }
+      // PHASE TRANSITION: DETECTING → STABLE
+      if (
+        instance.session.phase === SessionPhase.DETECTING &&
+        this.stabilityTracker.isStable(instance.session, now)
+      ) {
+        console.log(
+          `[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... stabilized after ${instance.session.stableFor}ms`,
+          `"${instance.session.promptText.substring(0, 50)}..."`
+        );
+        instance.session = markStable(instance.session, now);
+        this.emit("session-stable", instance.session);
+      }
+
+      // PHASE TRANSITION: STABLE → OPTIMIZING
+      if (instance.session.phase === SessionPhase.STABLE) {
+        this.attemptOptimization(instance, hash);
+      }
+    });
   }
 
   /**
    * Attempt to start optimization if guardrails allow
    */
-  private async attemptOptimization() {
-    if (!this.session) {
-      return;
-    }
-
+  private async attemptOptimization(
+    instance: { instanceHash: string; session: PromptSession; isOptimized: boolean },
+    hash: string
+  ) {
     const shouldOptimize = await this.guardrails.shouldOptimize(
-      this.session.promptText,
-      this.session
+      instance.session.promptText,
+      instance.session
     );
 
     if (shouldOptimize) {
-      await this.startOptimization();
+      await this.startOptimization(instance, hash);
     }
   }
 
   /**
-   * Start AI optimization request
+   * Start AI optimization request for a specific instance
    */
-  private async startOptimization() {
-    if (!this.session) {
-      return;
-    }
-
+  private async startOptimization(
+    instance: { instanceHash: string; session: PromptSession; isOptimized: boolean },
+    hash: string
+  ) {
     const requestId = randomUUID();
-    const promptText = this.session.promptText;
+    const promptText = instance.session.promptText;
 
     console.log(
-      `[ContinuousOptimizer] Starting optimization`,
+      `[ContinuousOptimizer] Starting optimization for instance ${hash.substring(0, 20)}...`,
       `requestId: ${requestId}`,
       `prompt: "${promptText.substring(0, 50)}..."`
     );
 
-    this.session = markOptimizing(this.session, requestId);
+    instance.session = markOptimizing(instance.session, requestId);
     this.validator.cacheRequest(requestId, promptText);
-    this.emit("optimization-started", this.session);
+    this.emit("optimization-started", instance.session);
 
     // Show loading indicator
-    this.showLoadingOverlay();
+    this.showLoadingOverlay(instance.session);
 
     try {
       const optimized = await this.guardrails.optimize(promptText, requestId);
 
       console.log(
-        `[ContinuousOptimizer] Optimization completed`,
+        `[ContinuousOptimizer] Optimization completed for instance ${hash.substring(0, 20)}...`,
         `requestId: ${requestId}`,
         `optimized length: ${optimized.length}`
       );
 
       // Validate response is still relevant
-      if (!this.validator.validate(optimized, requestId, this.session)) {
+      if (!this.validator.validate(optimized, requestId, instance.session)) {
         console.log(`[ContinuousOptimizer] Discarding stale response`);
         return;
       }
 
-      // Update session
-      this.session = markShowing(this.session, optimized);
-      this.emit("optimization-completed", this.session);
+      // Update session and mark as optimized
+      instance.session = markShowing(instance.session, optimized);
+      instance.isOptimized = true;
+      this.emit("optimization-completed", instance.session);
 
       // Show result overlay
-      this.showResultOverlay(promptText, optimized);
+      this.showResultOverlay(promptText, optimized, instance.session);
+
+      // Mark instance as optimized to prevent re-optimization
+      console.log(`[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... marked as optimized`);
+
 
     } catch (error) {
-      console.error(`[ContinuousOptimizer] Optimization failed:`, error);
+      console.error(`[ContinuousOptimizer] Optimization failed for instance ${hash.substring(0, 20)}...:`, error);
 
-      if (this.session && this.session.aiRequestId === requestId) {
+      if (instance.session.aiRequestId === requestId) {
         // Reset to stable phase to retry
-        this.session = markStable(this.session, Date.now());
+        instance.session = markStable(instance.session, Date.now());
+        instance.isOptimized = false;
         this.emit("optimization-failed", error);
 
         // Show error overlay
-        this.showErrorOverlay();
+        this.showErrorOverlay(instance.session);
       }
     }
   }
 
   /**
-   * Handle text change from poller
+   * Handle text change from poller - manages multiple prompt instances
+   * @param promptText The text after @prompt
+   * @param triggerIndex Position in buffer
+   * @param instanceHash Unique hash for this instance
    */
-  onTextChanged(promptText: string, triggerIndex: number) {
+  onTextChanged(promptText: string, triggerIndex: number, instanceHash: string) {
     const now = Date.now();
 
-    if (!this.session) {
-      // Create new session
-      this.session = createSession(promptText, triggerIndex, now);
+    // Check if we already have this instance
+    let instance = this.promptInstances.get(instanceHash);
+
+    if (!instance) {
+      // NEW instance - create session
+      const session = createSession(promptText, triggerIndex, now);
+      instance = {
+        instanceHash,
+        session,
+        isOptimized: false
+      };
+      this.promptInstances.set(instanceHash, instance);
+
       console.log(
-        `[ContinuousOptimizer] New session created`,
+        `[ContinuousOptimizer] New instance created ${instanceHash.substring(0, 20)}...`,
         `"${promptText.substring(0, 50)}..."`
       );
-      this.emit("session-created", this.session);
+      this.emit("session-created", session);
     } else {
-      // Only update if text actually changed
-      if (this.session.promptText !== promptText) {
-        // Update existing session
-        this.session = updateSession(this.session, promptText, now);
-        this.stabilityTracker.recordEdit(now);
+      // EXISTING instance
+      if (instance.isOptimized) {
+        // Already optimized - check if text changed
+        if (instance.session.promptText !== promptText) {
+          console.log(
+            `[ContinuousOptimizer] Optimized instance text changed ${instanceHash.substring(0, 20)}...`,
+            `"${promptText.substring(0, 50)}..."`
+          );
+          // Text changed - reset to DETECTING
+          instance.session = createSession(promptText, triggerIndex, now);
+          instance.isOptimized = false;
+          this.emit("session-created", instance.session);
+        }
+        // Same text - keep optimized, do nothing
+      } else {
+        // Not yet optimized - update session if text changed
+        if (instance.session.promptText !== promptText) {
+          instance.session = updateSession(instance.session, promptText, now);
+          this.stabilityTracker.recordEdit(now);
 
-        console.log(
-          `[ContinuousOptimizer] Session updated (edit #${this.session.editCount})`,
-          `"${promptText.substring(0, 50)}..."`
-        );
-        this.emit("session-updated", this.session);
-
-        // Hide existing overlays when text changes
-        this.hideOverlays();
+          console.log(
+            `[ContinuousOptimizer] Instance updated ${instanceHash.substring(0, 20)}... (edit #${instance.session.editCount})`,
+            `"${promptText.substring(0, 50)}..."`
+          );
+          this.emit("session-updated", instance.session);
+        }
       }
-      // If text is the same, do nothing - let stability tracker continue counting
+    }
+  }
+
+  /**
+   * Handle instance removal from poller
+   */
+  onInstanceRemoved(instanceHash: string) {
+    if (this.promptInstances.has(instanceHash)) {
+      console.log(`[ContinuousOptimizer] Removing instance ${instanceHash.substring(0, 20)}...`);
+      this.promptInstances.delete(instanceHash);
+      this.emit("session-reset");
     }
   }
 
@@ -238,18 +291,23 @@ export class ContinuousOptimizer extends EventEmitter {
       `"${promptText.substring(0, 50)}..."`
     );
 
-    // Create or update session
-    if (!this.session || this.session.promptText !== promptText) {
-      this.session = createSession(promptText, 0, now);
-      // Mark as immediately stable
-      this.session = markStable(this.session, now);
-      this.emit("session-created", this.session);
-    }
+    // Create a special instance for immediate optimization (floating panel)
+    const instanceHash = `immediate_${Date.now()}`;
+    const session = createSession(promptText, 0, now);
+    const stableSession = markStable(session, now);
+
+    const instance = {
+      instanceHash,
+      session: stableSession,
+      isOptimized: false
+    };
+    this.promptInstances.set(instanceHash, instance);
+    this.emit("session-created", stableSession);
 
     // Check guardrails
     const shouldOptimize = await this.guardrails.shouldOptimize(
       promptText,
-      this.session
+      stableSession
     );
 
     if (!shouldOptimize) {
@@ -258,74 +316,63 @@ export class ContinuousOptimizer extends EventEmitter {
     }
 
     // Start optimization immediately
-    await this.startOptimization();
+    await this.startOptimization(instance, instanceHash);
   }
 
   /**
-   * Handle trigger removal
+   * Handle all triggers removed (no @prompt in buffer)
    */
   onTriggerRemoved() {
-    if (this.session) {
-      console.log(`[ContinuousOptimizer] Trigger removed, resetting session`);
-      this.session = null;
+    if (this.promptInstances.size > 0) {
+      console.log(`[ContinuousOptimizer] All triggers removed, clearing ${this.promptInstances.size} instances`);
+      this.promptInstances.clear();
       this.stabilityTracker.reset();
-      this.hideOverlays();
       this.emit("session-reset");
     }
   }
 
   /**
-   * Show loading overlay
+   * Show loading overlay for a specific session
    */
-  private showLoadingOverlay() {
-    if (!this.session) {
-      return;
-    }
-
-    const context = this.createPromptContext();
+  private showLoadingOverlay(session: PromptSession) {
+    const context = this.createPromptContext(session);
     if (context) {
       this.overlayManager.showHighlight(context, { loading: true });
     }
   }
 
   /**
-   * Show result overlay
+   * Show result overlay for a specific session
    */
-  private showResultOverlay(original: string, optimized: string) {
-    const context = this.createPromptContext();
+  private showResultOverlay(original: string, optimized: string, session: PromptSession) {
+    const context = this.createPromptContext(session);
     if (context) {
       this.overlayManager.showOptimization(context, original, optimized);
     }
   }
 
   /**
-   * Show error overlay
+   * Show error overlay for a specific session
    */
-  private showErrorOverlay() {
-    const context = this.createPromptContext();
+  private showErrorOverlay(session: PromptSession) {
+    const context = this.createPromptContext(session);
     if (context) {
       this.overlayManager.showError(context, "Failed to optimize. Please try again.");
     }
   }
 
   /**
-   * Hide all overlays
+   * Hide all overlays (no longer used in multi-instance mode)
    */
   private hideOverlays() {
-    const context = this.createPromptContext();
-    if (context) {
-      this.overlayManager.hide(context);
-    }
+    // DEPRECATED: In multi-instance mode, overlays are managed per-instance
+    // This method kept for compatibility but does nothing
   }
 
   /**
-   * Create PromptContext for overlay manager
+   * Create PromptContext for overlay manager from a session
    */
-  private createPromptContext() {
-    if (!this.session) {
-      return null;
-    }
-
+  private createPromptContext(session: PromptSession) {
     const window = this.windowTracker.getCurrentContext();
     if (!window) {
       console.warn("[ContinuousOptimizer] No window context available");
@@ -338,26 +385,34 @@ export class ContinuousOptimizer extends EventEmitter {
 
     return {
       window,
-      promptText: this.session.promptText,
+      promptText: session.promptText,
       estimatedCursorX,
       estimatedCursorY,
-      timestamp: this.session.detectedAt
+      timestamp: session.detectedAt
     };
   }
 
   /**
-   * Get current session
+   * Get current session (returns first instance if multiple exist)
    */
   getCurrentSession(): PromptSession | null {
-    return this.session;
+    if (this.promptInstances.size === 0) {
+      return null;
+    }
+    return this.promptInstances.values().next().value?.session || null;
   }
+
+  // REMOVED: scheduleSessionReset() and resetCompletedSession()
+  // Session now stays alive in SHOWING phase until text changes or trigger is removed
+  // This prevents infinite re-optimization of the same prompt
 
   /**
    * Cleanup
    */
   cleanup() {
     this.stopOrchestration();
-    this.session = null;
+
+    this.promptInstances.clear();
     this.stabilityTracker.reset();
     this.guardrails.clear();
     this.validator.clear();
