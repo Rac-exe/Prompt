@@ -120,4 +120,13 @@ export class TriggerDetector extends EventEmitter {
 
     console.log("[TriggerDetector] Stopped");
   }
+
+  /**
+   * Manually trigger optimization (for floating panel input)
+   * Optimizes immediately without waiting for stability
+   */
+  async triggerManualOptimization(promptText: string) {
+    console.log("[TriggerDetector] Manual optimization triggered:", promptText.substring(0, 50));
+    await this.continuousOptimizer.optimizeImmediately(promptText);
+  }
 }

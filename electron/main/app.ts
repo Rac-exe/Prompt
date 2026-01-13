@@ -1,18 +1,21 @@
 import { TriggerDetector } from "./input/trigger-detector";
 import { OverlayManager } from "./overlay/overlay-manager";
 import { PythonClient } from "./api/python-client";
+import { FloatingPanel } from "./overlay/floating-panel";
 import { EventEmitter } from "events";
 
 export class PromptOptimizerApp extends EventEmitter {
   private triggerDetector: TriggerDetector;
   private overlayManager: OverlayManager;
   private pythonClient: PythonClient;
+  private floatingPanel: FloatingPanel;
   private isInitialized: boolean = false;
 
   constructor() {
     super();
     this.overlayManager = new OverlayManager();
     this.pythonClient = new PythonClient("http://127.0.0.1:8000");
+    this.floatingPanel = new FloatingPanel();
 
     // Initialize trigger detector with dependencies
     this.triggerDetector = new TriggerDetector(
@@ -39,6 +42,8 @@ export class PromptOptimizerApp extends EventEmitter {
 
     this.triggerDetector.on("optimization-completed", (session) => {
       console.log("[App] Optimization completed successfully");
+      // Clear floating panel after successful optimization
+      this.floatingPanel.clearPromptText();
     });
 
     this.triggerDetector.on("optimization-failed", (error: Error) => {
@@ -50,6 +55,37 @@ export class PromptOptimizerApp extends EventEmitter {
       console.error("[App] Trigger detector error:", error);
       this.emit("error", error);
     });
+
+    // Listen to floating panel events
+    this.floatingPanel.on("prompt-submit", (promptText: string) => {
+      console.log("[App] Prompt submitted from floating panel:", promptText.substring(0, 50));
+      // Manually trigger optimization via the trigger detector
+      this.handleFloatingPanelPrompt(promptText);
+    });
+
+    this.floatingPanel.on("voice-start", () => {
+      console.log("[App] Voice input started");
+    });
+
+    this.floatingPanel.on("voice-stop", (transcript: string) => {
+      console.log("[App] Voice input stopped, transcript:", transcript.substring(0, 50));
+      // Automatically trigger optimization after voice input
+      if (transcript && transcript.trim().length >= 10) {
+        this.handleFloatingPanelPrompt(transcript);
+      }
+    });
+
+    this.floatingPanel.on("voice-error", (error: string) => {
+      console.error("[App] Voice input error:", error);
+    });
+  }
+
+  /**
+   * Handle prompt submission from floating panel
+   */
+  private handleFloatingPanelPrompt(promptText: string) {
+    console.log("[App] Processing floating panel prompt:", promptText);
+    this.triggerDetector.triggerManualOptimization(promptText);
   }
 
   async initialize() {
@@ -81,17 +117,27 @@ export class PromptOptimizerApp extends EventEmitter {
       throw error;
     }
 
+    // Show floating panel
+    try {
+      this.floatingPanel.create();
+      console.log("Floating panel created");
+    } catch (error) {
+      console.error("Failed to create floating panel:", error);
+    }
+
     this.isInitialized = true;
     console.log("Prompt Optimizer initialized successfully");
     this.emit("initialized");
   }
 
+
   async shutdown() {
     console.log("Shutting down Prompt Optimizer...");
-    
+
     try {
       this.triggerDetector.stop();
       this.overlayManager.cleanup();
+      this.floatingPanel.destroy();
       console.log("Shutdown complete");
     } catch (error) {
       console.error("Error during shutdown:", error);

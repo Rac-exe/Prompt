@@ -228,6 +228,40 @@ export class ContinuousOptimizer extends EventEmitter {
   }
 
   /**
+   * Optimize immediately without waiting for stability (for manual input like floating panel)
+   */
+  async optimizeImmediately(promptText: string) {
+    const now = Date.now();
+
+    console.log(
+      `[ContinuousOptimizer] Immediate optimization requested`,
+      `"${promptText.substring(0, 50)}..."`
+    );
+
+    // Create or update session
+    if (!this.session || this.session.promptText !== promptText) {
+      this.session = createSession(promptText, 0, now);
+      // Mark as immediately stable
+      this.session = markStable(this.session, now);
+      this.emit("session-created", this.session);
+    }
+
+    // Check guardrails
+    const shouldOptimize = await this.guardrails.shouldOptimize(
+      promptText,
+      this.session
+    );
+
+    if (!shouldOptimize) {
+      console.log(`[ContinuousOptimizer] Immediate optimization blocked by guardrails`);
+      return;
+    }
+
+    // Start optimization immediately
+    await this.startOptimization();
+  }
+
+  /**
    * Handle trigger removal
    */
   onTriggerRemoved() {
