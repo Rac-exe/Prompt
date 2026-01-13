@@ -1,6 +1,12 @@
 import { EventEmitter } from "events";
-import { KeyboardHook } from "./keyboard-hook";
 import { WindowTracker, WindowContext } from "../context/window-tracker";
+import { TextStatePoller } from "./text-state-poller";
+import { ContinuousOptimizer } from "../optimization/continuous-optimizer";
+import { StabilityTracker } from "../optimization/stability-tracker";
+import { AIGuardrails } from "../optimization/ai-guardrails";
+import { ResponseValidator } from "../optimization/response-validator";
+import { OverlayManager } from "../overlay/overlay-manager";
+import { PythonClient } from "../api/python-client";
 
 export interface PromptContext {
   window: WindowContext;
@@ -10,138 +16,108 @@ export interface PromptContext {
   timestamp: number;
 }
 
+/**
+ * Trigger detector using new continuous optimization architecture
+ */
 export class TriggerDetector extends EventEmitter {
-  private keyboardHook: KeyboardHook;
   private windowTracker: WindowTracker;
-  private isCapturingPrompt: boolean = false;
-  private captureBuffer: string = "";
-  private captureStartTime: number = 0;
-  private readonly CAPTURE_TIMEOUT = 10000; // 10 seconds
-  private keyListener: ((e: any, down: boolean) => void) | null = null;
-  private captureTimer: NodeJS.Timeout | null = null;
+  private textPoller: TextStatePoller;
+  private continuousOptimizer: ContinuousOptimizer;
 
-  constructor() {
+  constructor(
+    pythonClient: PythonClient,
+    overlayManager: OverlayManager
+  ) {
     super();
-    this.keyboardHook = new KeyboardHook();
+
     this.windowTracker = new WindowTracker();
+    this.textPoller = new TextStatePoller();
+
+    // Initialize continuous optimizer with all components
+    const stabilityTracker = new StabilityTracker();
+    const guardrails = new AIGuardrails(pythonClient);
+    const validator = new ResponseValidator();
+
+    this.continuousOptimizer = new ContinuousOptimizer(
+      stabilityTracker,
+      guardrails,
+      validator,
+      overlayManager,
+      this.windowTracker
+    );
+
     this.setupListeners();
   }
 
   private setupListeners() {
-    this.keyboardHook.on("trigger-detected", () => {
-      this.startPromptCapture();
+    // Listen for trigger events from text poller
+    this.textPoller.on("trigger-found", (data: any) => {
+      this.continuousOptimizer.onTextChanged(
+        data.promptText,
+        data.triggerIndex
+      );
     });
 
-    // Listen for captured prompt text from keyboard hook
-    this.keyboardHook.on("prompt-text-captured", (text: string) => {
-      this.handleCapturedText(text);
+    this.textPoller.on("trigger-not-found", () => {
+      this.continuousOptimizer.onTriggerRemoved();
     });
-  }
 
-  private handleCapturedText(text: string) {
-    if (!this.isCapturingPrompt) {
-      return;
-    }
+    // Forward optimizer events
+    this.continuousOptimizer.on("session-created", (session) => {
+      console.log("[TriggerDetector] New prompt session created");
+      this.emit("session-created", session);
+    });
 
-    console.log("Received captured text:", text);
-    this.captureBuffer = text;
-    this.finishCapture();
-  }
+    this.continuousOptimizer.on("session-stable", (session) => {
+      console.log("[TriggerDetector] Prompt session stabilized");
+      this.emit("session-stable", session);
+    });
 
-  private startPromptCapture() {
-    if (this.isCapturingPrompt) {
-      // Already capturing, finish current capture
-      this.finishCapture();
-      return;
-    }
+    this.continuousOptimizer.on("optimization-started", (session) => {
+      console.log("[TriggerDetector] Optimization started");
+      this.emit("optimization-started", session);
+    });
 
-    this.isCapturingPrompt = true;
-    this.captureBuffer = "";
-    this.captureStartTime = Date.now();
-    
-    // Get current window context
-    const window = this.windowTracker.getCurrentContext();
-    if (!window) {
-      console.warn("No window context available");
-      this.isCapturingPrompt = false;
-      return;
-    }
+    this.continuousOptimizer.on("optimization-completed", (session) => {
+      console.log("[TriggerDetector] Optimization completed");
+      this.emit("optimization-completed", session);
+    });
 
-    console.log("Started capturing prompt in:", window.title);
-    console.log("Type your prompt and press Enter to finish, or Escape to cancel");
-    
-    // Set up a timeout in case user doesn't press Enter
-    this.captureTimer = setTimeout(() => {
-      if (this.isCapturingPrompt) {
-        console.log("Capture timeout - waiting for Enter key");
-        // Don't cancel, just log - wait for Enter key
-      }
-    }, 30000); // 30 second timeout
-  }
-
-  private finishCapture() {
-    const trimmed = this.captureBuffer.trim();
-    
-    if (trimmed.length === 0) {
-      this.cancelCapture();
-      return;
-    }
-
-    const window = this.windowTracker.getCurrentContext();
-    if (!window) {
-      this.cancelCapture();
-      return;
-    }
-
-    // Estimate cursor position (simplified - would need better calculation)
-    // Assume text starts at some offset from window edge
-    const estimatedCursorX = window.bounds.x + 50;
-    const estimatedCursorY = window.bounds.y + 100; // Rough estimate for text field
-
-    const context: PromptContext = {
-      window,
-      promptText: trimmed,
-      estimatedCursorX,
-      estimatedCursorY,
-      timestamp: Date.now()
-    };
-
-    console.log("Prompt captured:", trimmed);
-    this.emit("prompt-captured", context);
-    this.reset();
-  }
-
-  private cancelCapture() {
-    console.log("Prompt capture cancelled");
-    this.reset();
-  }
-
-  private reset() {
-    this.isCapturingPrompt = false;
-    this.captureBuffer = "";
-    this.captureStartTime = 0;
-    this.keyListener = null;
-    if (this.captureTimer) {
-      clearTimeout(this.captureTimer);
-      this.captureTimer = null;
-    }
+    this.continuousOptimizer.on("optimization-failed", (error) => {
+      console.error("[TriggerDetector] Optimization failed:", error);
+      this.emit("optimization-failed", error);
+    });
   }
 
   start() {
     try {
-      this.keyboardHook.start();
+      console.log("[TriggerDetector] Starting...");
+
+      // Start window tracking
       this.windowTracker.startTracking();
-      console.log("Trigger detector started");
+
+      // Start text state polling
+      this.textPoller.start();
+
+      // Start continuous optimization orchestration
+      this.continuousOptimizer.startOrchestration();
+
+      console.log("[TriggerDetector] Started successfully");
+      console.log("[TriggerDetector] Listening for @prompt triggers...");
     } catch (error) {
-      console.error("Failed to start trigger detector:", error);
+      console.error("[TriggerDetector] Failed to start:", error);
       this.emit("error", error);
       throw error;
     }
   }
 
   stop() {
-    this.keyboardHook.stop();
+    console.log("[TriggerDetector] Stopping...");
+
+    this.textPoller.stop();
     this.windowTracker.stopTracking();
-    this.reset();
+    this.continuousOptimizer.cleanup();
+
+    console.log("[TriggerDetector] Stopped");
   }
 }
