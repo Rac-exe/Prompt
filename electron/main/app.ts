@@ -3,6 +3,7 @@ import { OverlayManager } from "./overlay/overlay-manager";
 import { PythonClient } from "./api/python-client";
 import { FloatingPanel } from "./overlay/floating-panel";
 import { EventEmitter } from "events";
+import { globalShortcut } from "electron";
 
 export class PromptOptimizerApp extends EventEmitter {
   private triggerDetector: TriggerDetector;
@@ -10,6 +11,7 @@ export class PromptOptimizerApp extends EventEmitter {
   private pythonClient: PythonClient;
   private floatingPanel: FloatingPanel;
   private isInitialized: boolean = false;
+  private isPanelVisible: boolean = false;
 
   constructor() {
     super();
@@ -117,17 +119,50 @@ export class PromptOptimizerApp extends EventEmitter {
       throw error;
     }
 
-    // Show floating panel
+    // Create floating panel but keep it hidden (don't call show())
+    // Panel will be shown when user presses Ctrl+5
     try {
       this.floatingPanel.create();
-      console.log("Floating panel created");
+      this.floatingPanel.hide(); // Start hidden
+      console.log("Floating panel created (hidden by default)");
     } catch (error) {
       console.error("Failed to create floating panel:", error);
     }
 
+    // Register global hotkey Ctrl+5 to toggle panel
+    try {
+      const registered = globalShortcut.register('CommandOrControl+5', () => {
+        this.togglePanel();
+      });
+
+      if (registered) {
+        console.log("Global hotkey registered: Ctrl+5 (or Cmd+5 on macOS)");
+      } else {
+        console.error("Failed to register global hotkey Ctrl+5");
+      }
+    } catch (error) {
+      console.error("Error registering global hotkey:", error);
+    }
+
     this.isInitialized = true;
     console.log("Prompt Optimizer initialized successfully");
+    console.log("Press Ctrl+5 (or Cmd+5 on macOS) to show/hide the floating panel");
     this.emit("initialized");
+  }
+
+  /**
+   * Toggle floating panel visibility
+   */
+  private togglePanel() {
+    if (this.isPanelVisible) {
+      this.floatingPanel.hide();
+      this.isPanelVisible = false;
+      console.log("[App] Floating panel hidden (Ctrl+5)");
+    } else {
+      this.floatingPanel.show();
+      this.isPanelVisible = true;
+      console.log("[App] Floating panel shown (Ctrl+5)");
+    }
   }
 
 
@@ -135,6 +170,10 @@ export class PromptOptimizerApp extends EventEmitter {
     console.log("Shutting down Prompt Optimizer...");
 
     try {
+      // Unregister global hotkey
+      globalShortcut.unregister('CommandOrControl+5');
+      console.log("Global hotkey unregistered");
+
       this.triggerDetector.stop();
       this.overlayManager.cleanup();
       this.floatingPanel.destroy();
