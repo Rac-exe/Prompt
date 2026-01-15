@@ -2,76 +2,59 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <!-- Tailwind + Inter setup (kept light, body remains transparent) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  >
   <style>
     * {
-      margin: 0;
-      padding: 0;
       box-sizing: border-box;
     }
-    
     body {
+      margin: 0;
       background: transparent;
       overflow: hidden;
-    }
-    
-    .highlight {
-      width: 100%;
-      height: 100%;
-      background: rgba(100, 200, 255, 0.25);
-      border-bottom: 2px solid #64C8FF;
-      pointer-events: none;
-      display: flex;
-      align-items: center;
-      padding: 0 8px;
-    }
-    
-    .highlight.loading::after {
-      content: "Optimizing...";
-      color: #64C8FF;
-      font-size: 12px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-    
-    .highlight.ready {
-      background: rgba(100, 255, 150, 0.25);
-      border-bottom-color: #64FF96;
-      cursor: pointer;
-      pointer-events: auto;
-    }
-    
-    .highlight.ready::after {
-      content: "Hover to see optimization";
-      color: #64FF96;
-      font-size: 11px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    
-    @keyframes pulse {
-      0%, 100% { opacity: 0.6; }
-      50% { opacity: 1; }
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
   </style>
 </head>
 <body>
-  <div id="highlight" class="highlight"></div>
+  <div
+    id="highlight"
+    class="w-full h-full pointer-events-none flex items-center px-2 rounded-full bg-[#FEF0FA]/70 border border-[#E5E7EB] shadow-[0_4px_20px_-2px_rgba(0,0,0,0.08)]"
+  >
+    <div class="flex items-center gap-2">
+      <div class="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[#CB91C2]">
+        <span class="text-[11px] text-white font-semibold">✶</span>
+      </div>
+      <span
+        id="highlight-text"
+        class="text-[11px] font-medium text-[#6B7280]"
+      >
+        Optimizing...
+      </span>
+    </div>
+  </div>
   
   <script>
     const params = new URLSearchParams(window.location.search);
     const highlight = document.getElementById("highlight");
+    const highlightText = document.getElementById("highlight-text");
     
     if (params.get("loading") === "true") {
-      highlight.classList.add("loading");
+      highlightText.textContent = "Optimizing...";
     }
     
     // Listen for state updates from main process
     if (window.electronAPI) {
-      window.electronAPI.onStateUpdate = (state) => {
-        if (state.ready) {
-          highlight.classList.remove("loading");
-          highlight.classList.add("ready");
+      window.electronAPI.onStateUpdate((state) => {
+        if (state && state.ready) {
+          highlight.classList.add("pointer-events-auto", "cursor-pointer");
+          highlightText.textContent = "Optimization ready – click to open";
         }
-      };
+      });
     }
   </script>
 </body>

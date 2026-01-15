@@ -9,7 +9,7 @@ import { EventEmitter } from "events";
 export class FloatingPanel extends EventEmitter {
   private window: BrowserWindow | null = null;
   private snapCalculator: SnapPositionCalculator;
-  private currentPosition: SnapPosition = SnapPosition.TOP_RIGHT;
+  private currentPosition: SnapPosition = SnapPosition.TOP_CENTER;
   private isDragging: boolean = false;
   private dragStartPosition: ScreenCoordinates = { x: 0, y: 0 };
 

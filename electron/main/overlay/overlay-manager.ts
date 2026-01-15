@@ -264,6 +264,12 @@ export class OverlayManager {
       x = 10;
     }
 
+    // Ensure we don't overlap the top edge area where the floating Ctrl+5 bar lives
+    const MIN_TOP_MARGIN = 80;
+    if (y < MIN_TOP_MARGIN) {
+      y = MIN_TOP_MARGIN;
+    }
+
     return { x, y };
   }
 
