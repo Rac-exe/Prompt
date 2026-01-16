@@ -36,19 +36,20 @@
       </div>
 
       <input
+        id="prompt-input"
         type="text"
         placeholder="happy prompting..."
         class="flex-1 bg-transparent px-3 text-[14px] font-semibold text-[#6B7280] placeholder-[#6B7280] outline-none"
-        readonly
       >
 
       <div class="mr-[10px] flex items-center gap-1">
         <button
+          id="mic-button"
           class="w-[28px] h-[28px] flex items-center justify-center hover:bg-black/5 rounded-full transition"
           type="button"
         >
           <!-- Mic icon from Lucide -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#6B7280]">
+          <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#6B7280]">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
             <line x1="12" y1="19" x2="12" y2="23"></line>
@@ -70,5 +71,91 @@
       </div>
     </div>
   </div>
+
+  <script>
+    const promptInput = document.getElementById("prompt-input");
+    const micButton = document.getElementById("mic-button");
+    const micIcon = document.getElementById("mic-icon");
+    let isListening = false;
+
+    // Handle mic button click
+    micButton.addEventListener("click", () => {
+      if (!isListening) {
+        startListening();
+      } else {
+        stopListening();
+      }
+    });
+
+    function startListening() {
+      isListening = true;
+      micButton.classList.add("bg-red-500");
+      micIcon.classList.remove("text-[#6B7280]");
+      micIcon.classList.add("text-white");
+      
+      // Add pulse animation
+      micButton.style.animation = "pulse 1.5s ease-in-out infinite";
+      
+      if (window.electronAPI) {
+        window.electronAPI.startTranscription();
+      }
+    }
+
+    function stopListening() {
+      isListening = false;
+      micButton.classList.remove("bg-red-500");
+      micIcon.classList.remove("text-white");
+      micIcon.classList.add("text-[#6B7280]");
+      micButton.style.animation = "";
+      
+      if (window.electronAPI) {
+        window.electronAPI.stopTranscription();
+      }
+    }
+
+    // Listen for transcription updates
+    if (window.electronAPI) {
+      window.electronAPI.onTranscriptionUpdate((data) => {
+        if (data.type === "transcription" && promptInput) {
+          // Update input with accumulated text (final result)
+          promptInput.value = data.accumulated || data.text;
+        } else if (data.type === "partial" && promptInput) {
+          // Update input with partial/interim text (live feedback)
+          promptInput.value = data.accumulated || data.text;
+        } else if (data.type === "final" && promptInput) {
+          // Final transcription when stopping
+          promptInput.value = data.text;
+        } else if (data.type === "status") {
+          if (data.status === "listening" && !isListening) {
+            startListening();
+          } else if (data.status === "stopped" && isListening) {
+            stopListening();
+          }
+        } else if (data.type === "error") {
+          console.error("[FloatingPanel] Transcription error:", data.message);
+          stopListening();
+          alert(`Transcription error: ${data.message}`);
+        }
+      });
+    }
+
+    // Listen for text updates from main process
+    if (window.electronAPI) {
+      // Handle set-prompt-text IPC
+      const originalSetPromptText = window.electronAPI.setPromptText;
+      // This will be called via IPC from main process
+    }
+  </script>
+
+  <style>
+    @keyframes pulse {
+      0%, 100% {
+        opacity: 1;
+      }
+      50% {
+        opacity: 0.7;
+      }
+    }
+  </style>
 </body>
 </html>

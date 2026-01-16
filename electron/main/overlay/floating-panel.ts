@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, app } from "electron";
 import * as path from "path";
 import { SnapPositionCalculator, SnapPosition, ScreenCoordinates } from "./snap-positions";
 import { EventEmitter } from "events";
+import WebSocket from "ws";
 
 /**
  * Floating overlay panel with snap-to-position dragging and voice input
@@ -12,6 +13,9 @@ export class FloatingPanel extends EventEmitter {
   private currentPosition: SnapPosition = SnapPosition.TOP_CENTER;
   private isDragging: boolean = false;
   private dragStartPosition: ScreenCoordinates = { x: 0, y: 0 };
+  private transcriptionWebSocket: WebSocket | null = null;
+  private isTranscribing: boolean = false;
+  private sessionId: string | null = null;
 
   constructor() {
     super();
@@ -145,6 +149,21 @@ export class FloatingPanel extends EventEmitter {
       console.error("[FloatingPanel] Voice input error:", error);
       this.emit("voice-error", error);
     });
+
+    // Transcription start
+    ipcMain.on("floating-panel:transcription-start", () => {
+      this.startTranscription();
+    });
+
+    // Transcription stop
+    ipcMain.on("floating-panel:transcription-stop", () => {
+      this.stopTranscription();
+    });
+
+    // Set prompt text
+    ipcMain.on("floating-panel:set-prompt-text", (event, text: string) => {
+      this.setPromptText(text);
+    });
   }
 
   /**
@@ -200,5 +219,125 @@ export class FloatingPanel extends EventEmitter {
    */
   getWindow(): BrowserWindow | null {
     return this.window;
+  }
+
+  /**
+   * Start transcription via WebSocket
+   */
+  private startTranscription() {
+    if (this.isTranscribing) {
+      console.log("[FloatingPanel] Already transcribing");
+      return;
+    }
+
+    try {
+      this.sessionId = `session_${Date.now()}`;
+      const wsUrl = "ws://127.0.0.1:8000/ws/transcribe";
+      
+      console.log("[FloatingPanel] Connecting to transcription WebSocket:", wsUrl);
+      
+      this.transcriptionWebSocket = new WebSocket(wsUrl);
+      
+      this.transcriptionWebSocket.on("open", () => {
+        console.log("[FloatingPanel] WebSocket connected");
+        this.isTranscribing = true;
+        
+        // Send start message
+        this.transcriptionWebSocket?.send(JSON.stringify({
+          action: "start",
+          session_id: this.sessionId
+        }));
+        
+        // Notify renderer
+        if (this.window && !this.window.isDestroyed()) {
+          this.window.webContents.send("transcription-update", {
+            type: "status",
+            status: "listening"
+          });
+        }
+      });
+      
+      this.transcriptionWebSocket.on("message", (data: WebSocket.Data) => {
+        try {
+          const message = JSON.parse(data.toString());
+          console.log("[FloatingPanel] Transcription message:", message.type);
+          
+          if (this.window && !this.window.isDestroyed()) {
+            this.window.webContents.send("transcription-update", message);
+          }
+          
+          // Emit events for app.ts listeners
+          if (message.type === "transcription") {
+            this.emit("transcription-update", message.accumulated);
+          } else if (message.type === "final") {
+            this.emit("transcription-final", message.text);
+          }
+        } catch (error) {
+          console.error("[FloatingPanel] Failed to parse WebSocket message:", error);
+        }
+      });
+      
+      this.transcriptionWebSocket.on("error", (error) => {
+        console.error("[FloatingPanel] WebSocket error:", error);
+        this.isTranscribing = false;
+        
+        if (this.window && !this.window.isDestroyed()) {
+          this.window.webContents.send("transcription-update", {
+            type: "error",
+            message: "Failed to connect to transcription service"
+          });
+        }
+      });
+      
+      this.transcriptionWebSocket.on("close", () => {
+        console.log("[FloatingPanel] WebSocket closed");
+        this.isTranscribing = false;
+        this.transcriptionWebSocket = null;
+        
+        if (this.window && !this.window.isDestroyed()) {
+          this.window.webContents.send("transcription-update", {
+            type: "status",
+            status: "stopped"
+          });
+        }
+      });
+      
+    } catch (error) {
+      console.error("[FloatingPanel] Failed to start transcription:", error);
+      this.isTranscribing = false;
+      
+      if (this.window && !this.window.isDestroyed()) {
+        this.window.webContents.send("transcription-update", {
+          type: "error",
+          message: `Failed to start transcription: ${error}`
+        });
+      }
+    }
+  }
+
+  /**
+   * Stop transcription
+   */
+  private stopTranscription() {
+    if (!this.isTranscribing || !this.transcriptionWebSocket) {
+      return;
+    }
+
+    try {
+      console.log("[FloatingPanel] Stopping transcription");
+      
+      this.transcriptionWebSocket.send(JSON.stringify({
+        action: "stop",
+        session_id: this.sessionId
+      }));
+      
+      this.transcriptionWebSocket.close();
+      this.isTranscribing = false;
+      this.transcriptionWebSocket = null;
+      this.sessionId = null;
+      
+    } catch (error) {
+      console.error("[FloatingPanel] Error stopping transcription:", error);
+    }
   }
 }

@@ -8,6 +8,10 @@ declare global {
       replaceText: (text: string) => void;
       dismiss: () => void;
       onStateUpdate: (callback: (state: any) => void) => void;
+      startTranscription: () => void;
+      stopTranscription: () => void;
+      onTranscriptionUpdate: (callback: (data: any) => void) => void;
+      setPromptText: (text: string) => void;
     };
   }
 }
@@ -30,6 +34,18 @@ const electronAPI = {
   },
   onStateUpdate: (callback: (state: any) => void) => {
     ipcRenderer.on("update-state", (event, state) => callback(state));
+  },
+  startTranscription: () => {
+    ipcRenderer.send("floating-panel:transcription-start");
+  },
+  stopTranscription: () => {
+    ipcRenderer.send("floating-panel:transcription-stop");
+  },
+  onTranscriptionUpdate: (callback: (data: any) => void) => {
+    ipcRenderer.on("transcription-update", (event, data) => callback(data));
+  },
+  setPromptText: (text: string) => {
+    ipcRenderer.send("floating-panel:set-prompt-text", text);
   }
 };
 
