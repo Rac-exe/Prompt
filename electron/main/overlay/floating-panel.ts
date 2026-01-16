@@ -237,17 +237,20 @@ export class FloatingPanel extends EventEmitter {
       console.log("[FloatingPanel] Connecting to transcription WebSocket:", wsUrl);
       
       this.transcriptionWebSocket = new WebSocket(wsUrl);
-      
-      this.transcriptionWebSocket.on("open", () => {
+      const ws = this.transcriptionWebSocket; // Store reference for callbacks
+
+      ws.on("open", () => {
         console.log("[FloatingPanel] WebSocket connected");
         this.isTranscribing = true;
-        
+
         // Send start message
-        this.transcriptionWebSocket?.send(JSON.stringify({
-          action: "start",
-          session_id: this.sessionId
-        }));
-        
+        if (this.transcriptionWebSocket) {
+          this.transcriptionWebSocket.send(JSON.stringify({
+            action: "start",
+            session_id: this.sessionId
+          }));
+        }
+
         // Notify renderer
         if (this.window && !this.window.isDestroyed()) {
           this.window.webContents.send("transcription-update", {
@@ -256,8 +259,8 @@ export class FloatingPanel extends EventEmitter {
           });
         }
       });
-      
-      this.transcriptionWebSocket.on("message", (data: WebSocket.Data) => {
+
+      ws.on("message", (data: WebSocket.Data) => {
         try {
           const message = JSON.parse(data.toString());
           console.log("[FloatingPanel] Transcription message:", message.type);
@@ -277,10 +280,10 @@ export class FloatingPanel extends EventEmitter {
         }
       });
       
-      this.transcriptionWebSocket.on("error", (error) => {
+      ws.on("error", (error: Error) => {
         console.error("[FloatingPanel] WebSocket error:", error);
         this.isTranscribing = false;
-        
+
         if (this.window && !this.window.isDestroyed()) {
           this.window.webContents.send("transcription-update", {
             type: "error",
@@ -288,8 +291,8 @@ export class FloatingPanel extends EventEmitter {
           });
         }
       });
-      
-      this.transcriptionWebSocket.on("close", () => {
+
+      ws.on("close", () => {
         console.log("[FloatingPanel] WebSocket closed");
         this.isTranscribing = false;
         this.transcriptionWebSocket = null;

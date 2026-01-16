@@ -69,22 +69,22 @@ export class TriggerDetector extends EventEmitter {
 
     // Forward optimizer events
     this.continuousOptimizer.on("session-created", (session) => {
-      console.log("[TriggerDetector] New prompt session created");
+      // console.log("[TriggerDetector] New prompt session created");
       this.emit("session-created", session);
     });
 
     this.continuousOptimizer.on("session-stable", (session) => {
-      console.log("[TriggerDetector] Prompt session stabilized");
+      // console.log("[TriggerDetector] Prompt session stabilized");
       this.emit("session-stable", session);
     });
 
     this.continuousOptimizer.on("optimization-started", (session) => {
-      console.log("[TriggerDetector] Optimization started");
+      // console.log("[TriggerDetector] Optimization started");
       this.emit("optimization-started", session);
     });
 
     this.continuousOptimizer.on("optimization-completed", (session) => {
-      console.log("[TriggerDetector] Optimization completed");
+      // console.log("[TriggerDetector] Optimization completed");
       this.emit("optimization-completed", session);
     });
 
@@ -136,5 +136,13 @@ export class TriggerDetector extends EventEmitter {
   async triggerManualOptimization(promptText: string) {
     console.log("[TriggerDetector] Manual optimization triggered:", promptText.substring(0, 50));
     await this.continuousOptimizer.optimizeImmediately(promptText);
+  }
+
+  /**
+   * Clear text buffer after successful replacement
+   * This prevents stale @prompt detections after UI Automation replacement
+   */
+  clearTextBuffer(): void {
+    this.textPoller.clearBuffer();
   }
 }

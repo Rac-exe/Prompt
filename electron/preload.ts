@@ -6,6 +6,7 @@ declare global {
     __contextKey?: string;
     electronAPI: {
       replaceText: (text: string) => void;
+      replaceTextInPlace: (originalText: string, newText: string) => void;
       dismiss: () => void;
       onStateUpdate: (callback: (state: any) => void) => void;
       startTranscription: () => void;
@@ -24,6 +25,13 @@ const electronAPI = {
     const contextKey = (globalThis as any).__contextKey;
     if (contextKey) {
       ipcRenderer.send("replace-text", { contextKey, text });
+    }
+  },
+  replaceTextInPlace: (originalText: string, newText: string) => {
+    // Get context key from window
+    const contextKey = (globalThis as any).__contextKey;
+    if (contextKey) {
+      ipcRenderer.send("replace-text-in-place", { contextKey, originalText, newText });
     }
   },
   dismiss: () => {

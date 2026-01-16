@@ -31,21 +31,27 @@ export class PromptOptimizerApp extends EventEmitter {
   private setupListeners() {
     // Listen to optimization lifecycle events
     this.triggerDetector.on("session-created", (session) => {
-      console.log("[App] Prompt session created:", session.promptText.substring(0, 50));
+      // console.log("[App] Prompt session created:", session.promptText.substring(0, 50));
     });
 
     this.triggerDetector.on("session-stable", (session) => {
-      console.log("[App] Prompt stabilized, ready to optimize");
+      // console.log("[App] Prompt stabilized, ready to optimize");
     });
 
     this.triggerDetector.on("optimization-started", (session) => {
-      console.log("[App] Optimization started");
+      // console.log("[App] Optimization started");
     });
 
     this.triggerDetector.on("optimization-completed", (session) => {
-      console.log("[App] Optimization completed successfully");
+      // console.log("[App] Optimization completed successfully");
       // Clear floating panel after successful optimization
       this.floatingPanel.clearPromptText();
+    });
+
+    // Listen to text replacement events
+    this.overlayManager.on("text-replaced", () => {
+      console.log("[App] Text replaced, clearing text buffer to prevent stale detections");
+      this.triggerDetector.clearTextBuffer();
     });
 
     this.triggerDetector.on("optimization-failed", (error: Error) => {

@@ -64,6 +64,7 @@
           id="try-again-btn"
           type="button"
           class="w-[64px] h-[42px] flex items-center justify-center rounded-[12px] bg-[#CB91C2] hover:opacity-90 transition shadow-sm"
+          title="Refresh optimization"
         >
           <!-- RefreshCcw icon from Lucide -->
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
@@ -78,11 +79,24 @@
           id="copy-btn"
           type="button"
           class="w-[64px] h-[42px] flex items-center justify-center rounded-[12px] bg-[#CB91C2] hover:opacity-90 transition shadow-sm"
+          title="Copy to clipboard"
         >
           <!-- Copy icon from Lucide -->
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
+
+        <button
+          id="replace-btn"
+          type="button"
+          class="w-[64px] h-[42px] flex items-center justify-center rounded-[12px] bg-[#9B51E0] hover:opacity-90 transition shadow-sm"
+          title="Replace original text"
+        >
+          <!-- Check icon from Lucide -->
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+            <polyline points="20 6 9 17 4 12"></polyline>
           </svg>
         </button>
       </div>
@@ -109,14 +123,40 @@
       optimizedEl.textContent = original;
     }
 
+    // Copy button - copies to clipboard only
     document.getElementById("copy-btn").addEventListener("click", () => {
       const textToUse = optimized || original;
-      if (window.electronAPI && textToUse) {
-        window.electronAPI.replaceText(textToUse);
-      } else if (textToUse) {
+      if (textToUse) {
         navigator.clipboard.writeText(textToUse).then(() => {
-          alert("Optimized text copied to clipboard! Press Ctrl+V (Cmd+V on Mac) to paste.");
+          // Show brief feedback
+          const copyBtn = document.getElementById("copy-btn");
+          copyBtn.style.backgroundColor = "#10B981";
+          setTimeout(() => {
+            copyBtn.style.backgroundColor = "#CB91C2";
+          }, 1000);
+        }).catch(err => {
+          console.error("Failed to copy:", err);
+          alert("Failed to copy to clipboard");
         });
+      }
+    });
+
+    // Replace button - replaces original text with optimized text
+    document.getElementById("replace-btn").addEventListener("click", () => {
+      const textToUse = optimized || original;
+      if (window.electronAPI && textToUse) {
+        window.electronAPI.replaceTextInPlace(original, textToUse);
+        // Show brief feedback before closing
+        const replaceBtn = document.getElementById("replace-btn");
+        replaceBtn.style.backgroundColor = "#10B981";
+        setTimeout(() => {
+          if (window.electronAPI) {
+            window.electronAPI.dismiss();
+          }
+        }, 500);
+      } else if (textToUse) {
+        alert("Text replacement not available. Copying to clipboard instead.");
+        navigator.clipboard.writeText(textToUse);
       }
     });
 

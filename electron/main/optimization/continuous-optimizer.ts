@@ -114,10 +114,10 @@ export class ContinuousOptimizer extends EventEmitter {
         instance.session.phase === SessionPhase.DETECTING &&
         this.stabilityTracker.isStable(instance.session, now)
       ) {
-        console.log(
-          `[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... stabilized after ${instance.session.stableFor}ms`,
-          `"${instance.session.promptText.substring(0, 50)}..."`
-        );
+        // console.log(
+        //   `[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... stabilized after ${instance.session.stableFor}ms`,
+        //   `"${instance.session.promptText.substring(0, 50)}..."`
+        // );
         instance.session = markStable(instance.session, now);
         this.emit("session-stable", instance.session);
       }
@@ -156,11 +156,11 @@ export class ContinuousOptimizer extends EventEmitter {
     const requestId = randomUUID();
     const promptText = instance.session.promptText;
 
-    console.log(
-      `[ContinuousOptimizer] Starting optimization for instance ${hash.substring(0, 20)}...`,
-      `requestId: ${requestId}`,
-      `prompt: "${promptText.substring(0, 50)}..."`
-    );
+    // console.log(
+    //   `[ContinuousOptimizer] Starting optimization for instance ${hash.substring(0, 20)}...`,
+    //   `requestId: ${requestId}`,
+    //   `prompt: "${promptText.substring(0, 50)}..."`
+    // );
 
     instance.session = markOptimizing(instance.session, requestId);
     this.validator.cacheRequest(requestId, promptText);
@@ -172,15 +172,15 @@ export class ContinuousOptimizer extends EventEmitter {
     try {
       const optimized = await this.guardrails.optimize(promptText, requestId);
 
-      console.log(
-        `[ContinuousOptimizer] Optimization completed for instance ${hash.substring(0, 20)}...`,
-        `requestId: ${requestId}`,
-        `optimized length: ${optimized.length}`
-      );
+      // console.log(
+      //   `[ContinuousOptimizer] Optimization completed for instance ${hash.substring(0, 20)}...`,
+      //   `requestId: ${requestId}`,
+      //   `optimized length: ${optimized.length}`
+      // );
 
       // Validate response is still relevant
       if (!this.validator.validate(optimized, requestId, instance.session)) {
-        console.log(`[ContinuousOptimizer] Discarding stale response`);
+        // console.log(`[ContinuousOptimizer] Discarding stale response`);
         return;
       }
 
@@ -193,7 +193,7 @@ export class ContinuousOptimizer extends EventEmitter {
       this.showResultOverlay(promptText, optimized, instance.session);
 
       // Mark instance as optimized to prevent re-optimization
-      console.log(`[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... marked as optimized`);
+      // console.log(`[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... marked as optimized`);
 
 
     } catch (error) {
@@ -233,20 +233,20 @@ export class ContinuousOptimizer extends EventEmitter {
       };
       this.promptInstances.set(instanceHash, instance);
 
-      console.log(
-        `[ContinuousOptimizer] New instance created ${instanceHash.substring(0, 20)}...`,
-        `"${promptText.substring(0, 50)}..."`
-      );
+      // console.log(
+      //   `[ContinuousOptimizer] New instance created ${instanceHash.substring(0, 20)}...`,
+      //   `"${promptText.substring(0, 50)}..."`
+      // );
       this.emit("session-created", session);
     } else {
       // EXISTING instance
       if (instance.isOptimized) {
         // Already optimized - check if text changed
         if (instance.session.promptText !== promptText) {
-          console.log(
-            `[ContinuousOptimizer] Optimized instance text changed ${instanceHash.substring(0, 20)}...`,
-            `"${promptText.substring(0, 50)}..."`
-          );
+          // console.log(
+          //   `[ContinuousOptimizer] Optimized instance text changed ${instanceHash.substring(0, 20)}...`,
+          //   `"${promptText.substring(0, 50)}..."`
+          // );
           // Text changed - reset to DETECTING
           instance.session = createSession(promptText, triggerIndex, now);
           instance.isOptimized = false;
@@ -259,10 +259,10 @@ export class ContinuousOptimizer extends EventEmitter {
           instance.session = updateSession(instance.session, promptText, now);
           this.stabilityTracker.recordEdit(now);
 
-          console.log(
-            `[ContinuousOptimizer] Instance updated ${instanceHash.substring(0, 20)}... (edit #${instance.session.editCount})`,
-            `"${promptText.substring(0, 50)}..."`
-          );
+          // console.log(
+          //   `[ContinuousOptimizer] Instance updated ${instanceHash.substring(0, 20)}... (edit #${instance.session.editCount})`,
+          //   `"${promptText.substring(0, 50)}..."`
+          // );
           this.emit("session-updated", instance.session);
         }
       }
@@ -274,7 +274,7 @@ export class ContinuousOptimizer extends EventEmitter {
    */
   onInstanceRemoved(instanceHash: string) {
     if (this.promptInstances.has(instanceHash)) {
-      console.log(`[ContinuousOptimizer] Removing instance ${instanceHash.substring(0, 20)}...`);
+      // console.log(`[ContinuousOptimizer] Removing instance ${instanceHash.substring(0, 20)}...`);
       this.promptInstances.delete(instanceHash);
       this.emit("session-reset");
     }

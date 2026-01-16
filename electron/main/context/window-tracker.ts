@@ -83,27 +83,21 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
       const parts = stdout.trim().split("|");
       // PowerShell may output extra lines, so get the last line of the first part (coordinates)
       const coordsStr = parts[0].trim().split(/\r?\n/).pop() || parts[0].trim();
-      console.log(`[WindowTracker] Raw stdout: "${stdout.trim()}"`);
-      console.log(`[WindowTracker] Parts:`, parts);
-      console.log(`[WindowTracker] Coords string (extracted): "${coordsStr}"`);
-      
+
       const coords = coordsStr.split(",").map(Number);
-      console.log(`[WindowTracker] Parsed coords:`, coords);
-      
+
       // Validate coordinates
       if (coords.length !== 4 || coords.some(c => isNaN(c))) {
-        console.error(`[WindowTracker] Invalid coordinates parsed:`, coords);
+        console.error(`[WindowTracker] Failed to parse coordinates from: "${coordsStr}"`);
         throw new Error(`Failed to parse window coordinates: ${coordsStr}`);
       }
-      
+
       const bounds = {
         x: coords[0],
         y: coords[1],
         width: coords[2] - coords[0],
         height: coords[3] - coords[1]
       };
-      
-      console.log(`[WindowTracker] Window bounds:`, bounds);
       
       return {
         handle: "unknown", // Would need native module for actual handle

@@ -1,13 +1,14 @@
 import { BrowserWindow, screen, ipcMain, app } from "electron";
 import { PromptContext } from "../input/trigger-detector";
 import { TextReplacer } from "../text/text-replacer";
+import { EventEmitter } from "events";
 import * as path from "path";
 
 interface HighlightOptions {
   loading?: boolean;
 }
 
-export class OverlayManager {
+export class OverlayManager extends EventEmitter {
   private highlights: Map<string, BrowserWindow> = new Map();
   private popups: Map<string, BrowserWindow> = new Map();
   private textReplacer: TextReplacer;
@@ -15,6 +16,7 @@ export class OverlayManager {
   private rendererPath: string;
 
   constructor() {
+    super();
     this.textReplacer = new TextReplacer();
     this.setupIPC();
     // Get the app path and construct renderer directory path
@@ -23,7 +25,7 @@ export class OverlayManager {
   }
 
   private setupIPC() {
-    // Handle replace text requests from renderer
+    // Handle replace text requests from renderer (old method - just copies to clipboard)
     ipcMain.on("replace-text", async (event, data: { contextKey: string; text: string }) => {
       const promptData = this.promptContexts.get(data.contextKey);
       if (promptData) {
@@ -33,6 +35,35 @@ export class OverlayManager {
         } catch (error) {
           console.error("Failed to replace text:", error);
           this.showError(promptData.context, "Failed to replace text. Please try manually.");
+        }
+      }
+    });
+
+    // Handle replace text in place requests from renderer (new method - actually replaces text)
+    ipcMain.on("replace-text-in-place", async (event, data: { contextKey: string; originalText: string; newText: string }) => {
+      const promptData = this.promptContexts.get(data.contextKey);
+      if (promptData) {
+        try {
+          console.log("[OverlayManager] Replacing text in place...");
+          console.log("[OverlayManager] Original:", data.originalText.substring(0, 100));
+          console.log("[OverlayManager] New:", data.newText.substring(0, 100));
+
+          await this.textReplacer.replaceTextInPlace(data.originalText, data.newText);
+
+          // Close the popup after successful replacement
+          this.hide(promptData.context);
+          console.log("[OverlayManager] Text replaced successfully");
+
+          // Emit event to clear text buffer and prevent stale detections
+          this.emit("text-replaced");
+        } catch (error) {
+          console.error("Failed to replace text:", error);
+          const errorMsg = (error as Error).message || "Unknown error";
+          if (errorMsg.includes("UI Automation not available")) {
+            this.showError(promptData.context, "Auto-replace not available. Use the Copy button and paste (Ctrl+V).");
+          } else {
+            this.showError(promptData.context, "Failed to replace text. Please use Copy button instead.");
+          }
         }
       }
     });
@@ -47,11 +78,8 @@ export class OverlayManager {
   }
 
   showHighlight(context: PromptContext, options: HighlightOptions = {}) {
-    const timestamp = new Date().toISOString();
-    const startTime = Date.now();
     const key = this.getContextKey(context);
-    console.log(`[${timestamp}] [OverlayManager.showHighlight] START - key="${key}", loading=${options.loading || false}`);
-    
+
     // Remove existing highlight if any
     this.hideHighlight(context);
 
@@ -64,46 +92,35 @@ export class OverlayManager {
       skipTaskbar: true,
       focusable: false,
       resizable: false,
-      show: true, // Explicitly show the window
+      show: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(app.getAppPath(), "dist", "preload.js")
       }
     });
-    
+
     // Ensure window is visible
     highlight.show();
     highlight.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     highlight.setAlwaysOnTop(true, 'screen-saver');
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showHighlight] BrowserWindow created`);
 
     // Position over the prompt text
     const { x, y } = this.calculateHighlightPosition(context);
     // Validate coordinates to prevent NaN errors
     const posX = isNaN(x) || !isFinite(x) ? 100 : Math.max(0, x);
     const posY = isNaN(y) || !isFinite(y) ? 100 : Math.max(0, y);
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showHighlight] Calculated position: x=${x}, y=${y} -> posX=${posX}, posY=${posY}`);
     highlight.setPosition(posX, posY);
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showHighlight] Position set`);
 
     const htmlPath = path.join(this.rendererPath, "highlight.html");
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showHighlight] Loading file: ${htmlPath}`);
     highlight.loadFile(htmlPath, { query: options.loading ? { loading: "true" } : {} });
-    
-    // Listen for when the window is ready
-    highlight.webContents.once("did-finish-load", () => {
-      const elapsed = Date.now() - startTime;
-      console.log(`[${new Date().toISOString()}] [OverlayManager.showHighlight] ✓ File loaded - Window ready (${elapsed}ms total)`);
-    });
 
+    // Listen for errors only
     highlight.webContents.once("did-fail-load", (event, errorCode, errorDescription) => {
-      console.error(`[${new Date().toISOString()}] [OverlayManager.showHighlight] ✗ File load failed: ${errorCode} - ${errorDescription}`);
+      console.error(`[OverlayManager] Highlight load failed: ${errorCode} - ${errorDescription}`);
     });
 
     this.highlights.set(key, highlight);
-    const elapsed = Date.now() - startTime;
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showHighlight] ✓ COMPLETE - Highlight window created (${elapsed}ms)`);
   }
 
   showOptimization(
@@ -111,24 +128,15 @@ export class OverlayManager {
     original: string,
     optimized: string
   ) {
-    const timestamp = new Date().toISOString();
-    const startTime = Date.now();
     const key = this.getContextKey(context);
-    console.log(`[${timestamp}] [OverlayManager.showOptimization] START - key="${key}"`);
-    console.log(`[${timestamp}] [OverlayManager.showOptimization] Original length: ${original.length}, Optimized length: ${optimized.length}`);
-    
+
     // Update highlight to show it's ready
     const highlight = this.highlights.get(key);
     if (highlight && !highlight.isDestroyed()) {
-      console.log(`[${timestamp}] [OverlayManager.showOptimization] Updating highlight state to ready...`);
       highlight.webContents.send("update-state", { ready: true });
-      console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] ✓ Highlight state updated`);
-    } else {
-      console.warn(`[${timestamp}] [OverlayManager.showOptimization] ⚠ Highlight window not found or destroyed (key="${key}")`);
     }
 
     // Create popup
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] Creating popup window...`);
     const popup = new BrowserWindow({
       width: 550,
       height: 350,
@@ -137,28 +145,25 @@ export class OverlayManager {
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
-      focusable: true, // Allow focus so user can interact with it
-      show: true, // Explicitly show the window
+      focusable: false, // Keep underlying window (Notepad) focused for UI Automation
+      show: true,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(app.getAppPath(), "dist", "preload.js")
       }
     });
-    
+
     // Ensure window is visible
     popup.show();
     popup.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     popup.setAlwaysOnTop(true, 'screen-saver');
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] Popup window created`);
 
     const { x, y } = this.calculatePopupPosition(context);
     // Validate coordinates to prevent NaN errors
     const posX = isNaN(x) || !isFinite(x) ? 100 : Math.max(0, x);
     const posY = isNaN(y) || !isFinite(y) ? 100 : Math.max(0, y);
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] Calculated popup position: x=${x}, y=${y} -> posX=${posX}, posY=${posY}`);
     popup.setPosition(posX, posY);
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] Popup position set`);
 
     const queryParams: Record<string, string> = {
       original: original.substring(0, 200), // Limit length
@@ -166,29 +171,23 @@ export class OverlayManager {
     };
 
     const popupHtmlPath = path.join(this.rendererPath, "popup.html");
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] Loading popup file: ${popupHtmlPath}`);
     popup.loadFile(popupHtmlPath, {
       query: queryParams
     });
 
     // Store context for IPC handlers
     this.promptContexts.set(key, { context, optimized });
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] Context stored`);
 
     // Expose context key to renderer via preload
     popup.webContents.once("did-finish-load", () => {
-      const elapsed = Date.now() - startTime;
-      console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] ✓ Popup file loaded - Window ready (${elapsed}ms total)`);
       popup.webContents.send("set-context-key", key);
     });
 
     popup.webContents.once("did-fail-load", (event, errorCode, errorDescription) => {
-      console.error(`[${new Date().toISOString()}] [OverlayManager.showOptimization] ✗ Popup file load failed: ${errorCode} - ${errorDescription}`);
+      console.error(`[OverlayManager] Popup load failed: ${errorCode} - ${errorDescription}`);
     });
 
     this.popups.set(key, popup);
-    const elapsed = Date.now() - startTime;
-    console.log(`[${new Date().toISOString()}] [OverlayManager.showOptimization] ✓ COMPLETE - Popup window created (${elapsed}ms)`);
   }
 
   showError(context: PromptContext, message: string) {

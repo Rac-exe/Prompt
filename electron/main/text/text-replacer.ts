@@ -116,6 +116,218 @@ export class TextReplacer {
   }
 
   /**
+   * Replace text in place by selecting original text and typing new text
+   * This uses clipboard + keyboard simulation
+   */
+  async replaceTextInPlace(originalText: string, newText: string): Promise<void> {
+    console.log("[TextReplacer] replaceTextInPlace called");
+    console.log("[TextReplacer] Original text:", originalText.substring(0, 100));
+    console.log("[TextReplacer] New text:", newText.substring(0, 100));
+
+    // IMPORTANT: The originalText comes without the @prompt prefix, but the actual text
+    // in the editor includes it. We need to search for the full text including @prompt.
+    const fullOriginalText = `@prompt ${originalText}`;
+    console.log("[TextReplacer] Full text to search for:", fullOriginalText.substring(0, 100));
+
+    // TRY UI AUTOMATION FIRST (Windows only, true Word-like approach!)
+    if (this.platform === "win32") {
+      console.log("[TextReplacer] Attempting UI Automation (NO KEYBOARD)...");
+      try {
+        await this.replaceTextViaUIAutomation(fullOriginalText, newText);
+        console.log("[TextReplacer] ✅ SUCCESS via UI Automation (Word-like)!");
+        return; // Success! No keyboard needed!
+      } catch (error) {
+        console.log("[TextReplacer] ⚠️ UI Automation not available:", (error as Error).message);
+        console.log("[TextReplacer] Falling back to keyboard simulation...");
+        // Fall through to keyboard approach
+      }
+    }
+
+    // No fallback - UI Automation is required
+    // If we reach here, UI Automation failed
+    throw new Error("UI Automation not available. Please use the Copy button and paste manually (Ctrl+V).");
+  }
+
+  /**
+   * Windows UI Automation - Direct text replacement (like MS Word)
+   * NO KEYBOARD SIMULATION!
+   */
+  private async replaceTextViaUIAutomation(originalText: string, newText: string): Promise<void> {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+
+    console.log("[UIAutomation] Starting Word-like text replacement");
+    console.log("[UIAutomation] This uses Windows UI Automation API - NO KEYBOARD!");
+
+    // Use Base64 encoding to avoid PowerShell parsing issues with newlines and special chars
+    const base64Original = Buffer.from(originalText, 'utf8').toString('base64');
+    const base64New = Buffer.from(newText, 'utf8').toString('base64');
+
+    // PowerShell script using UI Automation
+    const script = `
+param([string]$originalBase64, [string]$newBase64)
+
+# Decode Base64 parameters to avoid newline/special char issues
+$original = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($originalBase64))
+$new = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($newBase64))
+
+try {
+    # Load UI Automation assemblies
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+
+    # Get the currently focused element (where cursor is)
+    $focusedElement = [System.Windows.Automation.AutomationElement]::FocusedElement
+
+    if ($null -eq $focusedElement) {
+        throw "No focused element found"
+    }
+
+    $elementName = $focusedElement.Current.Name
+    $controlType = $focusedElement.Current.ControlType.ProgrammaticName
+
+    Write-Host "INFO: Focused element: $elementName"
+    Write-Host "INFO: Control type: $controlType"
+
+    # Try to get ValuePattern (this is the magic - direct text access!)
+    try {
+        $valuePattern = $focusedElement.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+
+        if ($null -eq $valuePattern) {
+            throw "ValuePattern is null"
+        }
+
+        # Get current text value
+        $currentValue = $valuePattern.Current.Value
+
+        if ($null -eq $currentValue) {
+            $currentValue = ""
+        }
+
+        Write-Host "INFO: Current text length: $($currentValue.Length)"
+        Write-Host "INFO: Current text (first 100 chars): $($currentValue.Substring(0, [Math]::Min(100, $currentValue.Length)))"
+        Write-Host "INFO: Looking for: $original"
+        Write-Host "INFO: Looking for text to replace..."
+
+        # Replace the text
+        $updatedValue = $currentValue.Replace($original, $new)
+
+        if ($currentValue -eq $updatedValue) {
+            Write-Host "ERROR: Text comparison failed:"
+            Write-Host "  - Looking for: '$original'"
+            Write-Host "  - Found in text: $($currentValue.Contains($original))"
+            Write-Host "  - Actual text: '$currentValue'"
+            throw "Original text not found in current value"
+        }
+
+        Write-Host "INFO: Replacement found, setting new value..."
+
+        # THIS IS THE MAGIC: Direct text replacement, NO KEYBOARD!
+        $valuePattern.SetValue($updatedValue)
+
+        Write-Host "SUCCESS: Text replaced via UI Automation!"
+
+        # Now move cursor to the end of replaced text (NO KEYBOARD!)
+        try {
+            Write-Host "INFO: Attempting to move cursor to end of replaced text..."
+
+            # Try to get TextPattern for cursor positioning
+            $textPattern = $focusedElement.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern)
+
+            if ($null -ne $textPattern) {
+                # Get the document range
+                $documentRange = $textPattern.DocumentRange
+
+                # Find the position where we want to place the cursor
+                # Calculate the end position of the replaced text
+                $replacementIndex = $currentValue.IndexOf($original)
+                if ($replacementIndex -ge 0) {
+                    $endPosition = $replacementIndex + $new.Length
+
+                    Write-Host "INFO: Replacement starts at index: $replacementIndex"
+                    Write-Host "INFO: Moving cursor to position: $endPosition (end of replaced text)"
+
+                    # Move to the end position by moving from document start
+                    $documentRange.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [System.Windows.Automation.Text.TextUnit]::Character, $endPosition)
+                    $documentRange.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::End, [System.Windows.Automation.Text.TextUnit]::Character, 0)
+
+                    # Select the range (which is just a cursor position now)
+                    $documentRange.Select()
+
+                    Write-Host "SUCCESS: Cursor moved to end of replaced text!"
+                } else {
+                    Write-Host "WARNING: Could not find replacement position in original text"
+                }
+            } else {
+                Write-Host "WARNING: TextPattern not supported by this control (cursor will remain at start)"
+            }
+        } catch {
+            Write-Host "WARNING: Could not move cursor: $_"
+            Write-Host "WARNING: Text replaced successfully, but cursor remains at current position"
+        }
+
+        exit 0
+
+    } catch {
+        throw "ValuePattern not supported or failed: $_"
+    }
+
+} catch {
+    Write-Host "ERROR: $_"
+    exit 1
+}
+`;
+
+    const scriptFile = path.join(os.tmpdir(), `uia-replace-${Date.now()}.ps1`);
+    fs.writeFileSync(scriptFile, script, 'utf8');
+
+    try {
+      const result = await execAsync(
+        `powershell -ExecutionPolicy Bypass -File "${scriptFile}" ` +
+        `-originalBase64 "${base64Original}" ` +
+        `-newBase64 "${base64New}"`,
+        { timeout: 5000 }
+      );
+
+      // Clean up
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      console.log("[UIAutomation] PowerShell output:", result.stdout);
+
+      if (result.stdout.includes("SUCCESS")) {
+        console.log("[UIAutomation] ✅ Text replaced successfully (NO KEYBOARD!)");
+        return;
+      } else {
+        throw new Error("UI Automation did not succeed");
+      }
+
+    } catch (error) {
+      // Clean up
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      const errorObj = error as any;
+      const errorMsg = errorObj.stderr || errorObj.stdout || errorObj.message || String(error);
+      console.log("[UIAutomation] Failed with error:");
+      console.log("[UIAutomation] STDERR:", errorObj.stderr);
+      console.log("[UIAutomation] STDOUT:", errorObj.stdout);
+      console.log("[UIAutomation] Message:", errorObj.message);
+      throw new Error(`UI Automation not available: ${errorMsg}`);
+    }
+  }
+
+  // Keyboard fallback methods removed - UI Automation is now required for direct text replacement
+  // If UI Automation fails, users can use the Copy button instead
+
+  /**
    * Alternative: Use clipboard approach and show instruction to user
    */
   async copyToClipboard(text: string): Promise<void> {

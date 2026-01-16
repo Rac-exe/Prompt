@@ -73,6 +73,16 @@ export class TextStatePoller extends EventEmitter {
     return this.textBuffer;
   }
 
+  /**
+   * Clear text buffer and tracked instances
+   * Called after successful text replacement to avoid stale detections
+   */
+  clearBuffer(): void {
+    this.textBuffer = "";
+    this.trackedInstances.clear();
+    console.log("[TextStatePoller] Buffer cleared after text replacement");
+  }
+
   // REMOVED: resetState() method
   // No longer needed - session stays alive in SHOWING phase to prevent re-optimization
 
@@ -216,12 +226,13 @@ export class TextStatePoller extends EventEmitter {
         // New or updated instance - emit event
         const lineCount = promptText.split('\n').length;
 
-        console.log(
-          `[TextStatePoller] Instance detected at ${triggerIndex}:`,
-          `${lineCount} line(s),`,
-          `${promptText.length} chars,`,
-          `preview: "${promptText.substring(0, 50)}..."`
-        );
+        // Only log on first detection (not every character)
+        // console.log(
+        //   `[TextStatePoller] Instance detected at ${triggerIndex}:`,
+        //   `${lineCount} line(s),`,
+        //   `${promptText.length} chars,`,
+        //   `preview: "${promptText.substring(0, 50)}..."`
+        // );
 
         this.emit("trigger-found", {
           promptText,
@@ -235,7 +246,7 @@ export class TextStatePoller extends EventEmitter {
     // Check for removed instances (were tracked, now gone)
     this.trackedInstances.forEach((instance, hash) => {
       if (!currentInstances.has(hash)) {
-        console.log(`[TextStatePoller] Instance removed at ${instance.triggerIndex}`);
+        // console.log(`[TextStatePoller] Instance removed at ${instance.triggerIndex}`);
         this.emit("trigger-removed", { instanceHash: hash });
       }
     });
