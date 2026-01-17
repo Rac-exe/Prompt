@@ -4,7 +4,7 @@ export class PythonClient {
   private client: AxiosInstance;
   private baseUrl: string;
 
-  constructor(baseUrl: string = "http://127.0.0.1:8000") {
+  constructor(baseUrl: string = "http://127.0.0.1:8001") {
     this.baseUrl = baseUrl;
     this.client = axios.create({
       baseURL: baseUrl,

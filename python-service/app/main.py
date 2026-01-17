@@ -5,7 +5,7 @@ from typing import Optional
 import ollama
 import time
 import re
-import vosk
+import whisper
 import numpy as np
 import pyaudio
 import io
@@ -15,6 +15,7 @@ import threading
 import queue
 import asyncio
 import os
+import torch
 
 app = FastAPI()
 
@@ -175,43 +176,18 @@ async def health():
             "error": str(e)
         }
 
-# Vosk model (loaded lazily)
-vosk_model = None
-vosk_rec = None
+# Whisper model (loaded lazily)
+whisper_model = None
 
-def get_vosk_model():
-    """Lazy load Vosk model."""
-    global vosk_model, vosk_rec
-    if vosk_model is None:
-        # Try to find Vosk model directory
-        # Default locations to check
-        model_paths = [
-            os.path.join(os.path.dirname(__file__), "..", "vosk-model-en-us-0.22"),
-            os.path.join(os.path.expanduser("~"), "vosk-model-en-us-0.22"),
-            "vosk-model-en-us-0.22",
-            "vosk-model-small-en-us-0.15",  # Smaller alternative
-        ]
-        
-        model_path = None
-        for path in model_paths:
-            if os.path.exists(path) and os.path.isdir(path):
-                model_path = path
-                break
-        
-        if model_path is None:
-            raise FileNotFoundError(
-                "Vosk model not found. Please download a model:\n"
-                "1. Download from: https://alphacephei.com/vosk/models\n"
-                "2. Extract to: python-service/vosk-model-en-us-0.22\n"
-                "Or use: python -m vosk_download_model en-us-0.22"
-            )
-        
-        print(f"[Vosk] Loading Vosk model from: {model_path}")
-        vosk_model = vosk.Model(model_path)
-        vosk_rec = vosk.KaldiRecognizer(vosk_model, RATE)
-        vosk_rec.SetWords(True)
-        print("[Vosk] Model loaded successfully")
-    return vosk_rec
+def get_whisper_model():
+    """Lazy load Whisper model (small)."""
+    global whisper_model
+    if whisper_model is None:
+        print("[Whisper] Loading Whisper small model...")
+        # Load the small model for balance between speed and accuracy
+        whisper_model = whisper.load_model("small")
+        print("[Whisper] Model loaded successfully")
+    return whisper_model
 
 # Audio configuration
 CHUNK = 4096
@@ -229,6 +205,7 @@ class TranscriptionSession:
         self.is_recording = False
         self.audio_buffer = []
         self.transcription_thread = None
+        self.accumulated_text = ""  # Store accumulated transcription for live updates
         
     def start_recording(self):
         """Start audio recording."""
@@ -236,33 +213,52 @@ class TranscriptionSession:
             print("[Transcription] Already recording")
             return
 
-        print("[Transcription] Starting recording...")
+        print("[Transcription] ===== STARTING RECORDING SESSION =====")
         self.is_recording = True
         self.audio_buffer = []
+        self.accumulated_text = ""  # Reset accumulated text for new session
+
+        # Clear any old audio data from previous session
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except:
+                break
+        print("[Transcription] Audio queue cleared for new session")
 
         # Start audio capture thread
         try:
+            print("[Transcription] Spawning audio capture thread...")
             self.audio_thread = threading.Thread(target=self._capture_audio, daemon=True)
             self.audio_thread.start()
-            print("[Transcription] Audio capture thread started")
+            print("[Transcription] ✓ Audio capture thread started successfully")
         except Exception as e:
-            print(f"[Transcription] Failed to start audio thread: {e}")
+            print(f"[Transcription] ✗ Failed to start audio thread: {e}")
+            import traceback
+            traceback.print_exc()
             self.is_recording = False
             return
 
         # Start transcription thread
         try:
+            print("[Transcription] Spawning transcription thread...")
             self.transcription_thread = threading.Thread(target=self._transcribe_loop, daemon=True)
             self.transcription_thread.start()
-            print("[Transcription] Transcription thread started")
+            print("[Transcription] ✓ Transcription thread started successfully")
+            print("[Transcription] ===== RECORDING SESSION ACTIVE =====")
         except Exception as e:
-            print(f"[Transcription] Failed to start transcription thread: {e}")
+            print(f"[Transcription] ✗ Failed to start transcription thread: {e}")
+            import traceback
+            traceback.print_exc()
             self.is_recording = False
             return
         
     def stop_recording(self):
         """Stop audio recording."""
+        print("[Transcription] ===== STOPPING RECORDING SESSION =====")
+        print(f"[Transcription] is_recording was: {self.is_recording}")
         self.is_recording = False
+        print("[Transcription] Recording flag set to False, waiting for threads to finish...")
         
     def _capture_audio(self):
         """Capture audio from microphone."""
@@ -326,6 +322,10 @@ class TranscriptionSession:
                 raise
 
             print("[Transcription] Started audio capture - now reading from microphone")
+            print("[Transcription] ========================================")
+            print("[Transcription] MICROPHONE DIAGNOSTIC MODE ENABLED")
+            print("[Transcription] Will log detailed audio metrics every 10 chunks")
+            print("[Transcription] ========================================")
 
             chunk_count = 0
             first_chunk_validated = False
@@ -337,7 +337,9 @@ class TranscriptionSession:
 
                     # Validate first audio chunk
                     if not first_chunk_validated:
-                        print(f"[Transcription] First audio chunk validation:")
+                        print(f"[Transcription] ========================================")
+                        print(f"[Transcription] FIRST AUDIO CHUNK VALIDATION:")
+                        print(f"[Transcription] ========================================")
                         print(f"  - Chunk byte size: {len(data)} bytes")
                         print(f"  - Expected byte size: {CHUNK * 2} bytes (CHUNK={CHUNK}, int16=2 bytes)")
                         print(f"  - Audio format: {FORMAT} (8=paInt16)")
@@ -352,42 +354,93 @@ class TranscriptionSession:
                         print(f"  - Audio mean: {audio_array.mean():.2f}")
                         print(f"  - Audio std dev: {audio_array.std():.2f}")
 
-                        # Check if audio is silent (all zeros or very low values)
-                        if audio_array.std() < 10:
-                            print(f"  - WARNING: Audio appears to be silent or very quiet!")
+                        # Calculate RMS and dB for first chunk
+                        rms = np.sqrt(np.mean(audio_array.astype(np.float32)**2))
+                        if rms > 0:
+                            db = 20 * np.log10(rms / 32768.0)
                         else:
-                            print(f"  - Audio has valid signal")
+                            db = -100
+                        peak = np.abs(audio_array).max()
 
+                        print(f"  - RMS amplitude: {rms:.2f}")
+                        print(f"  - Decibels (dB): {db:.2f} dB")
+                        print(f"  - Peak amplitude: {peak} / 32768 ({(peak/32768.0*100):.4f}%)")
+
+                        # Check if audio is silent (all zeros or very low values)
+                        print(f"\n[Transcription] DIAGNOSIS:")
+                        if db < -60:
+                            print(f"  - STATUS: CRITICAL - Audio is essentially SILENT!")
+                            print(f"  - LIKELY CAUSES:")
+                            print(f"    1. Microphone is MUTED in Windows settings")
+                            print(f"    2. Wrong microphone selected (check Sound Control Panel)")
+                            print(f"    3. Microphone volume set to 0%")
+                            print(f"    4. Application doesn't have microphone permissions")
+                            print(f"  - ACTION REQUIRED: Check Windows microphone settings!")
+                        elif db < -40:
+                            print(f"  - STATUS: WARNING - Audio is very quiet")
+                            print(f"  - SUGGESTION: Increase microphone volume in Windows settings")
+                        elif db < -20:
+                            print(f"  - STATUS: OK - Normal speech levels detected")
+                        else:
+                            print(f"  - STATUS: EXCELLENT - Strong audio signal detected")
+
+                        print(f"[Transcription] ========================================")
                         first_chunk_validated = True
 
                     if chunk_count % 10 == 0:  # Log every 10 chunks
                         print(f"[Transcription] Captured {chunk_count} audio chunks")
 
-                    # Apply audio gain boost (amplify by 50x to compensate for low microphone volume)
+                    # For Whisper, we apply moderate gain only if audio is too quiet
                     audio_array = np.frombuffer(data, dtype=np.int16).copy()
 
-                    # Amplify the audio signal
-                    GAIN = 50.0  # Boost factor
-                    audio_array = audio_array.astype(np.float32) * GAIN
+                    # Check audio level and apply adaptive gain
+                    audio_std = audio_array.std()
+                    if audio_std < 100:
+                        # Audio is very quiet, apply moderate gain
+                        GAIN = 5.0  # Moderate boost for Whisper (reduced from 50x)
+                        audio_array = audio_array.astype(np.float32) * GAIN
+                        audio_array = np.clip(audio_array, -32768, 32767)
+                        audio_array = audio_array.astype(np.int16)
 
-                    # Clip to int16 range to prevent overflow
-                    audio_array = np.clip(audio_array, -32768, 32767)
+                    # Convert to bytes for processing
+                    processed_data = audio_array.tobytes()
 
-                    # Convert back to int16
-                    audio_array = audio_array.astype(np.int16)
+                    # Log audio stats every 10 chunks for better debugging
+                    if chunk_count % 10 == 0:
+                        original_audio = np.frombuffer(data, dtype=np.int16)
 
-                    # Convert to bytes for Vosk
-                    boosted_data = audio_array.tobytes()
+                        # Calculate RMS (Root Mean Square) amplitude
+                        rms = np.sqrt(np.mean(original_audio.astype(np.float32)**2))
 
-                    # Log boosted audio stats every 50 chunks
-                    if chunk_count % 50 == 0:
-                        print(f"[Transcription] Boosted audio stats (chunk {chunk_count}):")
-                        print(f"  - Original std: {np.frombuffer(data, dtype=np.int16).std():.2f}")
-                        print(f"  - Boosted std: {audio_array.std():.2f}")
-                        print(f"  - Boosted min/max: {audio_array.min()} / {audio_array.max()}")
+                        # Calculate decibels (dB) - reference is max int16 value
+                        if rms > 0:
+                            db = 20 * np.log10(rms / 32768.0)
+                        else:
+                            db = -100  # Very quiet/silent
 
-                    # Vosk works with raw bytes (int16), not float32
-                    self.audio_queue.put(boosted_data)
+                        # Calculate peak amplitude
+                        peak = np.abs(original_audio).max()
+
+                        print(f"[Transcription] Audio metrics (chunk {chunk_count}):")
+                        print(f"  - RMS amplitude: {rms:.2f}")
+                        print(f"  - Decibels (dB): {db:.2f} dB")
+                        print(f"  - Peak amplitude: {peak} / 32768 ({(peak/32768.0*100):.2f}%)")
+                        print(f"  - Std deviation: {original_audio.std():.2f}")
+                        print(f"  - Min/Max: {original_audio.min()} / {original_audio.max()}")
+                        print(f"  - Gain applied: {'YES (5x)' if audio_std < 100 else 'NO'}")
+
+                        # Audio quality assessment
+                        if db < -60:
+                            print(f"  - Quality: VERY QUIET/SILENT - Likely no microphone input!")
+                        elif db < -40:
+                            print(f"  - Quality: Quiet - Microphone may be muted or volume too low")
+                        elif db < -20:
+                            print(f"  - Quality: Normal speech levels")
+                        else:
+                            print(f"  - Quality: Loud - Good signal")
+
+                    # Queue audio data for transcription
+                    self.audio_queue.put(processed_data)
                 except Exception as e:
                     print(f"[Transcription] Audio capture error while reading: {e}")
                     import traceback
@@ -422,128 +475,58 @@ class TranscriptionSession:
                     print(f"[Transcription] Error terminating PyAudio: {e}")
     
     def _transcribe_loop(self):
-        """Continuously transcribe audio chunks using Vosk."""
+        """Continuously transcribe audio chunks using Whisper."""
         print("[Transcription] _transcribe_loop starting...")
 
-        # Create a new recognizer for this session (model is already loaded globally)
-        global vosk_model
-        if vosk_model is None:
-            print("[Transcription] Loading Vosk model (first time only)...")
-            get_vosk_model()
-            print("[Transcription] Vosk model loaded")
+        # Load Whisper model
+        model = get_whisper_model()
+        print("[Transcription] Whisper model ready")
 
-        # Create a new recognizer instance for this session
-        recognizer = vosk.KaldiRecognizer(vosk_model, RATE)
-        recognizer.SetWords(True)
-        print("[Transcription] Created new recognizer for this session")
-
-        accumulated_text = ""
-        last_partial = ""
+        accumulated_audio = []
+        audio_chunks_processed = 0
 
         print("[Transcription] Started transcription loop")
         print(f"[Transcription] is_recording = {self.is_recording}")
         print(f"[Transcription] audio_queue size = {self.audio_queue.qsize()}")
-
-        audio_chunks_processed = 0
-        first_transcription_chunk_validated = False
 
         # Give audio capture thread time to start filling the queue
         import time
         time.sleep(0.5)
         print(f"[Transcription] After 0.5s delay, queue size = {self.audio_queue.qsize()}")
 
-        # Process audio chunks while recording OR while there are chunks in the queue
+        # Collect audio in chunks and transcribe periodically for live feedback
+        last_transcription_time = time.time()
+        transcription_interval = 1.5  # Transcribe every 1.5 seconds for faster live updates
+
         while self.is_recording or not self.audio_queue.empty():
             try:
                 # Get audio chunk (raw bytes)
                 try:
-                    # Use shorter timeout when stopping to process remaining chunks faster
                     timeout = 0.1 if self.is_recording else 0.05
                     audio_data = self.audio_queue.get(timeout=timeout)
                     audio_chunks_processed += 1
 
-                    # Validate first chunk in transcription
-                    if not first_transcription_chunk_validated:
-                        print(f"[Transcription] First chunk validation in transcription loop:")
-                        print(f"  - Received {len(audio_data)} bytes")
-                        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-                        print(f"  - As int16 array: {len(audio_array)} samples")
-                        print(f"  - Min/max: {audio_array.min()} / {audio_array.max()}")
-                        print(f"  - Mean: {audio_array.mean():.2f}, Std: {audio_array.std():.2f}")
-
-                        if audio_array.std() < 10:
-                            print(f"  - WARNING: Audio signal appears silent!")
-
-                        first_transcription_chunk_validated = True
+                    # Convert bytes to numpy array and accumulate
+                    audio_array = np.frombuffer(audio_data, dtype=np.int16)
+                    accumulated_audio.append(audio_array)
 
                     if audio_chunks_processed % 10 == 0:
-                        print(f"[Transcription] Processed {audio_chunks_processed} audio chunks from queue")
-                except queue.Empty:
-                    # Process partial results even if no new audio
-                    if recognizer.AcceptWaveform(b''):
-                        result = json.loads(recognizer.Result())
-                        if result.get("text"):
-                            transcribed_text = result["text"].strip()
-                            print(f"[Transcription] Empty queue - got final text: '{transcribed_text}'")
-                            if transcribed_text:
-                                accumulated_text += " " + transcribed_text if accumulated_text else transcribed_text
-                                accumulated_text = accumulated_text.strip()
+                        print(f"[Transcription] Accumulated {audio_chunks_processed} audio chunks")
 
-                                if self.event_loop:
-                                    asyncio.run_coroutine_threadsafe(
-                                        self.websocket.send_json({
-                                            "type": "transcription",
-                                            "text": transcribed_text,
-                                            "accumulated": accumulated_text
-                                        }),
-                                        self.event_loop
-                                    )
+                except queue.Empty:
+                    # Check if we should transcribe what we have
+                    if accumulated_audio and time.time() - last_transcription_time > transcription_interval:
+                        self._process_accumulated_audio(model, accumulated_audio)
+                        accumulated_audio = []
+                        last_transcription_time = time.time()
                     continue
 
-                # Process audio with Vosk
-                if recognizer.AcceptWaveform(audio_data):
-                    # Final result
-                    result = json.loads(recognizer.Result())
-                    transcribed_text = result.get("text", "").strip()
-
-                    print(f"[Transcription] Vosk final result: '{transcribed_text}'")
-
-                    if transcribed_text:
-                        accumulated_text += " " + transcribed_text if accumulated_text else transcribed_text
-                        accumulated_text = accumulated_text.strip()
-
-                        print(f"[Transcription] Sending transcription update: '{transcribed_text}' (accumulated: '{accumulated_text}')")
-
-                        # Send update via WebSocket
-                        if self.event_loop:
-                            asyncio.run_coroutine_threadsafe(
-                                self.websocket.send_json({
-                                    "type": "transcription",
-                                    "text": transcribed_text,
-                                    "accumulated": accumulated_text
-                                }),
-                                self.event_loop
-                            )
-                else:
-                    # Partial result (interim)
-                    partial_result = json.loads(recognizer.PartialResult())
-                    partial_text = partial_result.get("partial", "").strip()
-
-                    # Only send if partial text changed
-                    if partial_text and partial_text != last_partial:
-                        last_partial = partial_text
-                        print(f"[Transcription] Vosk partial result: '{partial_text}'")
-
-                        # Send partial update (optional - for live feedback)
-                        if self.event_loop:
-                            asyncio.run_coroutine_threadsafe(
-                                self.websocket.send_json({
-                                    "type": "partial",
-                                    "text": partial_text,
-                                    "accumulated": accumulated_text + " " + partial_text if accumulated_text else partial_text
-                                }),
-                                self.event_loop
-                            )
+                # Transcribe periodically while recording
+                current_time = time.time()
+                if accumulated_audio and (current_time - last_transcription_time) >= transcription_interval:
+                    self._process_accumulated_audio(model, accumulated_audio)
+                    accumulated_audio = []
+                    last_transcription_time = current_time
 
             except Exception as e:
                 print(f"[Transcription] Transcription error: {e}")
@@ -557,29 +540,103 @@ class TranscriptionSession:
 
         print(f"[Transcription] Exited while loop. is_recording = {self.is_recording}")
         print(f"[Transcription] Stopped transcription loop (processed {audio_chunks_processed} chunks)")
-        print(f"[Transcription] Final queue size: {self.audio_queue.qsize()}")
 
-        # Get final result
+        # Process any remaining audio
+        if accumulated_audio:
+            print("[Transcription] Processing final audio buffer...")
+            self._process_accumulated_audio(model, accumulated_audio, is_final=True)
+
+    def _process_accumulated_audio(self, model, audio_chunks, is_final=False):
+        """Process accumulated audio chunks with Whisper."""
         try:
-            print("[Transcription] Getting final result from Vosk...")
-            final_result = json.loads(recognizer.FinalResult())
-            print(f"[Transcription] Final result: {final_result}")
-            final_text = final_result.get("text", "").strip()
-            if final_text:
-                accumulated_text += " " + final_text if accumulated_text else final_text
-                accumulated_text = accumulated_text.strip()
-        except:
-            pass
-        
-        # Send final transcription
-        if accumulated_text and self.event_loop:
-            asyncio.run_coroutine_threadsafe(
-                self.websocket.send_json({
-                    "type": "final",
-                    "text": accumulated_text
-                }),
-                self.event_loop
+            # Concatenate all audio chunks
+            audio_array = np.concatenate(audio_chunks)
+
+            print(f"[Transcription] Processing {len(audio_array)} samples ({len(audio_array)/RATE:.2f}s of audio)...")
+            print(f"[Transcription] Audio stats - min: {audio_array.min()}, max: {audio_array.max()}, mean: {audio_array.mean():.2f}, std: {audio_array.std():.2f}")
+
+            # Check if audio contains actual signal
+            audio_std = audio_array.std()
+            if audio_std < 10:
+                print(f"[Transcription] WARNING: Audio signal is too quiet (std={audio_std:.2f}), likely silence or no microphone input")
+                # Don't skip processing, let Whisper decide, but warn the user
+
+            # Normalize audio properly for Whisper
+            # 1. Convert int16 to float32
+            audio_float = audio_array.astype(np.float32)
+
+            # 2. Normalize to [-1, 1] range
+            audio_float = audio_float / 32768.0
+
+            # 3. Apply additional normalization to ensure proper range
+            # BUT only if we have actual signal (avoid amplifying silence)
+            max_val = np.abs(audio_float).max()
+            if max_val > 0.001:  # Only normalize if we have actual signal
+                audio_float = audio_float / max_val
+            else:
+                print(f"[Transcription] WARNING: Maximum amplitude is very low ({max_val:.6f}), audio may be silence")
+
+            # 4. Pad or trim audio to meet Whisper's expectations (Whisper expects at least 0.1s of audio)
+            min_samples = int(0.1 * RATE)  # 0.1 seconds minimum
+            if len(audio_float) < min_samples:
+                print(f"[Transcription] Audio too short ({len(audio_float)} samples), padding to {min_samples}")
+                audio_float = np.pad(audio_float, (0, min_samples - len(audio_float)), mode='constant')
+
+            print(f"[Transcription] Normalized audio - min: {audio_float.min():.4f}, max: {audio_float.max():.4f}, mean: {audio_float.mean():.4f}")
+            print(f"[Transcription] Calling Whisper transcribe with language='en'...")
+
+            # Transcribe with Whisper - force language to English
+            result = model.transcribe(
+                audio_float,
+                language="en",  # Force English language
+                fp16=torch.cuda.is_available(),  # Use FP16 if GPU available
+                verbose=True,  # Enable verbose to see what Whisper is doing
+                task="transcribe"  # Explicitly set task to transcribe (not translate)
             )
+
+            transcribed_text = result["text"].strip()
+            print(f"[Transcription] Whisper result: '{transcribed_text}'")
+
+            # Also log the segments for debugging
+            if "segments" in result:
+                print(f"[Transcription] Number of segments: {len(result['segments'])}")
+                for i, segment in enumerate(result["segments"]):
+                    print(f"[Transcription] Segment {i}: '{segment.get('text', '')}' (no_speech_prob: {segment.get('no_speech_prob', 'N/A')})")
+
+            # Check if this is actual speech or just noise
+            # Whisper returns empty or whitespace for non-speech audio
+            if transcribed_text and len(transcribed_text) > 0:
+                # Accumulate text for live updates
+                if not is_final:
+                    # For live updates, append new text
+                    if transcribed_text not in self.accumulated_text:
+                        self.accumulated_text += " " + transcribed_text if self.accumulated_text else transcribed_text
+                        self.accumulated_text = self.accumulated_text.strip()
+                else:
+                    # For final, use accumulated text plus any new text
+                    if transcribed_text not in self.accumulated_text:
+                        self.accumulated_text += " " + transcribed_text if self.accumulated_text else transcribed_text
+                        self.accumulated_text = self.accumulated_text.strip()
+
+                print(f"[Transcription] Accumulated text: '{self.accumulated_text}'")
+
+                if self.event_loop:
+                    message_type = "final" if is_final else "transcription"
+                    asyncio.run_coroutine_threadsafe(
+                        self.websocket.send_json({
+                            "type": message_type,
+                            "text": transcribed_text,
+                            "accumulated": self.accumulated_text  # Send accumulated text for live display
+                        }),
+                        self.event_loop
+                    )
+            else:
+                print("[Transcription] No speech detected in audio (empty result or silence)")
+
+        except Exception as e:
+            print(f"[Transcription] Error processing audio: {e}")
+            import traceback
+            traceback.print_exc()
 
 # Active transcription sessions
 active_sessions: dict[str, TranscriptionSession] = {}
@@ -588,33 +645,51 @@ active_sessions: dict[str, TranscriptionSession] = {}
 async def websocket_transcribe(websocket: WebSocket):
     """WebSocket endpoint for continuous transcription."""
     await websocket.accept()
+    print("[WebSocket] Client connected")
     session_id = None
     event_loop = asyncio.get_event_loop()
-    
+
     try:
         while True:
             data = await websocket.receive_json()
-            
+            print(f"[WebSocket] Received message: {data}")
+
             if data["action"] == "start":
                 session_id = data.get("session_id", f"session_{int(time.time())}")
+                print(f"[WebSocket] Starting transcription session: {session_id}")
                 session = TranscriptionSession(websocket, event_loop)
                 active_sessions[session_id] = session
                 session.start_recording()
+                print(f"[WebSocket] Recording started for session: {session_id}")
                 await websocket.send_json({"type": "status", "status": "listening", "session_id": session_id})
-                
+
             elif data["action"] == "stop":
+                print(f"[WebSocket] Received stop request for session: {session_id}")
                 if session_id and session_id in active_sessions:
                     session = active_sessions[session_id]
                     session.stop_recording()
+                    print(f"[WebSocket] Stopping recording for session: {session_id}")
+                    # Wait a moment for final transcription to complete
+                    await asyncio.sleep(1.0)
                     del active_sessions[session_id]
                     await websocket.send_json({"type": "status", "status": "stopped"})
-                    
+                else:
+                    print(f"[WebSocket] WARNING: Stop requested but no active session found: {session_id}")
+
     except WebSocketDisconnect:
+        print(f"[WebSocket] Client disconnected (session: {session_id})")
         if session_id and session_id in active_sessions:
             session = active_sessions[session_id]
             session.stop_recording()
             del active_sessions[session_id]
-        print(f"[Transcription] WebSocket disconnected: {session_id}")
+    except Exception as e:
+        print(f"[WebSocket] Error in websocket handler: {e}")
+        import traceback
+        traceback.print_exc()
+        if session_id and session_id in active_sessions:
+            session = active_sessions[session_id]
+            session.stop_recording()
+            del active_sessions[session_id]
 
 @app.get("/")
 async def root():
@@ -630,13 +705,13 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    """Preload Vosk model on application startup."""
-    print("[Startup] Preloading Vosk model...")
+    """Preload Whisper model on application startup."""
+    print("[Startup] Preloading Whisper model...")
     try:
-        get_vosk_model()
-        print("[Startup] Vosk model preloaded successfully")
+        get_whisper_model()
+        print("[Startup] Whisper model preloaded successfully")
     except Exception as e:
-        print(f"[Startup] Warning: Failed to preload Vosk model: {e}")
+        print(f"[Startup] Warning: Failed to preload Whisper model: {e}")
 
 if __name__ == "__main__":
     import uvicorn

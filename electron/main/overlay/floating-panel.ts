@@ -226,16 +226,27 @@ export class FloatingPanel extends EventEmitter {
    */
   private startTranscription() {
     if (this.isTranscribing) {
-      console.log("[FloatingPanel] Already transcribing");
+      console.log("[FloatingPanel] Already transcribing, ignoring start request");
       return;
+    }
+
+    // Close any existing connection first
+    if (this.transcriptionWebSocket) {
+      console.log("[FloatingPanel] Closing existing WebSocket before starting new session");
+      try {
+        this.transcriptionWebSocket.close();
+      } catch (e) {
+        console.error("[FloatingPanel] Error closing existing WebSocket:", e);
+      }
+      this.transcriptionWebSocket = null;
     }
 
     try {
       this.sessionId = `session_${Date.now()}`;
-      const wsUrl = "ws://127.0.0.1:8000/ws/transcribe";
-      
-      console.log("[FloatingPanel] Connecting to transcription WebSocket:", wsUrl);
-      
+      const wsUrl = "ws://127.0.0.1:8001/ws/transcribe";
+
+      console.log("[FloatingPanel] Connecting to transcription WebSocket:", wsUrl, "Session:", this.sessionId);
+
       this.transcriptionWebSocket = new WebSocket(wsUrl);
       const ws = this.transcriptionWebSocket; // Store reference for callbacks
 
@@ -327,18 +338,27 @@ export class FloatingPanel extends EventEmitter {
     }
 
     try {
-      console.log("[FloatingPanel] Stopping transcription");
-      
+      console.log("[FloatingPanel] Stopping transcription - sending stop message");
+
+      // Send stop message
       this.transcriptionWebSocket.send(JSON.stringify({
         action: "stop",
         session_id: this.sessionId
       }));
-      
-      this.transcriptionWebSocket.close();
-      this.isTranscribing = false;
-      this.transcriptionWebSocket = null;
-      this.sessionId = null;
-      
+
+      // Wait for server to process final transcription before closing (2 seconds delay)
+      // This allows the server to finish transcribing and send final results
+      console.log("[FloatingPanel] Waiting 2s for final transcription before closing WebSocket...");
+      setTimeout(() => {
+        if (this.transcriptionWebSocket) {
+          console.log("[FloatingPanel] Closing WebSocket after delay");
+          this.transcriptionWebSocket.close();
+          this.transcriptionWebSocket = null;
+        }
+        this.isTranscribing = false;
+        this.sessionId = null;
+      }, 2000); // 2 second delay
+
     } catch (error) {
       console.error("[FloatingPanel] Error stopping transcription:", error);
     }

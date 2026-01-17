@@ -16,7 +16,7 @@ export class PromptOptimizerApp extends EventEmitter {
   constructor() {
     super();
     this.overlayManager = new OverlayManager();
-    this.pythonClient = new PythonClient("http://127.0.0.1:8000");
+    this.pythonClient = new PythonClient("http://127.0.0.1:8001");
     this.floatingPanel = new FloatingPanel();
 
     // Initialize trigger detector with dependencies
