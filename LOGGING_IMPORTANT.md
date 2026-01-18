@@ -1,5 +1,60 @@
 # LOGGING_IMPORTANT - Complete Logging Reference
 
+## HOW TO MAINTAIN THIS FILE
+
+### Purpose
+This file tracks ALL logging changes made to the codebase during cleanup operations. It serves as a reference guide for restoring specific logs when debugging particular issues.
+
+### File Structure
+Each section follows this format:
+1. **Component Name** (e.g., WindowTracker, TextStatePoller)
+2. **File path and location** where logs were removed
+3. **REMOVED section** - Commented-out log statements with line numbers
+4. **KEPT section** - Logs that remain active in the code
+5. **When to Enable** - Scenarios where you should restore these logs
+6. **How to Restore** - Instructions for uncommenting the logs
+
+### When Adding New Log Removals
+Follow this template:
+```markdown
+## [Component Name] Logs
+
+**File:** `path/to/file.ts`
+**Location:** Line numbers in method `methodName()`
+
+### REMOVED (Commented Out):
+```typescript
+// Line X-Y (REMOVED)
+// console.log("[Component] Description");
+```
+
+### KEPT:
+```typescript
+// Line Z (KEPT - Reason)
+console.log("[Component] Important event");
+```
+
+### When to Enable:
+- Specific debugging scenario 1
+- Specific debugging scenario 2
+
+### How to Restore:
+Step-by-step instructions
+```
+
+### Important Rules
+1. **NEVER delete entries** - This is a historical record
+2. **Always include line numbers** - Makes restoration easy
+3. **Explain WHY logs were kept** - Not just what they do
+4. **Group by component** - One section per file/module
+5. **Update "Recent Changes"** - Add entries at the bottom for major updates
+6. **Keep TextReplacer logs ALWAYS ON** - Core feature, don't remove
+
+### Quick Reference Section
+The "Quick Reference - When to Enable What" section maps common issues to the logs you should enable. Update this when adding new components.
+
+---
+
 This file documents ALL logging changes made during the cleanup. Use this to restore specific logs when debugging particular issues.
 
 ---

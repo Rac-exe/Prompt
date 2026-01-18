@@ -36,3 +36,10 @@ pip-delete-this-directory.txt
 # Electron
 out/
 release/
+
+# Machine Learning Models (large files)
+python-service/vosk-model-*/
+python-service/*.pt
+python-service/*.pth
+python-service/*.onnx
+python-service/*.pb
