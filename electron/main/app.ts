@@ -54,6 +54,13 @@ export class PromptOptimizerApp extends EventEmitter {
       this.triggerDetector.clearTextBuffer();
     });
 
+    // Listen to re-optimize requests (refresh button)
+    this.overlayManager.on("re-optimize-requested", (originalText: string) => {
+      console.log("[App] Re-optimization requested via refresh button:", originalText.substring(0, 50));
+      // Force bypass guardrails for refresh (user explicitly wants a new optimization)
+      this.triggerDetector.triggerManualOptimization(originalText, true);
+    });
+
     this.triggerDetector.on("optimization-failed", (error: Error) => {
       console.error("[App] Optimization failed:", error);
       this.emit("error", error);

@@ -143,9 +143,21 @@ export class TextReplacer {
       }
     }
 
-    // No fallback - UI Automation is required
-    // If we reach here, UI Automation failed
-    throw new Error("UI Automation not available. Please use the Copy button and paste manually (Ctrl+V).");
+    // KEYBOARD FALLBACK - For controls that don't support UI Automation
+    // (e.g., browser search bars, some web inputs)
+    if (this.platform === "win32") {
+      console.log("[TextReplacer] Attempting keyboard fallback...");
+      try {
+        await this.replaceTextViaKeyboard(fullOriginalText, newText);
+        console.log("[TextReplacer] ✅ SUCCESS via keyboard simulation!");
+        return;
+      } catch (error) {
+        console.log("[TextReplacer] ⚠️ Keyboard fallback failed:", (error as Error).message);
+      }
+    }
+
+    // If all methods fail, tell user to use Copy button
+    throw new Error("Auto-replace not available for this input field. Please use the Copy button and paste manually (Ctrl+V).");
   }
 
   /**
@@ -324,8 +336,90 @@ try {
     }
   }
 
-  // Keyboard fallback methods removed - UI Automation is now required for direct text replacement
-  // If UI Automation fails, users can use the Copy button instead
+  /**
+   * Keyboard-based text replacement fallback
+   * Uses PowerShell SendKeys for keyboard simulation
+   */
+  private async replaceTextViaKeyboard(originalText: string, newText: string): Promise<void> {
+    console.log("[KeyboardFallback] Starting keyboard-based text replacement");
+    console.log("[KeyboardFallback] Original:", originalText.substring(0, 50));
+    console.log("[KeyboardFallback] New:", newText.substring(0, 50));
+
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+
+    // Strategy:
+    // 1. Copy new text to clipboard
+    // 2. Use PowerShell SendKeys to:
+    //    a. Select all text in the current field (Ctrl+A)
+    //    b. Paste (Ctrl+V)
+
+    // First, copy new text to clipboard
+    await this.copyToClipboard(newText);
+    console.log("[KeyboardFallback] Text copied to clipboard");
+
+    // Wait a moment for clipboard to be ready
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // PowerShell script to send keystrokes
+    const script = `
+# Load SendKeys assembly
+Add-Type -AssemblyName System.Windows.Forms
+
+# Wait a tiny bit for stability
+Start-Sleep -Milliseconds 50
+
+# Select all text (Ctrl+A)
+[System.Windows.Forms.SendKeys]::SendWait("^a")
+
+# Wait a moment
+Start-Sleep -Milliseconds 50
+
+# Paste (Ctrl+V)
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+
+Write-Host "SUCCESS: Keystrokes sent"
+`;
+
+    const scriptFile = path.join(os.tmpdir(), `keyboard-fallback-${Date.now()}.ps1`);
+    fs.writeFileSync(scriptFile, script, 'utf8');
+
+    try {
+      const result = await execAsync(
+        `powershell -ExecutionPolicy Bypass -File "${scriptFile}"`,
+        { timeout: 3000 }
+      );
+
+      // Clean up
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      console.log("[KeyboardFallback] PowerShell output:", result.stdout);
+
+      if (result.stdout.includes("SUCCESS")) {
+        console.log("[KeyboardFallback] ✅ Text replaced successfully via keyboard");
+        return;
+      } else {
+        throw new Error("Keyboard simulation did not succeed");
+      }
+
+    } catch (error) {
+      // Clean up
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      const errorObj = error as any;
+      console.log("[KeyboardFallback] Failed:", errorObj.message);
+      throw new Error(`Keyboard fallback failed: ${errorObj.message}`);
+    }
+  }
 
   /**
    * Alternative: Use clipboard approach and show instruction to user

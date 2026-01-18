@@ -75,6 +75,28 @@ export class OverlayManager extends EventEmitter {
         this.hide(promptData.context);
       }
     });
+
+    // Handle copy to clipboard requests (works without window focus)
+    ipcMain.on("copy-to-clipboard", async (event, text: string) => {
+      try {
+        await this.textReplacer.copyToClipboard(text);
+        console.log("[OverlayManager] Text copied to clipboard successfully");
+      } catch (error) {
+        console.error("[OverlayManager] Failed to copy to clipboard:", error);
+      }
+    });
+
+    // Handle re-optimize requests (refresh button)
+    ipcMain.on("re-optimize", (event, data: { contextKey: string; originalText: string }) => {
+      const promptData = this.promptContexts.get(data.contextKey);
+      if (promptData) {
+        console.log("[OverlayManager] Re-optimization requested for:", data.originalText.substring(0, 50));
+        // Hide current overlay
+        this.hide(promptData.context);
+        // Emit event to trigger re-optimization
+        this.emit("re-optimize-requested", data.originalText);
+      }
+    });
   }
 
   showHighlight(context: PromptContext, options: HighlightOptions = {}) {

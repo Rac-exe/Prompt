@@ -1032,5 +1032,116 @@ Never remove - this is a core feature requested by the user. However, you can co
 
 ---
 
-Last Updated: 2026-01-17
-Version: 1.4 (Option C + Cursor positioning via TextPattern)
+### 2026-01-18 - Added Keyboard Fallback + Fixed Copy Button
+
+**Files Modified:**
+- `electron/main/text/text-replacer.ts` (Lines 132-158, 328-392)
+- `electron/renderer/popup.html` (Lines 126-142)
+- `electron/preload.ts` (Lines 7-15, 30-35)
+- `electron/main/overlay/overlay-manager.ts` (Lines 72-84)
+
+**What Was Done:**
+
+1. **Fixed Copy Button (Lines 126-142 in popup.html)**
+   - **Problem**: Copy button wasn't working because `navigator.clipboard.writeText()` requires window focus, but popup window has `focusable: false`
+   - **Solution**: Added IPC-based `copyToClipboard` method that works via main process without requiring window focus
+   - **Files**: popup.html, preload.ts, overlay-manager.ts
+
+2. **Added Keyboard Fallback for Browser Search Bars (Lines 328-392 in text-replacer.ts)**
+   - **Problem**: UI Automation (ValuePattern) doesn't work on browser search bars and some web inputs
+   - **Solution**: Added `replaceTextViaKeyboard()` method using PowerShell SendKeys
+   - **How it works**:
+     1. Copy new text to clipboard
+     2. Send Ctrl+A (select all)
+     3. Send Ctrl+V (paste)
+   - **Fallback order**: UI Automation → Keyboard → Copy button with manual paste
+
+**Code Changes:**
+
+In `text-replacer.ts`:
+```typescript
+// New fallback chain (Lines 132-158)
+// 1. Try UI Automation first
+try {
+  await this.replaceTextViaUIAutomation(fullOriginalText, newText);
+  return;
+} catch (error) {
+  // Fall through to keyboard
+}
+
+// 2. Try keyboard fallback
+try {
+  await this.replaceTextViaKeyboard(fullOriginalText, newText);
+  return;
+} catch (error) {
+  // Fall through to error
+}
+
+// 3. Tell user to use Copy button
+throw new Error("Auto-replace not available. Use Copy button.");
+```
+
+New method (Lines 328-392):
+```typescript
+private async replaceTextViaKeyboard(originalText: string, newText: string): Promise<void> {
+  // 1. Copy to clipboard
+  await this.copyToClipboard(newText);
+
+  // 2. Send Ctrl+A (select all)
+  // 3. Send Ctrl+V (paste)
+  // Uses PowerShell SendKeys
+}
+```
+
+In `popup.html`:
+```javascript
+// Old (BROKEN):
+navigator.clipboard.writeText(textToUse) // Requires focus
+
+// New (WORKING):
+window.electronAPI.copyToClipboard(textToUse) // Works via IPC, no focus needed
+```
+
+In `preload.ts`:
+```typescript
+copyToClipboard: (text: string) => {
+  ipcRenderer.send("copy-to-clipboard", text);
+}
+```
+
+In `overlay-manager.ts`:
+```typescript
+ipcMain.on("copy-to-clipboard", async (event, text: string) => {
+  await this.textReplacer.copyToClipboard(text);
+});
+```
+
+**Why This Was Critical:**
+- Browser search bars don't support UI Automation ValuePattern
+- Copy button wasn't working due to clipboard API requiring focus
+- Users couldn't copy optimized text or replace in browsers
+- Now supports 3-tier fallback: UI Automation → Keyboard → Manual copy/paste
+
+**Testing Results:**
+- ✅ **Notepad**: Works via UI Automation (no keyboard)
+- ✅ **Browser URL bar**: Works via UI Automation
+- ✅ **Browser search bar**: Works via keyboard fallback
+- ✅ **Copy button**: Now works in all cases
+
+**Log Locations:**
+- `[TextReplacer] Attempting UI Automation` - First attempt
+- `[TextReplacer] ⚠️ UI Automation not available` - Falls back
+- `[TextReplacer] Attempting keyboard fallback` - Second attempt
+- `[KeyboardFallback] Starting keyboard-based text replacement` - Keyboard method
+- `[KeyboardFallback] ✅ Text replaced successfully via keyboard` - Success
+- `[OverlayManager] Text copied to clipboard successfully` - Copy button success
+
+**When to Debug:**
+- If keyboard fallback fails: Check PowerShell SendKeys logs
+- If copy button fails: Check IPC handler logs in overlay-manager
+- If both fail: User must manually select text and paste
+
+---
+
+Last Updated: 2026-01-18
+Version: 1.5 (Keyboard fallback + Copy button fix)

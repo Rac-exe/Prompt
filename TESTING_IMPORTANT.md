@@ -57,22 +57,23 @@ When testing a feature:
 ## Text Editors
 
 ### Notepad
-**Status:** 🔄 Not Tested
-**Last Tested:** Never
+**Status:** ✅ Working
+**Last Tested:** 2026-01-18
 
 #### Features Tested:
-- [ ] @prompt detection
-- [ ] Overlay appearance
-- [ ] Text replacement via UI Automation
-- [ ] Cursor positioning after replacement
-- [ ] Multi-line prompts
+- [x] @prompt detection
+- [x] Overlay appearance
+- [x] Text replacement via UI Automation
+- [x] Cursor positioning after replacement
+- [x] Multi-line prompts
 - [ ] Special characters in prompts
+- [x] Copy button functionality
 
 #### Known Issues:
-None documented yet.
+None - Works perfectly with UI Automation (ValuePattern + TextPattern).
 
 #### Notes:
-Notepad is the primary target application. Should support UI Automation (ValuePattern and TextPattern).
+Notepad is the primary target application and fully supports Windows UI Automation. Text replacement works without any keyboard simulation.
 
 ---
 
@@ -217,20 +218,34 @@ Test both claude.ai web interface and any desktop apps. Verify overlay doesn't c
 ## Browsers
 
 ### Browser Search Bar
-**Status:** 🔄 Not Tested
-**Last Tested:** Never
+**Status:** ⚠️ Partial (Brave Browser)
+**Last Tested:** 2026-01-18
 
 #### Features Tested:
-- [ ] @prompt detection in address/search bar
-- [ ] Overlay appearance
-- [ ] Text replacement in URL bar
-- [ ] Chrome/Edge/Firefox compatibility
+- [x] @prompt detection in address/search bar
+- [x] Overlay appearance
+- [x] Text replacement in URL bar (address bar) - **WORKING**
+- [x] Text replacement in search bar - **NOW WORKING with keyboard fallback**
+- [x] Copy button functionality - **FIXED**
+- [ ] Chrome compatibility
+- [ ] Edge compatibility
+- [ ] Firefox compatibility
 
 #### Known Issues:
-None documented yet.
+1. **Browser Search Bar (Previously BROKEN, now FIXED)**:
+   - **Issue**: UI Automation (ValuePattern) doesn't work on browser search bars
+   - **Solution**: Added keyboard fallback using PowerShell SendKeys (Ctrl+A, Ctrl+V)
+   - **Status**: Now working via keyboard simulation
+
+2. **Copy Button (Previously BROKEN, now FIXED)**:
+   - **Issue**: `navigator.clipboard.writeText()` requires window focus, but popup has `focusable: false`
+   - **Solution**: Added IPC-based copy method that works without focus
+   - **Status**: Now working via main process
 
 #### Notes:
-Browser address bars may have different accessibility APIs. Test multiple browsers (Chrome, Edge, Firefox, Brave).
+- **URL/Address Bar**: Works with UI Automation (ValuePattern)
+- **Search Bar**: Falls back to keyboard simulation (Ctrl+A → Ctrl+V)
+- Browser controls have varying accessibility support - keyboard fallback ensures compatibility
 
 ---
 

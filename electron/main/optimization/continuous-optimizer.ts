@@ -282,13 +282,16 @@ export class ContinuousOptimizer extends EventEmitter {
 
   /**
    * Optimize immediately without waiting for stability (for manual input like floating panel)
+   * @param promptText - The text to optimize
+   * @param forceBypassGuardrails - If true, skip guardrails (for refresh button)
    */
-  async optimizeImmediately(promptText: string) {
+  async optimizeImmediately(promptText: string, forceBypassGuardrails: boolean = false) {
     const now = Date.now();
 
     console.log(
       `[ContinuousOptimizer] Immediate optimization requested`,
-      `"${promptText.substring(0, 50)}..."`
+      `"${promptText.substring(0, 50)}..."`,
+      forceBypassGuardrails ? "(bypassing guardrails)" : ""
     );
 
     // Create a special instance for immediate optimization (floating panel)
@@ -304,15 +307,19 @@ export class ContinuousOptimizer extends EventEmitter {
     this.promptInstances.set(instanceHash, instance);
     this.emit("session-created", stableSession);
 
-    // Check guardrails
-    const shouldOptimize = await this.guardrails.shouldOptimize(
-      promptText,
-      stableSession
-    );
+    // Check guardrails (unless forced to bypass)
+    if (!forceBypassGuardrails) {
+      const shouldOptimize = await this.guardrails.shouldOptimize(
+        promptText,
+        stableSession
+      );
 
-    if (!shouldOptimize) {
-      console.log(`[ContinuousOptimizer] Immediate optimization blocked by guardrails`);
-      return;
+      if (!shouldOptimize) {
+        console.log(`[ContinuousOptimizer] Immediate optimization blocked by guardrails`);
+        return;
+      }
+    } else {
+      console.log(`[ContinuousOptimizer] Bypassing guardrails for forced optimization (refresh button)`);
     }
 
     // Start optimization immediately
