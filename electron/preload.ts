@@ -7,6 +7,8 @@ declare global {
     electronAPI: {
       replaceText: (text: string) => void;
       replaceTextInPlace: (originalText: string, newText: string) => void;
+      copyToClipboard: (text: string) => void;
+      reOptimize: (originalText: string) => void;
       dismiss: () => void;
       onStateUpdate: (callback: (state: any) => void) => void;
       startTranscription: () => void;
@@ -32,6 +34,15 @@ const electronAPI = {
     const contextKey = (globalThis as any).__contextKey;
     if (contextKey) {
       ipcRenderer.send("replace-text-in-place", { contextKey, originalText, newText });
+    }
+  },
+  copyToClipboard: (text: string) => {
+    ipcRenderer.send("copy-to-clipboard", text);
+  },
+  reOptimize: (originalText: string) => {
+    const contextKey = (globalThis as any).__contextKey;
+    if (contextKey) {
+      ipcRenderer.send("re-optimize", { contextKey, originalText });
     }
   },
   dismiss: () => {

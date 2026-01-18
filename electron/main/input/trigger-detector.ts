@@ -130,12 +130,14 @@ export class TriggerDetector extends EventEmitter {
   }
 
   /**
-   * Manually trigger optimization (for floating panel input)
+   * Manually trigger optimization (for floating panel input or refresh button)
    * Optimizes immediately without waiting for stability
+   * @param promptText - The text to optimize
+   * @param forceBypassGuardrails - If true, skip guardrails (for refresh button)
    */
-  async triggerManualOptimization(promptText: string) {
+  async triggerManualOptimization(promptText: string, forceBypassGuardrails: boolean = false) {
     console.log("[TriggerDetector] Manual optimization triggered:", promptText.substring(0, 50));
-    await this.continuousOptimizer.optimizeImmediately(promptText);
+    await this.continuousOptimizer.optimizeImmediately(promptText, forceBypassGuardrails);
   }
 
   /**

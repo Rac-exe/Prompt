@@ -123,21 +123,38 @@
       optimizedEl.textContent = original;
     }
 
-    // Copy button - copies to clipboard only
+    // Copy button - copies to clipboard using IPC (works without focus)
     document.getElementById("copy-btn").addEventListener("click", () => {
       const textToUse = optimized || original;
       if (textToUse) {
-        navigator.clipboard.writeText(textToUse).then(() => {
+        if (window.electronAPI && window.electronAPI.copyToClipboard) {
+          // Use IPC to copy (works even when window not focused)
+          window.electronAPI.copyToClipboard(textToUse);
           // Show brief feedback
           const copyBtn = document.getElementById("copy-btn");
           copyBtn.style.backgroundColor = "#10B981";
+          // Close popup after short delay so user sees the feedback
           setTimeout(() => {
-            copyBtn.style.backgroundColor = "#CB91C2";
-          }, 1000);
-        }).catch(err => {
-          console.error("Failed to copy:", err);
-          alert("Failed to copy to clipboard");
-        });
+            if (window.electronAPI) {
+              window.electronAPI.dismiss();
+            }
+          }, 300);
+        } else {
+          // Fallback to navigator.clipboard (requires focus)
+          navigator.clipboard.writeText(textToUse).then(() => {
+            const copyBtn = document.getElementById("copy-btn");
+            copyBtn.style.backgroundColor = "#10B981";
+            // Close popup after short delay
+            setTimeout(() => {
+              if (window.electronAPI) {
+                window.electronAPI.dismiss();
+              }
+            }, 300);
+          }).catch(err => {
+            console.error("Failed to copy:", err);
+            alert("Failed to copy to clipboard");
+          });
+        }
       }
     });
 
@@ -161,8 +178,19 @@
     });
 
     document.getElementById("try-again-btn").addEventListener("click", () => {
-      // For now, just dismiss the overlay; main process can retrigger optimization as needed
-      if (window.electronAPI) {
+      // Trigger re-optimization with the original prompt text
+      if (window.electronAPI && window.electronAPI.reOptimize) {
+        // Show loading state
+        const tryAgainBtn = document.getElementById("try-again-btn");
+        tryAgainBtn.style.backgroundColor = "#9B51E0";
+        statusEl.textContent = "Re-optimizing...";
+        optimizedEl.textContent = "Generating new optimization...";
+
+        // Request re-optimization
+        window.electronAPI.reOptimize(original);
+
+        // Note: The popup will be dismissed and a new one will appear with fresh optimization
+      } else if (window.electronAPI) {
         window.electronAPI.dismiss();
       }
     });
