@@ -151,7 +151,8 @@ export class ContinuousOptimizer extends EventEmitter {
    */
   private async startOptimization(
     instance: { instanceHash: string; session: PromptSession; isOptimized: boolean },
-    hash: string
+    hash: string,
+    skipCache: boolean = false
   ) {
     const requestId = randomUUID();
     const promptText = instance.session.promptText;
@@ -170,7 +171,7 @@ export class ContinuousOptimizer extends EventEmitter {
     this.showLoadingOverlay(instance.session);
 
     try {
-      const optimized = await this.guardrails.optimize(promptText, requestId);
+      const optimized = await this.guardrails.optimize(promptText, requestId, skipCache);
 
       // console.log(
       //   `[ContinuousOptimizer] Optimization completed for instance ${hash.substring(0, 20)}...`,
@@ -322,8 +323,8 @@ export class ContinuousOptimizer extends EventEmitter {
       console.log(`[ContinuousOptimizer] Bypassing guardrails for forced optimization (refresh button)`);
     }
 
-    // Start optimization immediately
-    await this.startOptimization(instance, instanceHash);
+    // Start optimization immediately (skip cache if bypassing guardrails for refresh)
+    await this.startOptimization(instance, instanceHash, forceBypassGuardrails);
   }
 
   /**

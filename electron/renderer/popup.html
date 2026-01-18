@@ -123,6 +123,15 @@
       optimizedEl.textContent = original;
     }
 
+    // ESC key to dismiss popup (Grammarly pattern)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (window.electronAPI && window.electronAPI.dismiss) {
+          window.electronAPI.dismiss();
+        }
+      }
+    });
+
     // Copy button - copies to clipboard using IPC (works without focus)
     document.getElementById("copy-btn").addEventListener("click", () => {
       const textToUse = optimized || original;

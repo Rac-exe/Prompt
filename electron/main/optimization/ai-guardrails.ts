@@ -110,18 +110,19 @@ export class AIGuardrails {
    */
   async optimize(
     promptText: string,
-    requestId: string
+    requestId: string,
+    skipCache: boolean = false
   ): Promise<string> {
-    // Check for in-flight request with same ID
-    if (this.inFlightRequests.has(requestId)) {
+    // Check for in-flight request with same ID (unless skipping cache for refresh)
+    if (!skipCache && this.inFlightRequests.has(requestId)) {
       console.log("[AIGuardrails] Reusing in-flight request:", requestId);
       return this.inFlightRequests.get(requestId)!;
     }
 
-    console.log("[AIGuardrails] Starting optimization:", requestId);
+    console.log("[AIGuardrails] Starting optimization:", requestId, skipCache ? "(skip cache)" : "");
 
     // Create new request
-    const promise = this.pythonClient.optimize(promptText)
+    const promise = this.pythonClient.optimize(promptText, skipCache)
       .finally(() => {
         this.inFlightRequests.delete(requestId);
         console.log("[AIGuardrails] Request completed:", requestId);

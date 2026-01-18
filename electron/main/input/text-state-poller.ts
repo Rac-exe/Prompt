@@ -12,8 +12,11 @@ export class TextStatePoller extends EventEmitter {
   private readonly POLL_INTERVAL_MS = 200;
   private readonly MAX_BUFFER_SIZE = 1000;
   private shiftPressed: boolean = false;
+  private ctrlPressed: boolean = false;
   private isRunning: boolean = false;
   private trackedInstances = new Map<string, { promptText: string; triggerIndex: number }>();
+  private isReplacingText: boolean = false; // Flag to prevent self-triggering during text replacement
+  private replacementTimeout: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -83,6 +86,39 @@ export class TextStatePoller extends EventEmitter {
     console.log("[TextStatePoller] Buffer cleared after text replacement");
   }
 
+  /**
+   * Signal that text replacement is in progress
+   * This prevents paste detection from triggering during keyboard fallback
+   */
+  startReplacingText(): void {
+    this.isReplacingText = true;
+    console.log("[TextStatePoller] Text replacement started - ignoring paste events");
+
+    // Clear any existing timeout
+    if (this.replacementTimeout) {
+      clearTimeout(this.replacementTimeout);
+    }
+
+    // Auto-clear flag after 1500ms (safety timeout)
+    // Keyboard fallback takes 350-550ms total, so 1500ms ensures flag remains set
+    this.replacementTimeout = setTimeout(() => {
+      this.isReplacingText = false;
+      console.log("[TextStatePoller] Text replacement timeout - re-enabling paste detection");
+    }, 1500);
+  }
+
+  /**
+   * Signal that text replacement is complete
+   */
+  stopReplacingText(): void {
+    this.isReplacingText = false;
+    if (this.replacementTimeout) {
+      clearTimeout(this.replacementTimeout);
+      this.replacementTimeout = null;
+    }
+    console.log("[TextStatePoller] Text replacement complete - paste detection re-enabled");
+  }
+
   // REMOVED: resetState() method
   // No longer needed - session stays alive in SHOWING phase to prevent re-optimization
 
@@ -118,6 +154,24 @@ export class TextStatePoller extends EventEmitter {
           this.shiftPressed = true;
         } else if (event?.state === 'UP') {
           this.shiftPressed = false;
+        }
+        return;
+      }
+
+      // Track Ctrl state (scan codes: 29 for left Ctrl, 157 for right Ctrl, 162 for VK_CONTROL)
+      if (scanCode === 29 || scanCode === 157 || scanCode === 162 || scanCode === 17) {
+        if (event?.state === 'DOWN') {
+          this.ctrlPressed = true;
+        } else if (event?.state === 'UP') {
+          this.ctrlPressed = false;
+        }
+        return;
+      }
+
+      // Detect Ctrl+V (paste)
+      if (this.ctrlPressed && (scanCode === 86 || scanCode === 47)) {
+        if (event?.state === 'DOWN') {
+          this.handlePaste();
         }
         return;
       }
@@ -166,6 +220,40 @@ export class TextStatePoller extends EventEmitter {
     if (scanCode === 13 || scanCode === 28) return '\n'; // Enter
 
     return null;
+  }
+
+  /**
+   * Handle paste event (Ctrl+V)
+   * Reads clipboard and appends to text buffer
+   */
+  private async handlePaste() {
+    // CRITICAL: Ignore paste events during text replacement to prevent infinite loops
+    if (this.isReplacingText) {
+      console.log('[TextStatePoller] Paste event ignored - text replacement in progress');
+      return;
+    }
+
+    try {
+      const { clipboard } = require('electron');
+      const clipboardText = clipboard.readText();
+
+      if (clipboardText && clipboardText.length > 0) {
+        console.log(`[TextStatePoller] Paste detected - adding ${clipboardText.length} chars to buffer`);
+
+        // Append clipboard text to buffer
+        this.textBuffer += clipboardText;
+
+        // Limit buffer size
+        if (this.textBuffer.length > this.MAX_BUFFER_SIZE) {
+          this.textBuffer = this.textBuffer.slice(-this.MAX_BUFFER_SIZE);
+        }
+
+        // Immediately check for triggers after paste
+        this.checkTextState();
+      }
+    } catch (error) {
+      console.error('[TextStatePoller] Failed to read clipboard on paste:', error);
+    }
   }
 
   /**

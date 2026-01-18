@@ -28,46 +28,239 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# System prompt for optimization
-SYSTEM_PROMPT = """You are an expert prompt optimization system.
+# Adaptive prompt optimization system with type detection and specialized strategies
 
-Your only task is to rewrite the user’s input into a clearer, more specific, and more effective version of the same request.
+def detect_prompt_type(prompt: str) -> str:
+    """
+    Detect the type of prompt to apply appropriate optimization strategy.
+    Returns: coding, email, analysis, creative, image, documentation, business, or general
+    """
+    prompt_lower = prompt.lower()
 
-Strict rules (no exceptions):
-- Preserve the original meaning, intent, and scope exactly
-- Do not add new ideas, facts, requirements, or assumptions
-- Improve clarity, specificity, and structure
-- Remove redundancy, filler, and ambiguity
-- Make the result immediately usable
-- Output ONLY the rewritten prompt or message
-- Do NOT explain what you changed
-- Do NOT describe improvements
-- Do NOT include commentary, notes, or reasoning
-- Do NOT add prefixes, suffixes, labels, or headers
-- Do NOT wrap the output in quotes, code blocks, or formatting
-- Return plain text only
+    # Coding/Technical
+    coding_keywords = ['function', 'code', 'program', 'script', 'algorithm', 'debug', 'implement',
+                       'api', 'database', 'class', 'method', 'variable', 'loop', 'array', 'regex',
+                       'python', 'javascript', 'java', 'c++', 'sql', 'html', 'css', 'react']
+    if any(keyword in prompt_lower for keyword in coding_keywords):
+        return 'coding'
 
-Behavioral constraints:
-- Do not ask questions
-- Do not provide alternatives or multiple versions
-- Do not include examples
-- Do not introduce disclaimers or advice
-- If the input is fragmented or informal, reconstruct it conservatively
-- When intent is unclear, prefer minimal clarification over creative expansion
+    # Email/Communication
+    email_keywords = ['email', 'message', 'letter', 'memo', 'write to', 'send to', 'contact',
+                      'reach out', 'follow up', 'thank you note']
+    if any(keyword in prompt_lower for keyword in email_keywords):
+        return 'email'
 
-Context handling:
-- If the input is an AI prompt, rewrite it as a clear, specific, and actionable prompt
-- If the input is a message (email, chat, professional writing), rewrite it to sound clear and appropriate for its context
-- If the input is technical or coding-related, rewrite it into precise, unambiguous instructions
-- If the input is for image or video generation, rewrite it as a concise, descriptive generation prompt
-- If the input is a question (exam, study, general), rewrite it for clarity without changing its meaning
+    # Data Analysis
+    analysis_keywords = ['analyze', 'analysis', 'data', 'statistics', 'metrics', 'trends',
+                         'compare', 'evaluate', 'assess', 'review', 'report', 'findings',
+                         'quarterly', 'sales', 'performance', 'financial']
+    if any(keyword in prompt_lower for keyword in analysis_keywords):
+        return 'analysis'
 
-Final requirement:
-Return ONLY the optimized version of the input, as plain text, exactly as the user would want to submit it.
-"""
+    # Creative Writing
+    creative_keywords = ['story', 'poem', 'novel', 'character', 'plot', 'narrative', 'creative',
+                        'fiction', 'write about', 'describe', 'imagine', 'fantasy', 'sci-fi']
+    if any(keyword in prompt_lower for keyword in creative_keywords):
+        return 'creative'
+
+    # Image Generation
+    image_keywords = ['image', 'picture', 'photo', 'illustration', 'drawing', 'painting',
+                      'artwork', 'generate', 'create visual', 'design']
+    if any(keyword in prompt_lower for keyword in image_keywords):
+        return 'image'
+
+    # Documentation
+    doc_keywords = ['document', 'explain', 'guide', 'tutorial', 'how to', 'instructions',
+                    'manual', 'documentation', 'walkthrough']
+    if any(keyword in prompt_lower for keyword in doc_keywords):
+        return 'documentation'
+
+    # Business Communication
+    business_keywords = ['client', 'project', 'proposal', 'meeting', 'deadline', 'budget',
+                        'stakeholder', 'presentation', 'strategy', 'plan']
+    if any(keyword in prompt_lower for keyword in business_keywords):
+        return 'business'
+
+    return 'general'
+
+
+def get_optimization_strategy(prompt_type: str) -> str:
+    """
+    Returns the specialized system prompt for the detected prompt type.
+    """
+
+    strategies = {
+        'coding': """Transform the coding request into a comprehensive technical specification PROMPT.
+
+CRITICAL: Create INSTRUCTIONS for writing code, NOT the code itself.
+
+Include these elements in your optimized prompt:
+- Role context: "You are an expert software engineer..."
+- Clear requirements: What the code should do
+- Technical specifications: Language, frameworks, algorithms
+- Edge cases: What scenarios to handle
+- Code quality requirements: Type hints, docstrings, error handling
+- Testing approach: What to validate
+- Output structure: Function signature, implementation, usage example
+
+Return ONLY the optimized prompt - a set of instructions for someone to write the code.""",
+
+        'email': """Transform the email request into a structured communication PROMPT.
+
+CRITICAL: Create INSTRUCTIONS for writing an email, NOT the email itself.
+
+Include these elements in your optimized prompt:
+- Role context: "You are a professional communicator..."
+- Email structure: Subject line, opening, body, closing
+- Tone requirements: Professional, concise, respectful
+- Content to include: Purpose, key details, call-to-action
+- Length guidance: Typically 3-4 paragraphs
+- Audience consideration: Relationship to recipient
+- Any specific requirements from the original request
+
+Return ONLY the optimized prompt - a set of instructions for someone to write the email.""",
+
+        'analysis': """You are a senior data analyst specializing in business intelligence.
+
+Transform the analysis request into a comprehensive analytical framework.
+
+Add these elements:
+- Role context: Frame as senior analyst with domain expertise
+- Chain of thought: Request step-by-step analytical approach
+- Framework: Provide structure (overview → trends → root causes → insights → recommendations)
+- Depth: Request specific numbers, percentages, comparisons
+- Output structure: Organize findings logically with executive summary
+- Actionable insights: Emphasize practical recommendations
+- Visualization: Suggest appropriate charts/graphs if relevant
+
+Output format: Structured analytical prompt with clear methodology.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'creative': """Transform the creative writing request into an inspiring PROMPT.
+
+CRITICAL: Create INSTRUCTIONS for creative writing, NOT the poem/story/content itself.
+
+Include these elements in your optimized prompt:
+- Role context: "You are an award-winning writer..."
+- What to create: Poem, story, character description, etc.
+- Structure: Narrative arc, stanza format, story beats
+- Style and tone: Voice, mood, point of view
+- Specific elements: Setting, themes, sensory details
+- Constraints: Word count, format, pacing
+- Quality guidance: Avoid clichés, create emotional resonance
+- Theme or message: What the piece should convey
+
+Return ONLY the optimized prompt - a set of instructions for someone to create the content.""",
+
+        'image': """You are a professional visual designer and art director.
+
+Transform the image request into a detailed visual specification.
+
+Add these elements:
+- Visual details: Expand with lighting, colors, textures, atmosphere
+- Composition: Suggest framing, perspective, focal points (rule of thirds, etc.)
+- Subject details: Enhance with specific characteristics, poses, expressions
+- Environment: Add background, setting, context elements
+- Mood/atmosphere: Specify emotional tone and feeling
+- Technical specs: Mention style (photorealistic, artistic, etc.), quality level
+- Lighting: Detail light sources, shadows, time of day
+
+Output format: Rich, descriptive prompt optimized for image generation.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'documentation': """You are a technical documentation specialist writing for developers.
+
+Transform the documentation request into a comprehensive doc structure.
+
+Add these elements:
+- Role context: Frame as technical writer for specific audience
+- Structure: Define sections (overview, prerequisites, step-by-step, examples, troubleshooting)
+- Clarity: Request active voice, second person, clear headers
+- Code examples: Specify need for copy-paste ready examples
+- Completeness: Request edge cases, common errors, best practices
+- Audience level: Specify assumed knowledge level
+- Format: Use bullet points, numbered steps, code blocks appropriately
+
+Output format: Structured documentation prompt with clear organization.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'business': """You are an experienced business professional and project manager.
+
+Transform the business communication into a strategic, professional prompt.
+
+Add these elements:
+- Role context: Frame as experienced business professional
+- Structure: Define logical flow (situation → impact → action → outcome)
+- Tone: Specify professional, solution-focused communication
+- Stakeholder focus: Consider audience needs and concerns
+- Clarity: Request specific details (dates, metrics, actions)
+- Accountability: Balance transparency with confidence
+- Next steps: Include clear actions and follow-up plan
+
+Output format: Professional business communication prompt with strategic framing.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'general': """You are an expert prompt optimization specialist.
+
+Transform the request into a clearer, more specific, and more effective version.
+
+Enhancement approach:
+- Add clarity: Make vague requests specific
+- Add structure: Organize complex requests logically
+- Add context: Include relevant background or constraints
+- Add guidance: Specify desired format, tone, or approach
+- Remove ambiguity: Clarify unclear elements
+- Maintain intent: Preserve the original meaning exactly
+
+Output format: Clear, actionable prompt that will generate better results.
+
+Return ONLY the optimized prompt as plain text."""
+    }
+
+    return strategies.get(prompt_type, strategies['general'])
+
+
+# Main system prompt that orchestrates the adaptive optimization
+SYSTEM_PROMPT = """You are a prompt improvement tool. You transform rough prompts into detailed, clear prompts.
+
+CRITICAL: Your output must be ONLY the improved prompt text. Nothing else.
+
+DO NOT:
+- Answer the prompt
+- Explain what you're doing
+- Include symbols like ❌ or ✅
+- Write "Here is..." or "CORRECT:" or any meta-text
+- Write the final deliverable (don't write the actual email/code/poem)
+- Have a conversation
+
+DO:
+- Output ONLY the improved version of the prompt itself
+- Start immediately with the improved prompt text
+- Make prompts more specific, detailed, and actionable
+
+EXAMPLES:
+
+User gives you: "write an email to boss for vacation"
+You output: Compose a professional email to your supervisor requesting vacation leave. Include: clear subject line, specific dates requested, brief reason for time off, plan for coverage during absence, and professional closing. Tone should be respectful and concise, approximately 3-4 paragraphs.
+
+User gives you: "what is this behavior"
+You output: Analyze and identify the specific behavior being observed. Describe its characteristics, potential causes, underlying mechanisms, and typical contexts where this behavior occurs. Provide concrete examples and explain any relevant patterns or triggers.
+
+User gives you: "write code for todo app"
+You output: Develop a fully functional todo application with these features: add new tasks, delete tasks, edit existing tasks, mark tasks as complete/incomplete, persistent data storage. Use React for frontend, include proper state management, implement error handling and input validation. Provide complete working code with explanatory comments.
+
+User gives you: "make this sound better: I need time off"
+You output: Rewrite the following request to be more professional and persuasive while maintaining a respectful tone. Enhance clarity and provide appropriate context for a workplace time-off request.
+
+Remember: Output ONLY the improved prompt. Start your response directly with it."""
 
 class OptimizeRequest(BaseModel):
     prompt: str
+    skip_cache: Optional[bool] = False  # Set to True to bypass cache (for refresh)
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -84,69 +277,96 @@ def clean_optimized_text(text: str) -> str:
     # Remove markdown code blocks
     text = re.sub(r'^```[\w]*\n?', '', text, flags=re.MULTILINE)
     text = re.sub(r'\n?```$', '', text, flags=re.MULTILINE)
-    
-    # Remove common prefixes
+
+    # Remove common prefixes (case insensitive)
     prefixes = [
+        "Here is a polished, professional prompt ready for immediate use:",
+        "Here is an optimized prompt",
         "Here's the optimized version:",
-        "Optimized prompt:",
         "Here's the optimized prompt:",
+        "Here is the optimized prompt:",
+        "Optimized prompt:",
+        "Optimized version:",
         "Optimized:",
     ]
     for prefix in prefixes:
-        if text.strip().startswith(prefix):
+        # Case insensitive check
+        if text.strip().lower().startswith(prefix.lower()):
             text = text.strip()[len(prefix):].strip()
-    
+            break  # Only remove first matching prefix
+
+    # Remove leading/trailing quotes if present
+    text = text.strip()
+    if text.startswith('"') and text.endswith('"'):
+        text = text[1:-1].strip()
+
     return text.strip()
 
 @app.post("/optimize", response_model=OptimizeResponse)
 async def optimize_prompt(request: OptimizeRequest):
     start_time = time.time()
-    
+
     if not request.prompt or len(request.prompt.strip()) < 3:
         raise HTTPException(status_code=400, detail="Prompt too short (minimum 3 characters)")
-    
+
     prompt_text = request.prompt.strip()
-    
-    # Check cache
-    if prompt_text in prompt_cache:
+
+    # Check cache (skip if refresh requested)
+    if not request.skip_cache and prompt_text in prompt_cache:
+        print(f"[Optimize] Cache hit - returning cached result")
         latency = (time.time() - start_time) * 1000
         return OptimizeResponse(
             optimized=prompt_cache[prompt_text],
             original=prompt_text,
             latency_ms=latency
         )
-    
+
+    if request.skip_cache:
+        print(f"[Optimize] Cache bypassed - generating fresh optimization (refresh requested)")
+
     try:
-        # Call Ollama
+        # Detect prompt type for adaptive optimization
+        prompt_type = detect_prompt_type(prompt_text)
+        optimization_strategy = get_optimization_strategy(prompt_type)
+
+        print(f"[Optimize] Detected prompt type: {prompt_type}")
+        print(f"[Optimize] Applying {prompt_type} optimization strategy")
+
+        # Call Ollama with adaptive system prompt
         response = ollama.chat(
             model="llama3.2",  # Default model - user should configure
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Optimize this prompt: {prompt_text}"}
+                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"},
+                {"role": "user", "content": prompt_text}
             ],
             options={
                 "temperature": 0.7,
-                "num_predict": 500
+                "num_predict": 800  # Increased from 500 to allow for richer optimizations
             }
         )
-        
+
         optimized = response["message"]["content"]
         optimized = clean_optimized_text(optimized)
-        
+
+        print(f"[Optimize] Original length: {len(prompt_text)} chars")
+        print(f"[Optimize] Optimized length: {len(optimized)} chars")
+        print(f"[Optimize] Improvement ratio: {len(optimized)/len(prompt_text):.2f}x")
+
         # Cache the result
         if len(prompt_cache) >= MAX_CACHE_SIZE:
             # Remove oldest entry (simple FIFO)
             prompt_cache.pop(next(iter(prompt_cache)))
         prompt_cache[prompt_text] = optimized
-        
+
         latency = (time.time() - start_time) * 1000
-        
+
         return OptimizeResponse(
             optimized=optimized,
             original=prompt_text,
             latency_ms=latency
         )
-        
+
     except Exception as e:
         error_msg = str(e)
         if "model" in error_msg.lower() or "not found" in error_msg.lower():
