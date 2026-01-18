@@ -15,16 +15,19 @@ export class PythonClient {
     });
   }
 
-  async optimize(prompt: string): Promise<string> {
+  async optimize(prompt: string, skipCache: boolean = false): Promise<string> {
     const timestamp = new Date().toISOString();
     const startTime = Date.now();
-    console.log(`[${timestamp}] [PythonClient.optimize] START - Prompt length: ${prompt.length} chars`);
+    console.log(`[${timestamp}] [PythonClient.optimize] START - Prompt length: ${prompt.length} chars, skipCache: ${skipCache}`);
     console.log(`[${timestamp}] [PythonClient.optimize] URL: ${this.baseUrl}/optimize`);
-    
+
     try {
       console.log(`[${timestamp}] [PythonClient.optimize] Sending POST request...`);
       const requestStartTime = Date.now();
-      const response = await this.client.post("/optimize", { prompt });
+      const response = await this.client.post("/optimize", {
+        prompt,
+        skip_cache: skipCache
+      });
       const requestElapsed = Date.now() - requestStartTime;
       
       console.log(`[${timestamp}] [PythonClient.optimize] ✓ Response received in ${requestElapsed}ms`);

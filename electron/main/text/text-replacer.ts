@@ -222,16 +222,32 @@ try {
         Write-Host "INFO: Looking for: $original"
         Write-Host "INFO: Looking for text to replace..."
 
-        # Replace the text
-        $updatedValue = $currentValue.Replace($original, $new)
+        # Find the FIRST occurrence index (case-insensitive to handle auto-corrections)
+        $replacementIndex = $currentValue.IndexOf($original, [System.StringComparison]::OrdinalIgnoreCase)
 
-        if ($currentValue -eq $updatedValue) {
-            Write-Host "ERROR: Text comparison failed:"
+        if ($replacementIndex -lt 0) {
+            # Try exact match as fallback
+            $replacementIndex = $currentValue.IndexOf($original)
+        }
+
+        if ($replacementIndex -lt 0) {
+            Write-Host "ERROR: Text not found:"
             Write-Host "  - Looking for: '$original'"
-            Write-Host "  - Found in text: $($currentValue.Contains($original))"
-            Write-Host "  - Actual text: '$currentValue'"
+            Write-Host "  - In text (first 200 chars): '$($currentValue.Substring(0, [Math]::Min(200, $currentValue.Length)))'"
             throw "Original text not found in current value"
         }
+
+        Write-Host "INFO: Found text at index: $replacementIndex"
+
+        # Get the actual matched text length (might differ in case due to auto-corrections)
+        $matchedLength = $original.Length
+
+        # Replace ONLY the first occurrence to avoid replacing multiple @prompt instances
+        $beforeText = $currentValue.Substring(0, $replacementIndex)
+        $afterText = $currentValue.Substring($replacementIndex + $matchedLength)
+        $updatedValue = $beforeText + $new + $afterText
+
+        Write-Host "INFO: Computed replacement - Before length: $($beforeText.Length), Match length: $matchedLength, New length: $($new.Length), After length: $($afterText.Length)"
 
         Write-Host "INFO: Replacement found, setting new value..."
 
@@ -251,14 +267,13 @@ try {
                 # Get the document range
                 $documentRange = $textPattern.DocumentRange
 
-                # Find the position where we want to place the cursor
-                # Calculate the end position of the replaced text
-                $replacementIndex = $currentValue.IndexOf($original)
-                if ($replacementIndex -ge 0) {
-                    $endPosition = $replacementIndex + $new.Length
+                # We already have replacementIndex from above, calculate end position
+                $endPosition = $replacementIndex + $new.Length
 
-                    Write-Host "INFO: Replacement starts at index: $replacementIndex"
-                    Write-Host "INFO: Moving cursor to position: $endPosition (end of replaced text)"
+                Write-Host "INFO: Replacement starts at index: $replacementIndex"
+                Write-Host "INFO: Moving cursor to position: $endPosition (end of replaced text)"
+
+                if ($replacementIndex -ge 0) {
 
                     # Move to the end position by moving from document start
                     $documentRange.MoveEndpointByUnit([System.Windows.Automation.Text.TextPatternRangeEndpoint]::Start, [System.Windows.Automation.Text.TextUnit]::Character, $endPosition)

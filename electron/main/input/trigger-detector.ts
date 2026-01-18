@@ -147,4 +147,19 @@ export class TriggerDetector extends EventEmitter {
   clearTextBuffer(): void {
     this.textPoller.clearBuffer();
   }
+
+  /**
+   * Signal that text replacement is starting
+   * Prevents paste detection from triggering during keyboard fallback
+   */
+  startReplacingText(): void {
+    this.textPoller.startReplacingText();
+  }
+
+  /**
+   * Signal that text replacement is complete
+   */
+  stopReplacingText(): void {
+    this.textPoller.stopReplacingText();
+  }
 }

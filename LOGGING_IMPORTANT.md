@@ -1145,3 +1145,5 @@ ipcMain.on("copy-to-clipboard", async (event, text: string) => {
 
 Last Updated: 2026-01-18
 Version: 1.5 (Keyboard fallback + Copy button fix)
+
+### 2026-01-18 - Implemented Adaptive Prompt Optimization System (v2.0)

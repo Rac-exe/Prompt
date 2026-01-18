@@ -25,6 +25,9 @@ export class PromptOptimizerApp extends EventEmitter {
       this.overlayManager
     );
 
+    // Pass trigger detector to overlay manager for text replacement coordination
+    this.overlayManager.setTriggerDetector(this.triggerDetector);
+
     this.setupListeners();
   }
 
@@ -52,6 +55,13 @@ export class PromptOptimizerApp extends EventEmitter {
     this.overlayManager.on("text-replaced", () => {
       console.log("[App] Text replaced, clearing text buffer to prevent stale detections");
       this.triggerDetector.clearTextBuffer();
+    });
+
+    // Listen to popup dismissal (user clicked outside or pressed ESC)
+    this.overlayManager.on("popup-dismissed", (promptText: string) => {
+      console.log("[App] Popup dismissed by user - preventing re-optimization of:", promptText.substring(0, 50));
+      // Don't need to do anything special - the session is already in SHOWING phase
+      // and won't re-optimize unless the text changes
     });
 
     // Listen to re-optimize requests (refresh button)

@@ -14,6 +14,9 @@ export class OverlayManager extends EventEmitter {
   private textReplacer: TextReplacer;
   private promptContexts: Map<string, { context: PromptContext; optimized: string }> = new Map();
   private rendererPath: string;
+  private activePopupKey: string | null = null; // Track currently active popup
+  private dismissCheckInterval: NodeJS.Timeout | null = null; // Timer to check for dismiss conditions
+  private triggerDetector: any = null; // Will be set after construction to avoid circular dependency
 
   constructor() {
     super();
@@ -22,6 +25,13 @@ export class OverlayManager extends EventEmitter {
     // Get the app path and construct renderer directory path
     const appPath = app.getAppPath();
     this.rendererPath = path.join(appPath, "electron", "renderer");
+  }
+
+  /**
+   * Set trigger detector reference (called after construction to avoid circular dependency)
+   */
+  setTriggerDetector(triggerDetector: any) {
+    this.triggerDetector = triggerDetector;
   }
 
   private setupIPC() {
@@ -48,15 +58,33 @@ export class OverlayManager extends EventEmitter {
           console.log("[OverlayManager] Original:", data.originalText.substring(0, 100));
           console.log("[OverlayManager] New:", data.newText.substring(0, 100));
 
+          // CRITICAL: Signal text replacement start to prevent paste detection loop
+          if (this.triggerDetector) {
+            this.triggerDetector.startReplacingText();
+          }
+
           await this.textReplacer.replaceTextInPlace(data.originalText, data.newText);
+
+          // CRITICAL: Signal text replacement complete and clear buffer immediately
+          if (this.triggerDetector) {
+            this.triggerDetector.stopReplacingText();
+            // Clear buffer immediately to prevent text concatenation
+            this.triggerDetector.clearTextBuffer();
+          }
 
           // Close the popup after successful replacement
           this.hide(promptData.context);
           console.log("[OverlayManager] Text replaced successfully");
 
-          // Emit event to clear text buffer and prevent stale detections
+          // Emit event for any other listeners
           this.emit("text-replaced");
         } catch (error) {
+          // CRITICAL: Clear replacement flag and buffer on error too
+          if (this.triggerDetector) {
+            this.triggerDetector.stopReplacingText();
+            this.triggerDetector.clearTextBuffer();
+          }
+
           console.error("Failed to replace text:", error);
           const errorMsg = (error as Error).message || "Unknown error";
           if (errorMsg.includes("UI Automation not available")) {
@@ -83,6 +111,18 @@ export class OverlayManager extends EventEmitter {
         console.log("[OverlayManager] Text copied to clipboard successfully");
       } catch (error) {
         console.error("[OverlayManager] Failed to copy to clipboard:", error);
+      }
+    });
+
+    // Handle dismiss requests (popup closed by user clicking outside or ESC)
+    ipcMain.on("dismiss-popup", (event, data: { contextKey: string }) => {
+      const promptData = this.promptContexts.get(data.contextKey);
+      if (promptData) {
+        console.log("[OverlayManager] Popup dismissed by user");
+        this.hide(promptData.context);
+        // Emit event to notify that user dismissed the popup
+        // This prevents re-optimization of the same prompt
+        this.emit("popup-dismissed", promptData.context.promptText);
       }
     });
 
@@ -167,7 +207,7 @@ export class OverlayManager extends EventEmitter {
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
-      focusable: false, // Keep underlying window (Notepad) focused for UI Automation
+      focusable: false, // CRITICAL: Keep false to avoid breaking UI Automation in underlying window
       show: true,
       webPreferences: {
         nodeIntegration: false,
@@ -207,6 +247,21 @@ export class OverlayManager extends EventEmitter {
 
     popup.webContents.once("did-fail-load", (event, errorCode, errorDescription) => {
       console.error(`[OverlayManager] Popup load failed: ${errorCode} - ${errorDescription}`);
+    });
+
+    // Track active popup
+    this.activePopupKey = key;
+
+    // Start monitoring for dismiss conditions (Grammarly pattern: non-intrusive monitoring)
+    // Check periodically if popup should be dismissed
+    this.startDismissMonitoring(popup, context, key);
+
+    // Cleanup when popup is closed
+    popup.on('closed', () => {
+      if (this.activePopupKey === key) {
+        this.activePopupKey = null;
+      }
+      this.stopDismissMonitoring();
     });
 
     this.popups.set(key, popup);
@@ -292,6 +347,37 @@ export class OverlayManager extends EventEmitter {
     }
 
     return { x, y };
+  }
+
+  /**
+   * Start monitoring for popup dismiss conditions (Grammarly pattern)
+   * Uses ESC key detection instead of focus events to avoid breaking UI Automation
+   */
+  private startDismissMonitoring(popup: BrowserWindow, context: PromptContext, key: string) {
+    // Stop any existing monitoring
+    this.stopDismissMonitoring();
+
+    // Monitor ESC key presses
+    this.dismissCheckInterval = setInterval(() => {
+      // Check if popup still exists
+      if (popup.isDestroyed()) {
+        this.stopDismissMonitoring();
+        return;
+      }
+
+      // Popup dismissal is now handled by ESC key in popup.html
+      // This interval is kept for future enhancements (e.g., auto-dismiss after timeout)
+    }, 500);
+  }
+
+  /**
+   * Stop dismiss monitoring
+   */
+  private stopDismissMonitoring() {
+    if (this.dismissCheckInterval) {
+      clearInterval(this.dismissCheckInterval);
+      this.dismissCheckInterval = null;
+    }
   }
 
   private getContextKey(context: PromptContext): string {
