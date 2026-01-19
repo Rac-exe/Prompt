@@ -56,8 +56,8 @@ export class FloatingPanel extends EventEmitter {
       }
     });
 
-    // Load the floating panel HTML
-    const htmlPath = path.join(app.getAppPath(), "electron", "renderer", "floating-panel.html");
+    // Load the floating panel HTML (v2 with three states)
+    const htmlPath = path.join(app.getAppPath(), "electron", "renderer", "floating-panel-v2.html");
     this.window.loadFile(htmlPath);
 
     // Show when ready
@@ -164,6 +164,11 @@ export class FloatingPanel extends EventEmitter {
     ipcMain.on("floating-panel:set-prompt-text", (event, text: string) => {
       this.setPromptText(text);
     });
+
+    // Window resize handler
+    ipcMain.on("floating-panel:resize", (event, data: { width: number; height: number }) => {
+      this.resizeWindow(data.width, data.height);
+    });
   }
 
   /**
@@ -219,6 +224,28 @@ export class FloatingPanel extends EventEmitter {
    */
   getWindow(): BrowserWindow | null {
     return this.window;
+  }
+
+  /**
+   * Resize the window
+   */
+  resizeWindow(width: number, height: number) {
+    if (this.window && !this.window.isDestroyed()) {
+      const currentBounds = this.window.getBounds();
+
+      // Calculate center position to keep window centered during resize
+      const newX = currentBounds.x + (currentBounds.width - width) / 2;
+      const newY = currentBounds.y + (currentBounds.height - height) / 2;
+
+      this.window.setBounds({
+        x: Math.floor(newX),
+        y: Math.floor(newY),
+        width,
+        height
+      }, true); // true = animate
+
+      console.log(`[FloatingPanel] Resized to ${width}x${height}`);
+    }
   }
 
   /**
