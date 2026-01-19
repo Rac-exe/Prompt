@@ -27,8 +27,8 @@ export interface ScreenCoordinates {
  */
 export class SnapPositionCalculator {
   private readonly MARGIN = 20; // Distance from screen edge
-  private readonly OVERLAY_WIDTH = 460;
-  private readonly OVERLAY_HEIGHT = 56;
+  private readonly OVERLAY_WIDTH = 96; // Start with circular orb size
+  private readonly OVERLAY_HEIGHT = 96;
 
   /**
    * Get all available snap positions for current screen

@@ -15,6 +15,8 @@ declare global {
       stopTranscription: () => void;
       onTranscriptionUpdate: (callback: (data: any) => void) => void;
       setPromptText: (text: string) => void;
+      resizeWindow: (width: number, height: number) => void;
+      send: (channel: string, data: any) => void;
     };
   }
 }
@@ -65,6 +67,12 @@ const electronAPI = {
   },
   setPromptText: (text: string) => {
     ipcRenderer.send("floating-panel:set-prompt-text", text);
+  },
+  resizeWindow: (width: number, height: number) => {
+    ipcRenderer.send("floating-panel:resize", { width, height });
+  },
+  send: (channel: string, data: any) => {
+    ipcRenderer.send(channel, data);
   }
 };
 
