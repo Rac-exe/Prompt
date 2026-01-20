@@ -219,33 +219,37 @@ Test both claude.ai web interface and any desktop apps. Verify overlay doesn't c
 
 ### Browser Search Bar
 **Status:** ⚠️ Partial (Brave Browser)
-**Last Tested:** 2026-01-18
+**Last Tested:** 2026-01-20
 
 #### Features Tested:
 - [x] @prompt detection in address/search bar
 - [x] Overlay appearance
 - [x] Text replacement in URL bar (address bar) - **WORKING**
-- [x] Text replacement in search bar - **NOW WORKING with keyboard fallback**
-- [x] Copy button functionality - **FIXED**
+- [x] Text replacement in search bar - **NOT WORKING (keyboard fallback removed)**
+- [x] Copy button functionality - **WORKING**
 - [ ] Chrome compatibility
 - [ ] Edge compatibility
 - [ ] Firefox compatibility
 
 #### Known Issues:
-1. **Browser Search Bar (Previously BROKEN, now FIXED)**:
+1. **Browser Search Bar**:
    - **Issue**: UI Automation (ValuePattern) doesn't work on browser search bars
-   - **Solution**: Added keyboard fallback using PowerShell SendKeys (Ctrl+A, Ctrl+V)
-   - **Status**: Now working via keyboard simulation
+   - **Previous Solution**: Keyboard fallback using PowerShell SendKeys
+   - **Current Status**: Keyboard fallback REMOVED (unreliable, caused issues)
+   - **User Action**: Must use Copy button and paste manually (Ctrl+V)
 
-2. **Copy Button (Previously BROKEN, now FIXED)**:
-   - **Issue**: `navigator.clipboard.writeText()` requires window focus, but popup has `focusable: false`
-   - **Solution**: Added IPC-based copy method that works without focus
-   - **Status**: Now working via main process
+2. **Copy Button**:
+   - **Status**: ✅ Working via IPC-based method (no focus required)
 
 #### Notes:
-- **URL/Address Bar**: Works with UI Automation (ValuePattern)
-- **Search Bar**: Falls back to keyboard simulation (Ctrl+A → Ctrl+V)
-- Browser controls have varying accessibility support - keyboard fallback ensures compatibility
+- **URL/Address Bar**: ✅ Works with UI Automation (ValuePattern)
+- **Search Bar**: ❌ Auto-replace disabled - users must use Copy button
+- **Why keyboard fallback was removed**:
+  - Selected wrong windows
+  - Unreliable timing
+  - Caused false triggers
+  - Users should use Copy button as designed fallback
+- Browser controls have varying accessibility support - UI Automation only works for some controls
 
 ---
 
@@ -453,5 +457,5 @@ Use this to prioritize fixes:
 
 ---
 
-Last Updated: 2026-01-18
-Version: 1.0 (Initial structure)
+Last Updated: 2026-01-20
+Version: 1.1 (Updated after keyboard fallback removal)

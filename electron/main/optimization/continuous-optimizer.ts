@@ -191,7 +191,7 @@ export class ContinuousOptimizer extends EventEmitter {
       this.emit("optimization-completed", instance.session);
 
       // Show result overlay
-      this.showResultOverlay(promptText, optimized, instance.session);
+      await this.showResultOverlay(promptText, optimized, instance.session);
 
       // Mark instance as optimized to prevent re-optimization
       // console.log(`[ContinuousOptimizer] Instance ${hash.substring(0, 20)}... marked as optimized`);
@@ -352,10 +352,10 @@ export class ContinuousOptimizer extends EventEmitter {
   /**
    * Show result overlay for a specific session
    */
-  private showResultOverlay(original: string, optimized: string, session: PromptSession) {
+  private async showResultOverlay(original: string, optimized: string, session: PromptSession) {
     const context = this.createPromptContext(session);
     if (context) {
-      this.overlayManager.showOptimization(context, original, optimized);
+      await this.overlayManager.showOptimization(context, original, optimized);
     }
   }
 
