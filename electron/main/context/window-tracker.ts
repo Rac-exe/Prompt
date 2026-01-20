@@ -177,4 +177,154 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
   getCurrentContext(): WindowContext | null {
     return this.currentContext;
   }
+
+  /**
+   * Restore focus to a window matching the given context
+   * This is used before UI Automation to ensure the target window has focus
+   */
+  async restoreFocusToWindow(context: WindowContext): Promise<void> {
+    if (this.platform === "win32") {
+      return this.restoreFocusWindows(context);
+    } else if (this.platform === "darwin") {
+      return this.restoreFocusMacOS(context);
+    }
+  }
+
+  private async restoreFocusWindows(context: WindowContext): Promise<void> {
+    console.log(`[WindowTracker] Restoring focus to: ${context.processName} - "${context.title}"`);
+
+    // PowerShell script to find and focus window by process name and title
+    const script = `
+param([string]$processName, [string]$windowTitle)
+
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class Win32 {
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")]
+  public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+}
+"@
+
+$foundWindow = $null
+
+# Enum all windows and find matching one
+$callback = {
+  param($hwnd, $lParam)
+
+  # Check if window is visible
+  if (-not [Win32]::IsWindowVisible($hwnd)) {
+    return $true
+  }
+
+  # Get process ID
+  $pid = 0
+  [Win32]::GetWindowThreadProcessId($hwnd, [ref]$pid)
+
+  try {
+    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    if ($proc -and $proc.ProcessName -eq $processName) {
+      # Get window title
+      $title = New-Object System.Text.StringBuilder 256
+      [Win32]::GetWindowText($hwnd, $title, 256)
+      $titleStr = $title.ToString()
+
+      # Match by title (case-insensitive partial match)
+      if ($titleStr -like "*$windowTitle*") {
+        $script:foundWindow = $hwnd
+        return $false  # Stop enumeration
+      }
+    }
+  } catch {
+    # Ignore errors for this window
+  }
+
+  return $true  # Continue enumeration
+}
+
+$delegateType = [System.Delegate]::CreateDelegate([Win32+EnumWindowsProc], $callback)
+[Win32]::EnumWindows($delegateType, [IntPtr]::Zero)
+
+if ($null -ne $script:foundWindow) {
+  # Show window if minimized
+  [Win32]::ShowWindow($script:foundWindow, 9) # SW_RESTORE = 9
+
+  # Set foreground window
+  [Win32]::SetForegroundWindow($script:foundWindow)
+
+  Write-Host "SUCCESS: Focus restored to window"
+  exit 0
+} else {
+  Write-Host "WARNING: Could not find window to restore focus"
+  exit 1
+}
+`;
+
+    const tempFile = path.join(os.tmpdir(), `restore-focus-${Date.now()}.ps1`);
+    fs.writeFileSync(tempFile, script, 'utf8');
+
+    try {
+      const result = await execAsync(
+        `powershell -ExecutionPolicy Bypass -File "${tempFile}" ` +
+        `-processName "${context.processName}" ` +
+        `-windowTitle "${context.title.replace(/"/g, '""')}"`
+      );
+
+      // Clean up
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      if (result.stdout.includes("SUCCESS")) {
+        console.log("[WindowTracker] Focus restored successfully");
+        // Give window time to receive focus
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } else {
+        console.warn("[WindowTracker] Could not restore focus:", result.stdout);
+      }
+    } catch (error) {
+      // Clean up
+      try {
+        fs.unlinkSync(tempFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+      console.error("[WindowTracker] Failed to restore focus:", error);
+    }
+  }
+
+  private async restoreFocusMacOS(context: WindowContext): Promise<void> {
+    console.log(`[WindowTracker] Restoring focus to: ${context.processName}`);
+
+    const script = `
+      tell application "${context.processName}"
+        activate
+      end tell
+    `;
+
+    try {
+      await execAsync(`osascript -e '${script}'`);
+      console.log("[WindowTracker] Focus restored successfully");
+      // Give window time to receive focus
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } catch (error) {
+      console.error("[WindowTracker] Failed to restore focus:", error);
+    }
+  }
 }

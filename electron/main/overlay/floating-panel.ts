@@ -16,6 +16,7 @@ export class FloatingPanel extends EventEmitter {
   private transcriptionWebSocket: WebSocket | null = null;
   private isTranscribing: boolean = false;
   private sessionId: string | null = null;
+  private collapsedPosition: { x: number; y: number } | null = null; // Remember orb position
 
   constructor() {
     super();
@@ -89,7 +90,7 @@ export class FloatingPanel extends EventEmitter {
       console.log("[FloatingPanel] Drag started");
     });
 
-    // During drag - show preview of snap positions
+    // During drag - move window freely (no snapping)
     ipcMain.on("floating-panel:drag-move", (event, data: { x: number; y: number }) => {
       if (!this.isDragging || !this.window) return;
 
@@ -98,14 +99,11 @@ export class FloatingPanel extends EventEmitter {
       const screenX = bounds.x + data.x - this.dragStartPosition.x;
       const screenY = bounds.y + data.y - this.dragStartPosition.y;
 
-      // Find nearest snap position
-      const nearestSnap = this.snapCalculator.findNearestPosition(screenX, screenY);
-
-      // Move window to follow cursor (we'll snap on release)
+      // Move window to follow cursor freely
       this.window.setPosition(screenX, screenY);
     });
 
-    // End drag - snap to nearest position
+    // End drag - keep window at current position (no snapping)
     ipcMain.on("floating-panel:drag-end", (event, data: { x: number; y: number }) => {
       if (!this.isDragging || !this.window) return;
 
@@ -114,16 +112,11 @@ export class FloatingPanel extends EventEmitter {
       const screenX = bounds.x + data.x - this.dragStartPosition.x;
       const screenY = bounds.y + data.y - this.dragStartPosition.y;
 
-      // Find nearest snap position
-      const nearestSnap = this.snapCalculator.findNearestPosition(screenX, screenY);
-      const snapCoords = this.snapCalculator.getPosition(nearestSnap);
-
-      // Snap to position with animation
-      this.window.setPosition(snapCoords.x, snapCoords.y, true);
-      this.currentPosition = nearestSnap;
+      // Set final position (no snapping)
+      this.window.setPosition(screenX, screenY);
 
       this.isDragging = false;
-      console.log("[FloatingPanel] Snapped to position:", nearestSnap);
+      console.log("[FloatingPanel] Dragged to position:", { x: screenX, y: screenY });
     });
 
     // Prompt submitted from text box
@@ -168,6 +161,11 @@ export class FloatingPanel extends EventEmitter {
     // Window resize handler
     ipcMain.on("floating-panel:resize", (event, data: { width: number; height: number }) => {
       this.resizeWindow(data.width, data.height);
+    });
+
+    // Smart resize and reposition handler (prevents going off-screen)
+    ipcMain.on("floating-panel:resize-and-reposition", (event, data: { width: number; height: number; fromState: string }) => {
+      this.resizeAndReposition(data.width, data.height, data.fromState);
     });
   }
 
@@ -246,6 +244,102 @@ export class FloatingPanel extends EventEmitter {
 
       console.log(`[FloatingPanel] Resized to ${width}x${height}`);
     }
+  }
+
+  /**
+   * Smart resize and reposition to prevent going off-screen
+   * Adjusts position based on current screen location
+   */
+  resizeAndReposition(width: number, height: number, fromState: string) {
+    if (!this.window || this.window.isDestroyed()) return;
+
+    const { screen } = require('electron');
+    const currentBounds = this.window.getBounds();
+    const display = screen.getDisplayNearestPoint({ x: currentBounds.x, y: currentBounds.y });
+    const screenBounds = display.workArea;
+
+    let newX = currentBounds.x;
+    let newY = currentBounds.y;
+
+    // When expanding from collapsed to expanded or detailed
+    if (fromState === 'collapsed') {
+      // Save the collapsed position before expanding
+      this.collapsedPosition = { x: currentBounds.x, y: currentBounds.y };
+      console.log(`[FloatingPanel] Saved collapsed position: (${currentBounds.x}, ${currentBounds.y})`);
+
+      // Calculate if we're near edges
+      const distanceFromLeft = currentBounds.x - screenBounds.x;
+      const distanceFromRight = (screenBounds.x + screenBounds.width) - (currentBounds.x + currentBounds.width);
+      const distanceFromTop = currentBounds.y - screenBounds.y;
+      const distanceFromBottom = (screenBounds.y + screenBounds.height) - (currentBounds.y + currentBounds.height);
+
+      // Horizontal positioning (for expanded state especially)
+      if (width > currentBounds.width) {
+        // Need to expand horizontally
+        const widthDiff = width - currentBounds.width;
+
+        // If near right edge, expand to the left
+        if (distanceFromRight < widthDiff / 2) {
+          newX = currentBounds.x - widthDiff;
+        }
+        // If near left edge, expand to the right
+        else if (distanceFromLeft < widthDiff / 2) {
+          newX = currentBounds.x;
+        }
+        // Otherwise, expand from center (but check if it fits)
+        else {
+          newX = currentBounds.x - widthDiff / 2;
+        }
+      }
+
+      // Vertical positioning
+      if (height > currentBounds.height) {
+        const heightDiff = height - currentBounds.height;
+
+        // If near bottom edge, expand upward
+        if (distanceFromBottom < heightDiff / 2) {
+          newY = currentBounds.y - heightDiff;
+        }
+        // If near top edge, expand downward
+        else if (distanceFromTop < heightDiff / 2) {
+          newY = currentBounds.y;
+        }
+        // Otherwise, expand from center
+        else {
+          newY = currentBounds.y - heightDiff / 2;
+        }
+      }
+    }
+    // When collapsing back to orb, restore saved position
+    else if ((fromState === 'expanded' || fromState === 'detailed') && width === 96 && height === 96) {
+      if (this.collapsedPosition) {
+        newX = this.collapsedPosition.x;
+        newY = this.collapsedPosition.y;
+        console.log(`[FloatingPanel] Restoring collapsed position: (${newX}, ${newY})`);
+      } else {
+        // Fallback: center on current position
+        newX = currentBounds.x + (currentBounds.width - width) / 2;
+        newY = currentBounds.y + (currentBounds.height - height) / 2;
+      }
+    }
+    // When transitioning between expanded states, center it
+    else {
+      newX = currentBounds.x + (currentBounds.width - width) / 2;
+      newY = currentBounds.y + (currentBounds.height - height) / 2;
+    }
+
+    // Ensure window stays within screen bounds
+    newX = Math.max(screenBounds.x, Math.min(newX, screenBounds.x + screenBounds.width - width));
+    newY = Math.max(screenBounds.y, Math.min(newY, screenBounds.y + screenBounds.height - height));
+
+    this.window.setBounds({
+      x: Math.floor(newX),
+      y: Math.floor(newY),
+      width,
+      height
+    }, true); // true = animate
+
+    console.log(`[FloatingPanel] Smart repositioned to ${width}x${height} at (${newX}, ${newY})`);
   }
 
   /**

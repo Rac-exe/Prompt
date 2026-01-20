@@ -1,6 +1,7 @@
 import { BrowserWindow, screen, ipcMain, app } from "electron";
 import { PromptContext } from "../input/trigger-detector";
 import { TextReplacer } from "../text/text-replacer";
+import { WindowTracker, WindowContext } from "../context/window-tracker";
 import { EventEmitter } from "events";
 import * as path from "path";
 
@@ -12,15 +13,17 @@ export class OverlayManager extends EventEmitter {
   private highlights: Map<string, BrowserWindow> = new Map();
   private popups: Map<string, BrowserWindow> = new Map();
   private textReplacer: TextReplacer;
-  private promptContexts: Map<string, { context: PromptContext; optimized: string }> = new Map();
+  private promptContexts: Map<string, { context: PromptContext; optimized: string; targetWindow: WindowContext }> = new Map();
   private rendererPath: string;
   private activePopupKey: string | null = null; // Track currently active popup
   private dismissCheckInterval: NodeJS.Timeout | null = null; // Timer to check for dismiss conditions
   private triggerDetector: any = null; // Will be set after construction to avoid circular dependency
+  private windowTracker: WindowTracker; // Track window focus for UI Automation
 
   constructor() {
     super();
     this.textReplacer = new TextReplacer();
+    this.windowTracker = new WindowTracker();
     this.setupIPC();
     // Get the app path and construct renderer directory path
     const appPath = app.getAppPath();
@@ -63,6 +66,12 @@ export class OverlayManager extends EventEmitter {
             this.triggerDetector.startReplacingText();
           }
 
+          // CRITICAL: Restore focus to target window BEFORE UI Automation
+          // This ensures UI Automation targets the correct window (Notepad, etc.)
+          console.log("[OverlayManager] Restoring focus to target window for UI Automation...");
+          await this.windowTracker.restoreFocusToWindow(promptData.targetWindow);
+
+          // Now perform UI Automation on the focused window
           await this.textReplacer.replaceTextInPlace(data.originalText, data.newText);
 
           // CRITICAL: Signal text replacement complete and clear buffer immediately
@@ -185,12 +194,29 @@ export class OverlayManager extends EventEmitter {
     this.highlights.set(key, highlight);
   }
 
-  showOptimization(
+  async showOptimization(
     context: PromptContext,
     original: string,
     optimized: string
   ) {
     const key = this.getContextKey(context);
+
+    // CRITICAL: Capture the currently focused window BEFORE showing popup
+    // This is the window we'll restore focus to before UI Automation
+    let targetWindow: WindowContext;
+    try {
+      targetWindow = await this.windowTracker.getActiveWindow();
+      console.log(`[OverlayManager] Captured target window: ${targetWindow.processName} - "${targetWindow.title}"`);
+    } catch (error) {
+      console.error("[OverlayManager] Failed to capture target window:", error);
+      // Use context.window as fallback
+      targetWindow = {
+        handle: context.window.handle,
+        title: context.window.title || "Unknown",
+        bounds: context.window.bounds || { x: 0, y: 0, width: 800, height: 600 },
+        processName: "unknown"
+      };
+    }
 
     // Update highlight to show it's ready
     const highlight = this.highlights.get(key);
@@ -207,8 +233,10 @@ export class OverlayManager extends EventEmitter {
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
-      focusable: false, // CRITICAL: Keep false to avoid breaking UI Automation in underlying window
-      show: true,
+      focusable: true, // Changed to true to enable click-outside detection via blur event
+      // Note: This means popup will briefly steal focus from underlying app (like Notepad)
+      // However, text replacement happens before popup is shown, so this is safe
+      show: false, // Don't show immediately
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -216,16 +244,18 @@ export class OverlayManager extends EventEmitter {
       }
     });
 
-    // Ensure window is visible
-    popup.show();
-    popup.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    popup.setAlwaysOnTop(true, 'screen-saver');
-
+    // Position first, then show
     const { x, y } = this.calculatePopupPosition(context);
     // Validate coordinates to prevent NaN errors
     const posX = isNaN(x) || !isFinite(x) ? 100 : Math.max(0, x);
     const posY = isNaN(y) || !isFinite(y) ? 100 : Math.max(0, y);
     popup.setPosition(posX, posY);
+
+    // Ensure window is visible and focused for click-outside detection
+    popup.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    popup.setAlwaysOnTop(true, 'screen-saver');
+    popup.show();
+    popup.focus(); // Give focus to enable blur event on click-outside
 
     const queryParams: Record<string, string> = {
       original: original.substring(0, 200), // Limit length
@@ -237,8 +267,8 @@ export class OverlayManager extends EventEmitter {
       query: queryParams
     });
 
-    // Store context for IPC handlers
-    this.promptContexts.set(key, { context, optimized });
+    // Store context for IPC handlers (including target window for focus restoration)
+    this.promptContexts.set(key, { context, optimized, targetWindow });
 
     // Expose context key to renderer via preload
     popup.webContents.once("did-finish-load", () => {
@@ -351,23 +381,36 @@ export class OverlayManager extends EventEmitter {
 
   /**
    * Start monitoring for popup dismiss conditions (Grammarly pattern)
-   * Uses ESC key detection instead of focus events to avoid breaking UI Automation
+   * Uses ESC key detection + click-outside detection via blur event
    */
   private startDismissMonitoring(popup: BrowserWindow, context: PromptContext, key: string) {
     // Stop any existing monitoring
     this.stopDismissMonitoring();
 
-    // Monitor ESC key presses
+    // Listen for blur event - fires when user clicks outside the popup window
+    const onBlur = () => {
+      if (popup.isDestroyed()) return;
+
+      console.log("[OverlayManager] Popup lost focus (clicked outside), dismissing...");
+      this.hide(context);
+    };
+
+    // Store the listener so we can remove it later
+    popup.once('blur', onBlur);
+
+    // Also keep a periodic check for edge cases
     this.dismissCheckInterval = setInterval(() => {
-      // Check if popup still exists
       if (popup.isDestroyed()) {
         this.stopDismissMonitoring();
         return;
       }
 
-      // Popup dismissal is now handled by ESC key in popup.html
-      // This interval is kept for future enhancements (e.g., auto-dismiss after timeout)
-    }, 500);
+      // If popup loses focus for any reason, dismiss it
+      if (!popup.isFocused()) {
+        console.log("[OverlayManager] Popup not focused, dismissing...");
+        this.hide(context);
+      }
+    }, 500); // Check every 500ms as fallback
   }
 
   /**

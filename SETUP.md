@@ -141,3 +141,4 @@ prompt-optimizer/
 3. Add settings UI
 4. Add undo/redo support
 5. Support multiple models
+@prompt write a blog post about AI

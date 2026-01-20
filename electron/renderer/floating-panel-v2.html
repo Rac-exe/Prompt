@@ -124,8 +124,8 @@
 
 <body>
   <!-- COLLAPSED STATE: Circular Orb (96px × 96px) -->
-  <div id="collapsed-state" class="state-container active" style="width: 96px; height: 96px; border-radius: 50%; overflow: hidden; -webkit-app-region: drag;">
-    <div class="w-full h-full flex items-center justify-center relative rounded-full bg-[#050507]">
+  <div id="collapsed-state" class="state-container active" style="width: 96px; height: 96px; border-radius: 50%; overflow: hidden;">
+    <div id="collapsed-drag-handle" class="w-full h-full flex items-center justify-center relative rounded-full bg-[#050507] cursor-move">
       <!-- Background glow effects -->
       <div class="absolute w-[200px] h-[200px] bg-purple-900/10 rounded-full blur-[80px] pointer-events-none"></div>
 
@@ -138,8 +138,8 @@
       </div>
 
       <!-- Central orb -->
-      <div id="orb-button" class="w-12 h-12 rounded-full orb-glow flex items-center justify-center relative z-10 animate-pulse-gentle cursor-pointer group" style="-webkit-app-region: no-drag;">
-        <span class="material-symbols-outlined text-white text-2xl font-light">auto_awesome</span>
+      <div id="orb-button" class="w-10 h-10 rounded-full orb-glow flex items-center justify-center relative z-10 animate-pulse-gentle cursor-pointer group" style="-webkit-app-region: no-drag;">
+        <span class="material-symbols-outlined text-white text-xl font-light">auto_awesome</span>
         <div class="absolute inset-0 rounded-full bg-gradient-to-br from-white/20 to-transparent pointer-events-none"></div>
         <div class="absolute -inset-2 border border-white/5 rounded-full scale-90 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-700"></div>
       </div>
@@ -152,8 +152,13 @@
       <!-- Main input bar container -->
       <div class="w-full h-[60px] flex items-center bg-gradient-to-r from-[#2d1b4d]/80 via-[#1a0f2e]/80 to-[#2d1b4d]/80 backdrop-blur-xl rounded-full border border-purple-500/20 shadow-[0_8px_32px_rgba(168,85,247,0.2)] px-3">
 
+        <!-- Drag handle (left side, visible area for dragging) -->
+        <div id="expanded-drag-handle" class="absolute left-0 top-0 bottom-0 w-16 cursor-move flex items-center justify-center" title="Drag to move">
+          <div class="w-1 h-8 bg-purple-400/20 rounded-full"></div>
+        </div>
+
         <!-- Logo icon (clickable to collapse) -->
-        <div id="collapse-button" class="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-purple-500/20 to-purple-600/20 border border-purple-400/30 cursor-pointer hover:scale-110 transition-transform">
+        <div id="collapse-button" class="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-br from-purple-500/20 to-purple-600/20 border border-purple-400/30 cursor-pointer hover:scale-110 transition-transform relative z-10">
           <span class="material-symbols-outlined text-purple-300 text-2xl">auto_awesome</span>
         </div>
 
@@ -162,14 +167,13 @@
           id="prompt-input"
           type="text"
           placeholder="happy prompting..."
-          class="flex-1 mx-4 bg-transparent text-slate-200 placeholder-slate-400 text-base font-normal outline-none"
-          style="-webkit-app-region: no-drag;"
+          class="flex-1 mx-4 bg-transparent text-slate-200 placeholder-slate-400 text-base font-normal outline-none relative z-10"
         >
 
         <!-- Mic button -->
         <button
           id="mic-button"
-          class="w-10 h-10 flex items-center justify-center rounded-full bg-purple-500/20 border border-purple-400/30 hover:bg-purple-500/30 transition-all mr-2"
+          class="w-10 h-10 flex items-center justify-center rounded-full bg-purple-500/20 border border-purple-400/30 hover:bg-purple-500/30 transition-all mr-2 relative z-10"
           type="button"
           title="Voice Input"
         >
@@ -183,7 +187,7 @@
 
         <!-- Dashboard/menu button -->
         <button
-          class="w-10 h-10 flex items-center justify-center rounded-full bg-purple-500/20 border border-purple-400/30 hover:bg-purple-500/30 transition-all"
+          class="w-10 h-10 flex items-center justify-center rounded-full bg-purple-500/20 border border-purple-400/30 hover:bg-purple-500/30 transition-all relative z-10"
           type="button"
           title="Menu"
         >
@@ -219,7 +223,7 @@
         <!-- Main glass panel -->
         <div class="glass-panel rounded-3xl overflow-hidden relative">
           <!-- Header -->
-          <div class="p-8 pb-0 flex justify-between items-start">
+          <div id="detailed-drag-handle" class="p-8 pb-0 flex justify-between items-start cursor-move">
             <div class="space-y-1">
               <div class="flex items-center gap-2">
                 <span class="material-symbols-outlined text-[#c084fc] text-xl">psychology</span>
@@ -228,7 +232,7 @@
               <p class="text-xs text-slate-500">Fine-tuning neural parameters for optimal output</p>
             </div>
             <div class="flex items-center gap-3">
-              <button id="close-detailed" class="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-colors" title="Settings">
+              <button id="close-detailed" class="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-colors relative z-10" title="Settings">
                 <span class="material-symbols-outlined text-[20px]">settings</span>
               </button>
             </div>
@@ -343,7 +347,7 @@
     const micIcon = document.getElementById('mic-icon');
     const closeDetailedButton = document.getElementById('close-detailed');
 
-    // State transitions
+    // State transitions with smart positioning
     function transitionToState(newState) {
       console.log('[State] Transitioning from', currentState, 'to', newState);
 
@@ -356,18 +360,30 @@
       if (newState === 'collapsed') {
         collapsedState.classList.add('active');
         // Notify Electron to resize window
-        if (window.electronAPI && window.electronAPI.resizeWindow) {
-          window.electronAPI.resizeWindow(96, 96);
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:resize-and-reposition', {
+            width: 96,
+            height: 96,
+            fromState: currentState
+          });
         }
       } else if (newState === 'expanded') {
         expandedState.classList.add('active');
-        if (window.electronAPI && window.electronAPI.resizeWindow) {
-          window.electronAPI.resizeWindow(720, 80);
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:resize-and-reposition', {
+            width: 720,
+            height: 80,
+            fromState: currentState
+          });
         }
       } else if (newState === 'detailed') {
         detailedState.classList.add('active');
-        if (window.electronAPI && window.electronAPI.resizeWindow) {
-          window.electronAPI.resizeWindow(900, 700);
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:resize-and-reposition', {
+            width: 900,
+            height: 700,
+            fromState: currentState
+          });
         }
       }
 
@@ -554,6 +570,94 @@
 
     // Initialize
     console.log('[FloatingPanel] Initialized in collapsed state');
+
+    // ==========================================
+    // DRAG FUNCTIONALITY (Grammarly-style)
+    // ==========================================
+
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+
+    // Setup drag for collapsed state (orb)
+    const collapsedDragHandle = document.getElementById('collapsed-drag-handle');
+    if (collapsedDragHandle) {
+      collapsedDragHandle.addEventListener('mousedown', (e) => {
+        // Don't start drag if clicking on the orb button itself
+        if (e.target.closest('#orb-button')) {
+          return;
+        }
+
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:drag-start', { x: dragStartX, y: dragStartY });
+        }
+
+        e.preventDefault();
+      });
+    }
+
+    // Setup drag for expanded state (input bar)
+    const expandedDragHandle = document.getElementById('expanded-drag-handle');
+    if (expandedDragHandle) {
+      expandedDragHandle.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:drag-start', { x: dragStartX, y: dragStartY });
+        }
+
+        e.preventDefault();
+      });
+    }
+
+    // Setup drag for detailed state (header)
+    const detailedDragHandle = document.getElementById('detailed-drag-handle');
+    if (detailedDragHandle) {
+      detailedDragHandle.addEventListener('mousedown', (e) => {
+        // Don't start drag if clicking on buttons
+        if (e.target.closest('button')) {
+          return;
+        }
+
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:drag-start', { x: dragStartX, y: dragStartY });
+        }
+
+        e.preventDefault();
+      });
+    }
+
+    // Global mouse move handler
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+
+      if (window.electronAPI && window.electronAPI.send) {
+        window.electronAPI.send('floating-panel:drag-move', { x: e.clientX, y: e.clientY });
+      }
+    });
+
+    // Global mouse up handler
+    document.addEventListener('mouseup', (e) => {
+      if (!isDragging) return;
+
+      isDragging = false;
+
+      if (window.electronAPI && window.electronAPI.send) {
+        window.electronAPI.send('floating-panel:drag-end', { x: e.clientX, y: e.clientY });
+      }
+    });
+
+    console.log('[FloatingPanel] Drag handlers initialized');
   </script>
 </body>
 </html>
