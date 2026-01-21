@@ -17,6 +17,9 @@ declare global {
       setPromptText: (text: string) => void;
       resizeWindow: (width: number, height: number) => void;
       send: (channel: string, data: any) => void;
+      onExpandToInput: (callback: () => void) => void;
+      onFocusInput: (callback: () => void) => void;
+      onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
     };
   }
 }
@@ -73,6 +76,15 @@ const electronAPI = {
   },
   send: (channel: string, data: any) => {
     ipcRenderer.send(channel, data);
+  },
+  onExpandToInput: (callback: () => void) => {
+    ipcRenderer.on("expand-to-input", () => callback());
+  },
+  onFocusInput: (callback: () => void) => {
+    ipcRenderer.on("focus-input", () => callback());
+  },
+  onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
+    ipcRenderer.on("optimization-complete", (event, data) => callback(data));
   }
 };
 

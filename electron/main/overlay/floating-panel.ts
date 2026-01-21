@@ -3,6 +3,10 @@ import * as path from "path";
 import { SnapPositionCalculator, SnapPosition, ScreenCoordinates } from "./snap-positions";
 import { EventEmitter } from "events";
 import WebSocket from "ws";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 /**
  * Floating overlay panel with snap-to-position dragging and voice input
@@ -44,12 +48,14 @@ export class FloatingPanel extends EventEmitter {
       frame: false,
       transparent: true,
       alwaysOnTop: true,
-      skipTaskbar: true,
+      skipTaskbar: true, // Hide from taskbar (stay invisible like emoji picker)
       resizable: false,
-      movable: false, // We handle movement manually
+      movable: false,
       minimizable: false,
       maximizable: false,
       show: false,
+      focusable: true,
+      hasShadow: false, // No shadow to be more subtle
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -57,8 +63,8 @@ export class FloatingPanel extends EventEmitter {
       }
     });
 
-    // Load the floating panel HTML (v2 with three states)
-    const htmlPath = path.join(app.getAppPath(), "electron", "renderer", "floating-panel-v2.html");
+    // Load the floating panel HTML (v3 with new design)
+    const htmlPath = path.join(app.getAppPath(), "electron", "renderer", "floating-panel-v3.html");
     this.window.loadFile(htmlPath);
 
     // Show when ready
@@ -67,6 +73,11 @@ export class FloatingPanel extends EventEmitter {
         this.window.show();
         this.window.setAlwaysOnTop(true, "screen-saver");
         this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+        // Make window click-through EXCEPT for the panel area
+        // This allows ChatGPT to remain clickable behind it
+        this.window.setIgnoreMouseEvents(true, { forward: true });
+
         console.log("[FloatingPanel] Shown at position:", this.currentPosition);
       }
     });
@@ -167,16 +178,95 @@ export class FloatingPanel extends EventEmitter {
     ipcMain.on("floating-panel:resize-and-reposition", (event, data: { width: number; height: number; fromState: string }) => {
       this.resizeAndReposition(data.width, data.height, data.fromState);
     });
+
+    // NEW: Handle Replace button click (optimized text ready to replace @prompt)
+    ipcMain.on("floating-panel:replace-text", (event, data: { optimizedText: string }) => {
+      console.log("[FloatingPanel] Replace requested with optimized text:", data.optimizedText.substring(0, 50));
+      this.emit("replace-requested", data.optimizedText);
+    });
+
+    // NEW: Handle panel dismissal (click outside or ESC key)
+    ipcMain.on("floating-panel:dismiss", () => {
+      console.log("[FloatingPanel] Panel dismissed by user");
+      this.emit("panel-dismissed");
+      this.hide();
+    });
+
+    // Handle mouse enter/leave for click-through behavior
+    ipcMain.on("floating-panel:set-clickable", (event, clickable: boolean) => {
+      if (this.window && !this.window.isDestroyed()) {
+        this.window.setIgnoreMouseEvents(!clickable, { forward: true });
+      }
+    });
   }
 
   /**
-   * Show the panel
+   * Force focus using Windows API (for Windows only)
+   */
+  private async forceWindowsFocus() {
+    if (process.platform !== 'win32' || !this.window) return;
+
+    try {
+      const hwnd = this.window.getNativeWindowHandle();
+      const handle = '0x' + hwnd.readUInt32LE(0).toString(16);
+
+      console.log('[FloatingPanel] Using Windows API to force focus, handle:', handle);
+
+      const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetFocus(IntPtr hWnd);
+}
+"@
+
+$handle = [IntPtr]::new(${handle})
+[Win32]::ShowWindow($handle, 5)      # SW_SHOW
+[Win32]::BringWindowToTop($handle)   # Bring to top
+[Win32]::SetForegroundWindow($handle) # Set as foreground
+[Win32]::SetFocus($handle)           # Set keyboard focus
+Write-Host "SUCCESS"
+`;
+
+      await execAsync(`powershell -Command "${script.replace(/"/g, '\\"')}"`);
+      console.log('[FloatingPanel] Windows API focus applied successfully');
+    } catch (error) {
+      console.error('[FloatingPanel] Failed to force focus via Windows API:', error);
+    }
+  }
+
+  /**
+   * Show the panel - Like Windows emoji picker (no tab switching)
    */
   show() {
+    console.log('[FloatingPanel] === SHOW() CALLED ===');
     if (!this.window || this.window.isDestroyed()) {
+      console.log('[FloatingPanel] Creating new window');
       this.create();
     } else {
-      this.window.show();
+      console.log('[FloatingPanel] Showing panel (no tab switch)');
+
+      // Show + focus but don't require tab switching
+      this.window.showInactive(); // Show without stealing focus from ChatGPT
+      this.window.setAlwaysOnTop(true, "screen-saver");
+
+      // After a moment, focus it (user can keep typing in ChatGPT or overlay)
+      setTimeout(() => {
+        this.window?.focus();
+      }, 50);
+
+      console.log('[FloatingPanel] - Window shown');
     }
   }
 

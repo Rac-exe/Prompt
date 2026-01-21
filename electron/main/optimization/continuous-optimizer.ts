@@ -341,22 +341,26 @@ export class ContinuousOptimizer extends EventEmitter {
 
   /**
    * Show loading overlay for a specific session
+   * DISABLED: Old overlay system - now using floating panel workflow
    */
   private showLoadingOverlay(session: PromptSession) {
-    const context = this.createPromptContext(session);
-    if (context) {
-      this.overlayManager.showHighlight(context, { loading: true });
-    }
+    // const context = this.createPromptContext(session);
+    // if (context) {
+    //   this.overlayManager.showHighlight(context, { loading: true });
+    // }
+    console.log("[ContinuousOptimizer] Loading overlay disabled - using floating panel instead");
   }
 
   /**
    * Show result overlay for a specific session
+   * DISABLED: Old overlay system - now using floating panel workflow
    */
   private async showResultOverlay(original: string, optimized: string, session: PromptSession) {
-    const context = this.createPromptContext(session);
-    if (context) {
-      await this.overlayManager.showOptimization(context, original, optimized);
-    }
+    // const context = this.createPromptContext(session);
+    // if (context) {
+    //   await this.overlayManager.showOptimization(context, original, optimized);
+    // }
+    console.log("[ContinuousOptimizer] Result overlay disabled - optimization sent to floating panel instead");
   }
 
   /**
