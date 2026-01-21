@@ -20,8 +20,8 @@ export interface PromptContext {
  * Trigger detector using new continuous optimization architecture
  */
 export class TriggerDetector extends EventEmitter {
-  private windowTracker: WindowTracker;
-  private textPoller: TextStatePoller;
+  public windowTracker: WindowTracker; // Made public for direct access from app.ts
+  public textPoller: TextStatePoller; // Made public for direct access from app.ts
   private continuousOptimizer: ContinuousOptimizer;
 
   constructor(
@@ -50,22 +50,26 @@ export class TriggerDetector extends EventEmitter {
   }
 
   private setupListeners() {
+    // NEW WORKFLOW: Disable automatic optimization via continuous optimizer
+    // The floating panel now handles optimization manually when user clicks Replace
+    //
+    // OLD WORKFLOW (DISABLED):
     // Listen for trigger events from text poller (now supports multiple instances)
-    this.textPoller.on("trigger-found", (data: any) => {
-      this.continuousOptimizer.onTextChanged(
-        data.promptText,
-        data.triggerIndex,
-        data.instanceHash
-      );
-    });
+    // this.textPoller.on("trigger-found", (data: any) => {
+    //   this.continuousOptimizer.onTextChanged(
+    //     data.promptText,
+    //     data.triggerIndex,
+    //     data.instanceHash
+    //   );
+    // });
 
-    this.textPoller.on("trigger-removed", (data: any) => {
-      this.continuousOptimizer.onInstanceRemoved(data.instanceHash);
-    });
+    // this.textPoller.on("trigger-removed", (data: any) => {
+    //   this.continuousOptimizer.onInstanceRemoved(data.instanceHash);
+    // });
 
-    this.textPoller.on("trigger-not-found", () => {
-      this.continuousOptimizer.onTriggerRemoved();
-    });
+    // this.textPoller.on("trigger-not-found", () => {
+    //   this.continuousOptimizer.onTriggerRemoved();
+    // });
 
     // Forward optimizer events
     this.continuousOptimizer.on("session-created", (session) => {

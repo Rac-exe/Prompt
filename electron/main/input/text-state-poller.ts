@@ -14,7 +14,7 @@ export class TextStatePoller extends EventEmitter {
   private shiftPressed: boolean = false;
   private ctrlPressed: boolean = false;
   private isRunning: boolean = false;
-  private trackedInstances = new Map<string, { promptText: string; triggerIndex: number }>();
+  private trackedInstances = new Map<string, { promptText: string; triggerIndex: number; cursorPosition: number }>();
   private isReplacingText: boolean = false; // Flag to prevent self-triggering during text replacement
   private replacementTimeout: NodeJS.Timeout | null = null;
 
@@ -281,50 +281,48 @@ export class TextStatePoller extends EventEmitter {
 
   /**
    * Check current text state for trigger
-   * Finds ALL @prompt instances in buffer and tracks them independently
+   * NEW WORKFLOW: Only detect @prompt (7 characters), don't capture text after it
+   * The cursor position is calculated as triggerIndex + 7 (length of "@prompt")
    */
   private checkTextState() {
     const currentText = this.textBuffer;
 
-    // Multi-line regex: [\s\S] matches ANY character including newlines
-    // +? = non-greedy (stop at earliest match)
-    // (?=\n@prompt|$) = lookahead: stop before next @prompt or end of buffer
-    // Use matchAll with 'g' flag to find ALL instances
-    const regex = /@prompt\s+([\s\S]+?)(?=\n@prompt|$)/gi;
+    // NEW: Simple regex - just find "@prompt" (case insensitive)
+    // No text capture after @prompt - just detect the trigger itself
+    const regex = /@prompt/gi;
     const matches = Array.from(currentText.matchAll(regex));
 
     // Track current instances found in this scan
-    const currentInstances = new Map<string, { promptText: string; triggerIndex: number }>();
+    const currentInstances = new Map<string, { promptText: string; triggerIndex: number; cursorPosition: number }>();
 
     // Process each match
     matches.forEach((match) => {
-      const promptText = match[1].trim();
       const triggerIndex = match.index!;
+      const cursorPosition = triggerIndex + 7; // Cursor is at position 7 (after "@prompt")
 
-      // Generate hash for this instance (content + approximate position)
-      const instanceHash = this.generateInstanceHash(promptText, triggerIndex);
+      // Generate hash for this instance (position-based since there's no text)
+      const instanceHash = this.generateInstanceHash("@prompt", triggerIndex);
 
       // Store in current scan
-      currentInstances.set(instanceHash, { promptText, triggerIndex });
+      currentInstances.set(instanceHash, {
+        promptText: "@prompt", // Just the trigger itself
+        triggerIndex,
+        cursorPosition
+      });
 
-      // Check if this is a new or updated instance
+      // Check if this is a new instance
       const tracked = this.trackedInstances.get(instanceHash);
 
-      if (!tracked || tracked.promptText !== promptText) {
-        // New or updated instance - emit event
-        const lineCount = promptText.split('\n').length;
-
-        // Only log on first detection (not every character)
-        // console.log(
-        //   `[TextStatePoller] Instance detected at ${triggerIndex}:`,
-        //   `${lineCount} line(s),`,
-        //   `${promptText.length} chars,`,
-        //   `preview: "${promptText.substring(0, 50)}..."`
-        // );
+      if (!tracked) {
+        // New instance detected - emit event
+        console.log(
+          `[TextStatePoller] @prompt detected at position ${triggerIndex}, cursor at ${cursorPosition}`
+        );
 
         this.emit("trigger-found", {
-          promptText,
+          promptText: "@prompt", // No text captured
           triggerIndex,
+          cursorPosition, // NEW: Exact cursor position for replacement
           instanceHash,
           fullText: currentText
         });
@@ -334,7 +332,7 @@ export class TextStatePoller extends EventEmitter {
     // Check for removed instances (were tracked, now gone)
     this.trackedInstances.forEach((instance, hash) => {
       if (!currentInstances.has(hash)) {
-        // console.log(`[TextStatePoller] Instance removed at ${instance.triggerIndex}`);
+        console.log(`[TextStatePoller] @prompt removed at ${instance.triggerIndex}`);
         this.emit("trigger-removed", { instanceHash: hash });
       }
     });
@@ -344,7 +342,7 @@ export class TextStatePoller extends EventEmitter {
 
     // Emit trigger-not-found only if NO instances exist
     if (matches.length === 0 && this.trackedInstances.size > 0) {
-      console.log("[TextStatePoller] All triggers removed");
+      console.log("[TextStatePoller] All @prompt triggers removed");
       this.emit("trigger-not-found");
     }
   }
