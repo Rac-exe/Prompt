@@ -32,6 +32,20 @@ export class PromptOptimizerApp extends EventEmitter {
   }
 
   private setupListeners() {
+    // NEW WORKFLOW: Listen to text poller directly for @prompt detection
+    // When @prompt is detected, show floating panel immediately
+    this.triggerDetector.textPoller.on("trigger-found", (data: any) => {
+      console.log("[App] @prompt detected - auto-showing floating panel");
+      console.log("[App] Cursor position:", data.cursorPosition);
+      console.log("[App] Trigger index:", data.triggerIndex);
+
+      // Store window context for later text replacement
+      this.storeWindowContextForReplacement(data);
+
+      // Auto-show floating panel and steal focus
+      this.showFloatingPanelOnTrigger();
+    });
+
     // Listen to optimization lifecycle events
     this.triggerDetector.on("session-created", (session) => {
       // console.log("[App] Prompt session created:", session.promptText.substring(0, 50));
@@ -46,9 +60,33 @@ export class PromptOptimizerApp extends EventEmitter {
     });
 
     this.triggerDetector.on("optimization-completed", (session) => {
-      // console.log("[App] Optimization completed successfully");
-      // Clear floating panel after successful optimization
-      this.floatingPanel.clearPromptText();
+      console.log("[App] Optimization completed successfully");
+      console.log("[App] Optimized text length:", session.lastOptimized?.length || 0);
+
+      // NEW: Send optimization result to floating panel renderer
+      const panelWindow = this.floatingPanel.getWindow();
+      if (panelWindow && !panelWindow.isDestroyed()) {
+        console.log("[App] Panel window exists, webContents ready:", !panelWindow.webContents.isLoading());
+
+        // Wait for webContents to be ready before sending
+        if (panelWindow.webContents.isLoading()) {
+          panelWindow.webContents.once('did-finish-load', () => {
+            panelWindow.webContents.send("optimization-complete", {
+              optimized: session.lastOptimized || "",
+              original: session.promptText || ""
+            });
+            console.log("[App] Sent optimization result to renderer (after load)");
+          });
+        } else {
+          panelWindow.webContents.send("optimization-complete", {
+            optimized: session.lastOptimized || "",
+            original: session.promptText || ""
+          });
+          console.log("[App] Sent optimization result to renderer");
+        }
+      } else {
+        console.error("[App] Panel window not available!");
+      }
     });
 
     // Listen to text replacement events
@@ -103,14 +141,164 @@ export class PromptOptimizerApp extends EventEmitter {
     this.floatingPanel.on("voice-error", (error: string) => {
       console.error("[App] Voice input error:", error);
     });
+
+    // NEW: Listen to Replace button click from floating panel
+    this.floatingPanel.on("replace-requested", (optimizedText: string) => {
+      console.log("[App] Replace requested from floating panel");
+      this.handleTextReplacementFromPanel(optimizedText);
+    });
+
+    // NEW: Listen to panel dismissal (click outside or ESC)
+    this.floatingPanel.on("panel-dismissed", () => {
+      console.log("[App] Floating panel dismissed - clearing stored context");
+      this.storedWindowContext = null; // Clear stored context
+      this.isPanelVisible = false;
+
+      // RESTART keyboard monitoring
+      console.log("[App] Restarting keyboard monitoring");
+      this.triggerDetector.textPoller.start();
+    });
+  }
+
+  /**
+   * NEW: Store window context when @prompt is detected for later replacement
+   */
+  private storedWindowContext: {
+    triggerIndex: number;
+    cursorPosition: number;
+    windowHandle: string;
+    instanceHash: string;
+  } | null = null;
+
+  private async storeWindowContextForReplacement(data: any) {
+    try {
+      const windowContext = await this.triggerDetector.windowTracker.getActiveWindow();
+
+      this.storedWindowContext = {
+        triggerIndex: data.triggerIndex,
+        cursorPosition: data.cursorPosition,
+        windowHandle: windowContext.handle,
+        instanceHash: data.instanceHash
+      };
+
+      console.log("[App] Stored window context for replacement:", this.storedWindowContext);
+    } catch (error) {
+      console.error("[App] Failed to store window context:", error);
+    }
+  }
+
+  /**
+   * NEW: Auto-show floating panel when @prompt is detected
+   */
+  private showFloatingPanelOnTrigger() {
+    if (!this.isPanelVisible) {
+      console.log("[App] === SHOWING FLOATING PANEL ON @PROMPT DETECTION ===");
+
+      // STOP keyboard monitoring so typing goes to overlay, not ChatGPT
+      console.log("[App] Pausing keyboard monitoring");
+      this.triggerDetector.textPoller.stop();
+
+      this.floatingPanel.show();
+      this.isPanelVisible = true;
+
+      // Wait for panel to render, then expand to input state and focus
+      setTimeout(() => {
+        const panelWindow = this.floatingPanel.getWindow();
+        if (panelWindow && !panelWindow.isDestroyed()) {
+          console.log("[App] Panel window exists, sending expand-to-input event");
+          // First, tell renderer to switch to expanded state (if it's collapsed)
+          panelWindow.webContents.send("expand-to-input");
+
+          // Simple focus after expand (like Grammarly)
+          setTimeout(() => {
+            panelWindow.focus();
+
+            // Auto-focus input field
+            setTimeout(() => {
+              panelWindow.webContents.executeJavaScript(`
+                const input = document.getElementById('prompt-input');
+                if (input) {
+                  input.focus();
+                  input.select(); // Select any existing text
+                }
+              `);
+            }, 100);
+          }, 100);
+        } else {
+          console.error("[App] Panel window is null or destroyed!");
+        }
+      }, 100);
+    } else {
+      console.log("[App] Panel already visible, not showing again");
+    }
   }
 
   /**
    * Handle prompt submission from floating panel
+   * NEW WORKFLOW: Trigger optimization, then replace @prompt with optimized text
    */
-  private handleFloatingPanelPrompt(promptText: string) {
+  private async handleFloatingPanelPrompt(promptText: string) {
     console.log("[App] Processing floating panel prompt:", promptText);
-    this.triggerDetector.triggerManualOptimization(promptText);
+
+    // Trigger optimization
+    await this.triggerDetector.triggerManualOptimization(promptText);
+
+    // Wait for optimization to complete (listen to optimization-completed event)
+    // The optimization result will be available after this event fires
+  }
+
+  /**
+   * NEW: Handle text replacement after optimization completes
+   * This is called when user clicks "Replace" button in the floating panel
+   */
+  async handleTextReplacementFromPanel(optimizedText: string) {
+    console.log("[App] Handling text replacement from panel");
+    console.log("[App] Optimized text:", optimizedText.substring(0, 100));
+
+    if (!this.storedWindowContext) {
+      console.error("[App] No stored window context - cannot replace");
+      return;
+    }
+
+    try {
+      // Hide the floating panel first
+      this.floatingPanel.hide();
+      this.isPanelVisible = false;
+
+      // Restore focus to original window
+      console.log("[App] Restoring focus to original window...");
+      await this.triggerDetector.windowTracker.restoreFocusToWindowByHandle(this.storedWindowContext.windowHandle);
+
+      // Wait for focus to settle
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      // Perform text replacement:
+      // 1. Delete 7 characters (the "@prompt" text)
+      // 2. Paste optimized text at that position
+      console.log("[App] Replacing @prompt with optimized text...");
+      await this.overlayManager.textReplacer.replacePromptMarkerWithText(
+        this.storedWindowContext.cursorPosition,
+        optimizedText
+      );
+
+      // Clear stored context
+      this.storedWindowContext = null;
+
+      // Clear text buffer to prevent re-detection
+      this.triggerDetector.clearTextBuffer();
+
+      // RESTART keyboard monitoring after replacement
+      console.log("[App] Restarting keyboard monitoring after replacement");
+      this.triggerDetector.textPoller.start();
+
+      console.log("[App] Text replacement completed successfully");
+    } catch (error) {
+      console.error("[App] Text replacement failed:", error);
+      // RESTART keyboard monitoring even on error
+      console.log("[App] Restarting keyboard monitoring after error");
+      this.triggerDetector.textPoller.start();
+      // Show error to user
+    }
   }
 
   async initialize() {

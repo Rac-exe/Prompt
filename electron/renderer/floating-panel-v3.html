@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Optimize</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: transparent;
+      overflow: hidden;
+      -webkit-app-region: no-drag;
+    }
+
+    /* State visibility */
+    .state-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
+    }
+
+    .state-container.active {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    /* Sparkle animation for logo */
+    @keyframes sparkle-rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .sparkle-icon {
+      animation: sparkle-rotate 20s linear infinite;
+    }
+
+    /* Thinking dots animation */
+    @keyframes thinking-dots {
+      0%, 20% { content: '.'; }
+      40% { content: '..'; }
+      60%, 100% { content: '...'; }
+    }
+
+    .thinking-dots::after {
+      content: '.';
+      animation: thinking-dots 1.5s infinite;
+    }
+
+    /* Custom scrollbar */
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.3);
+      border-radius: 3px;
+    }
+
+    .custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.5);
+    }
+
+    /* Smooth height transitions */
+    .expand-section {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+    }
+
+    .expand-section.expanded {
+      max-height: 2000px;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- ============================================ -->
+  <!-- COLLAPSED STATE: Floating Logo (64px × 64px) -->
+  <!-- ============================================ -->
+  <div id="collapsed-state" class="state-container active" style="width: 64px; height: 64px;">
+    <div id="collapsed-drag-handle" class="w-full h-full flex items-center justify-center cursor-move">
+      <!-- Logo button -->
+      <button id="logo-button" class="w-12 h-12 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 hover:from-purple-500 hover:to-purple-700 flex items-center justify-center shadow-[0_0_20px_rgba(147,51,234,0.4)] transition-all hover:scale-110 group relative" style="-webkit-app-region: no-drag;">
+        <!-- Sparkle icon -->
+        <svg class="w-6 h-6 text-white sparkle-icon" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+        </svg>
+        <!-- Glow effect on hover -->
+        <div class="absolute inset-0 rounded-full bg-purple-400 opacity-0 group-hover:opacity-20 blur-lg transition-opacity"></div>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============================================ -->
+  <!-- EXPANDED STATE: Single Panel (560px × variable) -->
+  <!-- ============================================ -->
+  <div id="expanded-state" class="state-container" style="width: 560px; min-height: 240px;">
+    <div class="w-full h-full flex flex-col bg-[#0a0a0a] rounded-3xl shadow-2xl border border-gray-800">
+
+      <!-- Header -->
+      <div id="expanded-drag-handle" class="flex items-center justify-between px-6 py-3 border-b border-gray-800 cursor-move">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center">
+            <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+            </svg>
+          </div>
+          <h2 class="text-white text-sm font-semibold">Quick Optimize</h2>
+        </div>
+        <button id="close-button" class="w-7 h-7 rounded-full hover:bg-gray-800 flex items-center justify-center transition-colors" style="-webkit-app-region: no-drag;">
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Content - Scrollable container -->
+      <div class="flex-1 flex flex-col overflow-y-auto custom-scroll" style="max-height: 600px;">
+        <div class="px-6 py-3 space-y-3">
+
+          <!-- YOUR PROMPT Section -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Your Prompt</label>
+              <div class="flex items-center gap-2">
+                <!-- Mic button -->
+                <button id="mic-button" class="p-1 rounded-lg hover:bg-gray-800 transition-colors" title="Voice Input" style="-webkit-app-region: no-drag;">
+                  <svg id="mic-icon" class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                  </svg>
+                </button>
+                <!-- Copy button -->
+                <button id="copy-input-btn" class="p-1 rounded-lg hover:bg-gray-800 transition-colors" title="Copy" style="-webkit-app-region: no-drag;">
+                  <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Input area -->
+            <div class="bg-[#141414] rounded-xl border border-gray-800 p-3">
+              <textarea
+                id="prompt-textarea"
+                placeholder="happy prompting..."
+                class="w-full bg-transparent text-white text-sm outline-none placeholder-gray-500 resize-none custom-scroll"
+                style="min-height: 50px; max-height: 120px;"
+              ></textarea>
+            </div>
+
+            <!-- Generate button -->
+            <button id="generate-button" class="w-full mt-2 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all" style="-webkit-app-region: no-drag;">
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+              </svg>
+              <span>GENERATE</span>
+            </button>
+          </div>
+
+          <!-- OPTIMIZED PROMPT Section (hidden initially, expands smoothly) -->
+          <div id="optimized-section" class="expand-section">
+            <div class="pt-3 border-t border-gray-800">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <label class="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Optimized Prompt</label>
+                  <!-- Status indicator -->
+                  <div id="status-indicator" class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gray-800">
+                    <div class="w-1.5 h-1.5 rounded-full bg-gray-500"></div>
+                    <span class="text-[9px] text-gray-400 font-medium">Waiting</span>
+                  </div>
+                </div>
+                <button id="copy-optimized-btn" class="p-1 rounded-lg hover:bg-gray-800 transition-colors" title="Copy" style="-webkit-app-region: no-drag;">
+                  <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- Optimized text display (NO POPUP - displays inline) -->
+              <div class="bg-[#141414] rounded-xl border border-gray-800 p-3 custom-scroll" style="max-height: 250px; overflow-y: auto;">
+                <p id="optimized-text" class="text-sm text-white leading-relaxed whitespace-pre-wrap">
+                  Click generate to optimize your prompt
+                </p>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="flex items-center gap-2 mt-2">
+                <!-- Retry button -->
+                <button id="retry-button" class="w-10 h-10 rounded-xl bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors" title="Retry" style="-webkit-app-region: no-drag;">
+                  <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                </button>
+
+                <!-- Copy button -->
+                <button id="copy-button" class="flex-1 h-10 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-colors" style="-webkit-app-region: no-drag;">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                  </svg>
+                  <span>Copy</span>
+                </button>
+
+                <!-- Replace Original button -->
+                <button id="replace-button" class="flex-1 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)]" style="-webkit-app-region: no-drag;">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+                  </svg>
+                  <span>REPLACE</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    console.log('[FloatingPanel v3] ===== SCRIPT STARTING =====');
+    console.log('[FloatingPanel v3] electronAPI available:', !!window.electronAPI);
+    console.log('[FloatingPanel v3] onOptimizationComplete available:', !!window.electronAPI?.onOptimizationComplete);
+
+    // ==========================================
+    // STATE MANAGEMENT
+    // ==========================================
+    let currentState = 'collapsed'; // collapsed | expanded
+    let isListening = false;
+    let isOptimizing = false;
+    let originalPrompt = '';
+    let optimizedPrompt = '';
+
+    const collapsedState = document.getElementById('collapsed-state');
+    const expandedState = document.getElementById('expanded-state');
+
+    const logoButton = document.getElementById('logo-button');
+    const closeButton = document.getElementById('close-button');
+    const promptTextarea = document.getElementById('prompt-textarea');
+    const generateButton = document.getElementById('generate-button');
+    const micButton = document.getElementById('mic-button');
+    const micIcon = document.getElementById('mic-icon');
+
+    const optimizedSection = document.getElementById('optimized-section');
+    const optimizedText = document.getElementById('optimized-text');
+    const statusIndicator = document.getElementById('status-indicator');
+    const retryButton = document.getElementById('retry-button');
+    const copyButton = document.getElementById('copy-button');
+    const replaceButton = document.getElementById('replace-button');
+    const copyInputBtn = document.getElementById('copy-input-btn');
+    const copyOptimizedBtn = document.getElementById('copy-optimized-btn');
+
+    // ==========================================
+    // STATE TRANSITIONS
+    // ==========================================
+    function transitionToState(newState) {
+      console.log('[State] Transitioning from', currentState, 'to', newState);
+
+      // Hide all states
+      collapsedState.classList.remove('active');
+      expandedState.classList.remove('active');
+
+      // Show new state and resize window
+      if (newState === 'collapsed') {
+        collapsedState.classList.add('active');
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('floating-panel:resize-and-reposition', {
+            width: 64,
+            height: 64,
+            fromState: currentState
+          });
+        }
+      } else if (newState === 'expanded') {
+        expandedState.classList.add('active');
+        // Dynamic height based on whether optimized section is shown
+        const hasOptimized = optimizedSection.classList.contains('expanded');
+        const height = hasOptimized ? 550 : 240;
+
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('floating-panel:resize-and-reposition', {
+            width: 560,
+            height: height,
+            fromState: currentState
+          });
+        }
+        // Focus textarea after transition
+        setTimeout(() => promptTextarea?.focus(), 300);
+      }
+
+      currentState = newState;
+    }
+
+    // ==========================================
+    // SHOW/HIDE OPTIMIZED SECTION
+    // ==========================================
+    function showOptimizedSection() {
+      optimizedSection.classList.add('expanded');
+
+      // Calculate dynamic height based on content
+      // Base height: 240px (collapsed state with input)
+      // Optimized section: ~100px header + text area
+      // Max text area height: 250px (with scrolling)
+      // Total: 240 + 100 + up to 250 = max 590px
+      // But clamp to screen size
+      const baseHeight = 240;
+      const optimizedSectionHeight = Math.min(350, 100 + 250); // Header + scrollable text area
+      const totalHeight = Math.min(590, baseHeight + optimizedSectionHeight);
+
+      // Resize window to accommodate optimized section
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:resize-and-reposition', {
+          width: 560,
+          height: totalHeight,
+          fromState: currentState
+        });
+      }
+    }
+
+    function hideOptimizedSection() {
+      optimizedSection.classList.remove('expanded');
+      // Resize back to smaller size
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:resize-and-reposition', {
+          width: 560,
+          height: 240,
+          fromState: currentState
+        });
+      }
+    }
+
+    // ==========================================
+    // STATUS INDICATOR
+    // ==========================================
+    function setStatus(status, label) {
+      const dot = statusIndicator.querySelector('.w-1\\.5');
+      const text = statusIndicator.querySelector('span');
+
+      if (status === 'waiting') {
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-gray-500';
+        text.textContent = label || 'Waiting';
+      } else if (status === 'optimizing') {
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse';
+        text.textContent = label || 'Optimizing';
+      } else if (status === 'ready') {
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-green-500';
+        text.textContent = label || 'Ready';
+      }
+    }
+
+    // ==========================================
+    // OPTIMIZE FUNCTION (INLINE - NO POPUP)
+    // ==========================================
+    async function optimizePrompt(userPrompt) {
+      if (!userPrompt || userPrompt.trim().length === 0) {
+        console.warn('[Optimize] Empty prompt');
+        return;
+      }
+
+      console.log('[Optimize] Starting optimization:', userPrompt);
+      originalPrompt = userPrompt;
+      isOptimizing = true;
+
+      // Show optimized section INLINE (no popup)
+      showOptimizedSection();
+
+      // Update UI
+      setStatus('optimizing', 'Optimizing');
+
+      // Show "thinking" state IN THE OPTIMIZED TEXT AREA
+      optimizedText.innerHTML = '<span class="thinking-dots">Optimizing</span>';
+
+      try {
+        // Send to main process for optimization
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('floating-panel:prompt-submit', userPrompt);
+        }
+
+      } catch (error) {
+        console.error('[Optimize] Error:', error);
+        optimizedText.textContent = 'Failed to optimize prompt. Please try again.';
+        setStatus('waiting', 'Error');
+        isOptimizing = false;
+      }
+    }
+
+    // ==========================================
+    // TYPING ANIMATION (IN THE OPTIMIZED SECTION)
+    // ==========================================
+    function typeText(element, text, speed = 10) {
+      return new Promise((resolve) => {
+        element.textContent = '';
+        let index = 0;
+
+        function addChar() {
+          if (index < text.length) {
+            element.textContent += text[index];
+            index++;
+            setTimeout(addChar, speed);
+          } else {
+            resolve();
+          }
+        }
+
+        addChar();
+      });
+    }
+
+    // ==========================================
+    // EVENT HANDLERS
+    // ==========================================
+
+    // Logo button - expand to input
+    logoButton.addEventListener('click', () => {
+      transitionToState('expanded');
+    });
+
+    // Close button
+    closeButton.addEventListener('click', () => {
+      hideOptimizedSection();
+      transitionToState('collapsed');
+    });
+
+    // Generate button
+    generateButton.addEventListener('click', () => {
+      const prompt = promptTextarea.value.trim();
+      if (prompt) {
+        optimizePrompt(prompt);
+      }
+    });
+
+    // Enter key in textarea
+    promptTextarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const prompt = promptTextarea.value.trim();
+        if (prompt) {
+          optimizePrompt(prompt);
+        }
+      }
+    });
+
+    // Retry button
+    retryButton.addEventListener('click', () => {
+      if (originalPrompt) {
+        optimizePrompt(originalPrompt);
+      }
+    });
+
+    // Copy buttons
+    copyInputBtn.addEventListener('click', () => {
+      const text = promptTextarea.value;
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          console.log('[Copy] Input copied');
+        });
+      }
+    });
+
+    copyOptimizedBtn.addEventListener('click', () => {
+      if (optimizedPrompt) {
+        navigator.clipboard.writeText(optimizedPrompt).then(() => {
+          console.log('[Copy] Optimized text copied');
+        });
+      }
+    });
+
+    copyButton.addEventListener('click', () => {
+      if (optimizedPrompt) {
+        navigator.clipboard.writeText(optimizedPrompt).then(() => {
+          console.log('[Copy] Optimized text copied');
+        });
+      }
+    });
+
+    // Replace button
+    replaceButton.addEventListener('click', () => {
+      if (optimizedPrompt && window.electronAPI?.send) {
+        console.log('[Replace] Sending replace request');
+        window.electronAPI.send('floating-panel:replace-text', {
+          optimizedText: optimizedPrompt
+        });
+      }
+    });
+
+    // Mic button
+    micButton.addEventListener('click', () => {
+      if (!isListening) {
+        startListening();
+      } else {
+        stopListening();
+      }
+    });
+
+    function startListening() {
+      isListening = true;
+      micButton.classList.add('bg-red-600');
+      micButton.classList.remove('hover:bg-gray-800');
+
+      if (window.electronAPI?.startTranscription) {
+        window.electronAPI.startTranscription();
+      }
+    }
+
+    function stopListening() {
+      isListening = false;
+      micButton.classList.remove('bg-red-600');
+      micButton.classList.add('hover:bg-gray-800');
+
+      if (window.electronAPI?.stopTranscription) {
+        window.electronAPI.stopTranscription();
+      }
+    }
+
+    // ==========================================
+    // ELECTRON IPC LISTENERS
+    // ==========================================
+
+    // Listen for expand-to-input event
+    if (window.electronAPI?.onExpandToInput) {
+      window.electronAPI.onExpandToInput(() => {
+        console.log('[IPC] Received expand-to-input event');
+        transitionToState('expanded');
+        promptTextarea.value = '';
+        hideOptimizedSection();
+      });
+    }
+
+    // Listen for focus-input event
+    if (window.electronAPI?.onFocusInput) {
+      window.electronAPI.onFocusInput(() => {
+        console.log('[IPC] Received focus-input event');
+        promptTextarea?.focus();
+      });
+    }
+
+    // Listen for optimization-complete event (DISPLAY INLINE - NO POPUP)
+    if (window.electronAPI?.onOptimizationComplete) {
+      console.log('[FloatingPanel] Setting up onOptimizationComplete listener');
+      window.electronAPI.onOptimizationComplete(async (data) => {
+        console.log('[FloatingPanel] ===== RECEIVED OPTIMIZATION RESULT =====');
+        console.log('[FloatingPanel] Original:', data.original?.substring(0, 50));
+        console.log('[FloatingPanel] Optimized length:', data.optimized?.length);
+        optimizedPrompt = data.optimized;
+
+        // Make sure optimized section is visible
+        if (!optimizedSection.classList.contains('expanded')) {
+          console.log('[FloatingPanel] Expanding optimized section');
+          showOptimizedSection();
+        }
+
+        // Type out the optimized text IN THE OPTIMIZED SECTION (not in a popup)
+        console.log('[FloatingPanel] Starting to type optimized text');
+        await typeText(optimizedText, optimizedPrompt, 15);
+        console.log('[FloatingPanel] Typing complete');
+
+        setStatus('ready', 'Ready');
+        isOptimizing = false;
+      });
+    } else {
+      console.error('[FloatingPanel] electronAPI.onOptimizationComplete is NOT available!');
+    }
+
+    // Listen for transcription updates
+    if (window.electronAPI?.onTranscriptionUpdate) {
+      window.electronAPI.onTranscriptionUpdate((data) => {
+        if (data.type === 'transcription' && promptTextarea) {
+          promptTextarea.value = data.accumulated || data.text;
+        } else if (data.type === 'final' && promptTextarea) {
+          promptTextarea.value = data.text;
+        } else if (data.type === 'status') {
+          if (data.status === 'listening' && !isListening) {
+            startListening();
+          } else if (data.status === 'stopped' && isListening) {
+            stopListening();
+          }
+        } else if (data.type === 'error') {
+          console.error('[Transcription] Error:', data.message);
+          stopListening();
+        }
+      });
+    }
+
+    // ESC key - dismiss panel
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        console.log('[Keyboard] ESC pressed');
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('floating-panel:dismiss', {});
+        }
+      }
+    });
+
+    // Mouse tracking
+    document.body.addEventListener('mouseenter', () => {
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:set-clickable', true);
+      }
+    });
+
+    document.body.addEventListener('mouseleave', () => {
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:set-clickable', false);
+      }
+    });
+
+    // ==========================================
+    // DRAG FUNCTIONALITY
+    // ==========================================
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+
+    function setupDragHandlers(dragHandle, excludeSelector = null) {
+      if (!dragHandle) return;
+
+      dragHandle.addEventListener('mousedown', (e) => {
+        if (excludeSelector && e.target.closest(excludeSelector)) {
+          return;
+        }
+
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('floating-panel:drag-start', { x: dragStartX, y: dragStartY });
+        }
+
+        e.preventDefault();
+      });
+    }
+
+    setupDragHandlers(document.getElementById('collapsed-drag-handle'), '#logo-button');
+    setupDragHandlers(document.getElementById('expanded-drag-handle'), 'button');
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:drag-move', { x: e.clientX, y: e.clientY });
+      }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!isDragging) return;
+
+      isDragging = false;
+
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:drag-end', { x: e.clientX, y: e.clientY });
+      }
+    });
+
+    // ==========================================
+    // INITIALIZE
+    // ==========================================
+    console.log('[FloatingPanel] Initialized - Single panel design (NO POPUP)');
+    setStatus('waiting', 'Waiting');
+  </script>
+</body>
+</html>
