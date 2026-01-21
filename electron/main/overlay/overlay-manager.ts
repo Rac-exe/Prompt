@@ -12,7 +12,7 @@ interface HighlightOptions {
 export class OverlayManager extends EventEmitter {
   private highlights: Map<string, BrowserWindow> = new Map();
   private popups: Map<string, BrowserWindow> = new Map();
-  private textReplacer: TextReplacer;
+  public textReplacer: TextReplacer; // Made public for access from app.ts
   private promptContexts: Map<string, { context: PromptContext; optimized: string; targetWindow: WindowContext }> = new Map();
   private rendererPath: string;
   private activePopupKey: string | null = null; // Track currently active popup

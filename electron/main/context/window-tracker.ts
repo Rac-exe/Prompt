@@ -190,6 +190,57 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
     }
   }
 
+  /**
+   * NEW: Restore focus to a window by window handle
+   * Simplified version that directly focuses the window by handle
+   */
+  async restoreFocusToWindowByHandle(handle: string): Promise<void> {
+    console.log(`[WindowTracker] Restoring focus to window handle: ${handle}`);
+
+    if (this.platform === "win32") {
+      const { exec } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+
+      const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32 {
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+}
+"@
+
+# Parse handle from string (remove "0x" prefix if present)
+$handleStr = "${handle}".Replace("0x", "")
+$handleInt = [Convert]::ToInt64($handleStr, 16)
+$hwnd = [IntPtr]::new($handleInt)
+
+# Show window (in case it's minimized)
+[Win32]::ShowWindow($hwnd, 9) # SW_RESTORE = 9
+
+# Set foreground
+[Win32]::SetForegroundWindow($hwnd)
+
+Write-Host "SUCCESS: Window focused"
+`;
+
+      try {
+        const result = await execAsync(`powershell -Command "${script.replace(/"/g, '\\"')}"`);
+        console.log("[WindowTracker] Window focus restored:", result.stdout);
+      } catch (error) {
+        console.error("[WindowTracker] Failed to restore focus:", error);
+        throw error;
+      }
+    } else if (this.platform === "darwin") {
+      // macOS implementation would go here
+      console.log("[WindowTracker] macOS focus restoration not implemented yet");
+    }
+  }
+
   private async restoreFocusWindows(context: WindowContext): Promise<void> {
     console.log(`[WindowTracker] Restoring focus to: ${context.processName} - "${context.title}"`);
 

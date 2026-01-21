@@ -405,31 +405,16 @@
       transitionToState('expanded');
     });
 
-    // Input handling - detect @prompt
-    promptInput.addEventListener('input', (e) => {
-      const value = e.target.value;
-
-      // Check if user typed @prompt
-      if (value.startsWith('@prompt ') && value.length > 8) {
-        const userPrompt = value.substring(8).trim();
-        if (userPrompt.length > 0) {
-          console.log('[Input] @prompt detected:', userPrompt);
-          // Trigger optimization
-          optimizePrompt(userPrompt);
-        }
-      }
-    });
-
+    // Input handling - submit prompt
+    // NOTE: @prompt detection now happens in main process (text-state-poller.ts)
+    // This input is for typing the actual prompt AFTER @prompt is detected
     promptInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const value = e.target.value;
-        if (value.startsWith('@prompt ') && value.length > 8) {
-          const userPrompt = value.substring(8).trim();
-          if (userPrompt.length > 0) {
-            optimizePrompt(userPrompt);
-          }
-        } else if (window.electronAPI) {
-          // Regular prompt submit
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const value = e.target.value.trim();
+        if (value.length > 0 && window.electronAPI) {
+          console.log('[Input] Submitting prompt for optimization:', value);
+          // Send prompt-submit event to main process
           window.electronAPI.send('floating-panel:prompt-submit', value);
         }
       }
@@ -562,14 +547,115 @@
     });
 
     document.getElementById('replace-button').addEventListener('click', () => {
-      if (optimizedResult && window.electronAPI && window.electronAPI.replaceText) {
-        window.electronAPI.replaceText(optimizedResult);
-        transitionToState('collapsed');
+      if (optimizedResult && window.electronAPI && window.electronAPI.send) {
+        console.log('[Replace] Sending floating-panel:replace-text with optimized text');
+        // NEW WORKFLOW: Send replace-text event to main process
+        window.electronAPI.send('floating-panel:replace-text', {
+          optimizedText: optimizedResult
+        });
+        // Main process will handle:
+        // 1. Hiding the panel
+        // 2. Restoring focus to original window
+        // 3. Deleting @prompt (7 backspaces)
+        // 4. Pasting optimized text (Ctrl+V)
+      }
+    });
+
+    // ==========================================
+    // NEW WORKFLOW: IPC Event Listeners
+    // ==========================================
+
+    // Listen for expand-to-input event (when @prompt is detected)
+    if (window.electronAPI && window.electronAPI.onExpandToInput) {
+      window.electronAPI.onExpandToInput(() => {
+        console.log('[FloatingPanel] Received expand-to-input event - switching to expanded state');
+        transitionToState('expanded');
+        // Clear any previous input
+        if (promptInput) {
+          promptInput.value = '';
+        }
+      });
+    }
+
+    // Listen for focus-input event (auto-focus input field)
+    if (window.electronAPI && window.electronAPI.onFocusInput) {
+      window.electronAPI.onFocusInput(() => {
+        console.log('[FloatingPanel] === RECEIVED FOCUS-INPUT EVENT ===');
+        console.log('[FloatingPanel] Document hasFocus:', document.hasFocus());
+        console.log('[FloatingPanel] Active element:', document.activeElement?.tagName);
+        if (promptInput) {
+          console.log('[FloatingPanel] Calling promptInput.focus()');
+          promptInput.focus();
+          console.log('[FloatingPanel] After focus - Active element:', document.activeElement?.tagName);
+          console.log('[FloatingPanel] Is promptInput focused?', document.activeElement === promptInput);
+        } else {
+          console.error('[FloatingPanel] promptInput is null!');
+        }
+      });
+    } else {
+      console.error('[FloatingPanel] electronAPI.onFocusInput not available!');
+    }
+
+    // Listen for optimization-complete event (receive optimized text from main)
+    if (window.electronAPI && window.electronAPI.onOptimizationComplete) {
+      window.electronAPI.onOptimizationComplete((data) => {
+        console.log('[FloatingPanel] Received optimization result:', data.optimized.substring(0, 50));
+        optimizedResult = data.optimized;
+
+        // Transition to detailed state if not already there
+        if (currentState !== 'detailed') {
+          transitionToState('detailed');
+        }
+
+        // Update UI with optimized result
+        const optimizedPromptEl = document.getElementById('optimized-prompt');
+        if (optimizedPromptEl) {
+          optimizedPromptEl.textContent = optimizedResult;
+        }
+
+        // Update token count
+        const tokenCount = Math.ceil(optimizedResult.split(/\s+/).length * 1.3);
+        const tokenCountEl = document.getElementById('token-count');
+        if (tokenCountEl) {
+          tokenCountEl.textContent = `Tokens: ${tokenCount}`;
+        }
+
+        // Calculate efficiency
+        const originalLength = data.original.length;
+        const optimizedLength = optimizedResult.length;
+        const efficiency = Math.min(98, Math.floor((optimizedLength / originalLength) * 50 + 48));
+        const efficiencyEl = document.getElementById('efficiency');
+        if (efficiencyEl) {
+          efficiencyEl.textContent = `Efficiency: ${efficiency}%`;
+        }
+      });
+    }
+
+    // ESC key handler - dismiss panel
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        console.log('[FloatingPanel] ESC pressed - dismissing panel');
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('floating-panel:dismiss', {});
+        }
+      }
+    });
+
+    // Mouse tracking for click-through behavior (like Windows emoji picker)
+    document.body.addEventListener('mouseenter', () => {
+      if (window.electronAPI && window.electronAPI.send) {
+        window.electronAPI.send('floating-panel:set-clickable', true);
+      }
+    });
+
+    document.body.addEventListener('mouseleave', () => {
+      if (window.electronAPI && window.electronAPI.send) {
+        window.electronAPI.send('floating-panel:set-clickable', false);
       }
     });
 
     // Initialize
-    console.log('[FloatingPanel] Initialized in collapsed state');
+    console.log('[FloatingPanel] Initialized in collapsed state with NEW WORKFLOW handlers');
 
     // ==========================================
     // DRAG FUNCTIONALITY (Grammarly-style)

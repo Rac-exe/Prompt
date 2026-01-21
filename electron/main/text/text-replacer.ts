@@ -339,6 +339,133 @@ try {
 
 
   /**
+   * NEW WORKFLOW: Replace @prompt marker with optimized text
+   * Steps:
+   * 1. Move cursor back 7 characters (length of "@prompt")
+   * 2. Select 7 characters forward (select "@prompt")
+   * 3. Delete selection
+   * 4. Paste optimized text
+   *
+   * @param cursorPosition - Current cursor position (after "@prompt")
+   * @param optimizedText - The text to replace @prompt with
+   */
+  async replacePromptMarkerWithText(cursorPosition: number, optimizedText: string): Promise<void> {
+    console.log("[TextReplacer] NEW WORKFLOW: Replacing @prompt marker");
+    console.log("[TextReplacer] Cursor position:", cursorPosition);
+    console.log("[TextReplacer] Will delete 7 chars backward and paste optimized text");
+
+    if (this.platform === "win32") {
+      await this.replacePromptMarkerWindows(optimizedText);
+    } else if (this.platform === "darwin") {
+      await this.replacePromptMarkerMacOS(optimizedText);
+    } else {
+      throw new Error(`Unsupported platform: ${this.platform}`);
+    }
+  }
+
+  /**
+   * Windows implementation: Delete @prompt and paste optimized text
+   * Uses keyboard simulation (Backspace x7 + paste)
+   */
+  private async replacePromptMarkerWindows(optimizedText: string): Promise<void> {
+    const fs = require('fs');
+    const path = require('path');
+    const os = require('os');
+
+    console.log("[TextReplacer] Windows: Deleting @prompt (7 chars) and pasting optimized text");
+
+    // Step 1: Copy optimized text to clipboard
+    await this.copyToClipboard(optimizedText);
+    console.log("[TextReplacer] Optimized text copied to clipboard");
+
+    // Step 2: Send 7 Backspace keys to delete "@prompt"
+    // Use PowerShell SendKeys or use UI Automation
+    const script = `
+Add-Type -AssemblyName System.Windows.Forms
+
+# Send 7 Backspace keys to delete "@prompt"
+for ($i = 0; $i -lt 7; $i++) {
+    [System.Windows.Forms.SendKeys]::SendWait("{BACKSPACE}")
+    Start-Sleep -Milliseconds 20
+}
+
+# Wait a bit
+Start-Sleep -Milliseconds 50
+
+# Send Ctrl+V to paste optimized text
+[System.Windows.Forms.SendKeys]::SendWait("^v")
+
+Write-Host "SUCCESS: @prompt deleted and text pasted"
+`;
+
+    const scriptFile = path.join(os.tmpdir(), `replace-prompt-${Date.now()}.ps1`);
+    fs.writeFileSync(scriptFile, script, 'utf8');
+
+    try {
+      const result = await execAsync(
+        `powershell -ExecutionPolicy Bypass -File "${scriptFile}"`,
+        { timeout: 5000 }
+      );
+
+      // Clean up
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      console.log("[TextReplacer] PowerShell output:", result.stdout);
+
+      if (result.stdout.includes("SUCCESS")) {
+        console.log("[TextReplacer] ✅ @prompt replaced successfully");
+        return;
+      } else {
+        throw new Error("Failed to replace @prompt");
+      }
+    } catch (error) {
+      // Clean up
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch (e) {
+        // Ignore cleanup errors
+      }
+
+      const errorObj = error as any;
+      const errorMsg = errorObj.stderr || errorObj.stdout || errorObj.message || String(error);
+      console.error("[TextReplacer] Failed to replace @prompt:", errorMsg);
+      throw new Error(`Failed to replace @prompt: ${errorMsg}`);
+    }
+  }
+
+  /**
+   * macOS implementation: Delete @prompt and paste optimized text
+   */
+  private async replacePromptMarkerMacOS(optimizedText: string): Promise<void> {
+    console.log("[TextReplacer] macOS: Deleting @prompt and pasting optimized text");
+
+    // Step 1: Copy to clipboard
+    await this.copyToClipboard(optimizedText);
+
+    // Step 2: Use AppleScript to send backspace keys and paste
+    const script = `
+      repeat 7 times
+        tell application "System Events" to keystroke (ASCII character 8)
+        delay 0.02
+      end repeat
+      delay 0.05
+      tell application "System Events" to keystroke "v" using command down
+    `;
+
+    try {
+      await execAsync(`osascript -e '${script.replace(/'/g, "\\'")}'`);
+      console.log("[TextReplacer] ✅ @prompt replaced successfully (macOS)");
+    } catch (error) {
+      console.error("[TextReplacer] macOS replacement failed:", error);
+      throw error;
+    }
+  }
+
+  /**
    * Alternative: Use clipboard approach and show instruction to user
    */
   async copyToClipboard(text: string): Promise<void> {
