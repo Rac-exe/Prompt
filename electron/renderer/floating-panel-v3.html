@@ -310,8 +310,19 @@
             fromState: currentState
           });
         }
-        // Focus textarea after transition
-        setTimeout(() => promptTextarea?.focus(), 300);
+        
+        // Focus textarea after transition with multiple attempts for reliability
+        const focusTextarea = () => {
+          if (promptTextarea) {
+            promptTextarea.focus();
+            console.log('[State] Focused textarea after transition to expanded');
+          }
+        };
+        
+        // Try multiple times to ensure focus (DOM rendering, window focus, etc.)
+        setTimeout(focusTextarea, 100);
+        setTimeout(focusTextarea, 200);
+        setTimeout(focusTextarea, 400);
       }
 
       currentState = newState;
@@ -549,6 +560,14 @@
         transitionToState('expanded');
         promptTextarea.value = '';
         hideOptimizedSection();
+        
+        // Force focus on textarea after transition
+        setTimeout(() => {
+          if (promptTextarea) {
+            promptTextarea.focus();
+            console.log('[IPC] Focused textarea after expand-to-input');
+          }
+        }, 100);
       });
     }
 
@@ -556,7 +575,12 @@
     if (window.electronAPI?.onFocusInput) {
       window.electronAPI.onFocusInput(() => {
         console.log('[IPC] Received focus-input event');
-        promptTextarea?.focus();
+        if (promptTextarea) {
+          promptTextarea.focus();
+          // Also try to select any existing text
+          promptTextarea.select();
+          console.log('[IPC] Focused and selected textarea');
+        }
       });
     }
 

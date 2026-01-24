@@ -198,38 +198,19 @@ export class PromptOptimizerApp extends EventEmitter {
       console.log("[App] Pausing keyboard monitoring");
       this.triggerDetector.textPoller.stop();
 
-      this.floatingPanel.show();
+      // Use the new method that handles show + expand + focus in one go
+      this.floatingPanel.showAndFocusInput();
       this.isPanelVisible = true;
 
-      // Wait for panel to render, then expand to input state and focus
-      setTimeout(() => {
-        const panelWindow = this.floatingPanel.getWindow();
-        if (panelWindow && !panelWindow.isDestroyed()) {
-          console.log("[App] Panel window exists, sending expand-to-input event");
-          // First, tell renderer to switch to expanded state (if it's collapsed)
-          panelWindow.webContents.send("expand-to-input");
-
-          // Simple focus after expand (like Grammarly)
-          setTimeout(() => {
-            panelWindow.focus();
-
-            // Auto-focus input field
-            setTimeout(() => {
-              panelWindow.webContents.executeJavaScript(`
-                const input = document.getElementById('prompt-input');
-                if (input) {
-                  input.focus();
-                  input.select(); // Select any existing text
-                }
-              `);
-            }, 100);
-          }, 100);
-        } else {
-          console.error("[App] Panel window is null or destroyed!");
-        }
-      }, 100);
+      console.log("[App] Panel shown and input focused");
     } else {
-      console.log("[App] Panel already visible, not showing again");
+      console.log("[App] Panel already visible, just focusing input");
+      // Panel is visible, just focus the input
+      const panelWindow = this.floatingPanel.getWindow();
+      if (panelWindow && !panelWindow.isDestroyed()) {
+        panelWindow.focus();
+        panelWindow.webContents.send("focus-input");
+      }
     }
   }
 

@@ -247,7 +247,40 @@ Write-Host "SUCCESS"
   }
 
   /**
-   * Show the panel - Like Windows emoji picker (no tab switching)
+   * Force focus using macOS AppleScript (for macOS only)
+   */
+  private async forceMacOSFocus() {
+    if (process.platform !== 'darwin' || !this.window) return;
+
+    try {
+      console.log('[FloatingPanel] Using macOS API to force focus');
+
+      // Use AppleScript to activate the Electron app and bring it to front
+      const script = `
+        tell application "System Events"
+          set frontmost of process "Electron" to true
+        end tell
+      `;
+
+      await execAsync(`osascript -e '${script}'`);
+      
+      // Also use Electron's built-in focus methods
+      this.window.focus();
+      this.window.moveTop();
+      
+      console.log('[FloatingPanel] macOS focus applied successfully');
+    } catch (error) {
+      console.error('[FloatingPanel] Failed to force focus via macOS API:', error);
+      // Fallback: just use Electron methods
+      if (this.window && !this.window.isDestroyed()) {
+        this.window.focus();
+        this.window.moveTop();
+      }
+    }
+  }
+
+  /**
+   * Show the panel and focus it for immediate input
    */
   show() {
     console.log('[FloatingPanel] === SHOW() CALLED ===');
@@ -255,19 +288,58 @@ Write-Host "SUCCESS"
       console.log('[FloatingPanel] Creating new window');
       this.create();
     } else {
-      console.log('[FloatingPanel] Showing panel (no tab switch)');
+      console.log('[FloatingPanel] Showing panel and focusing for input');
 
-      // Show + focus but don't require tab switching
-      this.window.showInactive(); // Show without stealing focus from ChatGPT
+      // Show the window
+      this.window.show();
       this.window.setAlwaysOnTop(true, "screen-saver");
 
-      // After a moment, focus it (user can keep typing in ChatGPT or overlay)
-      setTimeout(() => {
-        this.window?.focus();
-      }, 50);
+      // Focus the window immediately
+      this.window.focus();
 
-      console.log('[FloatingPanel] - Window shown');
+      // Platform-specific focus handling for reliable input capture
+      if (process.platform === 'win32') {
+        this.forceWindowsFocus();
+      } else if (process.platform === 'darwin') {
+        this.forceMacOSFocus();
+      }
+
+      console.log('[FloatingPanel] - Window shown and focused');
     }
+  }
+
+  /**
+   * Show the panel and expand to input mode with auto-focus
+   */
+  showAndFocusInput() {
+    this.show();
+    
+    // Wait for window to be ready, then expand and focus textarea
+    setTimeout(() => {
+      if (this.window && !this.window.isDestroyed()) {
+        // Send expand-to-input event to renderer
+        this.window.webContents.send("expand-to-input");
+        
+        // Focus the window
+        this.window.focus();
+        
+        // Focus the textarea in the renderer
+        setTimeout(() => {
+          if (this.window && !this.window.isDestroyed()) {
+            this.window.webContents.send("focus-input");
+            
+            // Also execute JS directly to ensure focus
+            this.window.webContents.executeJavaScript(`
+              const textarea = document.getElementById('prompt-textarea');
+              if (textarea) {
+                textarea.focus();
+                console.log('[FloatingPanel] Textarea focused via executeJavaScript');
+              }
+            `).catch(err => console.error('[FloatingPanel] Focus JS error:', err));
+          }
+        }, 150);
+      }
+    }, 100);
   }
 
   /**

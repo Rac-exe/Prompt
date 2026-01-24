@@ -138,87 +138,165 @@ export class TextStatePoller extends EventEmitter {
 
   /**
    * Setup keystroke listener to maintain text buffer
+   * Uses key names (platform-independent) instead of scan codes
    */
   private setupKeystrokeListener() {
     if (!this.listener) {
       return;
     }
 
+    // Debug: Log first few keystrokes to verify capture is working
+    let debugCount = 0;
+    const MAX_DEBUG_LOGS = 10;
+
     this.listener.addListener((event: any) => {
-      const scanCode = event?.scanCode;
-      if (!scanCode) return;
+      // Use key name (platform-independent) - works on both Windows and macOS
+      const keyName = event?.name?.toUpperCase();
+      const state = event?.state;
+      
+      // Debug: Log first few events to verify capture is working
+      if (debugCount < MAX_DEBUG_LOGS && state === 'DOWN') {
+        console.log(`[TextStatePoller] Key captured: "${keyName}" (${debugCount + 1}/${MAX_DEBUG_LOGS})`);
+        debugCount++;
+      }
+      
+      if (!keyName) {
+        // Debug: log raw event to understand what we're getting
+        console.log('[TextStatePoller] Raw event (no keyName):', JSON.stringify(event));
+        return;
+      }
 
       // Track shift state
-      if (scanCode === 42 || scanCode === 54 || scanCode === 160) {
-        if (event?.state === 'DOWN') {
+      if (keyName === 'LEFT SHIFT' || keyName === 'RIGHT SHIFT' || keyName === 'SHIFT') {
+        if (state === 'DOWN') {
           this.shiftPressed = true;
-        } else if (event?.state === 'UP') {
+        } else if (state === 'UP') {
           this.shiftPressed = false;
         }
         return;
       }
 
-      // Track Ctrl state (scan codes: 29 for left Ctrl, 157 for right Ctrl, 162 for VK_CONTROL)
-      if (scanCode === 29 || scanCode === 157 || scanCode === 162 || scanCode === 17) {
-        if (event?.state === 'DOWN') {
+      // Track Ctrl/Cmd state (Cmd on macOS, Ctrl on Windows)
+      if (keyName === 'LEFT CTRL' || keyName === 'RIGHT CTRL' || keyName === 'CTRL' ||
+          keyName === 'LEFT META' || keyName === 'RIGHT META' || keyName === 'META') {
+        if (state === 'DOWN') {
           this.ctrlPressed = true;
-        } else if (event?.state === 'UP') {
+        } else if (state === 'UP') {
           this.ctrlPressed = false;
         }
         return;
       }
 
-      // Detect Ctrl+V (paste)
-      if (this.ctrlPressed && (scanCode === 86 || scanCode === 47)) {
-        if (event?.state === 'DOWN') {
+      // Detect Ctrl+V / Cmd+V (paste)
+      if (this.ctrlPressed && keyName === 'V') {
+        if (state === 'DOWN') {
           this.handlePaste();
         }
         return;
       }
 
       // Only process keydown events
-      if (event?.state !== 'DOWN') return;
+      if (state !== 'DOWN') return;
 
-      // Convert scan code to character
-      let char = this.scanCodeToChar(scanCode);
+      // Convert key name to character
+      let char = this.keyNameToChar(keyName);
       if (!char) return;
 
       // Handle shift-modified keys
-      if (this.shiftPressed && (scanCode === 3 || scanCode === 50)) {
-        char = '@'; // Shift+2 = @
-      } else if (this.shiftPressed && scanCode >= 65 && scanCode <= 90) {
-        char = String.fromCharCode(scanCode); // Keep uppercase
+      if (this.shiftPressed) {
+        const shiftChar = this.getShiftedChar(keyName);
+        if (shiftChar) {
+          char = shiftChar;
+        }
       }
 
-      this.updateTextBuffer(char, scanCode);
+      this.updateTextBuffer(char, 0);
     });
   }
 
   /**
-   * Convert scan code to character
+   * Convert key name to character (platform-independent)
    */
-  private scanCodeToChar(scanCode: number): string | null {
-    // Letters A-Z
-    if (scanCode >= 65 && scanCode <= 90) {
-      return String.fromCharCode(scanCode).toLowerCase();
+  private keyNameToChar(keyName: string): string | null {
+    // Single letter keys (A-Z)
+    if (keyName.length === 1 && keyName >= 'A' && keyName <= 'Z') {
+      return keyName.toLowerCase();
     }
 
-    // Numbers
-    const numbers: { [key: number]: string } = {
-      48: '0', 49: '1', 50: '2', 51: '3', 52: '4',
-      53: '5', 54: '6', 55: '7', 56: '8', 57: '9',
-      3: '2', // Alternate scan code for '2'
+    // Number keys (including numpad)
+    const numberMap: { [key: string]: string } = {
+      '0': '0', '1': '1', '2': '2', '3': '3', '4': '4',
+      '5': '5', '6': '6', '7': '7', '8': '8', '9': '9',
+      'NUMPAD 0': '0', 'NUMPAD 1': '1', 'NUMPAD 2': '2', 'NUMPAD 3': '3', 'NUMPAD 4': '4',
+      'NUMPAD 5': '5', 'NUMPAD 6': '6', 'NUMPAD 7': '7', 'NUMPAD 8': '8', 'NUMPAD 9': '9',
     };
-
-    if (numbers[scanCode]) {
-      return numbers[scanCode];
+    if (numberMap[keyName]) {
+      return numberMap[keyName];
     }
 
     // Special keys
-    if (scanCode === 32) return ' '; // Space
-    if (scanCode === 8) return '\b'; // Backspace
-    if (scanCode === 13 || scanCode === 28) return '\n'; // Enter
+    const specialMap: { [key: string]: string } = {
+      'SPACE': ' ',
+      'BACKSPACE': '\b',
+      'RETURN': '\n',
+      'ENTER': '\n',
+      'TAB': '\t',
+      'DOT': '.',
+      'COMMA': ',',
+      'MINUS': '-',
+      'EQUALS': '=',
+      'SEMICOLON': ';',
+      'QUOTE': "'",
+      'BACKQUOTE': '`',
+      'BRACKET LEFT': '[',
+      'BRACKET RIGHT': ']',
+      'BACKSLASH': '\\',
+      'SLASH': '/',
+    };
+    if (specialMap[keyName]) {
+      return specialMap[keyName];
+    }
 
+    return null;
+  }
+
+  /**
+   * Get the shifted version of a character
+   */
+  private getShiftedChar(keyName: string): string | null {
+    const shiftMap: { [key: string]: string } = {
+      '1': '!',
+      '2': '@',
+      '3': '#',
+      '4': '$',
+      '5': '%',
+      '6': '^',
+      '7': '&',
+      '8': '*',
+      '9': '(',
+      '0': ')',
+      'MINUS': '_',
+      'EQUALS': '+',
+      'BRACKET LEFT': '{',
+      'BRACKET RIGHT': '}',
+      'BACKSLASH': '|',
+      'SEMICOLON': ':',
+      'QUOTE': '"',
+      'COMMA': '<',
+      'DOT': '>',
+      'SLASH': '?',
+      'BACKQUOTE': '~',
+    };
+    
+    if (shiftMap[keyName]) {
+      return shiftMap[keyName];
+    }
+    
+    // Uppercase letters
+    if (keyName.length === 1 && keyName >= 'A' && keyName <= 'Z') {
+      return keyName; // Already uppercase
+    }
+    
     return null;
   }
 
@@ -259,7 +337,7 @@ export class TextStatePoller extends EventEmitter {
   /**
    * Update text buffer based on keystroke
    */
-  private updateTextBuffer(char: string, scanCode: number) {
+  private updateTextBuffer(char: string, _scanCode: number) {
     if (char === '\b') {
       // Backspace
       if (this.textBuffer.length > 0) {
@@ -273,9 +351,18 @@ export class TextStatePoller extends EventEmitter {
       this.textBuffer += char;
     }
 
+    // Debug: Show buffer state (uncomment for debugging)
+    // console.log(`[TextStatePoller] Buffer: "${this.textBuffer.slice(-20)}"`);
+
     // Limit buffer size
     if (this.textBuffer.length > this.MAX_BUFFER_SIZE) {
       this.textBuffer = this.textBuffer.slice(-this.MAX_BUFFER_SIZE);
+    }
+    
+    // Check for @prompt immediately after each keystroke for faster detection
+    if (this.textBuffer.endsWith('@prompt') || this.textBuffer.endsWith('@PROMPT')) {
+      console.log('[TextStatePoller] @prompt detected immediately after keystroke!');
+      this.checkTextState();
     }
   }
 
