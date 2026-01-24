@@ -1,15 +1,13 @@
 import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
-import { GlobalKeyboardListener } from "node-global-key-listener";
+import { uIOhook, UiohookKey } from "uiohook-napi";
 import { FloatingPanel } from "./overlay/floating-panel";
 import { PythonClient } from "./api/python-client";
-import * as path from "path";
 
 // ============================================
 // GLOBAL STATE
 // ============================================
 let floatingPanel: FloatingPanel | null = null;
 let pythonClient: PythonClient | null = null;
-let keyboardListener: GlobalKeyboardListener | null = null;
 let isPanelVisible = false;
 
 // Keystroke tracking for @prompt detection
@@ -19,95 +17,156 @@ const MAX_BUFFER_SIZE = 50;
 let shiftPressed = false;
 
 // ============================================
-// KEYSTROKE DETECTION (Simple, Ghost-style)
+// KEY CODE MAPPING (from Ghost's inputEvents.js)
+// ============================================
+const KEYCODE_MAP: { [key: number]: string } = {
+  // Number row
+  [UiohookKey.Backquote]: '`',
+  [UiohookKey['1']]: '1',
+  [UiohookKey['2']]: '2',
+  [UiohookKey['3']]: '3',
+  [UiohookKey['4']]: '4',
+  [UiohookKey['5']]: '5',
+  [UiohookKey['6']]: '6',
+  [UiohookKey['7']]: '7',
+  [UiohookKey['8']]: '8',
+  [UiohookKey['9']]: '9',
+  [UiohookKey['0']]: '0',
+  [UiohookKey.Minus]: '-',
+  [UiohookKey.Equal]: '=',
+  [UiohookKey.Backspace]: '\b',
+  
+  // Letters
+  [UiohookKey.Q]: 'q',
+  [UiohookKey.W]: 'w',
+  [UiohookKey.E]: 'e',
+  [UiohookKey.R]: 'r',
+  [UiohookKey.T]: 't',
+  [UiohookKey.Y]: 'y',
+  [UiohookKey.U]: 'u',
+  [UiohookKey.I]: 'i',
+  [UiohookKey.O]: 'o',
+  [UiohookKey.P]: 'p',
+  [UiohookKey.BracketLeft]: '[',
+  [UiohookKey.BracketRight]: ']',
+  [UiohookKey.Backslash]: '\\',
+  [UiohookKey.A]: 'a',
+  [UiohookKey.S]: 's',
+  [UiohookKey.D]: 'd',
+  [UiohookKey.F]: 'f',
+  [UiohookKey.G]: 'g',
+  [UiohookKey.H]: 'h',
+  [UiohookKey.J]: 'j',
+  [UiohookKey.K]: 'k',
+  [UiohookKey.L]: 'l',
+  [UiohookKey.Semicolon]: ';',
+  [UiohookKey.Quote]: "'",
+  [UiohookKey.Z]: 'z',
+  [UiohookKey.X]: 'x',
+  [UiohookKey.C]: 'c',
+  [UiohookKey.V]: 'v',
+  [UiohookKey.B]: 'b',
+  [UiohookKey.N]: 'n',
+  [UiohookKey.M]: 'm',
+  [UiohookKey.Comma]: ',',
+  [UiohookKey.Period]: '.',
+  [UiohookKey.Slash]: '/',
+  [UiohookKey.Space]: ' ',
+  [UiohookKey.Enter]: '\n',
+};
+
+// Shift symbol mapping
+const SHIFT_MAP: { [key: string]: string } = {
+  '`': '~', '1': '!', '2': '@', '3': '#', '4': '$', '5': '%',
+  '6': '^', '7': '&', '8': '*', '9': '(', '0': ')', '-': '_',
+  '=': '+', '[': '{', ']': '}', '\\': '|', ';': ':', "'": '"',
+  ',': '<', '.': '>', '/': '?',
+};
+
+// ============================================
+// KEYSTROKE DETECTION (using uiohook-napi like Ghost)
 // ============================================
 function startKeystrokeDetection() {
-  console.log("[Main] Starting keystroke detection for @prompt...");
+  console.log("[Main] Starting keystroke detection with uiohook-napi...");
   
-  try {
-    keyboardListener = new GlobalKeyboardListener();
+  // Debug counter
+  let debugCount = 0;
+  const MAX_DEBUG = 15;
+  
+  // Handle keydown events
+  uIOhook.on('keydown', (event: any) => {
+    // Debug: Log first few keystrokes
+    if (debugCount < MAX_DEBUG) {
+      console.log(`[Main] Key DOWN: keycode=${event.keycode}, shiftKey=${event.shiftKey}`);
+      debugCount++;
+    }
     
-    keyboardListener.addListener((event: any) => {
-      const keyName = event?.name?.toUpperCase();
-      const state = event?.state;
-      
-      if (!keyName) return;
-      
-      // Track shift state
-      if (keyName.includes('SHIFT')) {
-        shiftPressed = state === 'DOWN';
-        return;
-      }
-      
-      // Only process key down events
-      if (state !== 'DOWN') return;
-      
-      // Convert key to character
-      const char = keyToChar(keyName, shiftPressed);
-      if (!char) return;
-      
-      // Handle backspace
-      if (char === '\b') {
-        typedBuffer = typedBuffer.slice(0, -1);
-        return;
-      }
-      
-      // Add to buffer
-      typedBuffer += char;
-      
-      // Keep buffer small
-      if (typedBuffer.length > MAX_BUFFER_SIZE) {
-        typedBuffer = typedBuffer.slice(-MAX_BUFFER_SIZE);
-      }
-      
-      // Check for @prompt trigger (case insensitive)
-      if (typedBuffer.toLowerCase().endsWith(TRIGGER_PHRASE)) {
-        console.log("[Main] @prompt detected! Showing overlay...");
-        showOverlay();
-        // Clear buffer after trigger to prevent re-triggering
-        typedBuffer = "";
-      }
-    });
+    // Track shift state
+    if (event.keycode === UiohookKey.Shift || event.keycode === UiohookKey.ShiftRight) {
+      shiftPressed = true;
+      return;
+    }
     
-    console.log("[Main] Keystroke detection started successfully");
-  } catch (error) {
-    console.error("[Main] Failed to start keystroke detection:", error);
-  }
-}
-
-function keyToChar(keyName: string, shift: boolean): string | null {
-  // Single letters
-  if (keyName.length === 1 && keyName >= 'A' && keyName <= 'Z') {
-    return shift ? keyName : keyName.toLowerCase();
-  }
+    // Get character from keycode
+    let char = KEYCODE_MAP[event.keycode];
+    if (!char) return;
+    
+    // Apply shift modifier
+    if (event.shiftKey || shiftPressed) {
+      if (char.length === 1 && /[a-z]/.test(char)) {
+        char = char.toUpperCase();
+      } else if (SHIFT_MAP[char]) {
+        char = SHIFT_MAP[char];
+      }
+    }
+    
+    // Handle backspace
+    if (char === '\b') {
+      typedBuffer = typedBuffer.slice(0, -1);
+      console.log(`[Main] Backspace - Buffer: "${typedBuffer.slice(-15)}"`);
+      return;
+    }
+    
+    // Skip enter/newline
+    if (char === '\n') return;
+    
+    // Add to buffer
+    typedBuffer += char;
+    
+    // Keep buffer small
+    if (typedBuffer.length > MAX_BUFFER_SIZE) {
+      typedBuffer = typedBuffer.slice(-MAX_BUFFER_SIZE);
+    }
+    
+    console.log(`[Main] Char: "${char}" -> Buffer: "${typedBuffer.slice(-15)}"`);
+    
+    // Check for @prompt trigger (case insensitive)
+    if (typedBuffer.toLowerCase().endsWith(TRIGGER_PHRASE)) {
+      console.log("[Main] *** @prompt DETECTED! Showing overlay... ***");
+      showOverlay();
+      // Clear buffer after trigger
+      typedBuffer = "";
+    }
+  });
   
-  // Numbers and their shift variants
-  const numberMap: { [key: string]: [string, string] } = {
-    '1': ['1', '!'], '2': ['2', '@'], '3': ['3', '#'], '4': ['4', '$'], '5': ['5', '%'],
-    '6': ['6', '^'], '7': ['7', '&'], '8': ['8', '*'], '9': ['9', '('], '0': ['0', ')'],
-  };
-  if (numberMap[keyName]) {
-    return shift ? numberMap[keyName][1] : numberMap[keyName][0];
-  }
+  // Handle keyup for shift tracking
+  uIOhook.on('keyup', (event: any) => {
+    if (event.keycode === UiohookKey.Shift || event.keycode === UiohookKey.ShiftRight) {
+      shiftPressed = false;
+    }
+  });
   
-  // Special keys
-  const specialMap: { [key: string]: string } = {
-    'SPACE': ' ',
-    'BACKSPACE': '\b',
-  };
-  if (specialMap[keyName]) {
-    return specialMap[keyName];
-  }
+  // Start uiohook
+  uIOhook.start();
   
-  return null;
+  console.log("[Main] uiohook-napi started successfully");
+  console.log("[Main] Type some keys to test - you should see logs...");
 }
 
 function stopKeystrokeDetection() {
-  if (keyboardListener) {
-    keyboardListener.kill();
-    keyboardListener = null;
-    console.log("[Main] Keystroke detection stopped");
-  }
+  console.log("[Main] Stopping uiohook-napi...");
+  uIOhook.stop();
+  console.log("[Main] uiohook-napi stopped");
 }
 
 // ============================================
