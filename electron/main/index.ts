@@ -215,6 +215,15 @@ function setupIPC() {
     hideOverlay();
   });
   
+  // Handle when panel transitions to collapsed state (user clicked close button)
+  ipcMain.on("floating-panel:resize-and-reposition", (event, data: { width: number; height: number; fromState: string }) => {
+    // If resizing to collapsed state (64x64 orb), treat as hidden
+    if (data.width === 64 && data.height === 64) {
+      console.log("[Main] Panel collapsed to orb - marking as not visible");
+      isPanelVisible = false;
+    }
+  });
+  
   // Handle prompt submission for optimization
   ipcMain.on("floating-panel:prompt-submit", async (event, promptText: string) => {
     console.log("[Main] Prompt submitted:", promptText.substring(0, 50));
