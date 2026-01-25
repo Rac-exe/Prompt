@@ -20,7 +20,7 @@
   </style>
 </head>
 <body class="w-full h-full flex items-center justify-center bg-transparent">
-  <div class="w-[400px] rounded-[20px] bg-[#FEF0FA] p-[32px] flex flex-col gap-4 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.08)]">
+  <div id="popup-container" class="w-[400px] rounded-[20px] bg-[#FEF0FA] p-[32px] flex flex-col gap-4 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.08)] cursor-move">
       <!-- Mini input bar inside card -->
       <div class="flex h-[42px] w-full items-center rounded-[100px] bg-white/60 border border-[#E5E7EB] px-[2px]">
         <div class="ml-[10px] w-[28px] h-[28px]">
@@ -139,26 +139,49 @@
         if (window.electronAPI && window.electronAPI.copyToClipboard) {
           // Use IPC to copy (works even when window not focused)
           window.electronAPI.copyToClipboard(textToUse);
-          // Show brief feedback
+
+          // Enhanced visual feedback
           const copyBtn = document.getElementById("copy-btn");
+          const originalContent = copyBtn.innerHTML;
+
+          // Change to success state
+          copyBtn.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          `;
           copyBtn.style.backgroundColor = "#10B981";
-          // Close popup after short delay so user sees the feedback
+          copyBtn.style.transform = "scale(1.05)";
+
+          // Reset after 1.5 seconds (don't auto-close popup for better UX)
           setTimeout(() => {
-            if (window.electronAPI) {
-              window.electronAPI.dismiss();
-            }
-          }, 300);
+            copyBtn.innerHTML = originalContent;
+            copyBtn.style.backgroundColor = "";
+            copyBtn.style.transform = "";
+          }, 1500);
+
         } else {
           // Fallback to navigator.clipboard (requires focus)
           navigator.clipboard.writeText(textToUse).then(() => {
+            // Enhanced visual feedback
             const copyBtn = document.getElementById("copy-btn");
+            const originalContent = copyBtn.innerHTML;
+
+            // Change to success state
+            copyBtn.innerHTML = `
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            `;
             copyBtn.style.backgroundColor = "#10B981";
-            // Close popup after short delay
+            copyBtn.style.transform = "scale(1.05)";
+
+            // Reset after 1.5 seconds
             setTimeout(() => {
-              if (window.electronAPI) {
-                window.electronAPI.dismiss();
-              }
-            }, 300);
+              copyBtn.innerHTML = originalContent;
+              copyBtn.style.backgroundColor = "";
+              copyBtn.style.transform = "";
+            }, 1500);
           }).catch(err => {
             console.error("Failed to copy:", err);
             alert("Failed to copy to clipboard");
@@ -201,6 +224,64 @@
         // Note: The popup will be dismissed and a new one will appear with fresh optimization
       } else if (window.electronAPI) {
         window.electronAPI.dismiss();
+      }
+    });
+
+    // ==========================================
+    // DRAG FUNCTIONALITY
+    // ==========================================
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+
+    const popupContainer = document.getElementById('popup-container');
+
+    if (popupContainer) {
+      popupContainer.addEventListener('mousedown', (e) => {
+        // Don't start drag if clicking on buttons
+        if (e.target.closest('button')) {
+          return;
+        }
+
+        isDragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('popup:drag-start', {
+            contextKey: (globalThis as any).__contextKey,
+            x: dragStartX,
+            y: dragStartY
+          });
+        }
+
+        e.preventDefault();
+      });
+    }
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('popup:drag-move', {
+          contextKey: (globalThis as any).__contextKey,
+          x: e.clientX,
+          y: e.clientY
+        });
+      }
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      if (!isDragging) return;
+
+      isDragging = false;
+
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('popup:drag-end', {
+          contextKey: (globalThis as any).__contextKey,
+          x: e.clientX,
+          y: e.clientY
+        });
       }
     });
   </script>

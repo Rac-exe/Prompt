@@ -114,17 +114,38 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
     const script = `
       tell application "System Events"
         set frontApp to name of first application process whose frontmost is true
-        set frontWindow to window 1 of process frontApp
-        set windowPosition to position of frontWindow
-        set windowSize to size of frontWindow
-        set windowTitle to title of frontWindow
+        
+        -- Skip if this is Electron (our own app)
+        if frontApp is "Electron" or frontApp is "node" then
+          return "SKIP"
+        end if
+        
+        try
+          set frontWindow to window 1 of process frontApp
+          set windowPosition to position of frontWindow
+          set windowSize to size of frontWindow
+          set windowTitle to title of frontWindow
+          return (item 1 of windowPosition as text) & ", " & (item 2 of windowPosition as text) & "|" & (item 1 of windowSize as text) & ", " & (item 2 of windowSize as text) & "|" & windowTitle & "|" & frontApp
+        on error
+          -- App has no windows, return basic info
+          return "0, 0|800, 600|" & frontApp & "|" & frontApp
+        end try
       end tell
-      return windowPosition & "|" & windowSize & "|" & windowTitle & "|" & frontApp
     `;
 
     try {
       const { stdout } = await execAsync(`osascript -e '${script}'`);
-      const parts = stdout.trim().split("|");
+      const output = stdout.trim();
+      
+      // Skip if it's our own app
+      if (output === "SKIP") {
+        if (this.currentContext) {
+          return this.currentContext; // Return last known context
+        }
+        throw new Error("Electron app is focused, no external window context");
+      }
+      
+      const parts = output.split("|");
       const pos = parts[0].split(", ").map(Number);
       const size = parts[1].split(", ").map(Number);
       
@@ -132,10 +153,10 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
         handle: "unknown",
         title: parts[2] || "",
         bounds: {
-          x: pos[0],
-          y: pos[1],
-          width: size[0],
-          height: size[1]
+          x: pos[0] || 0,
+          y: pos[1] || 0,
+          width: size[0] || 800,
+          height: size[1] || 600
         },
         processName: parts[3] || "unknown"
       };
@@ -161,7 +182,7 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
         this.currentContext = await this.getActiveWindow();
       } catch (error) {
         // Silently fail - window tracking is best effort
-        console.debug("Failed to update window context:", error);
+        // Don't log - this happens when our own app is focused
       }
     }, intervalMs);
   }

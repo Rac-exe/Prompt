@@ -120,10 +120,13 @@ export class PromptOptimizerApp extends EventEmitter {
     });
 
     // Listen to floating panel events
-    this.floatingPanel.on("prompt-submit", (promptText: string) => {
-      console.log("[App] Prompt submitted from floating panel:", promptText.substring(0, 50));
+    this.floatingPanel.on("prompt-submit", (data: string | { text: string; isRegenerate?: boolean }) => {
+      const promptText = typeof data === 'string' ? data : data.text;
+      const isRegenerate = typeof data === 'string' ? false : !!data.isRegenerate;
+      
+      console.log("[App] Prompt submitted from floating panel:", promptText.substring(0, 50), isRegenerate ? "(Regenerate)" : "");
       // Manually trigger optimization via the trigger detector
-      this.handleFloatingPanelPrompt(promptText);
+      this.handleFloatingPanelPrompt(promptText, isRegenerate);
     });
 
     this.floatingPanel.on("voice-start", () => {
@@ -134,7 +137,7 @@ export class PromptOptimizerApp extends EventEmitter {
       console.log("[App] Voice input stopped, transcript:", transcript.substring(0, 50));
       // Automatically trigger optimization after voice input
       if (transcript && transcript.trim().length >= 10) {
-        this.handleFloatingPanelPrompt(transcript);
+        this.handleFloatingPanelPrompt(transcript, false);
       }
     });
 
@@ -198,38 +201,19 @@ export class PromptOptimizerApp extends EventEmitter {
       console.log("[App] Pausing keyboard monitoring");
       this.triggerDetector.textPoller.stop();
 
-      this.floatingPanel.show();
+      // Use the new method that handles show + expand + focus in one go
+      this.floatingPanel.showAndFocusInput();
       this.isPanelVisible = true;
 
-      // Wait for panel to render, then expand to input state and focus
-      setTimeout(() => {
-        const panelWindow = this.floatingPanel.getWindow();
-        if (panelWindow && !panelWindow.isDestroyed()) {
-          console.log("[App] Panel window exists, sending expand-to-input event");
-          // First, tell renderer to switch to expanded state (if it's collapsed)
-          panelWindow.webContents.send("expand-to-input");
-
-          // Simple focus after expand (like Grammarly)
-          setTimeout(() => {
-            panelWindow.focus();
-
-            // Auto-focus input field
-            setTimeout(() => {
-              panelWindow.webContents.executeJavaScript(`
-                const input = document.getElementById('prompt-input');
-                if (input) {
-                  input.focus();
-                  input.select(); // Select any existing text
-                }
-              `);
-            }, 100);
-          }, 100);
-        } else {
-          console.error("[App] Panel window is null or destroyed!");
-        }
-      }, 100);
+      console.log("[App] Panel shown and input focused");
     } else {
-      console.log("[App] Panel already visible, not showing again");
+      console.log("[App] Panel already visible, just focusing input");
+      // Panel is visible, just focus the input
+      const panelWindow = this.floatingPanel.getWindow();
+      if (panelWindow && !panelWindow.isDestroyed()) {
+        panelWindow.focus();
+        panelWindow.webContents.send("focus-input");
+      }
     }
   }
 
@@ -237,11 +221,11 @@ export class PromptOptimizerApp extends EventEmitter {
    * Handle prompt submission from floating panel
    * NEW WORKFLOW: Trigger optimization, then replace @prompt with optimized text
    */
-  private async handleFloatingPanelPrompt(promptText: string) {
-    console.log("[App] Processing floating panel prompt:", promptText);
+  private async handleFloatingPanelPrompt(promptText: string, isRegenerate: boolean = false) {
+    console.log("[App] Processing floating panel prompt:", promptText, isRegenerate ? "(Regenerate)" : "");
 
     // Trigger optimization
-    await this.triggerDetector.triggerManualOptimization(promptText);
+    await this.triggerDetector.triggerManualOptimization(promptText, isRegenerate);
 
     // Wait for optimization to complete (listen to optimization-completed event)
     // The optimization result will be available after this event fires
@@ -330,12 +314,12 @@ export class PromptOptimizerApp extends EventEmitter {
       throw error;
     }
 
-    // Create floating panel but keep it hidden (don't call show())
-    // Panel will be shown when user presses Ctrl+5
+    // Create floating panel and show it immediately (orb mode)
     try {
       this.floatingPanel.create();
-      this.floatingPanel.hide(); // Start hidden
-      console.log("Floating panel created (hidden by default)");
+      this.floatingPanel.show(); // Show the orb immediately
+      this.isPanelVisible = true; // Mark as visible
+      console.log("Floating panel created and shown (orb mode)");
     } catch (error) {
       console.error("Failed to create floating panel:", error);
     }
@@ -362,17 +346,18 @@ export class PromptOptimizerApp extends EventEmitter {
   }
 
   /**
-   * Toggle floating panel visibility
+   * Toggle floating panel expanded state
    */
   private togglePanel() {
-    if (this.isPanelVisible) {
-      this.floatingPanel.hide();
-      this.isPanelVisible = false;
-      console.log("[App] Floating panel hidden (Ctrl+5)");
+    const panelWindow = this.floatingPanel.getWindow();
+    if (panelWindow && !panelWindow.isDestroyed()) {
+      console.log("[App] Toggling panel state via Ctrl+5");
+      panelWindow.webContents.send("toggle-state");
     } else {
+      console.log("[App] Recreating panel window");
+      this.floatingPanel.create();
       this.floatingPanel.show();
       this.isPanelVisible = true;
-      console.log("[App] Floating panel shown (Ctrl+5)");
     }
   }
 

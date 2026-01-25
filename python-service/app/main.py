@@ -311,13 +311,20 @@ async def optimize_prompt(request: OptimizeRequest):
 
     prompt_text = request.prompt.strip()
 
+    # For regenerate requests, add a unique identifier to force different results
+    if request.skip_cache:
+        import time
+        unique_id = str(int(time.time() * 1000000))  # Microsecond precision
+        prompt_text = f"{prompt_text}\n\n[REGENERATE_{unique_id}]"
+        print(f"[Optimize] Regenerate request - added unique ID: {unique_id}")
+
     # Check cache (skip if refresh requested)
     if not request.skip_cache and prompt_text in prompt_cache:
         print(f"[Optimize] Cache hit - returning cached result")
         latency = (time.time() - start_time) * 1000
         return OptimizeResponse(
             optimized=prompt_cache[prompt_text],
-            original=prompt_text,
+            original=request.prompt.strip(),  # Return original without unique ID
             latency_ms=latency
         )
 
@@ -332,6 +339,9 @@ async def optimize_prompt(request: OptimizeRequest):
         print(f"[Optimize] Detected prompt type: {prompt_type}")
         print(f"[Optimize] Applying {prompt_type} optimization strategy")
 
+        # Use higher temperature for regenerate requests to ensure different results
+        temperature = 1.2 if request.skip_cache else 0.7
+
         # Call Ollama with adaptive system prompt
         response = ollama.chat(
             model="llama3.2",  # Default model - user should configure
@@ -341,7 +351,7 @@ async def optimize_prompt(request: OptimizeRequest):
                 {"role": "user", "content": prompt_text}
             ],
             options={
-                "temperature": 0.7,
+                "temperature": temperature,
                 "num_predict": 800  # Increased from 500 to allow for richer optimizations
             }
         )
@@ -349,21 +359,27 @@ async def optimize_prompt(request: OptimizeRequest):
         optimized = response["message"]["content"]
         optimized = clean_optimized_text(optimized)
 
-        print(f"[Optimize] Original length: {len(prompt_text)} chars")
-        print(f"[Optimize] Optimized length: {len(optimized)} chars")
-        print(f"[Optimize] Improvement ratio: {len(optimized)/len(prompt_text):.2f}x")
+        # Remove the unique ID from optimized text if it was added for regenerate
+        if request.skip_cache and "[REGENERATE_" in optimized:
+            import re
+            optimized = re.sub(r'\n*\[REGENERATE_\d+\]', '', optimized).strip()
 
-        # Cache the result
+        print(f"[Optimize] Original length: {len(request.prompt.strip())} chars")
+        print(f"[Optimize] Optimized length: {len(optimized)} chars")
+        print(f"[Optimize] Improvement ratio: {len(optimized)/len(request.prompt.strip()):.2f}x")
+
+        # Cache the result (use original prompt as key)
+        cache_key = request.prompt.strip()
         if len(prompt_cache) >= MAX_CACHE_SIZE:
             # Remove oldest entry (simple FIFO)
             prompt_cache.pop(next(iter(prompt_cache)))
-        prompt_cache[prompt_text] = optimized
+        prompt_cache[cache_key] = optimized
 
         latency = (time.time() - start_time) * 1000
 
         return OptimizeResponse(
             optimized=optimized,
-            original=prompt_text,
+            original=request.prompt.strip(),
             latency_ms=latency
         )
 
