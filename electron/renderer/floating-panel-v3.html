@@ -447,12 +447,26 @@
     // EVENT HANDLERS
     // ==========================================
 
-    // Logo button - expand to input
+    // Logo button - toggle between collapsed and expanded
     logoButton.addEventListener('click', () => {
-      transitionToState('expanded');
+      if (currentState === 'collapsed') {
+        transitionToState('expanded');
+      } else {
+        transitionToState('collapsed');
+      }
     });
 
-    // Close button
+    // Also make the orb in the header clickable to collapse
+    const headerOrb = document.querySelector('#expanded-state .w-8.h-8.rounded-full');
+    if (headerOrb) {
+      headerOrb.classList.add('cursor-pointer', 'hover:scale-110', 'transition-transform');
+      headerOrb.addEventListener('click', () => {
+        hideOptimizedSection();
+        transitionToState('collapsed');
+      });
+    }
+
+    // Close button - also collapses
     closeButton.addEventListener('click', () => {
       hideOptimizedSection();
       transitionToState('collapsed');
@@ -477,12 +491,50 @@
       }
     });
 
-    // Retry button
+    // Retry button (Regenerate)
     retryButton.addEventListener('click', () => {
       if (originalPrompt) {
-        optimizePrompt(originalPrompt);
+        // Clear previous optimized prompt to show it's working
+        optimizedPrompt = '';
+        optimizedText.innerHTML = '<span class="thinking-dots">Regenerating</span>';
+        setStatus('optimizing', 'Regenerating');
+        
+        if (window.electronAPI?.send) {
+          window.electronAPI.send('floating-panel:prompt-submit', { 
+            text: originalPrompt, 
+            isRegenerate: true 
+          });
+        }
       }
     });
+
+    // Helper for visual feedback
+    function showCopyFeedback(button) {
+      const originalContent = button.innerHTML;
+      const isIconOnly = !button.querySelector('span');
+      
+      if (isIconOnly) {
+        button.innerHTML = `
+          <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+          </svg>
+        `;
+      } else {
+        const span = button.querySelector('span');
+        const originalText = span.textContent;
+        span.textContent = 'Copied!';
+        button.classList.add('bg-green-900/30', 'text-green-400');
+        button.classList.remove('bg-gray-800', 'hover:bg-gray-700');
+      }
+
+      setTimeout(() => {
+        button.innerHTML = originalContent;
+        if (!isIconOnly) {
+          button.classList.remove('bg-green-900/30', 'text-green-400');
+          button.classList.add('bg-gray-800', 'hover:bg-gray-700');
+        }
+      }, 2000);
+    }
 
     // Copy buttons
     copyInputBtn.addEventListener('click', () => {
@@ -490,6 +542,7 @@
       if (text) {
         navigator.clipboard.writeText(text).then(() => {
           console.log('[Copy] Input copied');
+          showCopyFeedback(copyInputBtn);
         });
       }
     });
@@ -498,6 +551,7 @@
       if (optimizedPrompt) {
         navigator.clipboard.writeText(optimizedPrompt).then(() => {
           console.log('[Copy] Optimized text copied');
+          showCopyFeedback(copyOptimizedBtn);
         });
       }
     });
@@ -506,6 +560,7 @@
       if (optimizedPrompt) {
         navigator.clipboard.writeText(optimizedPrompt).then(() => {
           console.log('[Copy] Optimized text copied');
+          showCopyFeedback(copyButton);
         });
       }
     });
@@ -580,6 +635,19 @@
           // Also try to select any existing text
           promptTextarea.select();
           console.log('[IPC] Focused and selected textarea');
+        }
+      });
+    }
+
+    // Listen for toggle-state event
+    if (window.electronAPI?.onToggleState) {
+      window.electronAPI.onToggleState(() => {
+        console.log('[IPC] Received toggle-state event');
+        if (currentState === 'collapsed') {
+          transitionToState('expanded');
+        } else {
+          hideOptimizedSection();
+          transitionToState('collapsed');
         }
       });
     }
@@ -687,9 +755,9 @@
     document.addEventListener('mousemove', (e) => {
       if (!isDragging) return;
 
-      if (window.electronAPI?.send) {
-        window.electronAPI.send('floating-panel:drag-move', { x: e.clientX, y: e.clientY });
-      }
+      // Note: We no longer send drag-move events to the main process
+      // to avoid IPC bottleneck. The main process now uses a high-frequency
+      // timer triggered by drag-start for buttery smooth movement.
     });
 
     document.addEventListener('mouseup', (e) => {

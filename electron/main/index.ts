@@ -225,8 +225,11 @@ function setupIPC() {
   });
   
   // Handle prompt submission for optimization
-  ipcMain.on("floating-panel:prompt-submit", async (event, promptText: string) => {
-    console.log("[Main] Prompt submitted:", promptText.substring(0, 50));
+  ipcMain.on("floating-panel:prompt-submit", async (event, data: string | { text: string; isRegenerate?: boolean }) => {
+    const promptText = (typeof data === 'string' ? data : data?.text) || "";
+    const skipCache = typeof data === 'string' ? false : !!data?.isRegenerate;
+    
+    console.log("[Main] Prompt submitted:", promptText.substring(0, 50), skipCache ? "(Regenerate)" : "");
     
     if (!pythonClient) {
       console.error("[Main] Python client not available");
@@ -235,7 +238,7 @@ function setupIPC() {
     
     try {
       // Call Python service for optimization
-      const optimizedText = await pythonClient.optimize(promptText);
+      const optimizedText = await pythonClient.optimize(promptText, skipCache);
       
       // Send result back to renderer
       const panelWindow = floatingPanel?.getWindow();

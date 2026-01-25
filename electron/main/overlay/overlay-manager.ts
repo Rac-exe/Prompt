@@ -19,6 +19,10 @@ export class OverlayManager extends EventEmitter {
   private dismissCheckInterval: NodeJS.Timeout | null = null; // Timer to check for dismiss conditions
   private triggerDetector: any = null; // Will be set after construction to avoid circular dependency
   private windowTracker: WindowTracker; // Track window focus for UI Automation
+  private isDragging: boolean = false;
+  private dragStartPosition: { x: number; y: number } = { x: 0, y: 0 };
+  private draggedPopup: BrowserWindow | null = null;
+  private draggedPopupInitialBounds: { x: number; y: number; width: number; height: number } | null = null;
 
   constructor() {
     super();
@@ -145,6 +149,78 @@ export class OverlayManager extends EventEmitter {
         // Emit event to trigger re-optimization
         this.emit("re-optimize-requested", data.originalText);
       }
+    });
+
+    // Handle popup drag events
+    ipcMain.on("popup:drag-start", (event, data: { contextKey: string; x: number; y: number }) => {
+      const promptData = this.promptContexts.get(data.contextKey);
+      if (promptData && this.popups.has(data.contextKey)) {
+        this.isDragging = true;
+        this.dragStartPosition = data;
+        this.draggedPopup = this.popups.get(data.contextKey)!;
+        this.draggedPopupInitialBounds = this.draggedPopup.getBounds();
+        console.log("[OverlayManager] Popup drag started for context:", data.contextKey);
+      }
+    });
+
+    ipcMain.on("popup:drag-move", (event, data: { contextKey: string; x: number; y: number }) => {
+      if (!this.isDragging || !this.draggedPopup || !this.draggedPopupInitialBounds) return;
+
+      // Calculate new position based on initial bounds + mouse delta
+      const deltaX = data.x - this.dragStartPosition.x;
+      const deltaY = data.y - this.dragStartPosition.y;
+
+      let screenX = this.draggedPopupInitialBounds.x + deltaX;
+      let screenY = this.draggedPopupInitialBounds.y + deltaY;
+
+      // Get screen bounds to prevent going off-screen
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+      // Constrain to screen bounds (allow some margin for taskbar, etc.)
+      const minX = 0;
+      const minY = 0;
+      const maxX = screenWidth - this.draggedPopupInitialBounds.width;
+      const maxY = screenHeight - this.draggedPopupInitialBounds.height;
+
+      screenX = Math.max(minX, Math.min(screenX, maxX));
+      screenY = Math.max(minY, Math.min(screenY, maxY));
+
+      // Move window smoothly (no bounds checking during move for performance)
+      this.draggedPopup.setPosition(screenX, screenY);
+    });
+
+    ipcMain.on("popup:drag-end", (event, data: { contextKey: string; x: number; y: number }) => {
+      if (!this.isDragging || !this.draggedPopup || !this.draggedPopupInitialBounds) return;
+
+      // Calculate final position based on initial bounds + mouse delta
+      const deltaX = data.x - this.dragStartPosition.x;
+      const deltaY = data.y - this.dragStartPosition.y;
+
+      let screenX = this.draggedPopupInitialBounds.x + deltaX;
+      let screenY = this.draggedPopupInitialBounds.y + deltaY;
+
+      // Get screen bounds to prevent going off-screen
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+
+      // Constrain to screen bounds
+      const minX = 0;
+      const minY = 0;
+      const maxX = screenWidth - this.draggedPopupInitialBounds.width;
+      const maxY = screenHeight - this.draggedPopupInitialBounds.height;
+
+      screenX = Math.max(minX, Math.min(screenX, maxX));
+      screenY = Math.max(minY, Math.min(screenY, maxY));
+
+      // Set final position
+      this.draggedPopup.setPosition(screenX, screenY);
+
+      // Reset drag state
+      this.isDragging = false;
+      this.draggedPopup = null;
+      this.draggedPopupInitialBounds = null;
+      console.log("[OverlayManager] Popup drag ended for context:", data.contextKey);
     });
   }
 

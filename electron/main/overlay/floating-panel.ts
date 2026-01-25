@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, app } from "electron";
+import { BrowserWindow, ipcMain, app, screen } from "electron";
 import * as path from "path";
 import { SnapPositionCalculator, SnapPosition, ScreenCoordinates } from "./snap-positions";
 import { EventEmitter } from "events";
@@ -21,6 +21,8 @@ export class FloatingPanel extends EventEmitter {
   private isTranscribing: boolean = false;
   private sessionId: string | null = null;
   private collapsedPosition: { x: number; y: number } | null = null; // Remember orb position
+
+  private dragTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -95,45 +97,83 @@ export class FloatingPanel extends EventEmitter {
    */
   private setupIPC() {
     // Start drag
-    ipcMain.on("floating-panel:drag-start", (event, data: { x: number; y: number }) => {
+    ipcMain.on("floating-panel:drag-start", (event) => {
+      if (!this.window || this.isDragging) return;
+      
       this.isDragging = true;
-      this.dragStartPosition = data;
-      console.log("[FloatingPanel] Drag started");
+      const cursor = screen.getCursorScreenPoint();
+      const bounds = this.window.getBounds();
+      
+      // Offset from cursor to window top-left
+      this.dragStartPosition = {
+        x: cursor.x - bounds.x,
+        y: cursor.y - bounds.y
+      };
+
+      // Use local variables for position to avoid repeated getBounds() calls
+      let currentX = bounds.x;
+      let currentY = bounds.y;
+
+      // Start a high-frequency timer for smooth movement without IPC lag
+      if (this.dragTimer) clearInterval(this.dragTimer);
+      this.dragTimer = setInterval(() => {
+        if (!this.isDragging || !this.window) {
+          if (this.dragTimer) {
+            clearInterval(this.dragTimer);
+            this.dragTimer = null;
+          }
+          return;
+        }
+
+        const currentCursor = screen.getCursorScreenPoint();
+        let targetX = currentCursor.x - this.dragStartPosition.x;
+        let targetY = currentCursor.y - this.dragStartPosition.y;
+
+        // Enforce screen bounds
+        const display = screen.getDisplayNearestPoint(currentCursor);
+        const workArea = display.workArea;
+        const windowBounds = this.window.getBounds(); // Get current size
+
+        targetX = Math.max(workArea.x, Math.min(targetX, workArea.x + workArea.width - windowBounds.width));
+        targetY = Math.max(workArea.y, Math.min(targetY, workArea.y + workArea.height - windowBounds.height));
+
+        const finalX = Math.floor(targetX);
+        const finalY = Math.floor(targetY);
+        
+        // Only move if position changed significantly
+        if (finalX !== currentX || finalY !== currentY) {
+          this.window.setPosition(finalX, finalY);
+          currentX = finalX;
+          currentY = finalY;
+        }
+      }, 8); // ~120 FPS for extreme smoothness
+
+      console.log("[FloatingPanel] Drag started at offset:", this.dragStartPosition);
     });
 
-    // During drag - move window freely (no snapping)
-    ipcMain.on("floating-panel:drag-move", (event, data: { x: number; y: number }) => {
-      if (!this.isDragging || !this.window) return;
-
-      // Calculate cursor position in screen coordinates
-      const bounds = this.window.getBounds();
-      const screenX = bounds.x + data.x - this.dragStartPosition.x;
-      const screenY = bounds.y + data.y - this.dragStartPosition.y;
-
-      // Move window to follow cursor freely
-      this.window.setPosition(screenX, screenY);
+    // During drag - the timer handles movement, but we keep this for compatibility
+    ipcMain.on("floating-panel:drag-move", (event) => {
+      // Handled by timer for smoothness
     });
 
-    // End drag - keep window at current position (no snapping)
-    ipcMain.on("floating-panel:drag-end", (event, data: { x: number; y: number }) => {
-      if (!this.isDragging || !this.window) return;
-
-      // Calculate final position
-      const bounds = this.window.getBounds();
-      const screenX = bounds.x + data.x - this.dragStartPosition.x;
-      const screenY = bounds.y + data.y - this.dragStartPosition.y;
-
-      // Set final position (no snapping)
-      this.window.setPosition(screenX, screenY);
-
+    // End drag
+    ipcMain.on("floating-panel:drag-end", (event) => {
       this.isDragging = false;
-      console.log("[FloatingPanel] Dragged to position:", { x: screenX, y: screenY });
+      if (this.dragTimer) {
+        clearInterval(this.dragTimer);
+        this.dragTimer = null;
+      }
+      if (this.window) {
+        const bounds = this.window.getBounds();
+        console.log("[FloatingPanel] Drag ended at:", { x: bounds.x, y: bounds.y });
+      }
     });
 
     // Prompt submitted from text box
-    ipcMain.on("floating-panel:prompt-submit", (event, promptText: string) => {
+    ipcMain.on("floating-panel:prompt-submit", (event, data: string | { text: string; isRegenerate?: boolean }) => {
+      const promptText = typeof data === 'string' ? data : data.text;
       console.log("[FloatingPanel] Prompt submitted:", promptText.substring(0, 50));
-      this.emit("prompt-submit", promptText);
+      this.emit("prompt-submit", data);
     });
 
     // Voice input started
@@ -415,7 +455,6 @@ Write-Host "SUCCESS"
   resizeAndReposition(width: number, height: number, fromState: string) {
     if (!this.window || this.window.isDestroyed()) return;
 
-    const { screen } = require('electron');
     const currentBounds = this.window.getBounds();
     const display = screen.getDisplayNearestPoint({ x: currentBounds.x, y: currentBounds.y });
     const screenBounds = display.workArea;
@@ -429,51 +468,12 @@ Write-Host "SUCCESS"
       this.collapsedPosition = { x: currentBounds.x, y: currentBounds.y };
       console.log(`[FloatingPanel] Saved collapsed position: (${currentBounds.x}, ${currentBounds.y})`);
 
-      // Calculate if we're near edges
-      const distanceFromLeft = currentBounds.x - screenBounds.x;
-      const distanceFromRight = (screenBounds.x + screenBounds.width) - (currentBounds.x + currentBounds.width);
-      const distanceFromTop = currentBounds.y - screenBounds.y;
-      const distanceFromBottom = (screenBounds.y + screenBounds.height) - (currentBounds.y + currentBounds.height);
-
-      // Horizontal positioning (for expanded state especially)
-      if (width > currentBounds.width) {
-        // Need to expand horizontally
-        const widthDiff = width - currentBounds.width;
-
-        // If near right edge, expand to the left
-        if (distanceFromRight < widthDiff / 2) {
-          newX = currentBounds.x - widthDiff;
-        }
-        // If near left edge, expand to the right
-        else if (distanceFromLeft < widthDiff / 2) {
-          newX = currentBounds.x;
-        }
-        // Otherwise, expand from center (but check if it fits)
-        else {
-          newX = currentBounds.x - widthDiff / 2;
-        }
-      }
-
-      // Vertical positioning
-      if (height > currentBounds.height) {
-        const heightDiff = height - currentBounds.height;
-
-        // If near bottom edge, expand upward
-        if (distanceFromBottom < heightDiff / 2) {
-          newY = currentBounds.y - heightDiff;
-        }
-        // If near top edge, expand downward
-        else if (distanceFromTop < heightDiff / 2) {
-          newY = currentBounds.y;
-        }
-        // Otherwise, expand from center
-        else {
-          newY = currentBounds.y - heightDiff / 2;
-        }
-      }
+      // Default: keep the top-left as the anchor
+      newX = currentBounds.x;
+      newY = currentBounds.y;
     }
     // When collapsing back to orb, restore saved position
-    else if ((fromState === 'expanded' || fromState === 'detailed') && width === 96 && height === 96) {
+    else if ((fromState === 'expanded' || fromState === 'detailed') && width === 64 && height === 64) {
       if (this.collapsedPosition) {
         newX = this.collapsedPosition.x;
         newY = this.collapsedPosition.y;

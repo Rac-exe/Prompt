@@ -20,6 +20,7 @@ declare global {
       onExpandToInput: (callback: () => void) => void;
       onFocusInput: (callback: () => void) => void;
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
+      onToggleState: (callback: () => void) => void;
     };
   }
 }
@@ -85,6 +86,9 @@ const electronAPI = {
   },
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
     ipcRenderer.on("optimization-complete", (event, data) => callback(data));
+  },
+  onToggleState: (callback: () => void) => {
+    ipcRenderer.on("toggle-state", () => callback());
   }
 };
 
