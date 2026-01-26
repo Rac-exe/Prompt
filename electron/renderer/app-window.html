@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Prompt | Obsidian Core</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "obsidian": "#000000",
+                        "charcoal": "#0a0a0a",
+                        "silver-light": "#e5e5e5",
+                        "silver-dark": "#a3a3a3",
+                        "border-silver": "rgba(255, 255, 255, 0.1)"
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    }
+                },
+            },
+        }
+    </script>
+    <style type="text/tailwindcss">
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background-color: #000000;
+        }
+        .glass-sidebar {
+            background: rgba(10, 10, 10, 0.8);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .obsidian-gradient {
+            background: radial-gradient(circle at center, #0a0a0a 0%, #000000 100%);
+        }
+        .nav-item {
+            transition: all 0.2s ease;
+        }
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .nav-active {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+        }
+        .white-glow-button {
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+        }
+        .white-glow-button:hover {
+            box-shadow: 0 0 25px rgba(255, 255, 255, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-obsidian text-white min-h-screen overflow-hidden font-display obsidian-gradient">
+    <div class="flex h-screen w-full relative z-10">
+        <!-- Sidebar -->
+        <aside class="w-64 flex flex-col glass-sidebar">
+            <!-- Logo -->
+            <div class="p-6 flex items-center gap-3">
+                <div class="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.3)]">
+                    <span class="material-symbols-outlined text-black font-bold text-[20px]">blur_on</span>
+                </div>
+                <div class="flex flex-col">
+                    <h1 class="text-white text-lg font-bold leading-tight tracking-[0.05em]">PROMPT</h1>
+                    <p class="text-silver-dark text-[10px] uppercase tracking-[0.25em] font-medium">Obsidian Core</p>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <nav class="flex-1 px-4 py-6 space-y-2">
+                <div id="nav-dashboard" class="nav-item flex items-center gap-3 px-4 py-3 rounded-xl nav-active cursor-pointer">
+                    <span class="material-symbols-outlined text-[22px]">dashboard</span>
+                    <span class="text-sm font-medium">Dashboard</span>
+                </div>
+                <div id="nav-library" class="nav-item flex items-center gap-3 px-4 py-3 rounded-xl text-silver-dark cursor-pointer">
+                    <span class="material-symbols-outlined text-[22px]">auto_awesome_motion</span>
+                    <span class="text-sm font-medium">Prompt Library</span>
+                </div>
+                <div id="nav-trending" class="nav-item flex items-center gap-3 px-4 py-3 rounded-xl text-silver-dark cursor-pointer">
+                    <span class="material-symbols-outlined text-[22px]">trending_up</span>
+                    <span class="text-sm font-medium">Trending Prompts</span>
+                </div>
+            </nav>
+
+            <!-- User Profile & Actions -->
+            <div class="p-4 space-y-2">
+                <div class="flex items-center gap-3 px-4 py-4 rounded-xl bg-white/5 border border-white/5 mb-4">
+                    <div class="w-10 h-10 rounded-full border border-white/20 p-0.5">
+                        <div id="user-avatar" class="w-full h-full rounded-full bg-white/10 flex items-center justify-center">
+                            <span class="material-symbols-outlined text-white text-[20px]">person</span>
+                        </div>
+                    </div>
+                    <div class="flex flex-col min-w-0">
+                        <p id="user-name" class="text-sm font-bold text-white leading-none truncate">Loading...</p>
+                        <p class="text-[10px] text-silver-dark font-medium uppercase tracking-wider mt-1">Enterprise Tier</p>
+                    </div>
+                </div>
+                <div id="btn-settings" class="flex items-center gap-3 px-4 py-3 rounded-xl text-silver-dark hover:text-white transition-all cursor-pointer">
+                    <span class="material-symbols-outlined text-[22px]">settings</span>
+                    <span class="text-sm font-medium">Settings</span>
+                </div>
+                <div id="btn-signout" class="flex items-center gap-3 px-4 py-3 rounded-xl text-silver-dark hover:text-red-400 transition-all cursor-pointer">
+                    <span class="material-symbols-outlined text-[22px]">logout</span>
+                    <span class="text-sm font-medium">Sign Out</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col relative overflow-y-auto">
+            <!-- Header -->
+            <header class="flex items-center justify-between px-10 py-5 bg-transparent">
+                <div class="flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>
+                    <span id="engine-status" class="text-[10px] font-medium text-silver-dark tracking-[0.2em] uppercase">Engine Status: Optimal</span>
+                </div>
+            </header>
+
+            <!-- Dashboard Content -->
+            <section id="dashboard-view" class="flex flex-col items-center justify-center flex-1 px-10 -mt-20">
+                <div class="text-center mb-12">
+                    <h2 class="text-6xl font-bold text-white tracking-tighter mb-4">Happy Prompting</h2>
+                    <p class="text-silver-dark text-lg max-w-xl mx-auto font-light">The next generation of AI prompt engineering. Optimized for speed, precision, and monochromatic elegance.</p>
+                </div>
+                <div class="w-full max-w-3xl">
+                    <div class="relative flex items-center">
+                        <div class="absolute left-6 text-white/40">
+                            <span class="material-symbols-outlined text-[24px]">colors_spark</span>
+                        </div>
+                        <input
+                            id="prompt-input"
+                            class="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-white/40 focus:ring-0 rounded-2xl py-6 pl-16 pr-36 text-xl font-light placeholder:text-white/10 transition-all text-white"
+                            placeholder="Initiate optimization..."
+                            type="text"
+                        />
+                        <div class="absolute right-3">
+                            <button id="btn-optimize" class="bg-white hover:bg-silver-light text-black px-8 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all white-glow-button">
+                                Optimize
+                                <span class="material-symbols-outlined text-[18px] font-bold">arrow_forward</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex justify-center gap-6 mt-8">
+                        <span class="text-[10px] text-white/20 uppercase tracking-[0.25em] font-bold">Suggested:</span>
+                        <a class="text-[10px] text-silver-dark hover:text-white transition-colors font-bold uppercase tracking-[0.25em] cursor-pointer">Generative Art</a>
+                        <span class="text-white/10">/</span>
+                        <a class="text-[10px] text-silver-dark hover:text-white transition-colors font-bold uppercase tracking-[0.25em] cursor-pointer">Neural Logic</a>
+                        <span class="text-white/10">/</span>
+                        <a class="text-[10px] text-silver-dark hover:text-white transition-colors font-bold uppercase tracking-[0.25em] cursor-pointer">Semantic Analysis</a>
+                    </div>
+                </div>
+
+                <!-- Optimized Result (Hidden by default) -->
+                <div id="optimized-result" class="w-full max-w-3xl mt-8 hidden">
+                    <div class="bg-white/5 border border-white/10 rounded-2xl p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-sm font-bold text-white uppercase tracking-wider">Optimized Prompt</h3>
+                            <div class="flex gap-2">
+                                <button id="btn-regenerate" class="text-silver-dark hover:text-white transition-colors">
+                                    <span class="material-symbols-outlined text-[20px]">refresh</span>
+                                </button>
+                                <button id="btn-copy" class="text-silver-dark hover:text-white transition-colors">
+                                    <span class="material-symbols-outlined text-[20px]">content_copy</span>
+                                </button>
+                                <button id="btn-save-to-chat" class="text-silver-dark hover:text-white transition-colors">
+                                    <span class="material-symbols-outlined text-[20px]">save</span>
+                                </button>
+                            </div>
+                        </div>
+                        <p id="optimized-text" class="text-white font-light leading-relaxed"></p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Library View (Hidden by default) -->
+            <section id="library-view" class="flex-1 px-10 py-6 hidden">
+                <h2 class="text-3xl font-bold text-white mb-6">Prompt Library</h2>
+                <div id="library-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <!-- Library items will be populated here -->
+                </div>
+            </section>
+
+            <!-- Trending View (Hidden by default) -->
+            <section id="trending-view" class="flex-1 px-10 py-6 hidden">
+                <h2 class="text-3xl font-bold text-white mb-6">Trending Prompts</h2>
+                <div id="trending-list" class="space-y-4">
+                    <!-- Trending items will be populated here -->
+                </div>
+            </section>
+
+            <div class="h-32"></div>
+        </main>
+    </div>
+
+    <script>
+        // Navigation
+        const views = {
+            dashboard: document.getElementById('dashboard-view'),
+            library: document.getElementById('library-view'),
+            trending: document.getElementById('trending-view')
+        };
+
+        const navItems = {
+            dashboard: document.getElementById('nav-dashboard'),
+            library: document.getElementById('nav-library'),
+            trending: document.getElementById('nav-trending')
+        };
+
+        function showView(viewName) {
+            Object.values(views).forEach(v => v.classList.add('hidden'));
+            Object.values(navItems).forEach(n => {
+                n.classList.remove('nav-active');
+                n.classList.add('text-silver-dark');
+            });
+
+            views[viewName].classList.remove('hidden');
+            navItems[viewName].classList.add('nav-active');
+            navItems[viewName].classList.remove('text-silver-dark');
+        }
+
+        navItems.dashboard.addEventListener('click', () => showView('dashboard'));
+        navItems.library.addEventListener('click', () => showView('library'));
+        navItems.trending.addEventListener('click', () => showView('trending'));
+
+        // Optimize button
+        document.getElementById('btn-optimize').addEventListener('click', async () => {
+            const input = document.getElementById('prompt-input');
+            const text = input.value.trim();
+
+            if (!text) return;
+
+            // Send to main process for optimization
+            window.electronAPI.optimizePrompt(text);
+        });
+
+        // Listen for optimization results from main process
+        window.electronAPI.onOptimizationComplete((data) => {
+            document.getElementById('optimized-text').textContent = data.optimized;
+            document.getElementById('optimized-result').classList.remove('hidden');
+        });
+
+        // Regenerate button
+        document.getElementById('btn-regenerate').addEventListener('click', () => {
+            const input = document.getElementById('prompt-input');
+            window.electronAPI.optimizePrompt(input.value.trim(), true);
+        });
+
+        // Copy button
+        document.getElementById('btn-copy').addEventListener('click', () => {
+            const text = document.getElementById('optimized-text').textContent;
+            window.electronAPI.copyToClipboard(text);
+        });
+
+        // Save to chat button
+        document.getElementById('btn-save-to-chat').addEventListener('click', () => {
+            const original = document.getElementById('prompt-input').value;
+            const optimized = document.getElementById('optimized-text').textContent;
+            window.electronAPI.saveToChat(original, optimized);
+        });
+
+        // Sign out button
+        document.getElementById('btn-signout').addEventListener('click', () => {
+            window.electronAPI.signOut();
+        });
+
+        // Load user data on startup
+        window.electronAPI.onUserDataLoaded((user) => {
+            document.getElementById('user-name').textContent = user.email.split('@')[0];
+        });
+
+        // Request user data
+        window.electronAPI.requestUserData();
+    </script>
+</body>
+</html>

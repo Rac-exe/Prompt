@@ -1,23 +1,25 @@
 {
   "name": "prompt-optimizer",
-  "version": "1.0.0",
-  "description": "Global desktop app for AI prompt optimization",
-  "main": "dist/main/index.js",
+  "version": "2.0.0",
+  "description": "Global desktop app for AI prompt optimization with Supabase",
+  "main": "dist/main/index-new.js",
   "scripts": {
     "build": "tsc",
     "electron": "electron .",
     "dev": "npm run build && npm run electron",
     "python:dev": "cd python-service && .\\venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001",
-    "python:dev:mac": "cd python-service && ./venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000",
+    "python:dev:mac": "cd python-service && ./venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
     "python:install": "cd python-service && python -m venv venv && .\\venv\\Scripts\\python.exe -m pip install -r requirements.txt",
-    "start": "npm run build && npm run electron"
+    "start": "npm run build && npm run electron",
+    "supabase:migrate": "supabase db push"
   },
   "keywords": [
     "prompt",
     "optimization",
     "ai",
     "electron",
-    "desktop"
+    "desktop",
+    "supabase"
   ],
   "author": "",
   "license": "MIT",
@@ -28,7 +30,9 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
     "node-global-key-listener": "^0.2.0",
     "uiohook-napi": "^1.5.4",
     "ws": "^8.19.0"
