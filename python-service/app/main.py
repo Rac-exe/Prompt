@@ -313,7 +313,6 @@ async def optimize_prompt(request: OptimizeRequest):
 
     # For regenerate requests, add a unique identifier to force different results
     if request.skip_cache:
-        import time
         unique_id = str(int(time.time() * 1000000))  # Microsecond precision
         prompt_text = f"{prompt_text}\n\n[REGENERATE_{unique_id}]"
         print(f"[Optimize] Regenerate request - added unique ID: {unique_id}")

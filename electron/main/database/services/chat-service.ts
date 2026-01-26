@@ -1,0 +1,185 @@
+import { SupabaseClientManager } from '../supabase-client';
+
+export interface Chat {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  is_pinned: boolean;
+  metadata: {
+    tags: string[];
+    folder: string | null;
+    color: string;
+    statistics: {
+      total_messages: number;
+      total_optimizations: number;
+      avg_response_time_ms: number;
+    };
+  };
+}
+
+export interface Message {
+  id: string;
+  chat_id: string;
+  user_id: string;
+  content: string;
+  role: 'user' | 'assistant' | 'system';
+  created_at: string;
+  optimization_id: string | null;
+  metadata: {
+    model: string;
+    tokens: {
+      prompt: number;
+      completion: number;
+      total: number;
+    };
+    timing: {
+      duration_ms: number;
+    };
+    source_app?: string;
+    trigger_type?: string;
+  };
+}
+
+export class ChatService {
+  private client = SupabaseClientManager.getClient();
+
+  /**
+   * Get all chats for current user
+   */
+  async getChats(): Promise<Chat[]> {
+    const { data, error } = await this.client
+      .from('chats')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  /**
+   * Get a single chat by ID
+   */
+  async getChat(chatId: string): Promise<Chat | null> {
+    const { data, error } = await this.client
+      .from('chats')
+      .select('*')
+      .eq('id', chatId)
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  /**
+   * Create a new chat
+   */
+  async createChat(title?: string): Promise<Chat> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    const { data, error } = await this.client
+      .from('chats')
+      .insert({
+        user_id: userData.user.id,
+        title: title || 'New Chat',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  /**
+   * Update chat title
+   */
+  async updateChatTitle(chatId: string, title: string): Promise<void> {
+    const { error } = await this.client
+      .from('chats')
+      .update({ title })
+      .eq('id', chatId);
+
+    if (error) throw error;
+  }
+
+  /**
+   * Delete a chat
+   */
+  async deleteChat(chatId: string): Promise<void> {
+    const { error } = await this.client
+      .from('chats')
+      .delete()
+      .eq('id', chatId);
+
+    if (error) throw error;
+  }
+
+  /**
+   * Get messages for a chat
+   */
+  async getMessages(chatId: string): Promise<Message[]> {
+    const { data, error } = await this.client
+      .from('messages')
+      .select('*')
+      .eq('chat_id', chatId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return data || [];
+  }
+
+  /**
+   * Add a message to a chat
+   */
+  async addMessage(
+    chatId: string,
+    content: string,
+    role: 'user' | 'assistant' | 'system',
+    optimizationId?: string,
+    metadata?: any
+  ): Promise<Message> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    const { data, error } = await this.client
+      .from('messages')
+      .insert({
+        chat_id: chatId,
+        user_id: userData.user.id,
+        content,
+        role,
+        optimization_id: optimizationId || null,
+        metadata: metadata || {},
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  /**
+   * Find or create a default "Quick Optimizations" chat
+   */
+  async getOrCreateQuickOptimizationsChat(): Promise<Chat> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    // Try to find existing quick optimizations chat
+    const { data: existingChats } = await this.client
+      .from('chats')
+      .select('*')
+      .eq('user_id', userData.user.id)
+      .eq('title', 'Quick Optimizations')
+      .limit(1);
+
+    if (existingChats && existingChats.length > 0) {
+      return existingChats[0];
+    }
+
+    // Create new one
+    return this.createChat('Quick Optimizations');
+  }
+}

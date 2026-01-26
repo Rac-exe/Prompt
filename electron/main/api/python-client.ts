@@ -8,7 +8,7 @@ export class PythonClient {
     this.baseUrl = baseUrl;
     this.client = axios.create({
       baseURL: baseUrl,
-      timeout: 15000, // 15 second timeout
+      timeout: 60000, // 60 second timeout (LLM can take time)
       headers: {
         "Content-Type": "application/json"
       }
