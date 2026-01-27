@@ -56,6 +56,39 @@
         .white-glow-button:hover {
             box-shadow: 0 0 25px rgba(255, 255, 255, 0.3);
         }
+        .chat-item {
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        .chat-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .chat-item-active {
+            background: rgba(255, 255, 255, 0.08);
+            border-left: 3px solid white;
+        }
+        .tag {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .message-bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+        }
+        .message-user {
+            background: rgba(255, 255, 255, 0.1);
+            margin-left: auto;
+        }
+        .message-assistant {
+            background: rgba(255, 255, 255, 0.05);
+            margin-right: auto;
+        }
     </style>
 </head>
 <body class="bg-obsidian text-white min-h-screen overflow-hidden font-display obsidian-gradient">
@@ -64,9 +97,6 @@
         <aside class="w-64 flex flex-col glass-sidebar">
             <!-- Logo -->
             <div class="p-6 flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-white flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.3)]">
-                    <span class="material-symbols-outlined text-black font-bold text-[20px]">blur_on</span>
-                </div>
                 <div class="flex flex-col">
                     <h1 class="text-white text-lg font-bold leading-tight tracking-[0.05em]">PROMPT</h1>
                     <p class="text-silver-dark text-[10px] uppercase tracking-[0.25em] font-medium">Obsidian Core</p>
@@ -130,30 +160,20 @@
                     <p class="text-silver-dark text-lg max-w-xl mx-auto font-light">The next generation of AI prompt engineering. Optimized for speed, precision, and monochromatic elegance.</p>
                 </div>
                 <div class="w-full max-w-3xl">
-                    <div class="relative flex items-center">
-                        <div class="absolute left-6 text-white/40">
-                            <span class="material-symbols-outlined text-[24px]">colors_spark</span>
-                        </div>
-                        <input
+                    <div class="relative flex items-start">
+                        <textarea
                             id="prompt-input"
-                            class="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-white/40 focus:ring-0 rounded-2xl py-6 pl-16 pr-36 text-xl font-light placeholder:text-white/10 transition-all text-white"
-                            placeholder="Initiate optimization..."
-                            type="text"
-                        />
-                        <div class="absolute right-3">
+                            class="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-white/40 focus:ring-0 rounded-2xl py-6 pl-6 pr-36 text-xl font-light placeholder:text-white/20 transition-all text-white resize-none"
+                            placeholder="Happy Prompting..."
+                            rows="1"
+                            style="min-height: 72px; max-height: 300px; overflow-y: auto;"
+                        ></textarea>
+                        <div class="absolute right-3 top-3">
                             <button id="btn-optimize" class="bg-white hover:bg-silver-light text-black px-8 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all white-glow-button">
                                 Optimize
                                 <span class="material-symbols-outlined text-[18px] font-bold">arrow_forward</span>
                             </button>
                         </div>
-                    </div>
-                    <div class="flex justify-center gap-6 mt-8">
-                        <span class="text-[10px] text-white/20 uppercase tracking-[0.25em] font-bold">Suggested:</span>
-                        <a class="text-[10px] text-silver-dark hover:text-white transition-colors font-bold uppercase tracking-[0.25em] cursor-pointer">Generative Art</a>
-                        <span class="text-white/10">/</span>
-                        <a class="text-[10px] text-silver-dark hover:text-white transition-colors font-bold uppercase tracking-[0.25em] cursor-pointer">Neural Logic</a>
-                        <span class="text-white/10">/</span>
-                        <a class="text-[10px] text-silver-dark hover:text-white transition-colors font-bold uppercase tracking-[0.25em] cursor-pointer">Semantic Analysis</a>
                     </div>
                 </div>
 
@@ -180,10 +200,44 @@
             </section>
 
             <!-- Library View (Hidden by default) -->
-            <section id="library-view" class="flex-1 px-10 py-6 hidden">
-                <h2 class="text-3xl font-bold text-white mb-6">Prompt Library</h2>
-                <div id="library-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <!-- Library items will be populated here -->
+            <section id="library-view" class="flex-1 flex hidden">
+                <!-- Chat List Sidebar -->
+                <div class="w-80 border-r border-white/10 flex flex-col">
+                    <div class="p-4 border-b border-white/10">
+                        <div class="flex items-center gap-2 mb-4">
+                            <h2 class="text-xl font-bold text-white flex-1">Chat Sessions</h2>
+                            <button id="btn-new-chat" class="text-white hover:bg-white/10 p-2 rounded-lg transition-colors" title="New chat">
+                                <span class="material-symbols-outlined text-[20px]">add</span>
+                            </button>
+                        </div>
+                        <input
+                            id="search-chats"
+                            type="text"
+                            placeholder="Search chats..."
+                            class="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/30 focus:ring-0"
+                        />
+                    </div>
+                    <div id="chat-list" class="flex-1 overflow-y-auto p-2">
+                        <!-- Chat items will be populated here -->
+                        <div class="text-center text-silver-dark text-sm py-8">
+                            No chats yet. Start optimizing!
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Messages Area -->
+                <div class="flex-1 flex flex-col">
+                    <div id="chat-messages-header" class="p-6 border-b border-white/10 hidden">
+                        <h3 id="chat-title" class="text-2xl font-bold text-white">Chat Title</h3>
+                        <div id="chat-tags" class="flex gap-2 mt-2">
+                            <!-- Tags will be populated here -->
+                        </div>
+                    </div>
+                    <div id="chat-messages" class="flex-1 overflow-y-auto p-6">
+                        <div class="text-center text-silver-dark py-12">
+                            Select a chat to view messages
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -200,6 +254,11 @@
     </div>
 
     <script>
+        // State
+        let chats = [];
+        let currentChatId = null;
+        let currentOptimization = { original: '', optimized: '' };
+
         // Navigation
         const views = {
             dashboard: document.getElementById('dashboard-view'),
@@ -223,6 +282,11 @@
             views[viewName].classList.remove('hidden');
             navItems[viewName].classList.add('nav-active');
             navItems[viewName].classList.remove('text-silver-dark');
+
+            // Load chats when entering library view
+            if (viewName === 'library') {
+                loadChats();
+            }
         }
 
         navItems.dashboard.addEventListener('click', () => showView('dashboard'));
@@ -240,10 +304,55 @@
             window.electronAPI.optimizePrompt(text);
         });
 
+        // Handle Enter key (submit) and Shift+Enter (new line) in textarea
+        const promptInput = document.getElementById('prompt-input');
+
+        promptInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault(); // Prevent default new line
+                const text = promptInput.value.trim();
+                if (text) {
+                    window.electronAPI.optimizePrompt(text);
+                }
+            }
+            // Shift+Enter will naturally create a new line (default behavior)
+        });
+
+        // Auto-resize textarea as user types
+        promptInput.addEventListener('input', () => {
+            // Reset height to recalculate
+            promptInput.style.height = '72px';
+
+            // Set height based on scroll height (content height)
+            const newHeight = Math.min(promptInput.scrollHeight, 300); // Max 300px
+            promptInput.style.height = newHeight + 'px';
+        });
+
+        // Typing animation function
+        function typeText(element, text, callback) {
+            element.textContent = '';
+            let index = 0;
+
+            function type() {
+                if (index < text.length) {
+                    element.textContent += text.charAt(index);
+                    index++;
+                    setTimeout(type, 10); // 10ms per character
+                } else {
+                    if (callback) callback();
+                }
+            }
+
+            type();
+        }
+
         // Listen for optimization results from main process
         window.electronAPI.onOptimizationComplete((data) => {
-            document.getElementById('optimized-text').textContent = data.optimized;
+            const optimizedTextEl = document.getElementById('optimized-text');
             document.getElementById('optimized-result').classList.remove('hidden');
+
+            // Type out the optimized text character by character
+            typeText(optimizedTextEl, data.optimized);
         });
 
         // Regenerate button
@@ -277,6 +386,151 @@
 
         // Request user data
         window.electronAPI.requestUserData();
+
+        // Prompt Library functionality
+        async function loadChats() {
+            const chatListEl = document.getElementById('chat-list');
+            chatListEl.innerHTML = '<div class="text-center text-silver-dark text-sm py-8">Loading chats...</div>';
+
+            // Request chats from main process
+            window.electronAPI.loadChats();
+        }
+
+        // Render chats in the UI
+        function renderChats(chats) {
+            const chatListEl = document.getElementById('chat-list');
+
+            if (!chats || chats.length === 0) {
+                chatListEl.innerHTML = `
+                    <div class="text-center text-silver-dark text-sm py-8">
+                        <p class="mb-2">No chats yet.</p>
+                        <p class="text-xs">Optimize a prompt and click "Save to Chat" to create your first session!</p>
+                    </div>
+                `;
+                return;
+            }
+
+            chatListEl.innerHTML = chats.map(chat => {
+                const date = new Date(chat.updated_at).toLocaleDateString();
+                return `
+                    <div class="chat-item px-3 py-3 rounded-lg mb-1" data-chat-id="${chat.id}">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1 min-w-0">
+                                <h4 class="text-sm font-medium text-white truncate">${chat.title}</h4>
+                                <p class="text-xs text-silver-dark mt-1">${date}</p>
+                            </div>
+                            ${chat.is_pinned ? '<span class="material-symbols-outlined text-[16px] text-silver-dark ml-2">push_pin</span>' : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Add click handlers to chat items
+            document.querySelectorAll('.chat-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const chatId = item.getAttribute('data-chat-id');
+                    selectChat(chatId);
+                });
+            });
+        }
+
+        // Select and load a chat
+        function selectChat(chatId) {
+            currentChatId = chatId;
+
+            // Update active state
+            document.querySelectorAll('.chat-item').forEach(item => {
+                item.classList.remove('chat-item-active');
+            });
+            document.querySelector(`[data-chat-id="${chatId}"]`)?.classList.add('chat-item-active');
+
+            // Load messages
+            window.electronAPI.loadMessages(chatId);
+
+            // Show chat header
+            document.getElementById('chat-messages-header').classList.remove('hidden');
+        }
+
+        // Render messages in the UI
+        function renderMessages(messages) {
+            const messagesEl = document.getElementById('chat-messages');
+
+            if (!messages || messages.length === 0) {
+                messagesEl.innerHTML = '<div class="text-center text-silver-dark py-12">No messages yet</div>';
+                return;
+            }
+
+            messagesEl.innerHTML = messages.map(msg => {
+                const isUser = msg.role === 'user';
+                return `
+                    <div class="message-bubble ${isUser ? 'message-user' : 'message-assistant'}">
+                        <p class="text-sm text-white leading-relaxed whitespace-pre-wrap">${msg.content}</p>
+                    </div>
+                `;
+            }).join('');
+
+            // Scroll to bottom
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        // Listen for IPC events
+        window.electronAPI.onChatSaved((data) => {
+            console.log('Chat saved with ID:', data.chatId);
+            // Reload chat list if in library view
+            if (!views.library.classList.contains('hidden')) {
+                loadChats();
+            }
+        });
+
+        window.electronAPI.onChatsLoaded((data) => {
+            console.log('Chats loaded:', data.chats);
+            chats = data.chats || [];
+            renderChats(chats);
+        });
+
+        window.electronAPI.onMessagesLoaded((data) => {
+            console.log('Messages loaded for chat:', data.chatId);
+            renderMessages(data.messages);
+        });
+
+        window.electronAPI.onChatCreated((data) => {
+            console.log('Chat created:', data.chat);
+            // Select the newly created chat
+            selectChat(data.chat.id);
+        });
+
+        // New chat button
+        document.getElementById('btn-new-chat').addEventListener('click', () => {
+            const title = prompt('Enter chat title (or leave empty for "New Chat"):');
+            window.electronAPI.createChat(title || 'New Chat');
+        });
+
+        // Update Save to chat button to show success
+        const originalSaveHandler = document.getElementById('btn-save-to-chat');
+        originalSaveHandler.addEventListener('click', () => {
+            const btn = document.getElementById('btn-save-to-chat');
+            const icon = btn.querySelector('.material-symbols-outlined');
+            icon.textContent = 'check';
+            setTimeout(() => {
+                icon.textContent = 'save';
+            }, 2000);
+        });
+
+        // Update Copy button to show success
+        document.getElementById('btn-copy').addEventListener('click', () => {
+            const btn = document.getElementById('btn-copy');
+            const icon = btn.querySelector('.material-symbols-outlined');
+            const originalIcon = icon.textContent;
+            icon.textContent = 'check';
+            setTimeout(() => {
+                icon.textContent = originalIcon;
+            }, 2000);
+        });
+
+        // Store current optimization for saving
+        window.electronAPI.onOptimizationComplete((data) => {
+            currentOptimization = { original: data.original, optimized: data.optimized };
+        });
     </script>
 </body>
 </html>
