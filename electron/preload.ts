@@ -28,6 +28,12 @@ declare global {
       requestUserData: () => void;
       onUserDataLoaded: (callback: (user: any) => void) => void;
       onChatSaved: (callback: (data: { chatId: string }) => void) => void;
+      loadChats: () => void;
+      onChatsLoaded: (callback: (data: { chats: any[] }) => void) => void;
+      createChat: (title?: string) => void;
+      onChatCreated: (callback: (data: { chat: any }) => void) => void;
+      loadMessages: (chatId: string) => void;
+      onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
       signOut: () => void;
 
       // Common API
@@ -117,6 +123,24 @@ const electronAPI = {
   },
   onChatSaved: (callback: (data: { chatId: string }) => void) => {
     ipcRenderer.on('chat-saved', (event, data) => callback(data));
+  },
+  loadChats: () => {
+    ipcRenderer.send('app:load-chats');
+  },
+  onChatsLoaded: (callback: (data: { chats: any[] }) => void) => {
+    ipcRenderer.on('chats-loaded', (event, data) => callback(data));
+  },
+  createChat: (title?: string) => {
+    ipcRenderer.send('app:create-chat', title);
+  },
+  onChatCreated: (callback: (data: { chat: any }) => void) => {
+    ipcRenderer.on('chat-created', (event, data) => callback(data));
+  },
+  loadMessages: (chatId: string) => {
+    ipcRenderer.send('app:load-messages', chatId);
+  },
+  onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
+    ipcRenderer.on('messages-loaded', (event, data) => callback(data));
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');

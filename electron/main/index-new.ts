@@ -343,6 +343,46 @@ function setupIPC() {
       console.error('[Main] Sign out failed:', error);
     }
   });
+
+  // App Window: Load chats
+  ipcMain.on('app:load-chats', async (event) => {
+    try {
+      console.log('[Main] Loading chats...');
+      const chats = await chatService.getChats();
+      appWindowManager.send('chats-loaded', { chats });
+    } catch (error) {
+      console.error('[Main] Failed to load chats:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      appWindowManager.send('chats-loaded', { chats: [], error: errorMessage });
+    }
+  });
+
+  // App Window: Create new chat
+  ipcMain.on('app:create-chat', async (event, title?: string) => {
+    try {
+      console.log('[Main] Creating new chat...');
+      const chat = await chatService.createChat(title);
+      appWindowManager.send('chat-created', { chat });
+      // Reload chats list
+      const chats = await chatService.getChats();
+      appWindowManager.send('chats-loaded', { chats });
+    } catch (error) {
+      console.error('[Main] Failed to create chat:', error);
+    }
+  });
+
+  // App Window: Load messages for a chat
+  ipcMain.on('app:load-messages', async (event, chatId: string) => {
+    try {
+      console.log('[Main] Loading messages for chat:', chatId);
+      const messages = await chatService.getMessages(chatId);
+      appWindowManager.send('messages-loaded', { chatId, messages });
+    } catch (error) {
+      console.error('[Main] Failed to load messages:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      appWindowManager.send('messages-loaded', { chatId, messages: [], error: errorMessage });
+    }
+  });
 }
 
 // ============================================
