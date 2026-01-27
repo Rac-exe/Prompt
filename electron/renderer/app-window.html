@@ -89,6 +89,70 @@
             background: rgba(255, 255, 255, 0.05);
             margin-right: auto;
         }
+
+        /* ChatGPT-inspired scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            border: 2px solid transparent;
+            background-clip: padding-box;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+            background-clip: padding-box;
+        }
+
+        /* Hide scrollbar until hover */
+        .scrollbar-thin {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+        }
+
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 0;
+            transition: width 0.2s;
+        }
+
+        .scrollbar-thin:hover::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        /* Optimized result container constraints */
+        #optimized-result-container {
+            max-height: 300px;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        /* Prevent layout shift during typing animation */
+        #optimized-text {
+            min-height: 1.5rem;
+            will-change: contents;
+        }
+
+        /* Loading spinner */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+
+        /* Smooth transitions without causing reflow */
+        .transition-opacity {
+            transition: opacity 0.2s ease;
+        }
     </style>
 </head>
 <body class="bg-obsidian text-white min-h-screen overflow-hidden font-display obsidian-gradient">
@@ -169,9 +233,13 @@
                             style="min-height: 72px; max-height: 300px; overflow-y: auto;"
                         ></textarea>
                         <div class="absolute right-3 top-3">
-                            <button id="btn-optimize" class="bg-white hover:bg-silver-light text-black px-8 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all white-glow-button">
-                                Optimize
-                                <span class="material-symbols-outlined text-[18px] font-bold">arrow_forward</span>
+                            <button id="btn-optimize" class="bg-white hover:bg-silver-light text-black px-8 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all white-glow-button disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span id="btn-optimize-text">Generate</span>
+                                <span id="btn-optimize-icon" class="material-symbols-outlined text-[18px] font-bold">arrow_forward</span>
+                                <svg id="btn-optimize-spinner" class="animate-spin h-[18px] w-[18px] hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
                             </button>
                         </div>
                     </div>
@@ -183,7 +251,7 @@
                         <div class="flex items-center justify-between mb-4">
                             <h3 class="text-sm font-bold text-white uppercase tracking-wider">Optimized Prompt</h3>
                             <div class="flex gap-2">
-                                <button id="btn-regenerate" class="text-silver-dark hover:text-white transition-colors">
+                                <button id="btn-regenerate" class="text-silver-dark hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                                     <span class="material-symbols-outlined text-[20px]">refresh</span>
                                 </button>
                                 <button id="btn-copy" class="text-silver-dark hover:text-white transition-colors">
@@ -194,7 +262,9 @@
                                 </button>
                             </div>
                         </div>
-                        <p id="optimized-text" class="text-white font-light leading-relaxed"></p>
+                        <div id="optimized-result-container" class="scrollbar-thin">
+                            <p id="optimized-text" class="text-white font-light leading-relaxed whitespace-pre-wrap"></p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -258,6 +328,19 @@
         let chats = [];
         let currentChatId = null;
         let currentOptimization = { original: '', optimized: '' };
+        let isOptimizing = false;
+        let typingAnimationId = null;
+        let hasOptimizedOnce = false;
+
+        // DOM References (cached to prevent repeated queries)
+        const promptInput = document.getElementById('prompt-input');
+        const btnOptimize = document.getElementById('btn-optimize');
+        const btnOptimizeText = document.getElementById('btn-optimize-text');
+        const btnOptimizeIcon = document.getElementById('btn-optimize-icon');
+        const btnOptimizeSpinner = document.getElementById('btn-optimize-spinner');
+        const btnRegenerate = document.getElementById('btn-regenerate');
+        const optimizedResult = document.getElementById('optimized-result');
+        const optimizedTextEl = document.getElementById('optimized-text');
 
         // Navigation
         const views = {
@@ -293,85 +376,165 @@
         navItems.library.addEventListener('click', () => showView('library'));
         navItems.trending.addEventListener('click', () => showView('trending'));
 
-        // Optimize button
-        document.getElementById('btn-optimize').addEventListener('click', async () => {
-            const input = document.getElementById('prompt-input');
-            const text = input.value.trim();
+        // Button state management
+        function setButtonState(state) {
+            switch (state) {
+                case 'idle':
+                    btnOptimize.disabled = false;
+                    promptInput.disabled = false;
+                    btnOptimizeText.textContent = hasOptimizedOnce ? 'Regenerate' : 'Generate';
+                    btnOptimizeIcon.classList.remove('hidden');
+                    btnOptimizeSpinner.classList.add('hidden');
+                    if (btnRegenerate) btnRegenerate.disabled = false;
+                    break;
+                case 'loading':
+                    btnOptimize.disabled = true;
+                    promptInput.disabled = true;
+                    btnOptimizeText.textContent = 'Generating...';
+                    btnOptimizeIcon.classList.add('hidden');
+                    btnOptimizeSpinner.classList.remove('hidden');
+                    if (btnRegenerate) btnRegenerate.disabled = true;
+                    break;
+            }
+        }
 
-            if (!text) return;
+        // Trigger optimization
+        function triggerOptimization(isRegenerate = false) {
+            const text = promptInput.value.trim();
+            if (!text || isOptimizing) return;
+
+            isOptimizing = true;
+            setButtonState('loading');
+
+            // Cancel any ongoing typing animation
+            if (typingAnimationId) {
+                cancelAnimationFrame(typingAnimationId);
+                typingAnimationId = null;
+            }
+
+            // Show loading state in optimized text
+            optimizedResult.classList.remove('hidden');
+            optimizedTextEl.textContent = 'Generating optimized prompt...';
 
             // Send to main process for optimization
-            window.electronAPI.optimizePrompt(text);
-        });
+            window.electronAPI.optimizePrompt(text, isRegenerate);
+        }
+
+        // Optimize button click handler
+        btnOptimize.addEventListener('click', () => triggerOptimization(false));
 
         // Handle Enter key (submit) and Shift+Enter (new line) in textarea
-        const promptInput = document.getElementById('prompt-input');
-
         promptInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault(); // Prevent default new line
-                const text = promptInput.value.trim();
-                if (text) {
-                    window.electronAPI.optimizePrompt(text);
-                }
+                e.preventDefault();
+                triggerOptimization(false);
             }
             // Shift+Enter will naturally create a new line (default behavior)
         });
 
-        // Auto-resize textarea as user types
+        // Debounced auto-resize textarea
+        let resizeTimeout = null;
         promptInput.addEventListener('input', () => {
-            // Reset height to recalculate
-            promptInput.style.height = '72px';
-
-            // Set height based on scroll height (content height)
-            const newHeight = Math.min(promptInput.scrollHeight, 300); // Max 300px
-            promptInput.style.height = newHeight + 'px';
+            if (resizeTimeout) clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                // Use requestAnimationFrame to batch DOM updates
+                requestAnimationFrame(() => {
+                    promptInput.style.height = '72px';
+                    const newHeight = Math.min(promptInput.scrollHeight, 300);
+                    promptInput.style.height = newHeight + 'px';
+                });
+            }, 16); // ~60fps
         });
 
-        // Typing animation function
+        // Improved typing animation using requestAnimationFrame
         function typeText(element, text, callback) {
-            element.textContent = '';
-            let index = 0;
+            // Cancel any existing animation
+            if (typingAnimationId) {
+                cancelAnimationFrame(typingAnimationId);
+            }
 
-            function type() {
-                if (index < text.length) {
-                    element.textContent += text.charAt(index);
-                    index++;
-                    setTimeout(type, 10); // 10ms per character
+            // Build up the text progressively to avoid re-layout issues
+            let index = 0;
+            const totalChars = text.length;
+            const charsPerFrame = Math.max(1, Math.ceil(totalChars / 100)); // Complete in ~100 frames
+
+            element.textContent = '';
+
+            function animate() {
+                const endIndex = Math.min(index + charsPerFrame, totalChars);
+                element.textContent = text.substring(0, endIndex);
+                index = endIndex;
+
+                if (index < totalChars) {
+                    typingAnimationId = requestAnimationFrame(animate);
                 } else {
+                    typingAnimationId = null;
                     if (callback) callback();
                 }
             }
 
-            type();
+            typingAnimationId = requestAnimationFrame(animate);
         }
 
-        // Listen for optimization results from main process
-        window.electronAPI.onOptimizationComplete((data) => {
-            const optimizedTextEl = document.getElementById('optimized-text');
-            document.getElementById('optimized-result').classList.remove('hidden');
+        // Listen for optimization results from main process (only register once)
+        let optimizationListenerRegistered = false;
+        if (!optimizationListenerRegistered) {
+            optimizationListenerRegistered = true;
+            window.electronAPI.onOptimizationComplete((data) => {
+                // Guard against duplicate or stale callbacks
+                if (!isOptimizing && optimizedTextEl.textContent !== 'Generating optimized prompt...') {
+                    return;
+                }
 
-            // Type out the optimized text character by character
-            typeText(optimizedTextEl, data.optimized);
-        });
+                isOptimizing = false;
+                hasOptimizedOnce = true;
+
+                // Store the optimization
+                currentOptimization = { original: data.original, optimized: data.optimized };
+
+                // Show result container
+                optimizedResult.classList.remove('hidden');
+
+                // Type out the optimized text with improved animation
+                typeText(optimizedTextEl, data.optimized, () => {
+                    setButtonState('idle');
+                });
+            });
+        }
 
         // Regenerate button
-        document.getElementById('btn-regenerate').addEventListener('click', () => {
-            const input = document.getElementById('prompt-input');
-            window.electronAPI.optimizePrompt(input.value.trim(), true);
-        });
+        btnRegenerate.addEventListener('click', () => triggerOptimization(true));
 
         // Copy button
         document.getElementById('btn-copy').addEventListener('click', () => {
-            const text = document.getElementById('optimized-text').textContent;
-            window.electronAPI.copyToClipboard(text);
+            const text = optimizedTextEl.textContent;
+            if (text && text !== 'Generating optimized prompt...') {
+                window.electronAPI.copyToClipboard(text);
+                // Visual feedback
+                const btn = document.getElementById('btn-copy');
+                const icon = btn.querySelector('.material-symbols-outlined');
+                const originalIcon = icon.textContent;
+                icon.textContent = 'check';
+                setTimeout(() => {
+                    icon.textContent = originalIcon;
+                }, 2000);
+            }
         });
 
         // Save to chat button
         document.getElementById('btn-save-to-chat').addEventListener('click', () => {
-            const original = document.getElementById('prompt-input').value;
-            const optimized = document.getElementById('optimized-text').textContent;
-            window.electronAPI.saveToChat(original, optimized);
+            const original = promptInput.value;
+            const optimized = optimizedTextEl.textContent;
+            if (original && optimized && optimized !== 'Generating optimized prompt...') {
+                window.electronAPI.saveToChat(original, optimized);
+                // Visual feedback
+                const btn = document.getElementById('btn-save-to-chat');
+                const icon = btn.querySelector('.material-symbols-outlined');
+                icon.textContent = 'check';
+                setTimeout(() => {
+                    icon.textContent = 'save';
+                }, 2000);
+            }
         });
 
         // Sign out button
@@ -503,33 +666,6 @@
         document.getElementById('btn-new-chat').addEventListener('click', () => {
             const title = prompt('Enter chat title (or leave empty for "New Chat"):');
             window.electronAPI.createChat(title || 'New Chat');
-        });
-
-        // Update Save to chat button to show success
-        const originalSaveHandler = document.getElementById('btn-save-to-chat');
-        originalSaveHandler.addEventListener('click', () => {
-            const btn = document.getElementById('btn-save-to-chat');
-            const icon = btn.querySelector('.material-symbols-outlined');
-            icon.textContent = 'check';
-            setTimeout(() => {
-                icon.textContent = 'save';
-            }, 2000);
-        });
-
-        // Update Copy button to show success
-        document.getElementById('btn-copy').addEventListener('click', () => {
-            const btn = document.getElementById('btn-copy');
-            const icon = btn.querySelector('.material-symbols-outlined');
-            const originalIcon = icon.textContent;
-            icon.textContent = 'check';
-            setTimeout(() => {
-                icon.textContent = originalIcon;
-            }, 2000);
-        });
-
-        // Store current optimization for saving
-        window.electronAPI.onOptimizationComplete((data) => {
-            currentOptimization = { original: data.original, optimized: data.optimized };
         });
     </script>
 </body>

@@ -33,6 +33,15 @@
       -webkit-app-region: no-drag;
     }
 
+    /* Loading spinner animation */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .animate-spin {
+      animation: spin 1s linear infinite;
+    }
+
     /* State visibility */
     .state-container {
       position: absolute;
@@ -70,22 +79,41 @@
       animation: thinking-dots 1.5s infinite;
     }
 
-    /* Custom scrollbar */
-    .custom-scroll::-webkit-scrollbar {
-      width: 6px;
+    /* Custom scrollbar - ChatGPT inspired */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
     }
 
-    .custom-scroll::-webkit-scrollbar-track {
+    ::-webkit-scrollbar-track {
       background: transparent;
     }
 
-    .custom-scroll::-webkit-scrollbar-thumb {
-      background: rgba(148, 163, 184, 0.3);
-      border-radius: 3px;
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.2);
+      border-radius: 10px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
     }
 
-    .custom-scroll::-webkit-scrollbar-thumb:hover {
-      background: rgba(148, 163, 184, 0.5);
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.4);
+      background-clip: padding-box;
+    }
+
+    /* Thin scrollbar that appears on hover */
+    .custom-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+    }
+
+    .custom-scroll::-webkit-scrollbar {
+      width: 0;
+      transition: width 0.2s;
+    }
+
+    .custom-scroll:hover::-webkit-scrollbar {
+      width: 8px;
     }
 
     /* Smooth height transitions */
@@ -177,11 +205,15 @@
             </div>
 
             <!-- Generate button -->
-            <button id="generate-button" class="w-full mt-2 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all" style="-webkit-app-region: no-drag;">
-              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <button id="generate-button" class="w-full mt-2 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed" style="-webkit-app-region: no-drag;">
+              <svg id="generate-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
               </svg>
-              <span>GENERATE</span>
+              <svg id="generate-spinner" class="w-4 h-4 hidden animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span id="generate-text">GENERATE</span>
             </button>
           </div>
 
@@ -205,8 +237,8 @@
               </div>
 
               <!-- Optimized text display (NO POPUP - displays inline) -->
-              <div class="bg-[#141414] rounded-xl border border-gray-800 p-3 custom-scroll" style="max-height: 250px; overflow-y: auto;">
-                <p id="optimized-text" class="text-sm text-white leading-relaxed whitespace-pre-wrap">
+              <div id="optimized-text-container" class="bg-[#141414] rounded-xl border border-gray-800 p-3 custom-scroll" style="max-height: 200px; min-height: 60px; overflow-y: auto; overflow-x: hidden;">
+                <p id="optimized-text" class="text-sm text-white leading-relaxed whitespace-pre-wrap break-words" style="min-height: 1rem; will-change: contents;">
                   Click generate to optimize your prompt
                 </p>
               </div>
@@ -257,6 +289,8 @@
     let isOptimizing = false;
     let originalPrompt = '';
     let optimizedPrompt = '';
+    let typingAnimationId = null;
+    let optimizationRequestId = 0; // To handle concurrent requests
 
     const collapsedState = document.getElementById('collapsed-state');
     const expandedState = document.getElementById('expanded-state');
@@ -299,9 +333,9 @@
         }
       } else if (newState === 'expanded') {
         expandedState.classList.add('active');
-        // Dynamic height based on whether optimized section is shown
+        // Fixed height - use 450px when optimized section is shown, 240px otherwise
         const hasOptimized = optimizedSection.classList.contains('expanded');
-        const height = hasOptimized ? 550 : 240;
+        const height = hasOptimized ? 450 : 240;
 
         if (window.electronAPI?.send) {
           window.electronAPI.send('floating-panel:resize-and-reposition', {
@@ -310,19 +344,16 @@
             fromState: currentState
           });
         }
-        
-        // Focus textarea after transition with multiple attempts for reliability
-        const focusTextarea = () => {
-          if (promptTextarea) {
-            promptTextarea.focus();
-            console.log('[State] Focused textarea after transition to expanded');
-          }
-        };
-        
-        // Try multiple times to ensure focus (DOM rendering, window focus, etc.)
-        setTimeout(focusTextarea, 100);
-        setTimeout(focusTextarea, 200);
-        setTimeout(focusTextarea, 400);
+
+        // Focus textarea after transition (single attempt is usually sufficient)
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            if (promptTextarea) {
+              promptTextarea.focus();
+              console.log('[State] Focused textarea after transition to expanded');
+            }
+          }, 150);
+        });
       }
 
       currentState = newState;
@@ -334,21 +365,12 @@
     function showOptimizedSection() {
       optimizedSection.classList.add('expanded');
 
-      // Calculate dynamic height based on content
-      // Base height: 240px (collapsed state with input)
-      // Optimized section: ~100px header + text area
-      // Max text area height: 250px (with scrolling)
-      // Total: 240 + 100 + up to 250 = max 590px
-      // But clamp to screen size
-      const baseHeight = 240;
-      const optimizedSectionHeight = Math.min(350, 100 + 250); // Header + scrollable text area
-      const totalHeight = Math.min(590, baseHeight + optimizedSectionHeight);
-
-      // Resize window to accommodate optimized section
+      // Use fixed height for stability (no dynamic calculation)
+      // Total height: 450px (provides good balance without auto-resizing)
       if (window.electronAPI?.send) {
         window.electronAPI.send('floating-panel:resize-and-reposition', {
           width: 560,
-          height: totalHeight,
+          height: 450,
           fromState: currentState
         });
       }
@@ -356,7 +378,7 @@
 
     function hideOptimizedSection() {
       optimizedSection.classList.remove('expanded');
-      // Resize back to smaller size
+      // Reset to base size
       if (window.electronAPI?.send) {
         window.electronAPI.send('floating-panel:resize-and-reposition', {
           width: 560,
@@ -388,21 +410,38 @@
     // ==========================================
     // OPTIMIZE FUNCTION (INLINE - NO POPUP)
     // ==========================================
-    async function optimizePrompt(userPrompt) {
+    async function optimizePrompt(userPrompt, isRegenerate = false) {
       if (!userPrompt || userPrompt.trim().length === 0) {
         console.warn('[Optimize] Empty prompt');
+        return;
+      }
+
+      // Prevent concurrent optimizations
+      if (isOptimizing) {
+        console.warn('[Optimize] Already optimizing, ignoring request');
         return;
       }
 
       console.log('[Optimize] Starting optimization:', userPrompt);
       originalPrompt = userPrompt;
       isOptimizing = true;
+      optimizationRequestId++; // Increment request ID
+      const currentRequestId = optimizationRequestId;
+
+      // Cancel any ongoing typing animation
+      if (typingAnimationId) {
+        cancelAnimationFrame(typingAnimationId);
+        typingAnimationId = null;
+      }
 
       // Show optimized section INLINE (no popup)
       showOptimizedSection();
 
       // Update UI
-      setStatus('optimizing', 'Optimizing');
+      setStatus('optimizing', isRegenerate ? 'Regenerating' : 'Optimizing');
+      generateButton.disabled = true;
+      retryButton.disabled = true;
+      promptTextarea.disabled = true;
 
       // Show "thinking" state IN THE OPTIMIZED TEXT AREA
       optimizedText.innerHTML = '<span class="thinking-dots">Optimizing</span>';
@@ -410,36 +449,59 @@
       try {
         // Send to main process for optimization
         if (window.electronAPI?.send) {
-          window.electronAPI.send('floating-panel:prompt-submit', userPrompt);
+          window.electronAPI.send('floating-panel:prompt-submit', isRegenerate ? { text: userPrompt, isRegenerate: true } : userPrompt);
         }
 
       } catch (error) {
         console.error('[Optimize] Error:', error);
-        optimizedText.textContent = 'Failed to optimize prompt. Please try again.';
-        setStatus('waiting', 'Error');
-        isOptimizing = false;
+        // Only update if this is still the current request
+        if (currentRequestId === optimizationRequestId) {
+          optimizedText.textContent = 'Failed to optimize prompt. Please try again.';
+          setStatus('waiting', 'Error');
+          isOptimizing = false;
+          generateButton.disabled = false;
+          retryButton.disabled = false;
+          promptTextarea.disabled = false;
+        }
       }
     }
 
     // ==========================================
     // TYPING ANIMATION (IN THE OPTIMIZED SECTION)
     // ==========================================
-    function typeText(element, text, speed = 10) {
+    function typeText(element, text, speed = 15) {
       return new Promise((resolve) => {
+        // Cancel any existing animation
+        if (typingAnimationId) {
+          cancelAnimationFrame(typingAnimationId);
+        }
+
+        // Ensure text is valid
+        if (!text || typeof text !== 'string') {
+          element.textContent = text || '';
+          resolve();
+          return;
+        }
+
         element.textContent = '';
         let index = 0;
+        const totalChars = text.length;
+        const charsPerFrame = Math.max(1, Math.ceil(totalChars / 60)); // Complete in ~60 frames
 
-        function addChar() {
-          if (index < text.length) {
-            element.textContent += text[index];
-            index++;
-            setTimeout(addChar, speed);
+        function animate() {
+          const endIndex = Math.min(index + charsPerFrame, totalChars);
+          element.textContent = text.substring(0, endIndex);
+          index = endIndex;
+
+          if (index < totalChars) {
+            typingAnimationId = requestAnimationFrame(animate);
           } else {
+            typingAnimationId = null;
             resolve();
           }
         }
 
-        addChar();
+        typingAnimationId = requestAnimationFrame(animate);
       });
     }
 
@@ -472,10 +534,33 @@
       transitionToState('collapsed');
     });
 
+    // DOM references for button state management
+    const generateIcon = document.getElementById('generate-icon');
+    const generateSpinner = document.getElementById('generate-spinner');
+    const generateText = document.getElementById('generate-text');
+    let hasGeneratedOnce = false;
+
+    // Update generate button state
+    function setGenerateButtonState(state) {
+      switch (state) {
+        case 'loading':
+          generateIcon.classList.add('hidden');
+          generateSpinner.classList.remove('hidden');
+          generateText.textContent = 'GENERATING...';
+          break;
+        case 'idle':
+          generateIcon.classList.remove('hidden');
+          generateSpinner.classList.add('hidden');
+          generateText.textContent = hasGeneratedOnce ? 'REGENERATE' : 'GENERATE';
+          break;
+      }
+    }
+
     // Generate button
     generateButton.addEventListener('click', () => {
       const prompt = promptTextarea.value.trim();
-      if (prompt) {
+      if (prompt && !isOptimizing) {
+        setGenerateButtonState('loading');
         optimizePrompt(prompt);
       }
     });
@@ -485,7 +570,8 @@
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const prompt = promptTextarea.value.trim();
-        if (prompt) {
+        if (prompt && !isOptimizing) {
+          setGenerateButtonState('loading');
           optimizePrompt(prompt);
         }
       }
@@ -493,18 +579,9 @@
 
     // Retry button (Regenerate)
     retryButton.addEventListener('click', () => {
-      if (originalPrompt) {
-        // Clear previous optimized prompt to show it's working
-        optimizedPrompt = '';
-        optimizedText.innerHTML = '<span class="thinking-dots">Regenerating</span>';
-        setStatus('optimizing', 'Regenerating');
-        
-        if (window.electronAPI?.send) {
-          window.electronAPI.send('floating-panel:prompt-submit', { 
-            text: originalPrompt, 
-            isRegenerate: true 
-          });
-        }
+      if (originalPrompt && !isOptimizing) {
+        setGenerateButtonState('loading');
+        optimizePrompt(originalPrompt, true);
       }
     });
 
@@ -655,26 +732,50 @@
     // Listen for optimization-complete event (DISPLAY INLINE - NO POPUP)
     if (window.electronAPI?.onOptimizationComplete) {
       console.log('[FloatingPanel] Setting up onOptimizationComplete listener');
-      window.electronAPI.onOptimizationComplete(async (data) => {
-        console.log('[FloatingPanel] ===== RECEIVED OPTIMIZATION RESULT =====');
-        console.log('[FloatingPanel] Original:', data.original?.substring(0, 50));
-        console.log('[FloatingPanel] Optimized length:', data.optimized?.length);
-        optimizedPrompt = data.optimized;
+      let listenerRegistered = false;
 
-        // Make sure optimized section is visible
-        if (!optimizedSection.classList.contains('expanded')) {
-          console.log('[FloatingPanel] Expanding optimized section');
-          showOptimizedSection();
-        }
+      if (!listenerRegistered) {
+        listenerRegistered = true;
+        window.electronAPI.onOptimizationComplete(async (data) => {
+          console.log('[FloatingPanel] ===== RECEIVED OPTIMIZATION RESULT =====');
+          console.log('[FloatingPanel] Original:', data.original?.substring(0, 50));
+          console.log('[FloatingPanel] Optimized length:', data.optimized?.length);
 
-        // Type out the optimized text IN THE OPTIMIZED SECTION (not in a popup)
-        console.log('[FloatingPanel] Starting to type optimized text');
-        await typeText(optimizedText, optimizedPrompt, 15);
-        console.log('[FloatingPanel] Typing complete');
+          // Validate the response
+          if (!data.optimized || typeof data.optimized !== 'string') {
+            console.error('[FloatingPanel] Invalid optimization result:', data);
+            optimizedText.textContent = 'Error: Invalid optimization result';
+            setStatus('waiting', 'Error');
+            isOptimizing = false;
+            setGenerateButtonState('idle');
+            generateButton.disabled = false;
+            retryButton.disabled = false;
+            promptTextarea.disabled = false;
+            return;
+          }
 
-        setStatus('ready', 'Ready');
-        isOptimizing = false;
-      });
+          optimizedPrompt = data.optimized;
+          hasGeneratedOnce = true;
+
+          // Make sure optimized section is visible
+          if (!optimizedSection.classList.contains('expanded')) {
+            console.log('[FloatingPanel] Expanding optimized section');
+            showOptimizedSection();
+          }
+
+          // Type out the optimized text IN THE OPTIMIZED SECTION (not in a popup)
+          console.log('[FloatingPanel] Starting to type optimized text');
+          await typeText(optimizedText, optimizedPrompt);
+          console.log('[FloatingPanel] Typing complete');
+
+          setStatus('ready', 'Ready');
+          isOptimizing = false;
+          setGenerateButtonState('idle');
+          generateButton.disabled = false;
+          retryButton.disabled = false;
+          promptTextarea.disabled = false;
+        });
+      }
     } else {
       console.error('[FloatingPanel] electronAPI.onOptimizationComplete is NOT available!');
     }
