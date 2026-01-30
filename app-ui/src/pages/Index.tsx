@@ -124,6 +124,17 @@ const Index = () => {
     }
   }, []);
 
+  // Load messages when a chat is selected (Fix 4: Recent chat navigation)
+  useEffect(() => {
+    if (selectedChatId) {
+      const chatSession = chatSessions.find((s) => s.id === selectedChatId);
+      if (chatSession) {
+        setMessages(chatSession.messages);
+        setCurrentView("chat");
+      }
+    }
+  }, [selectedChatId, chatSessions]);
+
   // Generate history from chat sessions (sorted by most recent)
   const history = useMemo((): HistoryItem[] => {
     return chatSessions

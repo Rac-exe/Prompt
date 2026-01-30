@@ -3,6 +3,7 @@ import { Copy, Check, Pencil, Trash2, Calendar, MessageSquare, Download, Share2 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { SharePromptModal } from "./SharePromptModal";
 
 export interface SavedPrompt {
   id: string;
@@ -24,6 +25,7 @@ interface PromptCardProps {
 
 export const PromptCard = ({ prompt, onCopy, onEdit, onDelete, onOpen }: PromptCardProps) => {
   const [copied, setCopied] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -52,12 +54,7 @@ export const PromptCard = ({ prompt, onCopy, onEdit, onDelete, onOpen }: PromptC
 
   const handleShare = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const shareText = `${prompt.title}\n\n${prompt.content}`;
-    navigator.clipboard.writeText(shareText);
-    toast({
-      title: "Copied to clipboard",
-      description: "Share this prompt with others",
-    });
+    setShareModalOpen(true);
   };
 
   const handleCardClick = () => {
@@ -151,6 +148,12 @@ export const PromptCard = ({ prompt, onCopy, onEdit, onDelete, onOpen }: PromptC
           </div>
         )}
       </div>
+
+      <SharePromptModal
+        open={shareModalOpen}
+        onOpenChange={setShareModalOpen}
+        prompt={{ title: prompt.title, content: prompt.content }}
+      />
     </div>
   );
 };

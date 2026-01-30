@@ -300,6 +300,26 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
               <div>
                 <h3 className="text-lg font-semibold text-foreground mb-4">Typography</h3>
                 <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
+                  {/* Font Size */}
+                  <div className="space-y-2">
+                    <Label className="text-foreground">Font Size</Label>
+                    <Select
+                      value={settings.fontSize}
+                      onValueChange={(value) =>
+                        updateSetting("fontSize", value as SettingsData["fontSize"])
+                      }
+                    >
+                      <SelectTrigger className="bg-secondary border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-card border-border">
+                        <SelectItem value="small">Small (14px)</SelectItem>
+                        <SelectItem value="medium">Medium (16px)</SelectItem>
+                        <SelectItem value="large">Large (18px)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   {/* Font Family */}
                   <div className="space-y-2">
                     <Label className="text-foreground">Font Family</Label>
