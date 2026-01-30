@@ -209,37 +209,50 @@ const Index = () => {
       timestamp: new Date(),
     };
 
+    // Add to recent chats BEFORE generating (prevents duplication)
+    let currentChatId = selectedChatId;
+    if (!currentChatId) {
+      const newChatId = `chat-${Date.now()}`;
+      const newChat = {
+        id: newChatId,
+        title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
+        date: "Today",
+      };
+      setRecentChats((prev) => [newChat, ...prev]);
+      setSelectedChatId(newChatId);
+      currentChatId = newChatId;
+    }
+
     setMessages((prev) => [...prev, userMessage]);
     setIsGenerating(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const responseIndex = Math.floor(Math.random() * optimizedResponses.length);
-      const assistantMessage: Message = {
-        id: `msg-${Date.now() + 1}`,
-        role: "assistant",
-        content: optimizedResponses[responseIndex],
-        timestamp: new Date(),
-      };
-
+    // Simulate AI response (FIX: Prevent duplication by using a unique timeout ID)
+    const timeoutId = setTimeout(() => {
       setMessages((prev) => {
-        const updated = [...prev, assistantMessage];
-        
-        // Add to recent chats if new
-        if (!selectedChatId) {
-          const newChat = {
-            id: `chat-${Date.now()}`,
-            title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
-            date: "Today",
-          };
-          setRecentChats((prev) => [newChat, ...prev]);
-          setSelectedChatId(newChat.id);
+        // Check if we already have a response (prevent duplication)
+        const lastMessage = prev[prev.length - 1];
+        if (lastMessage && lastMessage.role === "assistant" &&
+            Date.now() - lastMessage.timestamp.getTime() < 2000) {
+          // Response already added, skip
+          setIsGenerating(false);
+          return prev;
         }
-        
-        return updated;
+
+        const responseIndex = Math.floor(Math.random() * optimizedResponses.length);
+        const assistantMessage: Message = {
+          id: `msg-${Date.now()}`,
+          role: "assistant",
+          content: optimizedResponses[responseIndex],
+          timestamp: new Date(),
+        };
+
+        setIsGenerating(false);
+        return [...prev, assistantMessage];
       });
-      setIsGenerating(false);
     }, 1500);
+
+    // Cleanup if component unmounts
+    return () => clearTimeout(timeoutId);
   }, [selectedChatId]);
 
   const handleCopyPrompt = (id: string) => {
