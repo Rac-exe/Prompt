@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -84,7 +84,7 @@ const Index = () => {
   const [userEmail, setUserEmail] = useState("");
 
   // Navigation state
-  const [currentView, setCurrentView] = useState<"chat" | "library" | "history" | "settings">("chat");
+  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [recentChats, setRecentChats] = useState(initialRecentChats);
 
@@ -103,6 +103,26 @@ const Index = () => {
   // Library state
   const [collections, setCollections] = useState<Collection[]>(initialCollections);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(initialPrompts);
+
+  // Initialize theme on mount (Fix 1)
+  useEffect(() => {
+    const STORAGE_KEY = "prompt-weaver-settings";
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      try {
+        const settings = JSON.parse(stored);
+        if (settings.theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+      } catch (e) {
+        document.documentElement.classList.add("dark");
+      }
+    } else {
+      document.documentElement.classList.add("dark");
+    }
+  }, []);
 
   // Generate history from chat sessions (sorted by most recent)
   const history = useMemo((): HistoryItem[] => {
@@ -128,13 +148,17 @@ const Index = () => {
   };
 
   const handleLogout = () => {
-    setIsLoggedIn(false);
+    // Fix 10: Don't close app, just redirect to login
     setUserEmail("");
     setMessages([]);
+    setRecentChats([]);
+    setChatSessions([]);
+    setSavedPrompts([]);
     setCurrentView("chat");
+    setIsLoggedIn(false); // This will show login page
     toast({
       title: "Signed out",
-      description: "You've been signed out successfully.",
+      description: "Please log in again.",
     });
   };
 
