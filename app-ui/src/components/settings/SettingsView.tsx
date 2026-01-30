@@ -114,8 +114,8 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
       </div>
 
       {/* Tabs Navigation */}
-      <Tabs defaultValue="profile" className="flex-1 flex flex-col">
-        <div className="px-6 pt-6">
+      <Tabs defaultValue="profile" className="flex-1 flex flex-col overflow-hidden">
+        <div className="px-6 pt-6 flex-shrink-0">
           <TabsList className="grid w-full max-w-md grid-cols-3 bg-secondary">
             <TabsTrigger value="profile" className="gap-2">
               <User className="w-4 h-4" />
@@ -133,7 +133,7 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
         </div>
 
         {/* Profile Tab */}
-        <TabsContent value="profile" className="flex-1 mt-0">
+        <TabsContent value="profile" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-2xl mx-auto p-6 space-y-6">
               <div>
@@ -205,7 +205,7 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
         </TabsContent>
 
         {/* Billing Tab */}
-        <TabsContent value="billing" className="flex-1 mt-0">
+        <TabsContent value="billing" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-2xl mx-auto p-6 space-y-6">
               <div>
@@ -265,9 +265,35 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
         </TabsContent>
 
         {/* Customize Tab */}
-        <TabsContent value="customize" className="flex-1 mt-0">
+        <TabsContent value="customize" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-2xl mx-auto p-6 space-y-6">
+              {/* Personalized Prompt Instructions */}
+              <div>
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-6 h-6 rounded bg-emerald/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-emerald text-sm">📋</span>
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground">
+                    Personalized Prompt Instructions
+                  </h3>
+                </div>
+                <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-foreground font-medium">Custom Instructions</Label>
+                    <p className="text-xs text-muted-foreground">
+                      These instructions will be appended to every optimization request
+                    </p>
+                    <Textarea
+                      value={settings.promptInstructions}
+                      onChange={(e) => updateSetting("promptInstructions", e.target.value)}
+                      placeholder="Enter custom instructions here... (e.g., 'Always use formal tone', 'Include examples', 'Focus on technical accuracy')"
+                      className="min-h-[120px] bg-secondary border-border font-mono text-sm resize-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <h3 className="text-lg font-semibold text-foreground mb-4">
                   <Palette className="w-5 h-5 inline mr-2 text-emerald" />
