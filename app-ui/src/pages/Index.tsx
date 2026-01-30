@@ -29,54 +29,8 @@ interface ChatSession {
   createdAt: Date;
 }
 
-const optimizedResponses = [
-  `I've enhanced your prompt for maximum clarity and effectiveness:
-
-**Optimized Prompt:**
-"You are an expert content strategist with 10+ years of experience. Create a comprehensive, SEO-optimized blog post on [TOPIC]. 
-
-Requirements:
-- Compelling headline using power words
-- Meta description (150-160 chars)
-- Introduction with a hook
-- 3-5 H2 sections with supporting H3s
-- Naturally integrated primary and secondary keywords
-- Actionable conclusion with CTA
-
-Tone: Professional yet conversational
-Word count: 1,500-2,000 words"`,
-  `Here's your optimized prompt with enhanced specificity:
-
-**Optimized Prompt:**
-"Act as a senior software engineer documenting a production codebase. Generate comprehensive JSDoc documentation for the following code.
-
-Include:
-1. Function/class purpose (1-2 sentences)
-2. @param descriptions with types and constraints
-3. @returns with type and possible values
-4. @throws for error conditions
-5. @example with 2-3 usage scenarios
-6. @see for related functions
-
-Style: Technical but accessible
-Format: JSDoc 3.x compatible"`,
-  `I've transformed your prompt for better results:
-
-**Optimized Prompt:**
-"You are a conversion copywriter specializing in e-commerce. Write a high-converting product description for [PRODUCT].
-
-Structure:
-- Opening hook addressing primary pain point
-- 3 key benefits (feature → benefit → emotion)
-- Social proof placeholder
-- Urgency element
-- Clear CTA
-
-Constraints:
-- Maximum 150 words
-- Reading level: 8th grade
-- Include sensory language"`,
-];
+// Check if running in Electron environment
+const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 const Index = () => {
   // Auth state
@@ -121,6 +75,28 @@ const Index = () => {
       }
     } else {
       document.documentElement.classList.add("dark");
+    }
+  }, []);
+
+  // Listen for optimization results from Electron
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onOptimizationComplete) {
+      const handleOptimizationComplete = (data: { original: string; optimized: string }) => {
+        console.log('[Index] Optimization complete received:', data.original.substring(0, 50));
+
+        const assistantMessage: Message = {
+          id: `msg-${Date.now()}`,
+          role: "assistant",
+          content: data.optimized,
+          timestamp: new Date(),
+        };
+
+        setMessages((prev) => [...prev, assistantMessage]);
+        setIsGenerating(false);
+      };
+
+      window.electronAPI.onOptimizationComplete(handleOptimizationComplete);
+      console.log('[Index] Registered optimization complete listener');
     }
   }, []);
 
@@ -226,33 +202,28 @@ const Index = () => {
     setMessages((prev) => [...prev, userMessage]);
     setIsGenerating(true);
 
-    // Simulate AI response (FIX: Prevent duplication by using a unique timeout ID)
-    const timeoutId = setTimeout(() => {
-      setMessages((prev) => {
-        // Check if we already have a response (prevent duplication)
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage && lastMessage.role === "assistant" &&
-            Date.now() - lastMessage.timestamp.getTime() < 2000) {
-          // Response already added, skip
-          setIsGenerating(false);
-          return prev;
-        }
+    // Use Electron API for optimization if available
+    if (isElectron && window.electronAPI?.optimizePrompt) {
+      // Call the Python service via Electron IPC
+      window.electronAPI.optimizePrompt(content, false);
+    } else {
+      // Fallback for web environment (no Electron)
+      setTimeout(() => {
+        const fallbackResponse = `⚠️ Running in web mode - Electron API not available. Please run this app in Electron to use the AI-powered prompt optimization with adaptive system prompts.
 
-        const responseIndex = Math.floor(Math.random() * optimizedResponses.length);
+Your prompt was: "${content}"`;
+
         const assistantMessage: Message = {
           id: `msg-${Date.now()}`,
           role: "assistant",
-          content: optimizedResponses[responseIndex],
+          content: fallbackResponse,
           timestamp: new Date(),
         };
 
+        setMessages((prev) => [...prev, assistantMessage]);
         setIsGenerating(false);
-        return [...prev, assistantMessage];
-      });
-    }, 1500);
-
-    // Cleanup if component unmounts
-    return () => clearTimeout(timeoutId);
+      }, 500);
+    }
   }, [selectedChatId]);
 
   const handleCopyPrompt = (id: string) => {

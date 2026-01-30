@@ -7,7 +7,7 @@ interface AppLayoutProps {
 
 export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
   return (
-    <div className="min-h-screen flex w-full bg-background">
+    <div className="h-screen flex w-full bg-background overflow-hidden">
       {sidebar}
       <main className="flex-1 flex flex-col overflow-hidden">
         {children}
