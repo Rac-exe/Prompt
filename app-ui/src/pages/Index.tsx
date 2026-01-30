@@ -9,6 +9,7 @@ import { SavedPrompt } from "@/components/library/PromptCard";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { Message } from "@/components/chat/MessageBubble";
+import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
 
 // Empty initial data
@@ -53,6 +54,10 @@ const Index = () => {
   // Save modal state
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [promptToSave, setPromptToSave] = useState<Message | null>(null);
+
+  // Preview modal state
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [promptToPreview, setPromptToPreview] = useState<SavedPrompt | null>(null);
 
   // Library state
   const [collections, setCollections] = useState<Collection[]>(initialCollections);
@@ -356,19 +361,12 @@ Your prompt was: "${content}"`;
     }
   };
 
-  // Library handler - open prompt in chat
+  // Library handler - show prompt preview
   const handleOpenPrompt = (id: string) => {
     const prompt = savedPrompts.find((p) => p.id === id);
     if (prompt) {
-      // Create a new chat with this prompt
-      handleNewChat();
-      setTimeout(() => {
-        handleSendMessage(prompt.content);
-      }, 100);
-      toast({
-        title: "Prompt loaded",
-        description: `Opening "${prompt.title}"`,
-      });
+      setPromptToPreview(prompt);
+      setPreviewModalOpen(true);
     }
   };
 
@@ -451,6 +449,12 @@ Your prompt was: "${content}"`;
         collections={collections.filter((c) => c.id !== "all" && c.id !== "favorites")}
         onSave={handleSavePrompt}
         promptPreview={promptToSave?.content || ""}
+      />
+
+      <PromptPreviewModal
+        open={previewModalOpen}
+        onOpenChange={setPreviewModalOpen}
+        prompt={promptToPreview || { title: "", content: "" }}
       />
     </>
   );

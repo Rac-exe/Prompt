@@ -66,9 +66,8 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
         </DialogHeader>
 
         <Tabs defaultValue="link" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 bg-secondary">
+          <TabsList className="grid w-full grid-cols-2 bg-secondary">
             <TabsTrigger value="link">Link</TabsTrigger>
-            <TabsTrigger value="copy">Copy</TabsTrigger>
             <TabsTrigger value="export">Export</TabsTrigger>
           </TabsList>
 
@@ -99,33 +98,6 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
               <p className="text-xs text-muted-foreground">
                 Anyone with this link can view your prompt
               </p>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="copy" className="space-y-4 pt-4">
-            <div className="space-y-2">
-              <Label className="text-foreground">Prompt Content</Label>
-              <div className="p-4 bg-secondary border border-border rounded-lg max-h-[200px] overflow-y-auto">
-                <p className="text-sm text-foreground whitespace-pre-wrap">
-                  {prompt.content}
-                </p>
-              </div>
-              <Button
-                onClick={() => handleCopy(prompt.content, "Prompt")}
-                className="w-full bg-emerald text-white hover:bg-emerald/90"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-4 h-4 mr-2" />
-                    Copied!
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-4 h-4 mr-2" />
-                    Copy to Clipboard
-                  </>
-                )}
-              </Button>
             </div>
           </TabsContent>
 
