@@ -37,6 +37,15 @@ pip-delete-this-directory.txt
 out/
 release/
 
+# Built UI files (generated from app-ui/src)
+electron/renderer/app-ui/*
+!electron/renderer/app-ui/.gitkeep
+
+# App UI source dependencies
+app-ui/node_modules/
+app-ui/dist/
+app-ui/.emergent/
+
 # Machine Learning Models (large files)
 python-service/vosk-model-*/
 python-service/*.pt

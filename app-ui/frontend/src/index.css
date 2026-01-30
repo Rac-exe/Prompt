@@ -1,0 +1,310 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prompt Weaver - Premium Emerald Design System */
+
+@layer base {
+  :root {
+    /* Light mode - soft and muted */
+    --background: 0 0% 100%;
+    --foreground: 210 24% 20%;
+
+    --card: 0 0% 98%;
+    --card-foreground: 210 24% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 24% 20%;
+
+    --primary: 150 60% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 210 14% 96%;
+    --secondary-foreground: 210 24% 20%;
+
+    --muted: 210 14% 95%;
+    --muted-foreground: 215 20% 35%;
+
+    --accent: 150 60% 96%;
+    --accent-foreground: 150 60% 25%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 150 60% 45%;
+
+    --radius: 0.75rem;
+
+    /* Custom tokens - Light */
+    --surface: 0 0% 97%;
+    --surface-hover: 210 14% 93%;
+    --glow-primary: 150 60% 45%;
+    --success: 150 60% 45%;
+    --success-foreground: 0 0% 100%;
+    --emerald: 150 60% 45%;
+    --emerald-soft: 150 50% 65%;
+    --glass-overlay: 150 60% 45% / 0.06;
+
+    /* Sidebar - Light */
+    --sidebar-background: 0 0% 98%;
+    --sidebar-foreground: 215 20% 35%;
+    --sidebar-primary: 150 60% 45%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 14% 95%;
+    --sidebar-accent-foreground: 210 24% 20%;
+    --sidebar-border: 214 32% 88%;
+    --sidebar-ring: 150 60% 45%;
+  }
+
+  /* Light mode font weight enhancement */
+  :root:not(.dark) {
+    --font-weight-normal: 500;
+    --font-weight-medium: 600;
+    --font-weight-semibold: 700;
+  }
+
+  .dark {
+    /* Dark mode - premium emerald on refined black */
+    --background: 217 33% 7%;
+    --foreground: 210 20% 98%;
+
+    --card: 217 33% 10%;
+    --card-foreground: 210 20% 98%;
+
+    --popover: 217 33% 10%;
+    --popover-foreground: 210 20% 98%;
+
+    --primary: 150 80% 60%;
+    --primary-foreground: 217 33% 7%;
+
+    --secondary: 217 33% 12%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 217 33% 15%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 33% 18%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 217 33% 15%;
+    --input: 217 33% 15%;
+    --ring: 150 80% 60%;
+
+    --radius: 0.75rem;
+
+    /* Custom tokens - Dark */
+    --surface: 217 33% 12%;
+    --surface-hover: 217 33% 15%;
+    --glow-primary: 150 80% 60%;
+    --success: 150 80% 60%;
+    --success-foreground: 217 33% 7%;
+    --emerald: 150 80% 60%;
+    --emerald-soft: 150 70% 75%;
+    --glass-overlay: 150 80% 60% / 0.06;
+
+    /* Sidebar - Dark */
+    --sidebar-background: 217 33% 6%;
+    --sidebar-foreground: 215 20% 65%;
+    --sidebar-primary: 150 80% 60%;
+    --sidebar-primary-foreground: 217 33% 7%;
+    --sidebar-accent: 217 33% 12%;
+    --sidebar-accent-foreground: 210 20% 98%;
+    --sidebar-border: 217 33% 12%;
+    --sidebar-ring: 150 80% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply dark;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  /* Apply bolder font weight in light mode only */
+  :root:not(.dark) body,
+  :root:not(.dark) p,
+  :root:not(.dark) span,
+  :root:not(.dark) div,
+  :root:not(.dark) label,
+  :root:not(.dark) input,
+  :root:not(.dark) textarea,
+  :root:not(.dark) button {
+    font-weight: 500;
+  }
+  
+  :root:not(.dark) h1,
+  :root:not(.dark) h2,
+  :root:not(.dark) h3,
+  :root:not(.dark) h4,
+  :root:not(.dark) h5,
+  :root:not(.dark) h6 {
+    font-weight: 700;
+  }
+  
+  :root:not(.dark) .font-medium {
+    font-weight: 600;
+  }
+  
+  :root:not(.dark) .font-semibold {
+    font-weight: 700;
+  }
+  
+  :root:not(.dark) .font-bold {
+    font-weight: 800;
+  }
+
+  /* Custom scrollbar - thin, subtle, modern */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+    transition: background 0.2s ease;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+
+  /* Firefox scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted)) transparent;
+  }
+}
+
+@layer utilities {
+  .glow-primary {
+    box-shadow: 0 0 20px hsl(var(--emerald) / 0.3),
+                0 0 40px hsl(var(--emerald) / 0.15);
+  }
+
+  .glow-primary-subtle {
+    box-shadow: 0 0 10px hsl(var(--emerald) / 0.2);
+  }
+
+  .glow-emerald {
+    box-shadow: 0 0 24px hsl(var(--emerald) / 0.4),
+                0 0 12px hsl(var(--emerald) / 0.2);
+  }
+
+  .text-gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+  }
+
+  .bg-gradient-surface {
+    background: linear-gradient(180deg, hsl(var(--surface)) 0%, hsl(var(--background)) 100%);
+  }
+
+  .bg-glass {
+    background: hsl(var(--glass-overlay));
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .border-glow {
+    border-color: hsl(var(--border));
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.2s ease-out;
+  }
+
+  .animate-pulse-subtle {
+    animation: pulseSubtle 2s ease-in-out infinite;
+  }
+
+  .animate-button-press {
+    animation: buttonPress 0.15s ease-out;
+  }
+
+  .transition-button {
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulseSubtle {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes buttonPress {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
