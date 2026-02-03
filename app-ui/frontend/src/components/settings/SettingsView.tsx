@@ -15,78 +15,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
+import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/settings";
 
 interface SettingsViewProps {
   userEmail: string;
   onLogout: () => void;
 }
 
-interface SettingsData {
-  theme: "light" | "dark";
-  fontSize: "small" | "medium" | "large";
-  fontFamily: "inter" | "mono" | "serif";
-  promptInstructions: string;
-}
-
-const STORAGE_KEY = "prompt-weaver-settings";
-
-const loadSettings = (): SettingsData => {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      // Fall through to defaults
-    }
-  }
-  return {
-    theme: "dark",
-    fontSize: "medium",
-    fontFamily: "inter",
-    promptInstructions: "",
-  };
-};
-
-const saveSettings = (settings: SettingsData) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-};
-
 export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
   const [settings, setSettings] = useState<SettingsData>(loadSettings());
   const [isDirty, setIsDirty] = useState(false);
 
+  // Apply settings when they change (for live preview)
   useEffect(() => {
-    // Apply theme
-    if (settings.theme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-
-    // Apply font size
-    const root = document.documentElement;
-    switch (settings.fontSize) {
-      case "small":
-        root.style.fontSize = "14px";
-        break;
-      case "large":
-        root.style.fontSize = "18px";
-        break;
-      default:
-        root.style.fontSize = "16px";
-    }
-
-    // Apply font family
-    switch (settings.fontFamily) {
-      case "mono":
-        root.style.fontFamily = "'Courier New', monospace";
-        break;
-      case "serif":
-        root.style.fontFamily = "'Georgia', serif";
-        break;
-      default:
-        root.style.fontFamily = "'Inter', system-ui, sans-serif";
-    }
+    applySettings(settings);
   }, [settings]);
 
   const handleSave = () => {
