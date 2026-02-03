@@ -113,7 +113,7 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onMessageSent) {
       const handleMessageSent = (data: { chatId: string; chat: any; userMessage: any }) => {
         console.log('[Index] Message sent to Supabase:', data);
-        
+
         // Update selected chat ID if this was a new chat
         if (!selectedChatId) {
           setSelectedChatId(data.chatId);
@@ -128,7 +128,7 @@ const Index = () => {
           timestamp: new Date(data.userMessage.createdAt),
         };
         setMessages((prev) => [...prev, userMessage]);
-        
+
         // Show generating indicator
         setIsGenerating(true);
       };
@@ -181,7 +181,7 @@ const Index = () => {
       console.log('[Index] Loading messages for chat:', selectedChatId);
       window.electronAPI.loadMessages(selectedChatId);
       setCurrentView("chat");
-      
+
       // Find chat title
       const chat = recentChats.find((c) => c.id === selectedChatId);
       if (chat) {
@@ -195,7 +195,7 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onMessagesLoaded) {
       const handleMessagesLoaded = (data: { chatId: string; messages: any[] }) => {
         console.log('[Index] Messages loaded from Supabase:', data.messages.length);
-        
+
         if (data.chatId === selectedChatId) {
           const formattedMessages: Message[] = data.messages.map(msg => ({
             id: msg.id,
@@ -233,12 +233,12 @@ const Index = () => {
     setChatSessions([]);
     setSavedPrompts([]);
     setCurrentView("chat");
-    
+
     // Sign out via Electron (AuthWrapper will handle UI transition)
     if (isElectron && window.electronAPI?.signOut) {
       window.electronAPI.signOut();
     }
-    
+
     toast({
       title: "Signed out",
       description: "Please log in again.",
@@ -273,12 +273,12 @@ const Index = () => {
         chatId: selectedChatId,
         content: content
       });
-      
+
       console.log('[Index] Message sent to Electron main process');
     } else {
       // Fallback for web environment (no Electron)
       console.warn('[Index] Running in web mode - no Electron API');
-      
+
       const userMessage: Message = {
         id: `msg-${Date.now()}`,
         role: "user",
@@ -287,7 +287,7 @@ const Index = () => {
       };
       setMessages((prev) => [...prev, userMessage]);
       setIsGenerating(true);
-      
+
       setTimeout(() => {
         const fallbackResponse = `⚠️ Running in web mode - Electron API not available. Please run this app in Electron to use the AI-powered prompt optimization with adaptive system prompts.
 
@@ -319,6 +319,23 @@ Your prompt was: "${content}"`;
       setPromptToSave(message);
       setSaveModalOpen(true);
     }
+  };
+
+  const handleFeedback = (messageId: string, rating: "positive" | "negative") => {
+    console.log('[Index] Feedback received:', { messageId, rating });
+
+    // Store feedback in localStorage for now (can be sent to Supabase later)
+    const feedbackKey = `feedback-${messageId}`;
+    localStorage.setItem(feedbackKey, JSON.stringify({
+      messageId,
+      rating,
+      timestamp: new Date().toISOString()
+    }));
+
+    toast({
+      title: "Thank you!",
+      description: "Your feedback helps us improve.",
+    });
   };
 
   const handleSavePrompt = (collectionId: string, title: string, newCollectionName?: string) => {
@@ -484,6 +501,7 @@ Your prompt was: "${content}"`;
             onSendMessage={handleSendMessage}
             onCopyPrompt={handleCopyPrompt}
             onSavePrompt={handleSavePromptClick}
+            onFeedback={handleFeedback}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
           />

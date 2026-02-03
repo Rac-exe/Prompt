@@ -22,6 +22,11 @@ export const FeedbackWidget = ({
   const handleRate = (type: "positive" | "negative") => {
     setRating(type);
     onFeedback?.(messageId, type);
+
+    // Auto-dismiss after a short delay to show the selected state
+    setTimeout(() => {
+      setDismissed(true);
+    }, 800);
   };
 
   const handleDismiss = () => {
