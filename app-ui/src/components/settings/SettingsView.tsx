@@ -242,12 +242,13 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
                   Appearance
                 </h3>
                 <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  {/* Theme Toggle */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label className="text-foreground">Dark Mode</Label>
+                      <Label className="text-foreground">
+                        {settings.theme === "dark" ? "Dark Mode" : "Light Mode"}
+                      </Label>
                       <p className="text-sm text-muted-foreground">
-                        Dark color scheme
+                        {settings.theme === "dark" ? "Dark color scheme" : "Light color scheme"}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
