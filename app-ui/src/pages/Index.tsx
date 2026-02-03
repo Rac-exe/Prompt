@@ -34,14 +34,13 @@ interface ChatSession {
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 const Index = () => {
-  // Auth state
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [userEmail, setUserEmail] = useState("");
+  // User state (auth is handled by AuthWrapper)
+  const [userEmail, setUserEmail] = useState("user@example.com");
 
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
-  const [recentChats, setRecentChats] = useState(initialRecentChats);
+  const [recentChats, setRecentChats] = useState<any[]>([]);
 
   // Chat sessions for history
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
@@ -50,6 +49,7 @@ const Index = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [savedPromptIds, setSavedPromptIds] = useState<string[]>([]);
+  const [currentChatTitle, setCurrentChatTitle] = useState<string>('');
 
   // Save modal state
   const [saveModalOpen, setSaveModalOpen] = useState(false);
@@ -83,38 +83,133 @@ const Index = () => {
     }
   }, []);
 
-  // Listen for optimization results from Electron
+  // Load chats from Supabase on mount
   useEffect(() => {
-    if (isElectron && window.electronAPI?.onOptimizationComplete) {
-      const handleOptimizationComplete = (data: { original: string; optimized: string }) => {
-        console.log('[Index] Optimization complete received:', data.original.substring(0, 50));
+    if (isElectron && window.electronAPI?.loadChats) {
+      console.log('[Index] Loading chats from Supabase');
+      window.electronAPI.loadChats();
+    }
+  }, []);
+
+  // Listen for chats loaded from Supabase
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onChatsLoaded) {
+      const handleChatsLoaded = (data: { chats: any[] }) => {
+        console.log('[Index] Chats loaded from Supabase:', data.chats.length);
+        const formattedChats = data.chats.map(chat => ({
+          id: chat.id,
+          title: chat.title,
+          date: new Date(chat.updated_at).toLocaleDateString(),
+        }));
+        setRecentChats(formattedChats);
+      };
+
+      window.electronAPI.onChatsLoaded(handleChatsLoaded);
+    }
+  }, []);
+
+  // Listen for message send confirmation (user message saved to DB)
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onMessageSent) {
+      const handleMessageSent = (data: { chatId: string; chat: any; userMessage: any }) => {
+        console.log('[Index] Message sent to Supabase:', data);
+        
+        // Update selected chat ID if this was a new chat
+        if (!selectedChatId) {
+          setSelectedChatId(data.chatId);
+          setCurrentChatTitle(data.chat.title);
+        }
+
+        // Add user message to local state
+        const userMessage: Message = {
+          id: data.userMessage.id,
+          role: "user",
+          content: data.userMessage.content,
+          timestamp: new Date(data.userMessage.createdAt),
+        };
+        setMessages((prev) => [...prev, userMessage]);
+        
+        // Show generating indicator
+        setIsGenerating(true);
+      };
+
+      window.electronAPI.onMessageSent(handleMessageSent);
+    }
+  }, [selectedChatId]);
+
+  // Listen for assistant response (optimization result saved to DB)
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onMessageReceived) {
+      const handleMessageReceived = (data: { chatId: string; message: any }) => {
+        console.log('[Index] Assistant message received:', data);
 
         const assistantMessage: Message = {
-          id: `msg-${Date.now()}`,
+          id: data.message.id,
           role: "assistant",
-          content: data.optimized,
-          timestamp: new Date(),
+          content: data.message.content,
+          timestamp: new Date(data.message.createdAt),
         };
 
         setMessages((prev) => [...prev, assistantMessage]);
         setIsGenerating(false);
       };
 
-      window.electronAPI.onOptimizationComplete(handleOptimizationComplete);
-      console.log('[Index] Registered optimization complete listener');
+      window.electronAPI.onMessageReceived(handleMessageReceived);
     }
   }, []);
 
-  // Load messages when a chat is selected (Fix 4: Recent chat navigation)
+  // Listen for message send errors
   useEffect(() => {
-    if (selectedChatId) {
-      const chatSession = chatSessions.find((s) => s.id === selectedChatId);
-      if (chatSession) {
-        setMessages(chatSession.messages);
-        setCurrentView("chat");
+    if (isElectron && window.electronAPI?.onMessageSendError) {
+      const handleMessageSendError = (data: { error: string; details?: string }) => {
+        console.error('[Index] Message send error:', data);
+        setIsGenerating(false);
+        toast({
+          title: "Failed to send message",
+          description: data.error,
+          variant: "destructive",
+        });
+      };
+
+      window.electronAPI.onMessageSendError(handleMessageSendError);
+    }
+  }, []);
+
+  // Load messages from Supabase when a chat is selected
+  useEffect(() => {
+    if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
+      console.log('[Index] Loading messages for chat:', selectedChatId);
+      window.electronAPI.loadMessages(selectedChatId);
+      setCurrentView("chat");
+      
+      // Find chat title
+      const chat = recentChats.find((c) => c.id === selectedChatId);
+      if (chat) {
+        setCurrentChatTitle(chat.title);
       }
     }
-  }, [selectedChatId, chatSessions]);
+  }, [selectedChatId, recentChats]);
+
+  // Listen for messages loaded from Supabase
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onMessagesLoaded) {
+      const handleMessagesLoaded = (data: { chatId: string; messages: any[] }) => {
+        console.log('[Index] Messages loaded from Supabase:', data.messages.length);
+        
+        if (data.chatId === selectedChatId) {
+          const formattedMessages: Message[] = data.messages.map(msg => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            timestamp: new Date(msg.created_at),
+          }));
+          setMessages(formattedMessages);
+        }
+      };
+
+      window.electronAPI.onMessagesLoaded(handleMessagesLoaded);
+    }
+  }, [selectedChatId]);
 
   // Generate history from chat sessions (sorted by most recent)
   const history = useMemo((): HistoryItem[] => {
@@ -130,24 +225,20 @@ const Index = () => {
   }, [chatSessions]);
 
   // Auth handlers
-  const handleLogin = (email: string) => {
-    setUserEmail(email);
-    setIsLoggedIn(true);
-    toast({
-      title: "Welcome back!",
-      description: "You've successfully signed in.",
-    });
-  };
-
   const handleLogout = () => {
-    // Fix 10: Don't close app, just redirect to login
+    // Clear local state
     setUserEmail("");
     setMessages([]);
     setRecentChats([]);
     setChatSessions([]);
     setSavedPrompts([]);
     setCurrentView("chat");
-    setIsLoggedIn(false); // This will show login page
+    
+    // Sign out via Electron (AuthWrapper will handle UI transition)
+    if (isElectron && window.electronAPI?.signOut) {
+      window.electronAPI.signOut();
+    }
+    
     toast({
       title: "Signed out",
       description: "Please log in again.",
@@ -156,63 +247,47 @@ const Index = () => {
 
   // Chat handlers
   const handleNewChat = () => {
-    // Save current chat to history if it has messages
-    if (messages.length > 0 && selectedChatId) {
-      const currentChat = recentChats.find((c) => c.id === selectedChatId);
-      if (currentChat) {
-        setChatSessions((prev) => {
-          // Don't duplicate
-          if (prev.find((s) => s.id === selectedChatId)) {
-            return prev;
-          }
-          return [
-            {
-              id: selectedChatId,
-              title: currentChat.title,
-              messages,
-              createdAt: new Date(),
-            },
-            ...prev,
-          ];
-        });
-      }
-    }
+    console.log('[Index] Starting new chat');
+    // Clear current chat selection and messages
     setMessages([]);
     setSelectedChatId(null);
+    setCurrentChatTitle('');
     setCurrentView("chat");
   };
 
   const handleSendMessage = useCallback((content: string) => {
-    const userMessage: Message = {
-      id: `msg-${Date.now()}`,
-      role: "user",
-      content,
-      timestamp: new Date(),
-    };
+    console.log('[Index] Sending message:', {
+      chatId: selectedChatId,
+      contentLength: content.length
+    });
 
-    // Add to recent chats BEFORE generating (prevents duplication)
-    let currentChatId = selectedChatId;
-    if (!currentChatId) {
-      const newChatId = `chat-${Date.now()}`;
-      const newChat = {
-        id: newChatId,
-        title: content.slice(0, 30) + (content.length > 30 ? "..." : ""),
-        date: "Today",
-      };
-      setRecentChats((prev) => [newChat, ...prev]);
-      setSelectedChatId(newChatId);
-      currentChatId = newChatId;
-    }
-
-    setMessages((prev) => [...prev, userMessage]);
-    setIsGenerating(true);
-
-    // Use Electron API for optimization if available
-    if (isElectron && window.electronAPI?.optimizePrompt) {
-      // Call the Python service via Electron IPC
-      window.electronAPI.optimizePrompt(content, false);
+    // Use new unified send-message API that handles everything
+    if (isElectron && window.electronAPI?.sendMessage) {
+      // Send via IPC - this will:
+      // 1. Create chat if needed (chatId is null)
+      // 2. Save user message to DB
+      // 3. Trigger optimization
+      // 4. Save assistant message to DB
+      // 5. Notify renderer via events
+      window.electronAPI.sendMessage({
+        chatId: selectedChatId,
+        content: content
+      });
+      
+      console.log('[Index] Message sent to Electron main process');
     } else {
       // Fallback for web environment (no Electron)
+      console.warn('[Index] Running in web mode - no Electron API');
+      
+      const userMessage: Message = {
+        id: `msg-${Date.now()}`,
+        role: "user",
+        content,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, userMessage]);
+      setIsGenerating(true);
+      
       setTimeout(() => {
         const fallbackResponse = `⚠️ Running in web mode - Electron API not available. Please run this app in Electron to use the AI-powered prompt optimization with adaptive system prompts.
 
@@ -370,12 +445,7 @@ Your prompt was: "${content}"`;
     }
   };
 
-  // Not logged in - show login page
-  if (!isLoggedIn) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
-
-  // Render current view
+  // Render current view (auth is handled by AuthWrapper, so we're always authenticated here)
   const renderView = () => {
     switch (currentView) {
       case "library":

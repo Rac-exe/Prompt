@@ -35,6 +35,17 @@ declare global {
       loadMessages: (chatId: string) => void;
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
       signOut: () => void;
+      
+      // Auth API
+      signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
+      signIn: (data: { email: string; password: string }) => void;
+      checkAuth: () => void;
+      onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
+      updateProfile: (updates: any) => void;
+      updatePreferences: (updates: any) => void;
+      setPersonalizationPrompt: (prompt: string) => void;
+      onProfileUpdated: (callback: () => void) => void;
+      onPreferencesUpdated: (callback: () => void) => void;
 
       // Common API
       send: (channel: string, data: any) => void;
@@ -142,8 +153,57 @@ const electronAPI = {
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
     ipcRenderer.on('messages-loaded', (event, data) => callback(data));
   },
+  sendMessage: (data: { chatId: string | null; content: string }) => {
+    ipcRenderer.send('app:send-message', data);
+  },
+  onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
+    ipcRenderer.on('message-sent', (event, data) => callback(data));
+  },
+  onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => {
+    ipcRenderer.on('message-received', (event, data) => callback(data));
+  },
+  onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => {
+    ipcRenderer.on('message-send-error', (event, data) => callback(data));
+  },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
+  },
+
+  // ============================================
+  // AUTH API
+  // ============================================
+  signUp: (data: { name: string; dob: string; email: string; password: string }) => {
+    ipcRenderer.send('auth:sign-up', data);
+  },
+  signIn: (data: { email: string; password: string }) => {
+    ipcRenderer.send('auth:sign-in', data);
+  },
+  checkAuth: () => {
+    ipcRenderer.send('auth:check');
+  },
+  onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
+    // Remove any existing listeners first to prevent duplicates
+    ipcRenderer.removeAllListeners('auth:state-changed');
+    // Add the new listener
+    ipcRenderer.on('auth:state-changed', (event, data) => {
+      console.log('[Preload] 📥 Auth state change event received, forwarding to renderer:', data);
+      callback(data);
+    });
+  },
+  updateProfile: (updates: any) => {
+    ipcRenderer.send('user:update-profile', updates);
+  },
+  updatePreferences: (updates: any) => {
+    ipcRenderer.send('user:update-preferences', updates);
+  },
+  setPersonalizationPrompt: (prompt: string) => {
+    ipcRenderer.send('user:set-personalization-prompt', prompt);
+  },
+  onProfileUpdated: (callback: () => void) => {
+    ipcRenderer.on('user:profile-updated', () => callback());
+  },
+  onPreferencesUpdated: (callback: () => void) => {
+    ipcRenderer.on('user:preferences-updated', () => callback());
   },
 
   // ============================================

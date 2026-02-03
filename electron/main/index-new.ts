@@ -7,6 +7,7 @@ import { SupabaseClientManager } from './database/supabase-client';
 import { ChatService } from './database/services/chat-service';
 import { OptimizationService } from './database/services/optimization-service';
 import { UserService } from './database/services/user-service';
+import { AuthService } from './database/services/auth-service';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
 
@@ -25,6 +26,11 @@ let pythonClient: PythonClient;
 let chatService: ChatService;
 let optimizationService: OptimizationService;
 let userService: UserService;
+let authService: AuthService;
+
+// Auth state
+let isUserAuthenticated = false;
+let currentUserId: string | null = null;
 
 // Keystroke tracking for @prompt detection
 let typedBuffer = '';
@@ -187,6 +193,81 @@ function toggleOverlay() {
 }
 
 // ============================================
+// AUTH HELPERS
+// ============================================
+async function checkAndRestoreSession(): Promise<boolean> {
+  try {
+    console.log('[Main] Checking for existing session...');
+    const { session, error } = await authService.getSession();
+    
+    if (error || !session) {
+      console.log('[Main] No valid session found');
+      isUserAuthenticated = false;
+      currentUserId = null;
+      return false;
+    }
+    
+    console.log('[Main] ✅ Valid session found, user authenticated');
+    isUserAuthenticated = true;
+    currentUserId = session.user.id;
+    
+    // Load user data
+    const userData = await userService.getCompleteUserData();
+    if (userData && appWindowManager) {
+      appWindowManager.send('user-data-loaded', userData);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('[Main] Error checking session:', error);
+    isUserAuthenticated = false;
+    currentUserId = null;
+    return false;
+  }
+}
+
+async function handleSuccessfulAuth() {
+  try {
+    // Get user data
+    const { user } = await authService.getCurrentUser();
+    if (!user) {
+      console.error('[Main] No user after authentication');
+      return;
+    }
+    
+    isUserAuthenticated = true;
+    currentUserId = user.id;
+    
+    // Load complete user data
+    const userData = await userService.getCompleteUserData();
+    
+    console.log('[Main] ✅ User authenticated and data loaded');
+    
+    // Send auth state to window
+    if (appWindowManager) {
+      const window = appWindowManager.getWindow();
+      if (window && !window.isDestroyed()) {
+        // Small delay to ensure renderer is ready
+        setTimeout(() => {
+          console.log('[Main] 📤 Sending auth state to renderer');
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: true,
+            user: userData,
+          });
+          
+          // Load chats
+          chatService.getChats().then(chats => {
+            appWindowManager.send('chats-loaded', { chats });
+          }).catch(err => console.error('[Main] Error loading chats:', err));
+        }, 100);
+      }
+    }
+  } catch (error) {
+    console.error('[Main] Error handling successful auth:', error);
+  }
+}
+
+// ============================================
 // IPC HANDLERS
 // ============================================
 function setupIPC() {
@@ -203,25 +284,44 @@ function setupIPC() {
     }
 
     try {
-      const optimizedText = await pythonClient.optimize(promptText, skipCache);
-
-      // Save optimization to database (source: overlay)
-      const optimization = await optimizationService.saveOptimization(
-        promptText,
-        optimizedText,
-        'overlay',
-        {
-          model: 'llama3.2',
-          latency_ms: 0,
-          source_context: { app: 'overlay' },
+      // Get personalization prompt if user is authenticated
+      let finalPrompt = promptText;
+      if (isUserAuthenticated) {
+        const personalizationPrompt = await userService.getPersonalizationPrompt();
+        if (personalizationPrompt) {
+          // Prepend personalization instructions (done internally by Python service)
+          console.log('[Main] Using personalization prompt');
+          // Note: You could pass this to Python service if you want to handle it there
         }
-      );
+      }
 
-      currentOptimization = {
-        optimizationId: optimization.id,
-        originalText: promptText,
-        optimizedText,
-      };
+      const optimizedText = await pythonClient.optimize(finalPrompt, skipCache);
+
+      // Save optimization to database (source: overlay) - only if authenticated
+      if (isUserAuthenticated) {
+        try {
+          const optimization = await optimizationService.saveOptimization(
+            promptText,
+            optimizedText,
+            'overlay',
+            {
+              model: 'llama3.2',
+              latency_ms: 0,
+              source_context: { app: 'overlay' },
+            }
+          );
+
+          currentOptimization = {
+            optimizationId: optimization.id,
+            originalText: promptText,
+            optimizedText,
+          };
+        } catch (dbError) {
+          console.error('[Main] Failed to save optimization to DB (continuing anyway):', dbError);
+        }
+      } else {
+        console.log('[Main] ℹ️ User not authenticated, optimization not saved to DB');
+      }
 
       // Send result to overlay
       const panelWindow = floatingPanel?.getWindow();
@@ -261,24 +361,40 @@ function setupIPC() {
     console.log('[Main] App window optimization request:', promptText.substring(0, 50));
 
     try {
-      const optimizedText = await pythonClient.optimize(promptText, isRegenerate);
-
-      // Save optimization to database (source: app_window)
-      const optimization = await optimizationService.saveOptimization(
-        promptText,
-        optimizedText,
-        'app_window',
-        {
-          model: 'llama3.2',
-          source_context: { app: 'app_window' },
+      // Get personalization prompt if user is authenticated
+      let finalPrompt = promptText;
+      if (isUserAuthenticated) {
+        const personalizationPrompt = await userService.getPersonalizationPrompt();
+        if (personalizationPrompt) {
+          console.log('[Main] Using personalization prompt for app window optimization');
+          // Note: You could pass this to Python service if you want to handle it there
         }
-      );
+      }
 
-      currentOptimization = {
-        optimizationId: optimization.id,
-        originalText: promptText,
-        optimizedText,
-      };
+      const optimizedText = await pythonClient.optimize(finalPrompt, isRegenerate);
+
+      // Save optimization to database (source: app_window) - only if authenticated
+      if (isUserAuthenticated) {
+        try {
+          const optimization = await optimizationService.saveOptimization(
+            promptText,
+            optimizedText,
+            'app_window',
+            {
+              model: 'llama3.2',
+              source_context: { app: 'app_window' },
+            }
+          );
+
+          currentOptimization = {
+            optimizationId: optimization.id,
+            originalText: promptText,
+            optimizedText,
+          };
+        } catch (dbError) {
+          console.error('[Main] Failed to save optimization to DB (continuing anyway):', dbError);
+        }
+      }
 
       // Send result to app window
       appWindowManager.send('optimization-complete', {
@@ -287,6 +403,11 @@ function setupIPC() {
       });
     } catch (error) {
       console.error('[Main] Optimization failed:', error);
+      appWindowManager.send('optimization-complete', {
+        original: promptText,
+        optimized: 'Optimization failed. Please try again.',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   });
 
@@ -325,9 +446,9 @@ function setupIPC() {
   // App Window: Request user data
   ipcMain.on('app:request-user-data', async () => {
     try {
-      const user = await userService.getCurrentUser();
-      if (user) {
-        appWindowManager.send('user-data-loaded', user);
+      const userData = await userService.getCompleteUserData();
+      if (userData) {
+        appWindowManager.send('user-data-loaded', userData);
       }
     } catch (error) {
       console.error('[Main] Failed to load user data:', error);
@@ -337,10 +458,213 @@ function setupIPC() {
   // App Window: Sign out
   ipcMain.on('app:sign-out', async () => {
     try {
-      await userService.signOut();
-      app.quit();
+      await authService.signOut();
+      isUserAuthenticated = false;
+      currentUserId = null;
+      
+      // Notify window
+      if (appWindowManager) {
+        appWindowManager.send('auth:state-changed', {
+          isAuthenticated: false,
+          user: null,
+        });
+      }
+      
+      console.log('[Main] ✅ User signed out');
     } catch (error) {
       console.error('[Main] Sign out failed:', error);
+    }
+  });
+
+  // ============================================
+  // AUTH IPC HANDLERS
+  // ============================================
+  
+  // Sign Up
+  ipcMain.on('auth:sign-up', async (event, data: { name: string; dob: string; email: string; password: string }) => {
+    try {
+      console.log('[Main] Sign up request for:', data.email);
+      
+      const { user, error } = await authService.signUp(data);
+      
+      if (error || !user) {
+        console.error('[Main] Sign up failed:', error?.message);
+        if (appWindowManager) {
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: false,
+            user: null,
+            error: error?.message || 'Sign up failed',
+          });
+        }
+        return;
+      }
+      
+      console.log('[Main] ✅ Sign up successful, signing in...');
+      
+      // Auto-sign in after signup
+      const { session: signInSession, error: signInError } = await authService.signIn({
+        email: data.email,
+        password: data.password,
+      });
+      
+      if (signInError || !signInSession) {
+        console.error('[Main] Auto sign-in after signup failed:', signInError?.message);
+        return;
+      }
+      
+      await handleSuccessfulAuth();
+    } catch (error) {
+      console.error('[Main] Unexpected sign up error:', error);
+      if (appWindowManager) {
+        appWindowManager.send('auth:state-changed', {
+          isAuthenticated: false,
+          user: null,
+          error: 'Sign up failed',
+        });
+      }
+    }
+  });
+  
+  // Sign In
+  ipcMain.on('auth:sign-in', async (event, data: { email: string; password: string }) => {
+    try {
+      console.log('[Main] Sign in request for:', data.email);
+      
+      const { session, error } = await authService.signIn(data);
+      
+      if (error || !session) {
+        console.error('[Main] Sign in failed:', error?.message);
+        if (appWindowManager) {
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: false,
+            user: null,
+            error: error?.message || 'Sign in failed',
+          });
+        }
+        return;
+      }
+      
+      console.log('[Main] ✅ Sign in successful');
+      await handleSuccessfulAuth();
+    } catch (error) {
+      console.error('[Main] Unexpected sign in error:', error);
+      if (appWindowManager) {
+        appWindowManager.send('auth:state-changed', {
+          isAuthenticated: false,
+          user: null,
+          error: 'Sign in failed',
+        });
+      }
+    }
+  });
+  
+  // Check Auth Status
+  ipcMain.on('auth:check', async () => {
+    try {
+      console.log('[Main] 📥 Renderer requested auth check');
+      const isAuth = await checkAndRestoreSession();
+      
+      if (appWindowManager) {
+        if (isAuth) {
+          const userData = await userService.getCompleteUserData();
+          console.log('[Main] 📤 Sending authenticated state to renderer');
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: true,
+            user: userData,
+          });
+          
+          // Also load chats
+          const chats = await chatService.getChats();
+          appWindowManager.send('chats-loaded', { chats });
+        } else {
+          console.log('[Main] 📤 Sending unauthenticated state to renderer');
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: false,
+            user: null,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[Main] Error checking auth:', error);
+      if (appWindowManager) {
+        appWindowManager.send('auth:state-changed', {
+          isAuthenticated: false,
+          user: null,
+          error: 'Auth check failed',
+        });
+      }
+    }
+  });
+  
+  // ============================================
+  // USER PROFILE & PREFERENCES IPC HANDLERS
+  // ============================================
+  
+  // Update Profile
+  ipcMain.on('user:update-profile', async (event, updates) => {
+    try {
+      if (!isUserAuthenticated) {
+        console.error('[Main] Cannot update profile: not authenticated');
+        return;
+      }
+      
+      await userService.updateProfile(updates);
+      
+      if (appWindowManager) {
+        appWindowManager.send('user:profile-updated');
+        
+        // Send updated user data
+        const userData = await userService.getCompleteUserData();
+        appWindowManager.send('user-data-loaded', userData);
+      }
+      
+      console.log('[Main] ✅ Profile updated');
+    } catch (error) {
+      console.error('[Main] Error updating profile:', error);
+    }
+  });
+  
+  // Update Preferences
+  ipcMain.on('user:update-preferences', async (event, updates) => {
+    try {
+      if (!isUserAuthenticated) {
+        console.error('[Main] Cannot update preferences: not authenticated');
+        return;
+      }
+      
+      await userService.updatePreferences(updates);
+      
+      if (appWindowManager) {
+        appWindowManager.send('user:preferences-updated');
+        
+        // Send updated user data
+        const userData = await userService.getCompleteUserData();
+        appWindowManager.send('user-data-loaded', userData);
+      }
+      
+      console.log('[Main] ✅ Preferences updated');
+    } catch (error) {
+      console.error('[Main] Error updating preferences:', error);
+    }
+  });
+  
+  // Set Personalization Prompt
+  ipcMain.on('user:set-personalization-prompt', async (event, prompt: string) => {
+    try {
+      if (!isUserAuthenticated) {
+        console.error('[Main] Cannot set personalization prompt: not authenticated');
+        return;
+      }
+      
+      await userService.setPersonalizationPrompt(prompt);
+      
+      if (appWindowManager) {
+        appWindowManager.send('user:preferences-updated');
+      }
+      
+      console.log('[Main] ✅ Personalization prompt updated');
+    } catch (error) {
+      console.error('[Main] Error setting personalization prompt:', error);
     }
   });
 
@@ -383,6 +707,118 @@ function setupIPC() {
       appWindowManager.send('messages-loaded', { chatId, messages: [], error: errorMessage });
     }
   });
+
+  // App Window: Send message (creates chat if needed, saves message, triggers optimization)
+  ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string }) => {
+    try {
+      console.log('[Main] 📥 Received send-message request:', {
+        chatId: data.chatId,
+        contentLength: data.content.length
+      });
+
+      let chatId = data.chatId;
+      let chat;
+
+      // Create chat if it doesn't exist
+      if (!chatId) {
+        console.log('[Main] 🆕 No chat ID provided, creating new chat');
+        const title = data.content.slice(0, 50) + (data.content.length > 50 ? '...' : '');
+        
+        // Verify user is authenticated
+        if (!isUserAuthenticated) {
+          throw new Error('User must be authenticated to create chat');
+        }
+
+        chat = await chatService.createChat(title);
+        chatId = chat.id;
+        
+        console.log('[Main] ✅ Created new chat in Supabase:', {
+          chatId: chat.id,
+          title: chat.title,
+          user_id: chat.user_id
+        });
+      } else {
+        console.log('[Main] 📂 Using existing chat:', chatId);
+        chat = await chatService.getChat(chatId);
+      }
+
+      // Save user message to database
+      console.log('[Main] 💾 Saving user message to Supabase...');
+      const userMessage = await chatService.addMessage(chatId, data.content, 'user');
+      console.log('[Main] ✅ User message saved:', userMessage.id);
+
+      // Send immediate confirmation with chat and user message
+      appWindowManager.send('message-sent', {
+        chatId,
+        chat,
+        userMessage: {
+          id: userMessage.id,
+          chatId: userMessage.chat_id,
+          role: userMessage.role,
+          content: userMessage.content,
+          createdAt: userMessage.created_at,
+        }
+      });
+
+      // Trigger optimization
+      console.log('[Main] 🤖 Triggering optimization...');
+      const optimizedText = await pythonClient.optimize(data.content, false);
+      console.log('[Main] ✅ Optimization complete');
+
+      // Save optimization record to DB (for analytics)
+      let optimizationId: string | undefined;
+      if (isUserAuthenticated) {
+        try {
+          const optimization = await optimizationService.saveOptimization(
+            data.content,
+            optimizedText,
+            'app_window',
+            { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+          );
+          optimizationId = optimization.id;
+          console.log('[Main] ✅ Optimization record saved:', optimizationId);
+        } catch (dbError) {
+          console.error('[Main] ⚠️ Failed to save optimization record (continuing):', dbError);
+        }
+      }
+
+      // Save assistant message to database
+      console.log('[Main] 💾 Saving assistant message to Supabase...');
+      const assistantMessage = await chatService.addMessage(
+        chatId,
+        optimizedText,
+        'assistant',
+        optimizationId,
+        { model: 'llama3.2', optimized: true }
+      );
+      console.log('[Main] ✅ Assistant message saved:', assistantMessage.id);
+
+      // Send assistant message to renderer
+      appWindowManager.send('message-received', {
+        chatId,
+        message: {
+          id: assistantMessage.id,
+          chatId: assistantMessage.chat_id,
+          role: assistantMessage.role,
+          content: assistantMessage.content,
+          createdAt: assistantMessage.created_at,
+        }
+      });
+
+      // Reload chats list to update timestamps
+      const chats = await chatService.getChats();
+      appWindowManager.send('chats-loaded', { chats });
+
+      console.log('[Main] ✅ Message flow complete');
+    } catch (error) {
+      console.error('[Main] ❌ Failed to send message:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      appWindowManager.send('message-send-error', { 
+        error: errorMessage,
+        details: error instanceof Error ? error.stack : undefined
+      });
+    }
+  });
 }
 
 // ============================================
@@ -407,41 +843,45 @@ async function initialize() {
   chatService = new ChatService();
   optimizationService = new OptimizationService();
   userService = new UserService();
+  authService = new AuthService();
 
-  // AUTO-LOGIN FOR TESTING (REMOVE IN PRODUCTION!)
-  // Create a test user in Supabase dashboard first:
-  // Email: test@example.com, Password: testpassword123
+  // ============================================
+  // SESSION MANAGEMENT & AUTO-RESTORE
+  // ============================================
   try {
-    const supabase = SupabaseClientManager.getClient();
-
-    // Try to get existing session first
-    const { data: sessionData } = await supabase.auth.getSession();
-
-    if (!sessionData.session) {
-      console.log('[Main] No existing session, attempting auto-login...');
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: 'test@example.com',
-        password: 'testpassword123'
-      });
-
-      if (error) {
-        console.error('[Main] Auto-login failed:', error.message);
-        console.error('[Main] Please create a test user in Supabase:');
-        console.error('[Main] Email: test@example.com, Password: testpassword123');
-      } else {
-        console.log('[Main] ✅ Auto-logged in as test@example.com');
-      }
+    // Check for existing session and restore if valid
+    const hasSession = await checkAndRestoreSession();
+    
+    if (hasSession) {
+      console.log('[Main] ✅ Session restored, user logged in');
     } else {
-      console.log('[Main] ✅ Using existing session');
+      console.log('[Main] ℹ️ No session found, user needs to log in');
     }
-
-    // Ensure user profile exists in users table
-    const user = await userService.getCurrentUser();
-    if (user) {
-      console.log('[Main] ✅ User profile loaded:', user.email);
-    }
+    
+    // Set up auth state change listener
+    authService.onAuthStateChange(async (event, session) => {
+      console.log('[Main] Auth state changed:', event);
+      
+      if (event === 'SIGNED_IN' && session) {
+        isUserAuthenticated = true;
+        currentUserId = session.user.id;
+        await handleSuccessfulAuth();
+      } else if (event === 'SIGNED_OUT') {
+        isUserAuthenticated = false;
+        currentUserId = null;
+        
+        if (appWindowManager) {
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: false,
+            user: null,
+          });
+        }
+      } else if (event === 'TOKEN_REFRESHED' && session) {
+        console.log('[Main] ✅ Session token refreshed');
+      }
+    });
   } catch (error) {
-    console.error('[Main] Auth error:', error);
+    console.error('[Main] Auth initialization error:', error);
   }
 
   // Initialize Python client
