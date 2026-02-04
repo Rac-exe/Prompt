@@ -8,6 +8,7 @@ import { ChatService } from './database/services/chat-service';
 import { OptimizationService } from './database/services/optimization-service';
 import { UserService } from './database/services/user-service';
 import { AuthService } from './database/services/auth-service';
+import { SettingsService } from './database/services/settings-service';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
 
@@ -27,6 +28,7 @@ let chatService: ChatService;
 let optimizationService: OptimizationService;
 let userService: UserService;
 let authService: AuthService;
+let settingsService: SettingsService;
 
 // Auth state
 let isUserAuthenticated = false;
@@ -199,24 +201,24 @@ async function checkAndRestoreSession(): Promise<boolean> {
   try {
     console.log('[Main] Checking for existing session...');
     const { session, error } = await authService.getSession();
-    
+
     if (error || !session) {
       console.log('[Main] No valid session found');
       isUserAuthenticated = false;
       currentUserId = null;
       return false;
     }
-    
+
     console.log('[Main] ✅ Valid session found, user authenticated');
     isUserAuthenticated = true;
     currentUserId = session.user.id;
-    
+
     // Load user data
     const userData = await userService.getCompleteUserData();
     if (userData && appWindowManager) {
       appWindowManager.send('user-data-loaded', userData);
     }
-    
+
     return true;
   } catch (error) {
     console.error('[Main] Error checking session:', error);
@@ -234,15 +236,15 @@ async function handleSuccessfulAuth() {
       console.error('[Main] No user after authentication');
       return;
     }
-    
+
     isUserAuthenticated = true;
     currentUserId = user.id;
-    
+
     // Load complete user data
     const userData = await userService.getCompleteUserData();
-    
+
     console.log('[Main] ✅ User authenticated and data loaded');
-    
+
     // Send auth state to window
     if (appWindowManager) {
       const window = appWindowManager.getWindow();
@@ -254,7 +256,7 @@ async function handleSuccessfulAuth() {
             isAuthenticated: true,
             user: userData,
           });
-          
+
           // Load chats
           chatService.getChats().then(chats => {
             appWindowManager.send('chats-loaded', { chats });
@@ -461,7 +463,7 @@ function setupIPC() {
       await authService.signOut();
       isUserAuthenticated = false;
       currentUserId = null;
-      
+
       // Notify window
       if (appWindowManager) {
         appWindowManager.send('auth:state-changed', {
@@ -469,7 +471,7 @@ function setupIPC() {
           user: null,
         });
       }
-      
+
       console.log('[Main] ✅ User signed out');
     } catch (error) {
       console.error('[Main] Sign out failed:', error);
@@ -479,14 +481,14 @@ function setupIPC() {
   // ============================================
   // AUTH IPC HANDLERS
   // ============================================
-  
+
   // Sign Up
   ipcMain.on('auth:sign-up', async (event, data: { name: string; dob: string; email: string; password: string }) => {
     try {
       console.log('[Main] Sign up request for:', data.email);
-      
+
       const { user, error } = await authService.signUp(data);
-      
+
       if (error || !user) {
         console.error('[Main] Sign up failed:', error?.message);
         if (appWindowManager) {
@@ -498,20 +500,20 @@ function setupIPC() {
         }
         return;
       }
-      
+
       console.log('[Main] ✅ Sign up successful, signing in...');
-      
+
       // Auto-sign in after signup
       const { session: signInSession, error: signInError } = await authService.signIn({
         email: data.email,
         password: data.password,
       });
-      
+
       if (signInError || !signInSession) {
         console.error('[Main] Auto sign-in after signup failed:', signInError?.message);
         return;
       }
-      
+
       await handleSuccessfulAuth();
     } catch (error) {
       console.error('[Main] Unexpected sign up error:', error);
@@ -524,14 +526,14 @@ function setupIPC() {
       }
     }
   });
-  
+
   // Sign In
   ipcMain.on('auth:sign-in', async (event, data: { email: string; password: string }) => {
     try {
       console.log('[Main] Sign in request for:', data.email);
-      
+
       const { session, error } = await authService.signIn(data);
-      
+
       if (error || !session) {
         console.error('[Main] Sign in failed:', error?.message);
         if (appWindowManager) {
@@ -543,7 +545,7 @@ function setupIPC() {
         }
         return;
       }
-      
+
       console.log('[Main] ✅ Sign in successful');
       await handleSuccessfulAuth();
     } catch (error) {
@@ -557,13 +559,13 @@ function setupIPC() {
       }
     }
   });
-  
+
   // Check Auth Status
   ipcMain.on('auth:check', async () => {
     try {
       console.log('[Main] 📥 Renderer requested auth check');
       const isAuth = await checkAndRestoreSession();
-      
+
       if (appWindowManager) {
         if (isAuth) {
           const userData = await userService.getCompleteUserData();
@@ -572,7 +574,7 @@ function setupIPC() {
             isAuthenticated: true,
             user: userData,
           });
-          
+
           // Also load chats
           const chats = await chatService.getChats();
           appWindowManager.send('chats-loaded', { chats });
@@ -595,11 +597,11 @@ function setupIPC() {
       }
     }
   });
-  
+
   // ============================================
   // USER PROFILE & PREFERENCES IPC HANDLERS
   // ============================================
-  
+
   // Update Profile
   ipcMain.on('user:update-profile', async (event, updates) => {
     try {
@@ -607,23 +609,23 @@ function setupIPC() {
         console.error('[Main] Cannot update profile: not authenticated');
         return;
       }
-      
+
       await userService.updateProfile(updates);
-      
+
       if (appWindowManager) {
         appWindowManager.send('user:profile-updated');
-        
+
         // Send updated user data
         const userData = await userService.getCompleteUserData();
         appWindowManager.send('user-data-loaded', userData);
       }
-      
+
       console.log('[Main] ✅ Profile updated');
     } catch (error) {
       console.error('[Main] Error updating profile:', error);
     }
   });
-  
+
   // Update Preferences
   ipcMain.on('user:update-preferences', async (event, updates) => {
     try {
@@ -631,23 +633,23 @@ function setupIPC() {
         console.error('[Main] Cannot update preferences: not authenticated');
         return;
       }
-      
+
       await userService.updatePreferences(updates);
-      
+
       if (appWindowManager) {
         appWindowManager.send('user:preferences-updated');
-        
+
         // Send updated user data
         const userData = await userService.getCompleteUserData();
         appWindowManager.send('user-data-loaded', userData);
       }
-      
+
       console.log('[Main] ✅ Preferences updated');
     } catch (error) {
       console.error('[Main] Error updating preferences:', error);
     }
   });
-  
+
   // Set Personalization Prompt
   ipcMain.on('user:set-personalization-prompt', async (event, prompt: string) => {
     try {
@@ -655,16 +657,64 @@ function setupIPC() {
         console.error('[Main] Cannot set personalization prompt: not authenticated');
         return;
       }
-      
+
       await userService.setPersonalizationPrompt(prompt);
-      
+
       if (appWindowManager) {
         appWindowManager.send('user:preferences-updated');
       }
-      
+
       console.log('[Main] ✅ Personalization prompt updated');
     } catch (error) {
       console.error('[Main] Error setting personalization prompt:', error);
+    }
+  });
+
+  // ============================================
+  // SETTINGS IPC HANDLERS
+  // ============================================
+
+  // Load user settings
+  ipcMain.handle('settings:load', async () => {
+    try {
+      if (!isUserAuthenticated || !currentUserId) {
+        console.log('[Main] User not authenticated, returning default settings');
+        return {
+          theme: 'dark',
+          font_size: 'medium',
+          font_family: 'inter',
+          prompt_instructions: '',
+        };
+      }
+
+      const settings = await settingsService.getOrCreateSettings(currentUserId);
+      console.log('[Main] ✅ Settings loaded for user:', currentUserId);
+      return settings;
+    } catch (error) {
+      console.error('[Main] Error loading settings:', error);
+      // Return defaults on error
+      return {
+        theme: 'dark',
+        font_size: 'medium',
+        font_family: 'inter',
+        prompt_instructions: '',
+      };
+    }
+  });
+
+  // Save user settings
+  ipcMain.handle('settings:save', async (event, settings) => {
+    try {
+      if (!isUserAuthenticated || !currentUserId) {
+        throw new Error('User must be authenticated to save settings');
+      }
+
+      const saved = await settingsService.upsertUserSettings(currentUserId, settings);
+      console.log('[Main] ✅ Settings saved for user:', currentUserId);
+      return saved;
+    } catch (error) {
+      console.error('[Main] Error saving settings:', error);
+      throw error;
     }
   });
 
@@ -723,7 +773,7 @@ function setupIPC() {
       if (!chatId) {
         console.log('[Main] 🆕 No chat ID provided, creating new chat');
         const title = data.content.slice(0, 50) + (data.content.length > 50 ? '...' : '');
-        
+
         // Verify user is authenticated
         if (!isUserAuthenticated) {
           throw new Error('User must be authenticated to create chat');
@@ -731,7 +781,7 @@ function setupIPC() {
 
         chat = await chatService.createChat(title);
         chatId = chat.id;
-        
+
         console.log('[Main] ✅ Created new chat in Supabase:', {
           chatId: chat.id,
           title: chat.title,
@@ -813,7 +863,7 @@ function setupIPC() {
     } catch (error) {
       console.error('[Main] ❌ Failed to send message:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      appWindowManager.send('message-send-error', { 
+      appWindowManager.send('message-send-error', {
         error: errorMessage,
         details: error instanceof Error ? error.stack : undefined
       });
@@ -844,6 +894,7 @@ async function initialize() {
   optimizationService = new OptimizationService();
   userService = new UserService();
   authService = new AuthService();
+  settingsService = new SettingsService();
 
   // ============================================
   // SESSION MANAGEMENT & AUTO-RESTORE
@@ -851,17 +902,17 @@ async function initialize() {
   try {
     // Check for existing session and restore if valid
     const hasSession = await checkAndRestoreSession();
-    
+
     if (hasSession) {
       console.log('[Main] ✅ Session restored, user logged in');
     } else {
       console.log('[Main] ℹ️ No session found, user needs to log in');
     }
-    
+
     // Set up auth state change listener
     authService.onAuthStateChange(async (event, session) => {
       console.log('[Main] Auth state changed:', event);
-      
+
       if (event === 'SIGNED_IN' && session) {
         isUserAuthenticated = true;
         currentUserId = session.user.id;
@@ -869,7 +920,7 @@ async function initialize() {
       } else if (event === 'SIGNED_OUT') {
         isUserAuthenticated = false;
         currentUserId = null;
-        
+
         if (appWindowManager) {
           appWindowManager.send('auth:state-changed', {
             isAuthenticated: false,

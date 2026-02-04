@@ -23,21 +23,59 @@ interface SettingsViewProps {
 }
 
 export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
-  const [settings, setSettings] = useState<SettingsData>(loadSettings());
+  const [settings, setSettings] = useState<SettingsData>({
+    theme: "dark",
+    fontSize: "medium",
+    fontFamily: "inter",
+    promptInstructions: "",
+  });
   const [isDirty, setIsDirty] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
-  // Apply settings when they change (for live preview)
+  // Load settings on mount
   useEffect(() => {
-    applySettings(settings);
-  }, [settings]);
+    const initSettings = async () => {
+      try {
+        const loaded = await loadSettings();
+        setSettings(loaded);
+        setHasLoadedOnce(true);
+      } catch (error) {
+        console.error('[SettingsView] Failed to load settings:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    initSettings();
+  }, []);
 
-  const handleSave = () => {
-    saveSettings(settings);
-    setIsDirty(false);
-    toast({
-      title: "Settings saved",
-      description: "Your preferences have been updated.",
-    });
+  // Apply settings when user makes changes (for live preview)
+  useEffect(() => {
+    if (isDirty) {
+      applySettings(settings);
+    }
+  }, [settings, isDirty]);
+
+  const handleSave = async () => {
+    try {
+      await saveSettings(settings);
+      setIsDirty(false);
+
+      // Apply settings after successful save
+      applySettings(settings);
+
+      toast({
+        title: "Settings saved",
+        description: "Your preferences have been updated.",
+      });
+    } catch (error) {
+      console.error('[SettingsView] Failed to save settings:', error);
+      toast({
+        title: "Save failed",
+        description: "Could not save settings. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const updateSetting = <K extends keyof SettingsData>(

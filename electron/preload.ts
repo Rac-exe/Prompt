@@ -35,7 +35,7 @@ declare global {
       loadMessages: (chatId: string) => void;
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
       signOut: () => void;
-      
+
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
       signIn: (data: { email: string; password: string }) => void;
@@ -46,6 +46,10 @@ declare global {
       setPersonalizationPrompt: (prompt: string) => void;
       onProfileUpdated: (callback: () => void) => void;
       onPreferencesUpdated: (callback: () => void) => void;
+
+      // Settings API
+      loadSettings: () => Promise<any>;
+      saveSettings: (settings: any) => Promise<any>;
 
       // Common API
       send: (channel: string, data: any) => void;
@@ -204,6 +208,16 @@ const electronAPI = {
   },
   onPreferencesUpdated: (callback: () => void) => {
     ipcRenderer.on('user:preferences-updated', () => callback());
+  },
+
+  // ============================================
+  // SETTINGS API
+  // ============================================
+  loadSettings: () => {
+    return ipcRenderer.invoke('settings:load');
+  },
+  saveSettings: (settings: any) => {
+    return ipcRenderer.invoke('settings:save', settings);
   },
 
   // ============================================

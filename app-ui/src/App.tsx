@@ -6,14 +6,10 @@ import { HashRouter, Routes, Route } from "react-router-dom";
 import { AuthWrapper } from "@/components/auth/AuthWrapper";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
-import { useInitializeSettings } from "@/hooks/useInitializeSettings";
 
 const queryClient = new QueryClient();
 
 const App = () => {
-  // Initialize settings on app startup
-  useInitializeSettings();
-
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

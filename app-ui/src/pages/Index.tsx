@@ -11,6 +11,7 @@ import { SettingsView } from "@/components/settings/SettingsView";
 import { Message } from "@/components/chat/MessageBubble";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
+import { useInitializeSettings } from "@/hooks/useInitializeSettings";
 
 // Empty initial data
 const initialRecentChats: { id: string; title: string; date: string }[] = [];
@@ -34,6 +35,9 @@ interface ChatSession {
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 const Index = () => {
+  // Initialize settings after authentication
+  useInitializeSettings();
+
   // User state (auth is handled by AuthWrapper)
   const [userEmail, setUserEmail] = useState("user@example.com");
 
@@ -60,28 +64,8 @@ const Index = () => {
   const [promptToPreview, setPromptToPreview] = useState<SavedPrompt | null>(null);
 
   // Library state
-  const [collections, setCollections] = useState<Collection[]>(initialCollections);
+  const [collections, setCollections] = useState<Collection>(initialCollections);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(initialPrompts);
-
-  // Initialize theme on mount (Fix 1)
-  useEffect(() => {
-    const STORAGE_KEY = "prompt-weaver-settings";
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      try {
-        const settings = JSON.parse(stored);
-        if (settings.theme === "dark") {
-          document.documentElement.classList.add("dark");
-        } else {
-          document.documentElement.classList.remove("dark");
-        }
-      } catch (e) {
-        document.documentElement.classList.add("dark");
-      }
-    } else {
-      document.documentElement.classList.add("dark");
-    }
-  }, []);
 
   // Load chats from Supabase on mount
   useEffect(() => {
@@ -237,6 +221,15 @@ const Index = () => {
     // Sign out via Electron (AuthWrapper will handle UI transition)
     if (isElectron && window.electronAPI?.signOut) {
       window.electronAPI.signOut();
+
+      // Reload the page after a short delay to ensure auth state is cleared
+      // This forces the AuthWrapper to re-check auth and show login page
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } else {
+      // Fallback for non-Electron environment - just reload
+      window.location.reload();
     }
 
     toast({
