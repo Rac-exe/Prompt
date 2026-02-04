@@ -39,17 +39,29 @@ export const SavePromptModal = ({
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = () => {
+    console.log('🟢🟢🟢 MODAL SAVE CLICKED', { promptTitle, selectedCollection, isCreatingNew, newCollectionName });
+    
     if (!promptTitle.trim()) {
+      console.warn('❌ Modal save aborted - no title');
       return;
     }
 
     setIsSaving(true);
+    
+    // REMOVED setTimeout - call immediately
+    console.log('🟢 Calling onSave...');
+    if (isCreatingNew && newCollectionName.trim()) {
+      console.log('🟢 Path: NEW collection', newCollectionName.trim());
+      onSave("new", promptTitle.trim(), newCollectionName.trim());
+    } else if (selectedCollection) {
+      console.log('🟢 Path: EXISTING collection', selectedCollection);
+      onSave(selectedCollection, promptTitle.trim());
+    } else {
+      console.error('❌ No collection selected and not creating new');
+    }
+    
+    // Clean up state
     setTimeout(() => {
-      if (isCreatingNew && newCollectionName.trim()) {
-        onSave("new", promptTitle.trim(), newCollectionName.trim());
-      } else if (selectedCollection) {
-        onSave(selectedCollection, promptTitle.trim());
-      }
       setIsSaving(false);
       setPromptTitle("");
       setSelectedCollection("");

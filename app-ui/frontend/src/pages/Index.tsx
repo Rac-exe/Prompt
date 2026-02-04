@@ -88,6 +88,78 @@ const Index = () => {
     }
   }, [selectedChatId]);
 
+  // Listen for chats data from Electron
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onChatsLoaded) {
+      const handleChatsLoaded = (data: { chats: any[] }) => {
+        console.log('[Index] Chats loaded from Supabase:', data.chats.length);
+        
+        // SECURITY: Log user_id from each chat for verification (TEMP DEBUG)
+        if (data.chats.length > 0) {
+          const userIds = [...new Set(data.chats.map(c => c.user_id))];
+          console.log('[Index] 🔍 Unique user_ids in loaded chats:', userIds);
+          if (userIds.length > 1) {
+            console.error('[Index] 🚨 SECURITY VIOLATION: Multiple user_ids detected!', userIds);
+          }
+        }
+        
+        // Map Supabase chats to UI format
+        const mappedChats = data.chats.map(chat => ({
+          id: chat.id,
+          title: chat.title || 'Untitled Chat',
+          date: new Date(chat.updated_at).toLocaleDateString(),
+          user_id: chat.user_id, // Keep for debugging
+        }));
+        
+        // SECURITY: Replace entire state with user-specific chats
+        setRecentChats(mappedChats);
+        console.log('[Index] ✅ Recent chats updated with user-specific data');
+      };
+
+      window.electronAPI.onChatsLoaded(handleChatsLoaded);
+      console.log('[Index] Registered chats listener');
+    }
+  }, []);
+
+  // Listen for prompt library data from Electron
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onPromptLibraryLoaded) {
+      const handleLibraryLoaded = (data: { collections: any[]; prompts: any[] }) => {
+        console.log('[Index] Prompt library loaded:', data);
+        
+        // Map Supabase collections to UI format
+        const mappedCollections: Collection[] = [
+          // Keep default collections
+          { id: "all", name: "All Prompts", isDefault: true, icon: "all" },
+          { id: "favorites", name: "Favorites", isDefault: true, icon: "favorites" },
+          // Add user collections from database
+          ...data.collections.map(col => ({
+            id: col.id,
+            name: col.name,
+            icon: col.icon || "folder",
+            isDefault: false,
+          })),
+        ];
+        
+        // Map Supabase prompts to UI format
+        const mappedPrompts: SavedPrompt[] = data.prompts.map(prompt => ({
+          id: prompt.id,
+          title: prompt.title,
+          content: prompt.content,
+          collectionId: prompt.collection_id,
+          sourceChat: prompt.metadata?.source_chat,
+          createdAt: new Date(prompt.created_at),
+        }));
+        
+        setCollections(mappedCollections);
+        setSavedPrompts(mappedPrompts);
+      };
+
+      window.electronAPI.onPromptLibraryLoaded(handleLibraryLoaded);
+      console.log('[Index] Registered prompt library listener');
+    }
+  }, []);
+
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -126,10 +198,19 @@ const Index = () => {
   };
 
   const handleLogout = () => {
+    // SECURITY: Clear ALL user-specific state on logout
     setIsLoggedIn(false);
     setUserEmail("");
     setMessages([]);
+    setRecentChats([]); // ✅ FIX: Clear chats to prevent data leak
+    setSelectedChatId(null); // ✅ FIX: Clear selected chat
+    setChatSessions([]); // ✅ FIX: Clear chat sessions
+    setSavedPrompts([]); // ✅ FIX: Clear saved prompts
+    setCollections(initialCollections); // ✅ FIX: Reset to default collections
     setCurrentView("chat");
+    
+    console.log('[Index] ✅ All user state cleared on logout');
+    
     toast({
       title: "Signed out",
       description: "You've been signed out successfully.",
@@ -229,78 +310,275 @@ Your prompt was: "${content}"`;
     }
   };
 
-  const handleSavePrompt = (collectionId: string, title: string, newCollectionName?: string) => {
-    if (!promptToSave) return;
-
-    let targetCollectionId = collectionId;
-
-    // Create new collection if needed
-    if (collectionId === "new" && newCollectionName) {
-      const newCollection: Collection = {
-        id: `col-${Date.now()}`,
-        name: newCollectionName,
-        icon: "folder",
-      };
-      setCollections((prev) => [...prev, newCollection]);
-      targetCollectionId = newCollection.id;
+  const handleSavePrompt = async (collectionId: string, title: string, newCollectionName?: string) => {
+    // STEP 1: Prove save function runs
+    console.log('🔵 SAVE PROMPT CLICKED', { collectionId, title, newCollectionName, hasPrompt: !!promptToSave });
+    
+    if (!promptToSave) {
+      console.warn('❌ No prompt to save - early return');
+      return;
     }
 
-    // Save the prompt with user-provided title
-    const newPrompt: SavedPrompt = {
-      id: `prompt-${Date.now()}`,
-      title: title,
-      content: promptToSave.content,
-      collectionId: targetCollectionId,
-      sourceChat: recentChats.find((c) => c.id === selectedChatId)?.title,
-      createdAt: new Date(),
-    };
+    const sourceChat = recentChats.find((c) => c.id === selectedChatId)?.title;
+    const metadata = sourceChat ? { source_chat: sourceChat } : {};
 
-    setSavedPrompts((prev) => [newPrompt, ...prev]);
-    setSavedPromptIds((prev) => [...prev, promptToSave.id]);
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        console.log('🔵 Using Electron API for save');
+        
+        // Create new collection and save prompt OR save to existing collection
+        if (collectionId === "new" && newCollectionName) {
+          console.log('🔵 Creating NEW collection and saving prompt:', { newCollectionName, title });
+          const result = await window.electronAPI.promptLibrary.createCollectionAndSave(
+            newCollectionName,
+            title,
+            promptToSave.content,
+            "folder",
+            metadata
+          );
 
-    toast({
-      title: "Saved!",
-      description: "Prompt saved to your library.",
-    });
+          console.log('🔵 createCollectionAndSave RESULT:', result);
 
-    setSaveModalOpen(false);
-    setPromptToSave(null);
+          if (result.success) {
+            // Add new collection to UI
+            const newCollection: Collection = {
+              id: result.data.collection.id,
+              name: result.data.collection.name,
+              icon: result.data.collection.icon || "folder",
+            };
+            setCollections((prev) => [...prev, newCollection]);
+
+            // Add prompt to UI
+            const newPrompt: SavedPrompt = {
+              id: result.data.prompt.id,
+              title: result.data.prompt.title,
+              content: result.data.prompt.content,
+              collectionId: result.data.prompt.collection_id,
+              sourceChat: result.data.prompt.metadata?.source_chat,
+              createdAt: new Date(result.data.prompt.created_at),
+            };
+            setSavedPrompts((prev) => [newPrompt, ...prev]);
+            setSavedPromptIds((prev) => [...prev, promptToSave.id]);
+
+            toast({
+              title: "Saved!",
+              description: "Prompt saved to your library.",
+            });
+          } else {
+            throw new Error(result.error || 'Failed to save prompt');
+          }
+        } else {
+          // Save to existing collection
+          console.log('🔵 Saving to EXISTING collection:', { collectionId, title });
+          
+          const result = await window.electronAPI.promptLibrary.savePrompt(
+            collectionId,
+            title,
+            promptToSave.content,
+            metadata
+          );
+
+          console.log('🔵 savePrompt RESULT:', result);
+
+          if (result.success) {
+            // Add prompt to UI
+            const newPrompt: SavedPrompt = {
+              id: result.data.id,
+              title: result.data.title,
+              content: result.data.content,
+              collectionId: result.data.collection_id,
+              sourceChat: result.data.metadata?.source_chat,
+              createdAt: new Date(result.data.created_at),
+            };
+            setSavedPrompts((prev) => [newPrompt, ...prev]);
+            setSavedPromptIds((prev) => [...prev, promptToSave.id]);
+
+            toast({
+              title: "Saved!",
+              description: "Prompt saved to your library.",
+            });
+          } else {
+            throw new Error(result.error || 'Failed to save prompt');
+          }
+        }
+      } else {
+        // Fallback for non-Electron environment
+        let targetCollectionId = collectionId;
+
+        if (collectionId === "new" && newCollectionName) {
+          const newCollection: Collection = {
+            id: `col-${Date.now()}`,
+            name: newCollectionName,
+            icon: "folder",
+          };
+          setCollections((prev) => [...prev, newCollection]);
+          targetCollectionId = newCollection.id;
+        }
+
+        const newPrompt: SavedPrompt = {
+          id: `prompt-${Date.now()}`,
+          title: title,
+          content: promptToSave.content,
+          collectionId: targetCollectionId,
+          sourceChat,
+          createdAt: new Date(),
+        };
+
+        setSavedPrompts((prev) => [newPrompt, ...prev]);
+        setSavedPromptIds((prev) => [...prev, promptToSave.id]);
+
+        toast({
+          title: "Saved!",
+          description: "Prompt saved to your library (in-memory only).",
+        });
+      }
+
+      setSaveModalOpen(false);
+      setPromptToSave(null);
+    } catch (error) {
+      console.error('[Index] Error saving prompt:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to save prompt",
+        variant: "destructive",
+      });
+    }
   };
 
   // Library handlers
-  const handleCreateCollection = (name: string) => {
-    const newCollection: Collection = {
-      id: `col-${Date.now()}`,
-      name,
-      icon: "folder",
-    };
-    setCollections((prev) => [...prev, newCollection]);
-    toast({
-      title: "Collection created",
-      description: `"${name}" has been created.`,
-    });
+  const handleCreateCollection = async (name: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        const result = await window.electronAPI.promptLibrary.createCollection(name, "folder");
+        
+        if (result.success) {
+          const newCollection: Collection = {
+            id: result.data.id,
+            name: result.data.name,
+            icon: result.data.icon || "folder",
+          };
+          setCollections((prev) => [...prev, newCollection]);
+          toast({
+            title: "Collection created",
+            description: `"${name}" has been created.`,
+          });
+        } else {
+          throw new Error(result.error || 'Failed to create collection');
+        }
+      } else {
+        // Fallback for non-Electron environment
+        const newCollection: Collection = {
+          id: `col-${Date.now()}`,
+          name,
+          icon: "folder",
+        };
+        setCollections((prev) => [...prev, newCollection]);
+        toast({
+          title: "Collection created",
+          description: `"${name}" has been created (in-memory only).`,
+        });
+      }
+    } catch (error) {
+      console.error('[Index] Error creating collection:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create collection",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleRenameCollection = (id: string, name: string) => {
-    setCollections((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, name } : c))
-    );
-    toast({
-      title: "Collection renamed",
-      description: `Collection renamed to "${name}".`,
-    });
+  const handleRenameCollection = async (id: string, name: string) => {
+    // Don't allow renaming default collections
+    if (id === "all" || id === "favorites") {
+      toast({
+        title: "Cannot rename",
+        description: "Default collections cannot be renamed.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        const result = await window.electronAPI.promptLibrary.renameCollection(id, name);
+        
+        if (result.success) {
+          setCollections((prev) =>
+            prev.map((c) => (c.id === id ? { ...c, name } : c))
+          );
+          toast({
+            title: "Collection renamed",
+            description: `Collection renamed to "${name}".`,
+          });
+        } else {
+          throw new Error(result.error || 'Failed to rename collection');
+        }
+      } else {
+        // Fallback for non-Electron environment
+        setCollections((prev) =>
+          prev.map((c) => (c.id === id ? { ...c, name } : c))
+        );
+        toast({
+          title: "Collection renamed",
+          description: `Collection renamed to "${name}" (in-memory only).`,
+        });
+      }
+    } catch (error) {
+      console.error('[Index] Error renaming collection:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to rename collection",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleDeleteCollection = (id: string) => {
-    setCollections((prev) => prev.filter((c) => c.id !== id));
-    // Move prompts to "all"
-    setSavedPrompts((prev) =>
-      prev.map((p) => (p.collectionId === id ? { ...p, collectionId: "all" } : p))
-    );
-    toast({
-      title: "Collection deleted",
-      description: "Prompts moved to All Prompts.",
-    });
+  const handleDeleteCollection = async (id: string) => {
+    // Don't allow deleting default collections
+    if (id === "all" || id === "favorites") {
+      toast({
+        title: "Cannot delete",
+        description: "Default collections cannot be deleted.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        const result = await window.electronAPI.promptLibrary.deleteCollection(id);
+        
+        if (result.success) {
+          setCollections((prev) => prev.filter((c) => c.id !== id));
+          // Remove prompts in this collection (cascade delete in DB)
+          setSavedPrompts((prev) => prev.filter((p) => p.collectionId !== id));
+          toast({
+            title: "Collection deleted",
+            description: "Collection and its prompts have been deleted.",
+          });
+        } else {
+          throw new Error(result.error || 'Failed to delete collection');
+        }
+      } else {
+        // Fallback for non-Electron environment
+        setCollections((prev) => prev.filter((c) => c.id !== id));
+        setSavedPrompts((prev) =>
+          prev.map((p) => (p.collectionId === id ? { ...p, collectionId: "all" } : p))
+        );
+        toast({
+          title: "Collection deleted",
+          description: "Prompts moved to All Prompts (in-memory only).",
+        });
+      }
+    } catch (error) {
+      console.error('[Index] Error deleting collection:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete collection",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleCopyLibraryPrompt = (id: string) => {
@@ -321,12 +599,36 @@ Your prompt was: "${content}"`;
     });
   };
 
-  const handleDeletePrompt = (id: string) => {
-    setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
-    toast({
-      title: "Deleted",
-      description: "Prompt has been removed.",
-    });
+  const handleDeletePrompt = async (id: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        const result = await window.electronAPI.promptLibrary.deletePrompt(id);
+        
+        if (result.success) {
+          setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
+          toast({
+            title: "Deleted",
+            description: "Prompt has been removed.",
+          });
+        } else {
+          throw new Error(result.error || 'Failed to delete prompt');
+        }
+      } else {
+        // Fallback for non-Electron environment
+        setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
+        toast({
+          title: "Deleted",
+          description: "Prompt has been removed (in-memory only).",
+        });
+      }
+    } catch (error) {
+      console.error('[Index] Error deleting prompt:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to delete prompt",
+        variant: "destructive",
+      });
+    }
   };
 
   // History handlers

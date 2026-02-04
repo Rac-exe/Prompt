@@ -49,12 +49,27 @@ export class ChatService {
    * Get all chats for current user
    */
   async getChats(): Promise<Chat[]> {
+    // SECURITY: Explicitly verify auth and scope to user
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) {
+      console.error('[ChatService] ❌ getChats: Not authenticated');
+      throw new Error('Not authenticated');
+    }
+
+    console.log('[ChatService] Loading chats for user:', userData.user.id);
+
     const { data, error } = await this.client
       .from('chats')
       .select('*')
+      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
       .order('updated_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('[ChatService] ❌ Error loading chats:', error);
+      throw error;
+    }
+
+    console.log('[ChatService] ✅ Loaded', data?.length || 0, 'chats for user:', userData.user.id);
     return data || [];
   }
 
@@ -62,10 +77,18 @@ export class ChatService {
    * Get a single chat by ID
    */
   async getChat(chatId: string): Promise<Chat | null> {
+    // SECURITY: Explicitly verify auth and scope to user
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) {
+      console.error('[ChatService] ❌ getChat: Not authenticated');
+      throw new Error('Not authenticated');
+    }
+
     const { data, error } = await this.client
       .from('chats')
       .select('*')
       .eq('id', chatId)
+      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
       .single();
 
     if (error) throw error;
@@ -96,10 +119,18 @@ export class ChatService {
    * Update chat title
    */
   async updateChatTitle(chatId: string, title: string): Promise<void> {
+    // SECURITY: Explicitly verify auth and scope to user
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) {
+      console.error('[ChatService] ❌ updateChatTitle: Not authenticated');
+      throw new Error('Not authenticated');
+    }
+
     const { error } = await this.client
       .from('chats')
       .update({ title })
-      .eq('id', chatId);
+      .eq('id', chatId)
+      .eq('user_id', userData.user.id); // ✅ EXPLICIT user scoping
 
     if (error) throw error;
   }
@@ -108,10 +139,18 @@ export class ChatService {
    * Delete a chat
    */
   async deleteChat(chatId: string): Promise<void> {
+    // SECURITY: Explicitly verify auth and scope to user
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) {
+      console.error('[ChatService] ❌ deleteChat: Not authenticated');
+      throw new Error('Not authenticated');
+    }
+
     const { error } = await this.client
       .from('chats')
       .delete()
-      .eq('id', chatId);
+      .eq('id', chatId)
+      .eq('user_id', userData.user.id); // ✅ EXPLICIT user scoping
 
     if (error) throw error;
   }
@@ -120,10 +159,18 @@ export class ChatService {
    * Get messages for a chat
    */
   async getMessages(chatId: string): Promise<Message[]> {
+    // SECURITY: Explicitly verify auth and scope to user
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) {
+      console.error('[ChatService] ❌ getMessages: Not authenticated');
+      throw new Error('Not authenticated');
+    }
+
     const { data, error } = await this.client
       .from('messages')
       .select('*')
       .eq('chat_id', chatId)
+      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
       .order('created_at', { ascending: true });
 
     if (error) throw error;

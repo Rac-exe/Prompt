@@ -9,6 +9,7 @@ import { OptimizationService } from './database/services/optimization-service';
 import { UserService } from './database/services/user-service';
 import { AuthService } from './database/services/auth-service';
 import { SettingsService } from './database/services/settings-service';
+import { PromptLibraryService } from './database/services/prompt-library-service';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
 
@@ -29,6 +30,7 @@ let optimizationService: OptimizationService;
 let userService: UserService;
 let authService: AuthService;
 let settingsService: SettingsService;
+let promptLibraryService: PromptLibraryService;
 
 // Auth state
 let isUserAuthenticated = false;
@@ -257,10 +259,38 @@ async function handleSuccessfulAuth() {
             user: userData,
           });
 
+          // 🔴 FORCED DEBUG INSERT - Test if Supabase writes work
+          console.log('🔴🔴🔴 FORCING DEBUG INSERT...');
+          (async () => {
+            try {
+              const { data, error } = await SupabaseClientManager.getClient()
+                .from('prompt_collections')
+                .insert({
+                  user_id: user.id,
+                  name: `FORCED_DEBUG_${Date.now()}`,
+                  icon: 'folder'
+                })
+                .select()
+                .single();
+              
+              console.log('🔴 FORCED INSERT RESULT:', { 
+                data: data ? { id: data.id, name: data.name } : null, 
+                error: error ? { code: error.code, message: error.message } : null 
+              });
+            } catch (err) {
+              console.error('🔴 FORCED INSERT EXCEPTION:', err);
+            }
+          })();
+          
           // Load chats
           chatService.getChats().then(chats => {
             appWindowManager.send('chats-loaded', { chats });
           }).catch(err => console.error('[Main] Error loading chats:', err));
+          
+          // Load prompt library
+          promptLibraryService.getFullLibrary().then(library => {
+            appWindowManager.send('prompt-library:loaded', library);
+          }).catch(err => console.error('[Main] Error loading prompt library:', err));
         }, 100);
       }
     }
@@ -570,6 +600,32 @@ function setupIPC() {
         if (isAuth) {
           const userData = await userService.getCompleteUserData();
           console.log('[Main] 📤 Sending authenticated state to renderer');
+          
+          // 🔴 FORCED DEBUG INSERT - Test if Supabase writes work
+          if (userData && currentUserId) {
+            console.log('🔴🔴🔴 FORCING DEBUG INSERT...');
+            try {
+              const { data, error } = await SupabaseClientManager.getClient()
+                .from('prompt_collections')
+                .insert({
+                  user_id: currentUserId,
+                  name: `FORCED_DEBUG_${Date.now()}`,
+                  icon: 'folder'
+                })
+                .select()
+                .single();
+              
+              console.log('🔴 FORCED INSERT RESULT:', { 
+                data: data ? { id: data.id, name: data.name } : null, 
+                error: error ? { code: error.code, message: error.message } : null 
+              });
+            } catch (err) {
+              console.error('🔴 FORCED INSERT EXCEPTION:', err);
+            }
+          } else {
+            console.error('🔴 Cannot run forced insert - no user data or currentUserId');
+          }
+          
           appWindowManager.send('auth:state-changed', {
             isAuthenticated: true,
             user: userData,
@@ -578,6 +634,10 @@ function setupIPC() {
           // Also load chats
           const chats = await chatService.getChats();
           appWindowManager.send('chats-loaded', { chats });
+          
+          // Also load prompt library
+          const library = await promptLibraryService.getFullLibrary();
+          appWindowManager.send('prompt-library:loaded', library);
         } else {
           console.log('[Main] 📤 Sending unauthenticated state to renderer');
           appWindowManager.send('auth:state-changed', {
@@ -869,6 +929,264 @@ function setupIPC() {
       });
     }
   });
+
+  // ============================================
+  // PROMPT LIBRARY IPC HANDLERS
+  // ============================================
+
+  // Get all library data (collections + prompts)
+  ipcMain.handle('prompt-library:get-all', async () => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      const library = await promptLibraryService.getFullLibrary();
+      return { success: true, data: library };
+    } catch (error) {
+      console.error('[Main] Error getting library:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to load library' 
+      };
+    }
+  });
+
+  // Get collections only
+  ipcMain.handle('prompt-library:get-collections', async () => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      const collections = await promptLibraryService.getCollections();
+      return { success: true, data: collections };
+    } catch (error) {
+      console.error('[Main] Error getting collections:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to load collections' 
+      };
+    }
+  });
+
+  // Create a new collection
+  ipcMain.handle('prompt-library:create-collection', async (event, data: { name: string; icon?: string }) => {
+    try {
+      console.log('[Main] 📥 Create collection request:', data.name);
+      
+      if (!isUserAuthenticated) {
+        console.error('[Main] ❌ isUserAuthenticated flag is FALSE');
+        throw new Error('Not authenticated');
+      }
+      
+      // Verify session is actually valid
+      const sessionCheck = await SupabaseClientManager.verifySession();
+      if (!sessionCheck.hasSession) {
+        console.error('[Main] ❌ No valid session found in Supabase');
+        throw new Error('No valid session - please login again');
+      }
+      
+      console.log('[Main] ✅ Session verified, user:', sessionCheck.userId);
+      
+      const collection = await promptLibraryService.createCollection(data.name, data.icon);
+      console.log('[Main] ✅ Collection created:', collection.name);
+      return { success: true, data: collection };
+    } catch (error) {
+      console.error('[Main] ❌ Error creating collection:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to create collection' 
+      };
+    }
+  });
+
+  // Rename a collection
+  ipcMain.handle('prompt-library:rename-collection', async (event, data: { collectionId: string; name: string }) => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      const collection = await promptLibraryService.renameCollection(data.collectionId, data.name);
+      console.log('[Main] ✅ Collection renamed:', collection.name);
+      return { success: true, data: collection };
+    } catch (error) {
+      console.error('[Main] Error renaming collection:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to rename collection' 
+      };
+    }
+  });
+
+  // Delete a collection
+  ipcMain.handle('prompt-library:delete-collection', async (event, data: { collectionId: string }) => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      await promptLibraryService.deleteCollection(data.collectionId);
+      console.log('[Main] ✅ Collection deleted');
+      return { success: true };
+    } catch (error) {
+      console.error('[Main] Error deleting collection:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to delete collection' 
+      };
+    }
+  });
+
+  // Save a prompt
+  ipcMain.handle('prompt-library:save-prompt', async (event, data: { 
+    collectionId: string; 
+    title: string; 
+    content: string;
+    metadata?: Record<string, any>;
+  }) => {
+    try {
+      console.log('[Main] 📥 Save prompt request:', data.title);
+      
+      if (!isUserAuthenticated) {
+        console.error('[Main] ❌ isUserAuthenticated flag is FALSE');
+        throw new Error('Not authenticated');
+      }
+      
+      // Verify session is actually valid
+      const sessionCheck = await SupabaseClientManager.verifySession();
+      if (!sessionCheck.hasSession) {
+        console.error('[Main] ❌ No valid session found in Supabase');
+        throw new Error('No valid session - please login again');
+      }
+      
+      console.log('[Main] ✅ Session verified, user:', sessionCheck.userId);
+      
+      const prompt = await promptLibraryService.savePrompt(
+        data.collectionId,
+        data.title,
+        data.content,
+        data.metadata
+      );
+      console.log('[Main] ✅ Prompt saved:', prompt.title);
+      return { success: true, data: prompt };
+    } catch (error) {
+      console.error('[Main] ❌ Error saving prompt:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to save prompt' 
+      };
+    }
+  });
+
+  // Create collection and save prompt (for new collection flow)
+  ipcMain.handle('prompt-library:create-collection-and-save', async (event, data: { 
+    collectionName: string;
+    collectionIcon?: string;
+    promptTitle: string; 
+    promptContent: string;
+    metadata?: Record<string, any>;
+  }) => {
+    try {
+      console.log('[Main] 📥 Create collection and save prompt:', data.collectionName, data.promptTitle);
+      
+      if (!isUserAuthenticated) {
+        console.error('[Main] ❌ isUserAuthenticated flag is FALSE');
+        throw new Error('Not authenticated');
+      }
+      
+      // Verify session is actually valid
+      const sessionCheck = await SupabaseClientManager.verifySession();
+      if (!sessionCheck.hasSession) {
+        console.error('[Main] ❌ No valid session found in Supabase');
+        throw new Error('No valid session - please login again');
+      }
+      
+      console.log('[Main] ✅ Session verified, user:', sessionCheck.userId);
+      
+      const result = await promptLibraryService.createCollectionAndSavePrompt(
+        data.collectionName,
+        data.promptTitle,
+        data.promptContent,
+        data.collectionIcon,
+        data.metadata
+      );
+      console.log('[Main] ✅ Collection created and prompt saved');
+      return { success: true, data: result };
+    } catch (error) {
+      console.error('[Main] ❌ Error creating collection and saving prompt:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to save prompt' 
+      };
+    }
+  });
+
+  // Update a prompt
+  ipcMain.handle('prompt-library:update-prompt', async (event, data: { 
+    promptId: string;
+    updates: {
+      title?: string;
+      content?: string;
+      collection_id?: string;
+      metadata?: Record<string, any>;
+    };
+  }) => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      const prompt = await promptLibraryService.updatePrompt(data.promptId, data.updates);
+      console.log('[Main] ✅ Prompt updated');
+      return { success: true, data: prompt };
+    } catch (error) {
+      console.error('[Main] Error updating prompt:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to update prompt' 
+      };
+    }
+  });
+
+  // Delete a prompt
+  ipcMain.handle('prompt-library:delete-prompt', async (event, data: { promptId: string }) => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      await promptLibraryService.deletePrompt(data.promptId);
+      console.log('[Main] ✅ Prompt deleted');
+      return { success: true };
+    } catch (error) {
+      console.error('[Main] Error deleting prompt:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to delete prompt' 
+      };
+    }
+  });
+
+  // Toggle favorite
+  ipcMain.handle('prompt-library:toggle-favorite', async (event, data: { promptId: string }) => {
+    try {
+      if (!isUserAuthenticated) {
+        throw new Error('Not authenticated');
+      }
+      
+      const prompt = await promptLibraryService.toggleFavorite(data.promptId);
+      console.log('[Main] ✅ Favorite toggled');
+      return { success: true, data: prompt };
+    } catch (error) {
+      console.error('[Main] Error toggling favorite:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to toggle favorite' 
+      };
+    }
+  });
 }
 
 // ============================================
@@ -895,6 +1213,7 @@ async function initialize() {
   userService = new UserService();
   authService = new AuthService();
   settingsService = new SettingsService();
+  promptLibraryService = new PromptLibraryService();
 
   // ============================================
   // SESSION MANAGEMENT & AUTO-RESTORE

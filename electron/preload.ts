@@ -51,6 +51,21 @@ declare global {
       loadSettings: () => Promise<any>;
       saveSettings: (settings: any) => Promise<any>;
 
+      // Prompt Library API
+      promptLibrary: {
+        getAll: () => Promise<any>;
+        getCollections: () => Promise<any>;
+        createCollection: (name: string, icon?: string) => Promise<any>;
+        renameCollection: (collectionId: string, name: string) => Promise<any>;
+        deleteCollection: (collectionId: string) => Promise<any>;
+        savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => Promise<any>;
+        createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) => Promise<any>;
+        updatePrompt: (promptId: string, updates: any) => Promise<any>;
+        deletePrompt: (promptId: string) => Promise<any>;
+        toggleFavorite: (promptId: string) => Promise<any>;
+      };
+      onPromptLibraryLoaded: (callback: (data: any) => void) => void;
+
       // Common API
       send: (channel: string, data: any) => void;
     };
@@ -218,6 +233,39 @@ const electronAPI = {
   },
   saveSettings: (settings: any) => {
     return ipcRenderer.invoke('settings:save', settings);
+  },
+
+  // ============================================
+  // PROMPT LIBRARY API
+  // ============================================
+  promptLibrary: {
+    getAll: () => ipcRenderer.invoke('prompt-library:get-all'),
+    getCollections: () => ipcRenderer.invoke('prompt-library:get-collections'),
+    createCollection: (name: string, icon?: string) => 
+      ipcRenderer.invoke('prompt-library:create-collection', { name, icon }),
+    renameCollection: (collectionId: string, name: string) => 
+      ipcRenderer.invoke('prompt-library:rename-collection', { collectionId, name }),
+    deleteCollection: (collectionId: string) => 
+      ipcRenderer.invoke('prompt-library:delete-collection', { collectionId }),
+    savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => 
+      ipcRenderer.invoke('prompt-library:save-prompt', { collectionId, title, content, metadata }),
+    createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) => 
+      ipcRenderer.invoke('prompt-library:create-collection-and-save', { 
+        collectionName, 
+        collectionIcon, 
+        promptTitle, 
+        promptContent, 
+        metadata 
+      }),
+    updatePrompt: (promptId: string, updates: any) => 
+      ipcRenderer.invoke('prompt-library:update-prompt', { promptId, updates }),
+    deletePrompt: (promptId: string) => 
+      ipcRenderer.invoke('prompt-library:delete-prompt', { promptId }),
+    toggleFavorite: (promptId: string) => 
+      ipcRenderer.invoke('prompt-library:toggle-favorite', { promptId }),
+  },
+  onPromptLibraryLoaded: (callback: (data: any) => void) => {
+    ipcRenderer.on('prompt-library:loaded', (event, data) => callback(data));
   },
 
   // ============================================

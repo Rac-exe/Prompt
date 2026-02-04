@@ -88,7 +88,10 @@ export const MessageBubble = ({ message, onCopy, onSave, isSaved }: MessageBubbl
                   ? "text-emerald hover:text-emerald"
                   : "text-muted-foreground hover:text-foreground"
               )}
-              onClick={onSave}
+              onClick={() => {
+                console.log('🟢🟢🟢 SAVE BUTTON CLICKED - MessageBubble', message.id);
+                onSave();
+              }}
               data-testid="save-prompt-button"
             >
               {isSaved ? (
