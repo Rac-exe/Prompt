@@ -10,6 +10,7 @@ interface ChatViewProps {
   onSendMessage: (content: string) => void;
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
+  onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   savedPromptIds: string[];
   isGenerating: boolean;
 }
@@ -19,6 +20,7 @@ export const ChatView = ({
   onSendMessage,
   onCopyPrompt,
   onSavePrompt,
+  onFeedback,
   savedPromptIds,
   isGenerating,
 }: ChatViewProps) => {
@@ -86,6 +88,7 @@ export const ChatView = ({
                   message={message}
                   onCopy={() => onCopyPrompt(message.id)}
                   onSave={() => onSavePrompt(message.id)}
+                  onFeedback={onFeedback}
                   isSaved={savedPromptIds.includes(message.id)}
                 />
               ))}

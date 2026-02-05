@@ -15,87 +15,67 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
+import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/settings";
 
 interface SettingsViewProps {
   userEmail: string;
   onLogout: () => void;
 }
 
-interface SettingsData {
-  theme: "light" | "dark";
-  fontSize: "small" | "medium" | "large";
-  fontFamily: "inter" | "mono" | "serif";
-  promptInstructions: string;
-}
-
-const STORAGE_KEY = "prompt-weaver-settings";
-
-const loadSettings = (): SettingsData => {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch {
-      // Fall through to defaults
-    }
-  }
-  return {
+export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
+  const [settings, setSettings] = useState<SettingsData>({
     theme: "dark",
     fontSize: "medium",
     fontFamily: "inter",
     promptInstructions: "",
-  };
-};
-
-const saveSettings = (settings: SettingsData) => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-};
-
-export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
-  const [settings, setSettings] = useState<SettingsData>(loadSettings());
+  });
   const [isDirty, setIsDirty] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
+  // Load settings on mount
   useEffect(() => {
-    // Apply theme
-    if (settings.theme === "dark") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
+    const initSettings = async () => {
+      try {
+        const loaded = await loadSettings();
+        setSettings(loaded);
+        setHasLoadedOnce(true);
+      } catch (error) {
+        console.error('[SettingsView] Failed to load settings:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    initSettings();
+  }, []);
 
-    // Apply font size
-    const root = document.documentElement;
-    switch (settings.fontSize) {
-      case "small":
-        root.style.fontSize = "14px";
-        break;
-      case "large":
-        root.style.fontSize = "18px";
-        break;
-      default:
-        root.style.fontSize = "16px";
+  // Apply settings when user makes changes (for live preview)
+  useEffect(() => {
+    if (isDirty) {
+      applySettings(settings);
     }
+  }, [settings, isDirty]);
 
-    // Apply font family
-    switch (settings.fontFamily) {
-      case "mono":
-        root.style.fontFamily = "'Courier New', monospace";
-        break;
-      case "serif":
-        root.style.fontFamily = "'Georgia', serif";
-        break;
-      default:
-        root.style.fontFamily = "'Inter', system-ui, sans-serif";
+  const handleSave = async () => {
+    try {
+      await saveSettings(settings);
+      setIsDirty(false);
+
+      // Apply settings after successful save
+      applySettings(settings);
+
+      toast({
+        title: "Settings saved",
+        description: "Your preferences have been updated.",
+      });
+    } catch (error) {
+      console.error('[SettingsView] Failed to save settings:', error);
+      toast({
+        title: "Save failed",
+        description: "Could not save settings. Please try again.",
+        variant: "destructive",
+      });
     }
-  }, [settings]);
-
-  const handleSave = () => {
-    saveSettings(settings);
-    setIsDirty(false);
-    toast({
-      title: "Settings saved",
-      description: "Your preferences have been updated.",
-    });
   };
 
   const updateSetting = <K extends keyof SettingsData>(
@@ -300,12 +280,13 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
                   Appearance
                 </h3>
                 <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  {/* Theme Toggle */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label className="text-foreground">Dark Mode</Label>
+                      <Label className="text-foreground">
+                        {settings.theme === "dark" ? "Dark Mode" : "Light Mode"}
+                      </Label>
                       <p className="text-sm text-muted-foreground">
-                        Dark color scheme
+                        {settings.theme === "dark" ? "Dark color scheme" : "Light color scheme"}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

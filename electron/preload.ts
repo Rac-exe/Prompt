@@ -36,6 +36,36 @@ declare global {
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
       signOut: () => void;
 
+      // Auth API
+      signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
+      signIn: (data: { email: string; password: string }) => void;
+      checkAuth: () => void;
+      onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
+      updateProfile: (updates: any) => void;
+      updatePreferences: (updates: any) => void;
+      setPersonalizationPrompt: (prompt: string) => void;
+      onProfileUpdated: (callback: () => void) => void;
+      onPreferencesUpdated: (callback: () => void) => void;
+
+      // Settings API
+      loadSettings: () => Promise<any>;
+      saveSettings: (settings: any) => Promise<any>;
+
+      // Prompt Library API
+      promptLibrary: {
+        getAll: () => Promise<any>;
+        getCollections: () => Promise<any>;
+        createCollection: (name: string, icon?: string) => Promise<any>;
+        renameCollection: (collectionId: string, name: string) => Promise<any>;
+        deleteCollection: (collectionId: string) => Promise<any>;
+        savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => Promise<any>;
+        createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) => Promise<any>;
+        updatePrompt: (promptId: string, updates: any) => Promise<any>;
+        deletePrompt: (promptId: string) => Promise<any>;
+        toggleFavorite: (promptId: string) => Promise<any>;
+      };
+      onPromptLibraryLoaded: (callback: (data: any) => void) => void;
+
       // Common API
       send: (channel: string, data: any) => void;
     };
@@ -140,10 +170,110 @@ const electronAPI = {
     ipcRenderer.send('app:load-messages', chatId);
   },
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
-    ipcRenderer.on('messages-loaded', (event, data) => callback(data));
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('messages-loaded', handler);
+    return () => ipcRenderer.removeListener('messages-loaded', handler);
+  },
+  sendMessage: (data: { chatId: string | null; content: string }) => {
+    ipcRenderer.send('app:send-message', data);
+  },
+  onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('message-sent', handler);
+    return () => ipcRenderer.removeListener('message-sent', handler);
+  },
+  onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => {
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('message-received', handler);
+    return () => ipcRenderer.removeListener('message-received', handler);
+  },
+  onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => {
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('message-send-error', handler);
+    return () => ipcRenderer.removeListener('message-send-error', handler);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
+  },
+
+  // ============================================
+  // AUTH API
+  // ============================================
+  signUp: (data: { name: string; dob: string; email: string; password: string }) => {
+    ipcRenderer.send('auth:sign-up', data);
+  },
+  signIn: (data: { email: string; password: string }) => {
+    ipcRenderer.send('auth:sign-in', data);
+  },
+  checkAuth: () => {
+    ipcRenderer.send('auth:check');
+  },
+  onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
+    // Remove any existing listeners first to prevent duplicates
+    ipcRenderer.removeAllListeners('auth:state-changed');
+    // Add the new listener
+    ipcRenderer.on('auth:state-changed', (event, data) => {
+      console.log('[Preload] 📥 Auth state change event received, forwarding to renderer:', data);
+      callback(data);
+    });
+  },
+  updateProfile: (updates: any) => {
+    ipcRenderer.send('user:update-profile', updates);
+  },
+  updatePreferences: (updates: any) => {
+    ipcRenderer.send('user:update-preferences', updates);
+  },
+  setPersonalizationPrompt: (prompt: string) => {
+    ipcRenderer.send('user:set-personalization-prompt', prompt);
+  },
+  onProfileUpdated: (callback: () => void) => {
+    ipcRenderer.on('user:profile-updated', () => callback());
+  },
+  onPreferencesUpdated: (callback: () => void) => {
+    ipcRenderer.on('user:preferences-updated', () => callback());
+  },
+
+  // ============================================
+  // SETTINGS API
+  // ============================================
+  loadSettings: () => {
+    return ipcRenderer.invoke('settings:load');
+  },
+  saveSettings: (settings: any) => {
+    return ipcRenderer.invoke('settings:save', settings);
+  },
+
+  // ============================================
+  // PROMPT LIBRARY API
+  // ============================================
+  promptLibrary: {
+    getAll: () => ipcRenderer.invoke('prompt-library:get-all'),
+    getCollections: () => ipcRenderer.invoke('prompt-library:get-collections'),
+    createCollection: (name: string, icon?: string) =>
+      ipcRenderer.invoke('prompt-library:create-collection', { name, icon }),
+    renameCollection: (collectionId: string, name: string) =>
+      ipcRenderer.invoke('prompt-library:rename-collection', { collectionId, name }),
+    deleteCollection: (collectionId: string) =>
+      ipcRenderer.invoke('prompt-library:delete-collection', { collectionId }),
+    savePrompt: (collectionId: string, title: string, content: string, metadata?: any) =>
+      ipcRenderer.invoke('prompt-library:save-prompt', { collectionId, title, content, metadata }),
+    createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) =>
+      ipcRenderer.invoke('prompt-library:create-collection-and-save', {
+        collectionName,
+        collectionIcon,
+        promptTitle,
+        promptContent,
+        metadata
+      }),
+    updatePrompt: (promptId: string, updates: any) =>
+      ipcRenderer.invoke('prompt-library:update-prompt', { promptId, updates }),
+    deletePrompt: (promptId: string) =>
+      ipcRenderer.invoke('prompt-library:delete-prompt', { promptId }),
+    toggleFavorite: (promptId: string) =>
+      ipcRenderer.invoke('prompt-library:toggle-favorite', { promptId }),
+  },
+  onPromptLibraryLoaded: (callback: (data: any) => void) => {
+    ipcRenderer.on('prompt-library:loaded', (event, data) => callback(data));
   },
 
   // ============================================

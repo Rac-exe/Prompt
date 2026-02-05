@@ -7,8 +7,19 @@ import { SupabaseClientManager } from './database/supabase-client';
 import { ChatService } from './database/services/chat-service';
 import { OptimizationService } from './database/services/optimization-service';
 import { UserService } from './database/services/user-service';
+import { AuthService } from './database/services/auth-service';
+import { SettingsService } from './database/services/settings-service';
+import { PromptLibraryService } from './database/services/prompt-library-service';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
+import { authState } from './utils/auth-state';
+import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
+import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
+import { registerUserHandlers } from './ipc-handlers/user-handlers';
+import { registerChatHandlers } from './ipc-handlers/chat-handlers';
+
+// Import modular IPC handlers (these auto-register on import)
+import './ipc-handlers/prompt-library-handlers';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -25,6 +36,11 @@ let pythonClient: PythonClient;
 let chatService: ChatService;
 let optimizationService: OptimizationService;
 let userService: UserService;
+let authService: AuthService;
+let settingsService: SettingsService;
+let promptLibraryService: PromptLibraryService;
+
+// key tracking...
 
 // Keystroke tracking for @prompt detection
 let typedBuffer = '';
@@ -33,11 +49,7 @@ const MAX_BUFFER_SIZE = 50;
 let shiftPressed = false;
 
 // Current optimization context
-let currentOptimization: {
-  optimizationId: string;
-  originalText: string;
-  optimizedText: string;
-} | null = null;
+
 
 // ============================================
 // KEY CODE MAPPING
@@ -187,203 +199,19 @@ function toggleOverlay() {
 }
 
 // ============================================
+// AUTH HELPERS
+// ============================================
+
+// ============================================
 // IPC HANDLERS
 // ============================================
-function setupIPC() {
-  // Overlay: Prompt submission for optimization
-  ipcMain.on('floating-panel:prompt-submit', async (event, data: string | { text: string; isRegenerate?: boolean }) => {
-    const promptText = typeof data === 'string' ? data : data.text;
-    const skipCache = typeof data === 'string' ? false : !!data.isRegenerate;
 
-    console.log('[Main] Prompt submitted:', promptText.substring(0, 50));
 
-    if (!pythonClient) {
-      console.error('[Main] Python client not available');
-      return;
-    }
-
-    try {
-      const optimizedText = await pythonClient.optimize(promptText, skipCache);
-
-      // Save optimization to database (source: overlay)
-      const optimization = await optimizationService.saveOptimization(
-        promptText,
-        optimizedText,
-        'overlay',
-        {
-          model: 'llama3.2',
-          latency_ms: 0,
-          source_context: { app: 'overlay' },
-        }
-      );
-
-      currentOptimization = {
-        optimizationId: optimization.id,
-        originalText: promptText,
-        optimizedText,
-      };
-
-      // Send result to overlay
-      const panelWindow = floatingPanel?.getWindow();
-      if (panelWindow && !panelWindow.isDestroyed()) {
-        panelWindow.webContents.send('optimization-complete', {
-          original: promptText,
-          optimized: optimizedText,
-        });
-      }
-    } catch (error) {
-      console.error('[Main] Optimization failed:', error);
-    }
-  });
-
-  // Overlay: Replace button clicked (mark optimization as applied)
-  ipcMain.on('floating-panel:replace-text', async (event, data: { optimizedText: string }) => {
-    console.log('[Main] Replace requested');
-
-    if (currentOptimization) {
-      await optimizationService.markAsApplied(currentOptimization.optimizationId);
-    }
-
-    // Copy to clipboard
-    const { clipboard } = require('electron');
-    clipboard.writeText(data.optimizedText);
-    hideOverlay();
-  });
-
-  // Overlay: Dismiss
-  ipcMain.on('floating-panel:dismiss', () => {
-    console.log('[Main] Overlay dismissed');
-    hideOverlay();
-  });
-
-  // App Window: Optimize prompt request
-  ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false) => {
-    console.log('[Main] App window optimization request:', promptText.substring(0, 50));
-
-    try {
-      const optimizedText = await pythonClient.optimize(promptText, isRegenerate);
-
-      // Save optimization to database (source: app_window)
-      const optimization = await optimizationService.saveOptimization(
-        promptText,
-        optimizedText,
-        'app_window',
-        {
-          model: 'llama3.2',
-          source_context: { app: 'app_window' },
-        }
-      );
-
-      currentOptimization = {
-        optimizationId: optimization.id,
-        originalText: promptText,
-        optimizedText,
-      };
-
-      // Send result to app window
-      appWindowManager.send('optimization-complete', {
-        original: promptText,
-        optimized: optimizedText,
-      });
-    } catch (error) {
-      console.error('[Main] Optimization failed:', error);
-    }
-  });
-
-  // App Window: Save to chat
-  ipcMain.on('app:save-to-chat', async (event, originalText: string, optimizedText: string) => {
-    console.log('[Main] Saving to chat...');
-
-    try {
-      // Get or create "Quick Optimizations" chat
-      const chat = await chatService.getOrCreateQuickOptimizationsChat();
-
-      // Add user message (original)
-      await chatService.addMessage(chat.id, originalText, 'user');
-
-      // Add assistant message (optimized)
-      await chatService.addMessage(
-        chat.id,
-        optimizedText,
-        'assistant',
-        currentOptimization?.optimizationId
-      );
-
-      console.log('[Main] Saved to chat successfully');
-      appWindowManager.send('chat-saved', { chatId: chat.id });
-    } catch (error) {
-      console.error('[Main] Failed to save to chat:', error);
-    }
-  });
-
-  // App Window: Copy to clipboard
-  ipcMain.on('app:copy-to-clipboard', (event, text: string) => {
-    const { clipboard } = require('electron');
-    clipboard.writeText(text);
-  });
-
-  // App Window: Request user data
-  ipcMain.on('app:request-user-data', async () => {
-    try {
-      const user = await userService.getCurrentUser();
-      if (user) {
-        appWindowManager.send('user-data-loaded', user);
-      }
-    } catch (error) {
-      console.error('[Main] Failed to load user data:', error);
-    }
-  });
-
-  // App Window: Sign out
-  ipcMain.on('app:sign-out', async () => {
-    try {
-      await userService.signOut();
-      app.quit();
-    } catch (error) {
-      console.error('[Main] Sign out failed:', error);
-    }
-  });
-
-  // App Window: Load chats
-  ipcMain.on('app:load-chats', async (event) => {
-    try {
-      console.log('[Main] Loading chats...');
-      const chats = await chatService.getChats();
-      appWindowManager.send('chats-loaded', { chats });
-    } catch (error) {
-      console.error('[Main] Failed to load chats:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      appWindowManager.send('chats-loaded', { chats: [], error: errorMessage });
-    }
-  });
-
-  // App Window: Create new chat
-  ipcMain.on('app:create-chat', async (event, title?: string) => {
-    try {
-      console.log('[Main] Creating new chat...');
-      const chat = await chatService.createChat(title);
-      appWindowManager.send('chat-created', { chat });
-      // Reload chats list
-      const chats = await chatService.getChats();
-      appWindowManager.send('chats-loaded', { chats });
-    } catch (error) {
-      console.error('[Main] Failed to create chat:', error);
-    }
-  });
-
-  // App Window: Load messages for a chat
-  ipcMain.on('app:load-messages', async (event, chatId: string) => {
-    try {
-      console.log('[Main] Loading messages for chat:', chatId);
-      const messages = await chatService.getMessages(chatId);
-      appWindowManager.send('messages-loaded', { chatId, messages });
-    } catch (error) {
-      console.error('[Main] Failed to load messages:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      appWindowManager.send('messages-loaded', { chatId, messages: [], error: errorMessage });
-    }
-  });
-}
+// ============================================
+// PROMPT LIBRARY IPC HANDLERS
+// ============================================
+// NOTE: These handlers have been moved to ./ipc-handlers/prompt-library-handlers.ts
+// They are automatically registered on import at the top of this file
 
 // ============================================
 // INITIALIZATION
@@ -407,41 +235,63 @@ async function initialize() {
   chatService = new ChatService();
   optimizationService = new OptimizationService();
   userService = new UserService();
+  authService = new AuthService();
+  settingsService = new SettingsService();
+  promptLibraryService = new PromptLibraryService();
 
-  // AUTO-LOGIN FOR TESTING (REMOVE IN PRODUCTION!)
-  // Create a test user in Supabase dashboard first:
-  // Email: test@example.com, Password: testpassword123
+  // Create app window manager EARLY so handlers can use it
+  appWindowManager = new AppWindowManager();
+
+  // Register Auth Handlers
+  registerAuthHandlers(appWindowManager);
+
+  // Register User & Settings Handlers
+  registerUserHandlers(appWindowManager);
+  registerSettingsHandlers();
+
+  // ============================================
+  // SESSION MANAGEMENT & AUTO-RESTORE
+  // ============================================
   try {
-    const supabase = SupabaseClientManager.getClient();
+    // Check for existing session and restore if valid
+    const hasSession = await checkAndRestoreSession(appWindowManager);
 
-    // Try to get existing session first
-    const { data: sessionData } = await supabase.auth.getSession();
-
-    if (!sessionData.session) {
-      console.log('[Main] No existing session, attempting auto-login...');
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: 'test@example.com',
-        password: 'testpassword123'
-      });
-
-      if (error) {
-        console.error('[Main] Auto-login failed:', error.message);
-        console.error('[Main] Please create a test user in Supabase:');
-        console.error('[Main] Email: test@example.com, Password: testpassword123');
-      } else {
-        console.log('[Main] ✅ Auto-logged in as test@example.com');
-      }
+    if (hasSession) {
+      console.log('[Main] ✅ Session restored, user logged in');
     } else {
-      console.log('[Main] ✅ Using existing session');
+      console.log('[Main] ℹ️ No session found, user needs to log in');
     }
 
-    // Ensure user profile exists in users table
-    const user = await userService.getCurrentUser();
-    if (user) {
-      console.log('[Main] ✅ User profile loaded:', user.email);
-    }
+    // Set up auth state change listener
+    authService.onAuthStateChange(async (event, session) => {
+      console.log('[Main] Auth state changed:', event);
+
+      if (event === 'SIGNED_IN' && session) {
+        authState.isAuthenticated = true;
+        authState.currentUserId = session.user.id;
+        // logic is now handled by auth-handlers side effects or renderer reload
+        // But we might need to notify renderer if this event comes from outside IPC
+        if (appWindowManager) {
+          // We can implement handleSuccessfulAuth here too if needed, 
+          // but usually SIGNED_IN comes from our own signIn call which handles it.
+          // If it comes from token refresh or auto-login, we might need it.
+        }
+      } else if (event === 'SIGNED_OUT') {
+        authState.isAuthenticated = false;
+        authState.currentUserId = null;
+
+        if (appWindowManager) {
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: false,
+            user: null,
+          });
+        }
+      } else if (event === 'TOKEN_REFRESHED' && session) {
+        console.log('[Main] ✅ Session token refreshed');
+      }
+    });
   } catch (error) {
-    console.error('[Main] Auth error:', error);
+    console.error('[Main] Auth initialization error:', error);
   }
 
   // Initialize Python client
@@ -465,7 +315,8 @@ async function initialize() {
   console.log('[Main] Floating panel created (hidden)');
 
   // Setup IPC handlers
-  setupIPC();
+  // Register Chat & Optimization Handlers
+  registerChatHandlers(appWindowManager, pythonClient, floatingPanel);
 
   // Start keystroke detection for @prompt
   startKeystrokeDetection();
@@ -482,8 +333,9 @@ async function initialize() {
     console.error('[Main] Failed to register global hotkey');
   }
 
-  // Create app window manager (but don't show window yet)
-  appWindowManager = new AppWindowManager();
+  // NOTE: appWindowManager already created above
+
+  // Create system tray
 
   // Create system tray
   systemTray = new SystemTray(
