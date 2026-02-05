@@ -67,6 +67,38 @@ const Index = () => {
   const [collections, setCollections] = useState<Collection[]>(initialCollections);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(initialPrompts);
 
+  // Load prompt library from Supabase on mount
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.promptLibrary) {
+      // Load collections
+      window.electronAPI.promptLibrary.getCollections()
+        .then((collections) => {
+          console.log('[Index] Loaded collections from Supabase:', collections.length);
+          setCollections(collections.map((c: any) => ({
+            id: c.id,
+            name: c.name,
+            icon: c.icon || 'folder',
+          })));
+        })
+        .catch((error) => console.error('[Index] Error loading collections:', error));
+
+      // Load prompts
+      window.electronAPI.promptLibrary.getAll()
+        .then((prompts) => {
+          console.log('[Index] Loaded prompts from Supabase:', prompts.length);
+          setSavedPrompts(prompts.map((p: any) => ({
+            id: p.id,
+            title: p.title,
+            content: p.content,
+            collectionId: p.collection_id,
+            sourceChat: p.metadata?.source_chat,
+            createdAt: new Date(p.created_at),
+          })));
+        })
+        .catch((error) => console.error('[Index] Error loading prompts:', error));
+    }
+  }, [isElectron]);
+
   // Load chats from Supabase on mount
   useEffect(() => {
     if (isElectron && window.electronAPI?.loadChats) {
@@ -336,42 +368,61 @@ Your prompt was: "${content}"`;
     });
   };
 
-  const handleSavePrompt = (collectionId: string, title: string, newCollectionName?: string) => {
+  const handleSavePrompt = async (collectionId: string, title: string, newCollectionName?: string) => {
     if (!promptToSave) return;
 
-    let targetCollectionId = collectionId;
+    try {
+      let targetCollectionId = collectionId;
 
-    // Create new collection if needed
-    if (collectionId === "new" && newCollectionName) {
-      const newCollection: Collection = {
-        id: `col-${Date.now()}`,
-        name: newCollectionName,
-        icon: "folder",
-      };
-      setCollections((prev) => [...prev, newCollection]);
-      targetCollectionId = newCollection.id;
+      // Create new collection in Supabase if needed
+      if (collectionId === "new" && newCollectionName && isElectron && window.electronAPI?.promptLibrary) {
+        const newCollection = await window.electronAPI.promptLibrary.createCollection(newCollectionName, "folder");
+        targetCollectionId = newCollection.id;
+
+        // Update local state
+        setCollections((prev) => [...prev, {
+          id: newCollection.id,
+          name: newCollection.name,
+          icon: newCollection.icon || "folder",
+        }]);
+      }
+
+      // Save prompt to Supabase
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        const savedPrompt = await window.electronAPI.promptLibrary.savePrompt(
+          targetCollectionId,
+          title,
+          promptToSave.content,
+          { source_chat: recentChats.find((c) => c.id === selectedChatId)?.title }
+        );
+
+        // Update local state
+        setSavedPrompts((prev) => [{
+          id: savedPrompt.id,
+          title: savedPrompt.title,
+          content: savedPrompt.content,
+          collectionId: savedPrompt.collection_id,
+          sourceChat: savedPrompt.metadata?.source_chat,
+          createdAt: new Date(savedPrompt.created_at),
+        }, ...prev]);
+        setSavedPromptIds((prev) => [...prev, promptToSave.id]);
+
+        toast({
+          title: "Saved!",
+          description: "Prompt saved to your library.",
+        });
+      }
+
+      setSaveModalOpen(false);
+      setPromptToSave(null);
+    } catch (error: any) {
+      console.error('[Index] Error saving prompt:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save prompt",
+        variant: "destructive",
+      });
     }
-
-    // Save the prompt with user-provided title
-    const newPrompt: SavedPrompt = {
-      id: `prompt-${Date.now()}`,
-      title: title,
-      content: promptToSave.content,
-      collectionId: targetCollectionId,
-      sourceChat: recentChats.find((c) => c.id === selectedChatId)?.title,
-      createdAt: new Date(),
-    };
-
-    setSavedPrompts((prev) => [newPrompt, ...prev]);
-    setSavedPromptIds((prev) => [...prev, promptToSave.id]);
-
-    toast({
-      title: "Saved!",
-      description: "Prompt saved to your library.",
-    });
-
-    setSaveModalOpen(false);
-    setPromptToSave(null);
   };
 
   // Library handlers
