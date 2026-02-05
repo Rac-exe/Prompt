@@ -64,7 +64,7 @@ const Index = () => {
   const [promptToPreview, setPromptToPreview] = useState<SavedPrompt | null>(null);
 
   // Library state
-  const [collections, setCollections] = useState<Collection>(initialCollections);
+  const [collections, setCollections] = useState<Collection[]>(initialCollections);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(initialPrompts);
 
   // Load chats from Supabase on mount
