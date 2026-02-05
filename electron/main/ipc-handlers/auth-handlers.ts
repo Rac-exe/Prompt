@@ -198,6 +198,26 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
         }
     });
 
+    // App Window: Sign Out (Legacy/System Tray)
+    ipcMain.on('app:sign-out', async () => {
+        try {
+            console.log('[Auth] Sign out request (app:sign-out)');
+            await authService!.signOut();
+
+            authState.isAuthenticated = false;
+            authState.currentUserId = null;
+
+            console.log('[Auth] ✅ User signed out');
+
+            appWindowManager.send('auth:state-changed', {
+                isAuthenticated: false,
+                user: null
+            });
+        } catch (error) {
+            console.error('[Auth] Error signing out:', error);
+        }
+    });
+
     // Check Auth Status
     ipcMain.on('auth:check', async () => {
         try {

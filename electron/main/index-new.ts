@@ -14,6 +14,8 @@ import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
 import { authState } from './utils/auth-state';
 import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
+import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
+import { registerUserHandlers } from './ipc-handlers/user-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -380,161 +382,9 @@ function setupIPC() {
     clipboard.writeText(text);
   });
 
-  // App Window: Request user data
-  ipcMain.on('app:request-user-data', async () => {
-    try {
-      const userData = await userService.getCompleteUserData();
-      if (userData) {
-        appWindowManager.send('user-data-loaded', userData);
-      }
-    } catch (error) {
-      console.error('[Main] Failed to load user data:', error);
-    }
-  });
-
-  // App Window: Sign out
-  ipcMain.on('app:sign-out', async () => {
-    try {
-      await authService.signOut();
-      authState.isAuthenticated = false;
-      authState.currentUserId = null;
-
-      // Notify window
-      if (appWindowManager) {
-        appWindowManager.send('auth:state-changed', {
-          isAuthenticated: false,
-          user: null,
-        });
-      }
-
-      console.log('[Main] ✅ User signed out');
-    } catch (error) {
-      console.error('[Main] Sign out failed:', error);
-    }
-  });
-
-  // ============================================
 
 
-  // ============================================
-  // USER PROFILE & PREFERENCES IPC HANDLERS
-  // ============================================
 
-  // Update Profile
-  ipcMain.on('user:update-profile', async (event, updates) => {
-    try {
-      if (!authState.isAuthenticated) {
-        console.error('[Main] Cannot update profile: not authenticated');
-        return;
-      }
-
-      await userService.updateProfile(updates);
-
-      if (appWindowManager) {
-        appWindowManager.send('user:profile-updated');
-
-        // Send updated user data
-        const userData = await userService.getCompleteUserData();
-        appWindowManager.send('user-data-loaded', userData);
-      }
-
-      console.log('[Main] ✅ Profile updated');
-    } catch (error) {
-      console.error('[Main] Error updating profile:', error);
-    }
-  });
-
-  // Update Preferences
-  ipcMain.on('user:update-preferences', async (event, updates) => {
-    try {
-      if (!authState.isAuthenticated) {
-        console.error('[Main] Cannot update preferences: not authenticated');
-        return;
-      }
-
-      await userService.updatePreferences(updates);
-
-      if (appWindowManager) {
-        appWindowManager.send('user:preferences-updated');
-
-        // Send updated user data
-        const userData = await userService.getCompleteUserData();
-        appWindowManager.send('user-data-loaded', userData);
-      }
-
-      console.log('[Main] ✅ Preferences updated');
-    } catch (error) {
-      console.error('[Main] Error updating preferences:', error);
-    }
-  });
-
-  // Set Personalization Prompt
-  ipcMain.on('user:set-personalization-prompt', async (event, prompt: string) => {
-    try {
-      if (!authState.isAuthenticated) {
-        console.error('[Main] Cannot set personalization prompt: not authenticated');
-        return;
-      }
-
-      await userService.setPersonalizationPrompt(prompt);
-
-      if (appWindowManager) {
-        appWindowManager.send('user:preferences-updated');
-      }
-
-      console.log('[Main] ✅ Personalization prompt updated');
-    } catch (error) {
-      console.error('[Main] Error setting personalization prompt:', error);
-    }
-  });
-
-  // ============================================
-  // SETTINGS IPC HANDLERS
-  // ============================================
-
-  // Load user settings
-  ipcMain.handle('settings:load', async () => {
-    try {
-      if (!authState.isAuthenticated || !authState.currentUserId) {
-        console.log('[Main] User not authenticated, returning default settings');
-        return {
-          theme: 'dark',
-          font_size: 'medium',
-          font_family: 'inter',
-          prompt_instructions: '',
-        };
-      }
-
-      const settings = await settingsService.getOrCreateSettings(authState.currentUserId);
-      console.log('[Main] ✅ Settings loaded for user:', authState.currentUserId);
-      return settings;
-    } catch (error) {
-      console.error('[Main] Error loading settings:', error);
-      // Return defaults on error
-      return {
-        theme: 'dark',
-        font_size: 'medium',
-        font_family: 'inter',
-        prompt_instructions: '',
-      };
-    }
-  });
-
-  // Save user settings
-  ipcMain.handle('settings:save', async (event, settings) => {
-    try {
-      if (!authState.isAuthenticated || !authState.currentUserId) {
-        throw new Error('User must be authenticated to save settings');
-      }
-
-      const saved = await settingsService.upsertUserSettings(authState.currentUserId, settings);
-      console.log('[Main] ✅ Settings saved for user:', authState.currentUserId);
-      return saved;
-    } catch (error) {
-      console.error('[Main] Error saving settings:', error);
-      throw error;
-    }
-  });
 
   // App Window: Load chats
   ipcMain.on('app:load-chats', async (event) => {
@@ -730,6 +580,10 @@ async function initialize() {
 
   // Register Auth Handlers
   registerAuthHandlers(appWindowManager);
+
+  // Register User & Settings Handlers
+  registerUserHandlers(appWindowManager);
+  registerSettingsHandlers();
 
   // ============================================
   // SESSION MANAGEMENT & AUTO-RESTORE
