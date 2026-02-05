@@ -16,6 +16,7 @@ import { authState } from './utils/auth-state';
 import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
+import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -48,11 +49,7 @@ const MAX_BUFFER_SIZE = 50;
 let shiftPressed = false;
 
 // Current optimization context
-let currentOptimization: {
-  optimizationId: string;
-  originalText: string;
-  optimizedText: string;
-} | null = null;
+
 
 // ============================================
 // KEY CODE MAPPING
@@ -205,349 +202,16 @@ function toggleOverlay() {
 // AUTH HELPERS
 // ============================================
 
-
 // ============================================
 // IPC HANDLERS
 // ============================================
-function setupIPC() {
-  // Overlay: Prompt submission for optimization
-  ipcMain.on('floating-panel:prompt-submit', async (event, data: string | { text: string; isRegenerate?: boolean }) => {
-    const promptText = typeof data === 'string' ? data : data.text;
-    const skipCache = typeof data === 'string' ? false : !!data.isRegenerate;
-
-    console.log('[Main] Prompt submitted:', promptText.substring(0, 50));
-
-    if (!pythonClient) {
-      console.error('[Main] Python client not available');
-      return;
-    }
-
-    try {
-      // Get personalization prompt if user is authenticated
-      let finalPrompt = promptText;
-      if (authState.isAuthenticated) {
-        const personalizationPrompt = await userService.getPersonalizationPrompt();
-        if (personalizationPrompt) {
-          // Prepend personalization instructions (done internally by Python service)
-          console.log('[Main] Using personalization prompt');
-          // Note: You could pass this to Python service if you want to handle it there
-        }
-      }
-
-      const optimizedText = await pythonClient.optimize(finalPrompt, skipCache);
-
-      // Save optimization to database (source: overlay) - only if authenticated
-      if (authState.isAuthenticated) {
-        try {
-          const optimization = await optimizationService.saveOptimization(
-            promptText,
-            optimizedText,
-            'overlay',
-            {
-              model: 'llama3.2',
-              latency_ms: 0,
-              source_context: { app: 'overlay' },
-            }
-          );
-
-          currentOptimization = {
-            optimizationId: optimization.id,
-            originalText: promptText,
-            optimizedText,
-          };
-        } catch (dbError) {
-          console.error('[Main] Failed to save optimization to DB (continuing anyway):', dbError);
-        }
-      } else {
-        console.log('[Main] ℹ️ User not authenticated, optimization not saved to DB');
-      }
-
-      // Send result to overlay
-      const panelWindow = floatingPanel?.getWindow();
-      if (panelWindow && !panelWindow.isDestroyed()) {
-        panelWindow.webContents.send('optimization-complete', {
-          original: promptText,
-          optimized: optimizedText,
-        });
-      }
-    } catch (error) {
-      console.error('[Main] Optimization failed:', error);
-    }
-  });
-
-  // Overlay: Replace button clicked (mark optimization as applied)
-  ipcMain.on('floating-panel:replace-text', async (event, data: { optimizedText: string }) => {
-    console.log('[Main] Replace requested');
-
-    if (currentOptimization) {
-      await optimizationService.markAsApplied(currentOptimization.optimizationId);
-    }
-
-    // Copy to clipboard
-    const { clipboard } = require('electron');
-    clipboard.writeText(data.optimizedText);
-    hideOverlay();
-  });
-
-  // Overlay: Dismiss
-  ipcMain.on('floating-panel:dismiss', () => {
-    console.log('[Main] Overlay dismissed');
-    hideOverlay();
-  });
-
-  // App Window: Optimize prompt request
-  ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false) => {
-    console.log('[Main] App window optimization request:', promptText.substring(0, 50));
-
-    try {
-      // Get personalization prompt if user is authenticated
-      let finalPrompt = promptText;
-      if (authState.isAuthenticated) {
-        const personalizationPrompt = await userService.getPersonalizationPrompt();
-        if (personalizationPrompt) {
-          console.log('[Main] Using personalization prompt for app window optimization');
-          // Note: You could pass this to Python service if you want to handle it there
-        }
-      }
-
-      const optimizedText = await pythonClient.optimize(finalPrompt, isRegenerate);
-
-      // Save optimization to database (source: app_window) - only if authenticated
-      if (authState.isAuthenticated) {
-        try {
-          const optimization = await optimizationService.saveOptimization(
-            promptText,
-            optimizedText,
-            'app_window',
-            {
-              model: 'llama3.2',
-              source_context: { app: 'app_window' },
-            }
-          );
-
-          currentOptimization = {
-            optimizationId: optimization.id,
-            originalText: promptText,
-            optimizedText,
-          };
-        } catch (dbError) {
-          console.error('[Main] Failed to save optimization to DB (continuing anyway):', dbError);
-        }
-      }
-
-      // Send result to app window
-      appWindowManager.send('optimization-complete', {
-        original: promptText,
-        optimized: optimizedText,
-      });
-    } catch (error) {
-      console.error('[Main] Optimization failed:', error);
-      appWindowManager.send('optimization-complete', {
-        original: promptText,
-        optimized: 'Optimization failed. Please try again.',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    }
-  });
-
-  // App Window: Save to chat
-  ipcMain.on('app:save-to-chat', async (event, originalText: string, optimizedText: string) => {
-    console.log('[Main] Saving to chat...');
-
-    try {
-      // Get or create "Quick Optimizations" chat
-      const chat = await chatService.getOrCreateQuickOptimizationsChat();
-
-      // Add user message (original)
-      await chatService.addMessage(chat.id, originalText, 'user');
-
-      // Add assistant message (optimized)
-      await chatService.addMessage(
-        chat.id,
-        optimizedText,
-        'assistant',
-        currentOptimization?.optimizationId
-      );
-
-      console.log('[Main] Saved to chat successfully');
-      appWindowManager.send('chat-saved', { chatId: chat.id });
-    } catch (error) {
-      console.error('[Main] Failed to save to chat:', error);
-    }
-  });
-
-  // App Window: Copy to clipboard
-  ipcMain.on('app:copy-to-clipboard', (event, text: string) => {
-    const { clipboard } = require('electron');
-    clipboard.writeText(text);
-  });
 
 
-
-
-
-  // App Window: Load chats
-  ipcMain.on('app:load-chats', async (event) => {
-    try {
-      console.log('[Main] Loading chats...');
-      const chats = await chatService.getChats();
-      appWindowManager.send('chats-loaded', { chats });
-    } catch (error) {
-      console.error('[Main] Failed to load chats:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      appWindowManager.send('chats-loaded', { chats: [], error: errorMessage });
-    }
-  });
-
-  // App Window: Create new chat
-  ipcMain.on('app:create-chat', async (event, title?: string) => {
-    try {
-      console.log('[Main] Creating new chat...');
-      const chat = await chatService.createChat(title);
-      appWindowManager.send('chat-created', { chat });
-      // Reload chats list
-      const chats = await chatService.getChats();
-      appWindowManager.send('chats-loaded', { chats });
-    } catch (error) {
-      console.error('[Main] Failed to create chat:', error);
-    }
-  });
-
-  // App Window: Load messages for a chat
-  ipcMain.on('app:load-messages', async (event, chatId: string) => {
-    try {
-      console.log('[Main] Loading messages for chat:', chatId);
-      const messages = await chatService.getMessages(chatId);
-      appWindowManager.send('messages-loaded', { chatId, messages });
-    } catch (error) {
-      console.error('[Main] Failed to load messages:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      appWindowManager.send('messages-loaded', { chatId, messages: [], error: errorMessage });
-    }
-  });
-
-  // App Window: Send message (creates chat if needed, saves message, triggers optimization)
-  ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string }) => {
-    try {
-      console.log('[Main] 📥 Received send-message request:', {
-        chatId: data.chatId,
-        contentLength: data.content.length
-      });
-
-      let chatId = data.chatId;
-      let chat;
-
-      // Create chat if it doesn't exist
-      if (!chatId) {
-        console.log('[Main] 🆕 No chat ID provided, creating new chat');
-        const title = data.content.slice(0, 50) + (data.content.length > 50 ? '...' : '');
-
-        // Verify user is authenticated
-        if (!authState.isAuthenticated) {
-          throw new Error('User must be authenticated to create chat');
-        }
-
-        chat = await chatService.createChat(title);
-        chatId = chat.id;
-
-        console.log('[Main] ✅ Created new chat in Supabase:', {
-          chatId: chat.id,
-          title: chat.title,
-          user_id: chat.user_id
-        });
-      } else {
-        console.log('[Main] 📂 Using existing chat:', chatId);
-        chat = await chatService.getChat(chatId);
-      }
-
-      // Save user message to database
-      console.log('[Main] 💾 Saving user message to Supabase...');
-      const userMessage = await chatService.addMessage(chatId, data.content, 'user');
-      console.log('[Main] ✅ User message saved:', userMessage.id);
-
-      // Send immediate confirmation with chat and user message
-      appWindowManager.send('message-sent', {
-        chatId,
-        chat,
-        userMessage: {
-          id: userMessage.id,
-          chatId: userMessage.chat_id,
-          role: userMessage.role,
-          content: userMessage.content,
-          createdAt: userMessage.created_at,
-        }
-      });
-
-      // Trigger optimization
-      console.log('[Main] 🤖 Triggering optimization...');
-      const optimizedText = await pythonClient.optimize(data.content, false);
-      console.log('[Main] ✅ Optimization complete');
-
-      // Save optimization record to DB (for analytics)
-      let optimizationId: string | undefined;
-      if (authState.isAuthenticated) {
-        try {
-          const optimization = await optimizationService.saveOptimization(
-            data.content,
-            optimizedText,
-            'app_window',
-            { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
-          );
-          optimizationId = optimization.id;
-          console.log('[Main] ✅ Optimization record saved:', optimizationId);
-        } catch (dbError) {
-          console.error('[Main] ⚠️ Failed to save optimization record (continuing):', dbError);
-        }
-      }
-
-      // Save assistant message to database
-      console.log('[Main] 💾 Saving assistant message to Supabase...');
-      const assistantMessage = await chatService.addMessage(
-        chatId,
-        optimizedText,
-        'assistant',
-        optimizationId,
-        { model: 'llama3.2', optimized: true }
-      );
-      console.log('[Main] ✅ Assistant message saved:', assistantMessage.id);
-
-      // Send assistant message to renderer
-      appWindowManager.send('message-received', {
-        chatId,
-        message: {
-          id: assistantMessage.id,
-          chatId: assistantMessage.chat_id,
-          role: assistantMessage.role,
-          content: assistantMessage.content,
-          createdAt: assistantMessage.created_at,
-        }
-      });
-
-      // Reload chats list to update timestamps
-      const chats = await chatService.getChats();
-      appWindowManager.send('chats-loaded', { chats });
-
-      console.log('[Main] ✅ Message flow complete');
-    } catch (error) {
-      console.error('[Main] ❌ Failed to send message:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      appWindowManager.send('message-send-error', {
-        error: errorMessage,
-        details: error instanceof Error ? error.stack : undefined
-      });
-    }
-  });
-
-  // ============================================
-  // PROMPT LIBRARY IPC HANDLERS
-  // ============================================
-  // NOTE: These handlers have been moved to ./ipc-handlers/prompt-library-handlers.ts
-  // They are automatically registered on import at the top of this file
-}
-
-
-
-
+// ============================================
+// PROMPT LIBRARY IPC HANDLERS
+// ============================================
+// NOTE: These handlers have been moved to ./ipc-handlers/prompt-library-handlers.ts
+// They are automatically registered on import at the top of this file
 
 // ============================================
 // INITIALIZATION
@@ -651,7 +315,8 @@ async function initialize() {
   console.log('[Main] Floating panel created (hidden)');
 
   // Setup IPC handlers
-  setupIPC();
+  // Register Chat & Optimization Handlers
+  registerChatHandlers(appWindowManager, pythonClient, floatingPanel);
 
   // Start keystroke detection for @prompt
   startKeystrokeDetection();
