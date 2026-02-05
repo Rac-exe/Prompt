@@ -12,6 +12,8 @@ import { SettingsService } from './database/services/settings-service';
 import { PromptLibraryService } from './database/services/prompt-library-service';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
+import { authState } from './utils/auth-state';
+import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -35,9 +37,7 @@ let authService: AuthService;
 let settingsService: SettingsService;
 let promptLibraryService: PromptLibraryService;
 
-// Auth state
-let isUserAuthenticated = false;
-let currentUserId: string | null = null;
+// key tracking...
 
 // Keystroke tracking for @prompt detection
 let typedBuffer = '';
@@ -202,84 +202,7 @@ function toggleOverlay() {
 // ============================================
 // AUTH HELPERS
 // ============================================
-async function checkAndRestoreSession(): Promise<boolean> {
-  try {
-    console.log('[Main] Checking for existing session...');
-    const { session, error } = await authService.getSession();
 
-    if (error || !session) {
-      console.log('[Main] No valid session found');
-      isUserAuthenticated = false;
-      currentUserId = null;
-      return false;
-    }
-
-    console.log('[Main] ✅ Valid session found, user authenticated');
-    isUserAuthenticated = true;
-    currentUserId = session.user.id;
-
-    // Load user data
-    const userData = await userService.getCompleteUserData();
-    if (userData && appWindowManager) {
-      appWindowManager.send('user-data-loaded', userData);
-    }
-
-    return true;
-  } catch (error) {
-    console.error('[Main] Error checking session:', error);
-    isUserAuthenticated = false;
-    currentUserId = null;
-    return false;
-  }
-}
-
-async function handleSuccessfulAuth() {
-  try {
-    // Get user data
-    const { user } = await authService.getCurrentUser();
-    if (!user) {
-      console.error('[Main] No user after authentication');
-      return;
-    }
-
-    isUserAuthenticated = true;
-    currentUserId = user.id;
-
-    // Load complete user data
-    const userData = await userService.getCompleteUserData();
-
-    console.log('[Main] ✅ User authenticated and data loaded');
-
-    // Send auth state to window
-    if (appWindowManager) {
-      const window = appWindowManager.getWindow();
-      if (window && !window.isDestroyed()) {
-        // Small delay to ensure renderer is ready
-        setTimeout(() => {
-          console.log('[Main] 📤 Sending auth state to renderer');
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: true,
-            user: userData,
-          });
-
-
-
-          // Load chats
-          chatService.getChats().then(chats => {
-            appWindowManager.send('chats-loaded', { chats });
-          }).catch(err => console.error('[Main] Error loading chats:', err));
-
-          // Load prompt library
-          promptLibraryService.getFullLibrary().then(library => {
-            appWindowManager.send('prompt-library:loaded', library);
-          }).catch(err => console.error('[Main] Error loading prompt library:', err));
-        }, 100);
-      }
-    }
-  } catch (error) {
-    console.error('[Main] Error handling successful auth:', error);
-  }
-}
 
 // ============================================
 // IPC HANDLERS
@@ -300,7 +223,7 @@ function setupIPC() {
     try {
       // Get personalization prompt if user is authenticated
       let finalPrompt = promptText;
-      if (isUserAuthenticated) {
+      if (authState.isAuthenticated) {
         const personalizationPrompt = await userService.getPersonalizationPrompt();
         if (personalizationPrompt) {
           // Prepend personalization instructions (done internally by Python service)
@@ -312,7 +235,7 @@ function setupIPC() {
       const optimizedText = await pythonClient.optimize(finalPrompt, skipCache);
 
       // Save optimization to database (source: overlay) - only if authenticated
-      if (isUserAuthenticated) {
+      if (authState.isAuthenticated) {
         try {
           const optimization = await optimizationService.saveOptimization(
             promptText,
@@ -377,7 +300,7 @@ function setupIPC() {
     try {
       // Get personalization prompt if user is authenticated
       let finalPrompt = promptText;
-      if (isUserAuthenticated) {
+      if (authState.isAuthenticated) {
         const personalizationPrompt = await userService.getPersonalizationPrompt();
         if (personalizationPrompt) {
           console.log('[Main] Using personalization prompt for app window optimization');
@@ -388,7 +311,7 @@ function setupIPC() {
       const optimizedText = await pythonClient.optimize(finalPrompt, isRegenerate);
 
       // Save optimization to database (source: app_window) - only if authenticated
-      if (isUserAuthenticated) {
+      if (authState.isAuthenticated) {
         try {
           const optimization = await optimizationService.saveOptimization(
             promptText,
@@ -473,8 +396,8 @@ function setupIPC() {
   ipcMain.on('app:sign-out', async () => {
     try {
       await authService.signOut();
-      isUserAuthenticated = false;
-      currentUserId = null;
+      authState.isAuthenticated = false;
+      authState.currentUserId = null;
 
       // Notify window
       if (appWindowManager) {
@@ -491,131 +414,7 @@ function setupIPC() {
   });
 
   // ============================================
-  // AUTH IPC HANDLERS
-  // ============================================
 
-  // Sign Up
-  ipcMain.on('auth:sign-up', async (event, data: { name: string; dob: string; email: string; password: string }) => {
-    try {
-      console.log('[Main] Sign up request for:', data.email);
-
-      const { user, error } = await authService.signUp(data);
-
-      if (error || !user) {
-        console.error('[Main] Sign up failed:', error?.message);
-        if (appWindowManager) {
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: false,
-            user: null,
-            error: error?.message || 'Sign up failed',
-          });
-        }
-        return;
-      }
-
-      console.log('[Main] ✅ Sign up successful, signing in...');
-
-      // Auto-sign in after signup
-      const { session: signInSession, error: signInError } = await authService.signIn({
-        email: data.email,
-        password: data.password,
-      });
-
-      if (signInError || !signInSession) {
-        console.error('[Main] Auto sign-in after signup failed:', signInError?.message);
-        return;
-      }
-
-      await handleSuccessfulAuth();
-    } catch (error) {
-      console.error('[Main] Unexpected sign up error:', error);
-      if (appWindowManager) {
-        appWindowManager.send('auth:state-changed', {
-          isAuthenticated: false,
-          user: null,
-          error: 'Sign up failed',
-        });
-      }
-    }
-  });
-
-  // Sign In
-  ipcMain.on('auth:sign-in', async (event, data: { email: string; password: string }) => {
-    try {
-      console.log('[Main] Sign in request for:', data.email);
-
-      const { session, error } = await authService.signIn(data);
-
-      if (error || !session) {
-        console.error('[Main] Sign in failed:', error?.message);
-        if (appWindowManager) {
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: false,
-            user: null,
-            error: error?.message || 'Sign in failed',
-          });
-        }
-        return;
-      }
-
-      console.log('[Main] ✅ Sign in successful');
-      await handleSuccessfulAuth();
-    } catch (error) {
-      console.error('[Main] Unexpected sign in error:', error);
-      if (appWindowManager) {
-        appWindowManager.send('auth:state-changed', {
-          isAuthenticated: false,
-          user: null,
-          error: 'Sign in failed',
-        });
-      }
-    }
-  });
-
-  // Check Auth Status
-  ipcMain.on('auth:check', async () => {
-    try {
-      console.log('[Main] 📥 Renderer requested auth check');
-      const isAuth = await checkAndRestoreSession();
-
-      if (appWindowManager) {
-        if (isAuth) {
-          const userData = await userService.getCompleteUserData();
-          console.log('[Main] 📤 Sending authenticated state to renderer');
-
-
-
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: true,
-            user: userData,
-          });
-
-          // Also load chats
-          const chats = await chatService.getChats();
-          appWindowManager.send('chats-loaded', { chats });
-
-          // Also load prompt library
-          const library = await promptLibraryService.getFullLibrary();
-          appWindowManager.send('prompt-library:loaded', library);
-        } else {
-          console.log('[Main] 📤 Sending unauthenticated state to renderer');
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: false,
-            user: null,
-          });
-        }
-      }
-    } catch (error) {
-      console.error('[Main] Error checking auth:', error);
-      if (appWindowManager) {
-        appWindowManager.send('auth:state-changed', {
-          isAuthenticated: false,
-          user: null,
-          error: 'Auth check failed',
-        });
-      }
-    }
-  });
 
   // ============================================
   // USER PROFILE & PREFERENCES IPC HANDLERS
@@ -624,7 +423,7 @@ function setupIPC() {
   // Update Profile
   ipcMain.on('user:update-profile', async (event, updates) => {
     try {
-      if (!isUserAuthenticated) {
+      if (!authState.isAuthenticated) {
         console.error('[Main] Cannot update profile: not authenticated');
         return;
       }
@@ -648,7 +447,7 @@ function setupIPC() {
   // Update Preferences
   ipcMain.on('user:update-preferences', async (event, updates) => {
     try {
-      if (!isUserAuthenticated) {
+      if (!authState.isAuthenticated) {
         console.error('[Main] Cannot update preferences: not authenticated');
         return;
       }
@@ -672,7 +471,7 @@ function setupIPC() {
   // Set Personalization Prompt
   ipcMain.on('user:set-personalization-prompt', async (event, prompt: string) => {
     try {
-      if (!isUserAuthenticated) {
+      if (!authState.isAuthenticated) {
         console.error('[Main] Cannot set personalization prompt: not authenticated');
         return;
       }
@@ -696,7 +495,7 @@ function setupIPC() {
   // Load user settings
   ipcMain.handle('settings:load', async () => {
     try {
-      if (!isUserAuthenticated || !currentUserId) {
+      if (!authState.isAuthenticated || !authState.currentUserId) {
         console.log('[Main] User not authenticated, returning default settings');
         return {
           theme: 'dark',
@@ -706,8 +505,8 @@ function setupIPC() {
         };
       }
 
-      const settings = await settingsService.getOrCreateSettings(currentUserId);
-      console.log('[Main] ✅ Settings loaded for user:', currentUserId);
+      const settings = await settingsService.getOrCreateSettings(authState.currentUserId);
+      console.log('[Main] ✅ Settings loaded for user:', authState.currentUserId);
       return settings;
     } catch (error) {
       console.error('[Main] Error loading settings:', error);
@@ -724,12 +523,12 @@ function setupIPC() {
   // Save user settings
   ipcMain.handle('settings:save', async (event, settings) => {
     try {
-      if (!isUserAuthenticated || !currentUserId) {
+      if (!authState.isAuthenticated || !authState.currentUserId) {
         throw new Error('User must be authenticated to save settings');
       }
 
-      const saved = await settingsService.upsertUserSettings(currentUserId, settings);
-      console.log('[Main] ✅ Settings saved for user:', currentUserId);
+      const saved = await settingsService.upsertUserSettings(authState.currentUserId, settings);
+      console.log('[Main] ✅ Settings saved for user:', authState.currentUserId);
       return saved;
     } catch (error) {
       console.error('[Main] Error saving settings:', error);
@@ -794,7 +593,7 @@ function setupIPC() {
         const title = data.content.slice(0, 50) + (data.content.length > 50 ? '...' : '');
 
         // Verify user is authenticated
-        if (!isUserAuthenticated) {
+        if (!authState.isAuthenticated) {
           throw new Error('User must be authenticated to create chat');
         }
 
@@ -836,7 +635,7 @@ function setupIPC() {
 
       // Save optimization record to DB (for analytics)
       let optimizationId: string | undefined;
-      if (isUserAuthenticated) {
+      if (authState.isAuthenticated) {
         try {
           const optimization = await optimizationService.saveOptimization(
             data.content,
@@ -926,12 +725,18 @@ async function initialize() {
   settingsService = new SettingsService();
   promptLibraryService = new PromptLibraryService();
 
+  // Create app window manager EARLY so handlers can use it
+  appWindowManager = new AppWindowManager();
+
+  // Register Auth Handlers
+  registerAuthHandlers(appWindowManager);
+
   // ============================================
   // SESSION MANAGEMENT & AUTO-RESTORE
   // ============================================
   try {
     // Check for existing session and restore if valid
-    const hasSession = await checkAndRestoreSession();
+    const hasSession = await checkAndRestoreSession(appWindowManager);
 
     if (hasSession) {
       console.log('[Main] ✅ Session restored, user logged in');
@@ -944,12 +749,18 @@ async function initialize() {
       console.log('[Main] Auth state changed:', event);
 
       if (event === 'SIGNED_IN' && session) {
-        isUserAuthenticated = true;
-        currentUserId = session.user.id;
-        await handleSuccessfulAuth();
+        authState.isAuthenticated = true;
+        authState.currentUserId = session.user.id;
+        // logic is now handled by auth-handlers side effects or renderer reload
+        // But we might need to notify renderer if this event comes from outside IPC
+        if (appWindowManager) {
+          // We can implement handleSuccessfulAuth here too if needed, 
+          // but usually SIGNED_IN comes from our own signIn call which handles it.
+          // If it comes from token refresh or auto-login, we might need it.
+        }
       } else if (event === 'SIGNED_OUT') {
-        isUserAuthenticated = false;
-        currentUserId = null;
+        authState.isAuthenticated = false;
+        authState.currentUserId = null;
 
         if (appWindowManager) {
           appWindowManager.send('auth:state-changed', {
@@ -1003,8 +814,9 @@ async function initialize() {
     console.error('[Main] Failed to register global hotkey');
   }
 
-  // Create app window manager (but don't show window yet)
-  appWindowManager = new AppWindowManager();
+  // NOTE: appWindowManager already created above
+
+  // Create system tray
 
   // Create system tray
   systemTray = new SystemTray(

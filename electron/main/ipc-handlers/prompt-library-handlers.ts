@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
+import { authState } from '../utils/auth-state';
 
 // ============================================
 // PROMPT LIBRARY IPC HANDLERS
@@ -26,6 +27,7 @@ const getService = () => {
  */
 ipcMain.handle('prompt-library:get-collections', async () => {
     try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
         console.log('[IPC] prompt-library:get-collections');
         const collections = await getService().getCollections();
         console.log('[IPC] ✅ Loaded', collections.length, 'collections');
@@ -41,6 +43,7 @@ ipcMain.handle('prompt-library:get-collections', async () => {
  */
 ipcMain.handle('prompt-library:get-all', async () => {
     try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
         console.log('[IPC] prompt-library:get-all');
         const prompts = await getService().getPrompts();
         console.log('[IPC] ✅ Loaded', prompts.length, 'prompts');
@@ -56,6 +59,7 @@ ipcMain.handle('prompt-library:get-all', async () => {
  */
 ipcMain.handle('prompt-library:create-collection', async (event, { name, icon }) => {
     try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
         console.log('[IPC] prompt-library:create-collection:', name);
         const collection = await getService().createCollection(name, icon);
         console.log('[IPC] ✅ Collection created:', collection.id);
@@ -71,6 +75,7 @@ ipcMain.handle('prompt-library:create-collection', async (event, { name, icon })
  */
 ipcMain.handle('prompt-library:rename-collection', async (event, { collectionId, name }) => {
     try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
         console.log('[IPC] prompt-library:rename-collection:', collectionId, name);
         const collection = await getService().renameCollection(collectionId, name);
         console.log('[IPC] ✅ Collection renamed');
@@ -86,6 +91,7 @@ ipcMain.handle('prompt-library:rename-collection', async (event, { collectionId,
  */
 ipcMain.handle('prompt-library:delete-collection', async (event, { collectionId }) => {
     try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
         console.log('[IPC] prompt-library:delete-collection:', collectionId);
         await getService().deleteCollection(collectionId);
         console.log('[IPC] ✅ Collection deleted');
