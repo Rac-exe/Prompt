@@ -88,7 +88,8 @@ const Index = () => {
         setRecentChats(formattedChats);
       };
 
-      window.electronAPI.onChatsLoaded(handleChatsLoaded);
+      const cleanup = window.electronAPI.onChatsLoaded(handleChatsLoaded);
+      return cleanup; // Cleanup listener on unmount
     }
   }, []);
 
@@ -117,7 +118,8 @@ const Index = () => {
         setIsGenerating(true);
       };
 
-      window.electronAPI.onMessageSent(handleMessageSent);
+      const cleanup = window.electronAPI.onMessageSent(handleMessageSent);
+      return cleanup; // Cleanup listener on unmount or dependency change
     }
   }, [selectedChatId]);
 
@@ -138,7 +140,8 @@ const Index = () => {
         setIsGenerating(false);
       };
 
-      window.electronAPI.onMessageReceived(handleMessageReceived);
+      const cleanup = window.electronAPI.onMessageReceived(handleMessageReceived);
+      return cleanup; // Cleanup listener on unmount
     }
   }, []);
 
@@ -155,7 +158,8 @@ const Index = () => {
         });
       };
 
-      window.electronAPI.onMessageSendError(handleMessageSendError);
+      const cleanup = window.electronAPI.onMessageSendError(handleMessageSendError);
+      return cleanup; // Cleanup listener on unmount
     }
   }, []);
 
@@ -191,7 +195,8 @@ const Index = () => {
         }
       };
 
-      window.electronAPI.onMessagesLoaded(handleMessagesLoaded);
+      const cleanup = window.electronAPI.onMessagesLoaded(handleMessagesLoaded);
+      return cleanup; // Cleanup listener on unmount or dependency change
     }
   }, [selectedChatId]);
 

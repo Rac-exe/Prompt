@@ -170,19 +170,27 @@ const electronAPI = {
     ipcRenderer.send('app:load-messages', chatId);
   },
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
-    ipcRenderer.on('messages-loaded', (event, data) => callback(data));
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('messages-loaded', handler);
+    return () => ipcRenderer.removeListener('messages-loaded', handler);
   },
   sendMessage: (data: { chatId: string | null; content: string }) => {
     ipcRenderer.send('app:send-message', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
-    ipcRenderer.on('message-sent', (event, data) => callback(data));
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('message-sent', handler);
+    return () => ipcRenderer.removeListener('message-sent', handler);
   },
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => {
-    ipcRenderer.on('message-received', (event, data) => callback(data));
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('message-received', handler);
+    return () => ipcRenderer.removeListener('message-received', handler);
   },
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => {
-    ipcRenderer.on('message-send-error', (event, data) => callback(data));
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('message-send-error', handler);
+    return () => ipcRenderer.removeListener('message-send-error', handler);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
@@ -241,27 +249,27 @@ const electronAPI = {
   promptLibrary: {
     getAll: () => ipcRenderer.invoke('prompt-library:get-all'),
     getCollections: () => ipcRenderer.invoke('prompt-library:get-collections'),
-    createCollection: (name: string, icon?: string) => 
+    createCollection: (name: string, icon?: string) =>
       ipcRenderer.invoke('prompt-library:create-collection', { name, icon }),
-    renameCollection: (collectionId: string, name: string) => 
+    renameCollection: (collectionId: string, name: string) =>
       ipcRenderer.invoke('prompt-library:rename-collection', { collectionId, name }),
-    deleteCollection: (collectionId: string) => 
+    deleteCollection: (collectionId: string) =>
       ipcRenderer.invoke('prompt-library:delete-collection', { collectionId }),
-    savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => 
+    savePrompt: (collectionId: string, title: string, content: string, metadata?: any) =>
       ipcRenderer.invoke('prompt-library:save-prompt', { collectionId, title, content, metadata }),
-    createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) => 
-      ipcRenderer.invoke('prompt-library:create-collection-and-save', { 
-        collectionName, 
-        collectionIcon, 
-        promptTitle, 
-        promptContent, 
-        metadata 
+    createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) =>
+      ipcRenderer.invoke('prompt-library:create-collection-and-save', {
+        collectionName,
+        collectionIcon,
+        promptTitle,
+        promptContent,
+        metadata
       }),
-    updatePrompt: (promptId: string, updates: any) => 
+    updatePrompt: (promptId: string, updates: any) =>
       ipcRenderer.invoke('prompt-library:update-prompt', { promptId, updates }),
-    deletePrompt: (promptId: string) => 
+    deletePrompt: (promptId: string) =>
       ipcRenderer.invoke('prompt-library:delete-prompt', { promptId }),
-    toggleFavorite: (promptId: string) => 
+    toggleFavorite: (promptId: string) =>
       ipcRenderer.invoke('prompt-library:toggle-favorite', { promptId }),
   },
   onPromptLibraryLoaded: (callback: (data: any) => void) => {
