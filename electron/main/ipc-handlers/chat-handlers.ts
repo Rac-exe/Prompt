@@ -38,11 +38,12 @@ export function registerChatHandlers(
     // ============================================
 
     // Overlay: Prompt submission for optimization
-    ipcMain.on('floating-panel:prompt-submit', async (event, data: string | { text: string; isRegenerate?: boolean }) => {
+    ipcMain.on('floating-panel:prompt-submit', async (event, data: string | { text: string; isRegenerate?: boolean; chatId?: string }) => {
         const promptText = typeof data === 'string' ? data : data.text;
         const skipCache = typeof data === 'string' ? false : !!data.isRegenerate;
+        const chatId = typeof data === 'object' ? data.chatId : undefined;
 
-        console.log('[Chat] Prompt submitted:', promptText.substring(0, 50));
+        console.log('[Chat] Prompt submitted:', promptText.substring(0, 50), chatId ? `(chatId: ${chatId})` : '(no chat context)');
 
         try {
             // Get personalization prompt if user is authenticated
@@ -54,7 +55,23 @@ export function registerChatHandlers(
                 }
             }
 
-            const optimizedText = await pythonClient.optimize(finalPrompt, skipCache);
+            // Retrieve chat history for context-aware optimization
+            let chatHistory: Array<{ role: string; content: string }> | undefined;
+            if (authState.isAuthenticated && chatId) {
+                try {
+                    const messages = await chatService.getMessages(chatId);
+                    // Get last 10 messages and format for Python service
+                    chatHistory = messages.slice(-10).map(msg => ({
+                        role: msg.role,
+                        content: msg.content
+                    }));
+                    console.log(`[Chat] Retrieved ${chatHistory.length} messages for context`);
+                } catch (historyError) {
+                    console.error('[Chat] Failed to retrieve chat history (continuing without context):', historyError);
+                }
+            }
+
+            const optimizedText = await pythonClient.optimize(finalPrompt, skipCache, chatHistory);
 
             // Save optimization to database (source: overlay) - only if authenticated
             if (authState.isAuthenticated) {
@@ -66,7 +83,7 @@ export function registerChatHandlers(
                         {
                             model: 'llama3.2',
                             latency_ms: 0,
-                            source_context: { app: 'overlay' },
+                            source_context: { app: 'overlay', chat_id: chatId },
                         }
                     );
 
@@ -75,6 +92,13 @@ export function registerChatHandlers(
                         originalText: promptText,
                         optimizedText,
                     };
+
+                    // If we have a chatId, save the user message and assistant response
+                    if (chatId) {
+                        await chatService.addMessage(chatId, promptText, 'user', optimization.id);
+                        await chatService.addMessage(chatId, optimizedText, 'assistant', optimization.id);
+                        console.log('[Chat] Saved messages to chat history');
+                    }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization to DB (continuing anyway):', dbError);
                 }
@@ -133,8 +157,8 @@ export function registerChatHandlers(
     });
 
     // App Window: Optimize prompt request
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false) => {
-        console.log('[Chat] App window optimization request:', promptText.substring(0, 50));
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string) => {
+        console.log('[Chat] App window optimization request:', promptText.substring(0, 50), chatId ? `(chatId: ${chatId})` : '(no chat context)');
 
         try {
             // Get personalization prompt if user is authenticated
@@ -147,7 +171,23 @@ export function registerChatHandlers(
                 }
             }
 
-            const optimizedText = await pythonClient.optimize(finalPrompt, isRegenerate);
+            // Retrieve chat history for context-aware optimization
+            let chatHistory: Array<{ role: string; content: string }> | undefined;
+            if (authState.isAuthenticated && chatId) {
+                try {
+                    const messages = await chatService.getMessages(chatId);
+                    // Get last 10 messages and format for Python service
+                    chatHistory = messages.slice(-10).map(msg => ({
+                        role: msg.role,
+                        content: msg.content
+                    }));
+                    console.log(`[Chat] Retrieved ${chatHistory.length} messages for context`);
+                } catch (historyError) {
+                    console.error('[Chat] Failed to retrieve chat history (continuing without context):', historyError);
+                }
+            }
+
+            const optimizedText = await pythonClient.optimize(finalPrompt, isRegenerate, chatHistory);
 
             // Save optimization to database (source: app_window) - only if authenticated
             if (authState.isAuthenticated) {
