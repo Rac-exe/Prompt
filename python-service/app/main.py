@@ -199,9 +199,14 @@ You output: Rewrite the following request to be more professional and persuasive
 
 Remember: Output ONLY the improved prompt. Start your response directly with it."""
 
+class Message(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
 class OptimizeRequest(BaseModel):
     prompt: str
     skip_cache: Optional[bool] = False  # Set to True to bypass cache (for refresh)
+    messages: Optional[list[Message]] = None  # Chat history for context-aware optimization
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -279,17 +284,35 @@ async def optimize_prompt(request: OptimizeRequest):
         print(f"[Optimize] Detected prompt type: {prompt_type}")
         print(f"[Optimize] Applying {prompt_type} optimization strategy")
 
+        # Check if we have chat history (context-aware mode)
+        has_history = request.messages and len(request.messages) > 0
+        if has_history:
+            print(f"[Optimize] Context-aware mode: {len(request.messages)} previous messages")
+        
         # Use higher temperature for regenerate requests to ensure different results
         temperature = 1.2 if request.skip_cache else 0.7
+
+        # Build messages array for Ollama
+        ollama_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"},
+        ]
+        
+        # If we have chat history, include it for context
+        if has_history:
+            for msg in request.messages:
+                ollama_messages.append({
+                    "role": msg.role,
+                    "content": msg.content
+                })
+        
+        # Add the current user prompt
+        ollama_messages.append({"role": "user", "content": prompt_text})
 
         # Call Ollama with adaptive system prompt
         response = ollama.chat(
             model="llama3.2",  # Default model - user should configure
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"},
-                {"role": "user", "content": prompt_text}
-            ],
+            messages=ollama_messages,
             options={
                 "temperature": temperature,
                 "num_predict": 800  # Increased from 500 to allow for richer optimizations
