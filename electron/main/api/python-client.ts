@@ -15,10 +15,14 @@ export class PythonClient {
     });
   }
 
-  async optimize(prompt: string, skipCache: boolean = false): Promise<string> {
+  async optimize(
+    prompt: string,
+    skipCache: boolean = false,
+    messages?: Array<{ role: string; content: string }>
+  ): Promise<string> {
     const timestamp = new Date().toISOString();
     const startTime = Date.now();
-    console.log(`[${timestamp}] [PythonClient.optimize] START - Prompt length: ${prompt.length} chars, skipCache: ${skipCache}`);
+    console.log(`[${timestamp}] [PythonClient.optimize] START - Prompt length: ${prompt.length} chars, skipCache: ${skipCache}, hasHistory: ${!!messages}`);
     console.log(`[${timestamp}] [PythonClient.optimize] URL: ${this.baseUrl}/optimize`);
 
     try {
@@ -26,20 +30,21 @@ export class PythonClient {
       const requestStartTime = Date.now();
       const response = await this.client.post("/optimize", {
         prompt,
-        skip_cache: skipCache
+        skip_cache: skipCache,
+        messages: messages || null  // Send chat history if provided
       });
       const requestElapsed = Date.now() - requestStartTime;
-      
+
       console.log(`[${timestamp}] [PythonClient.optimize] ✓ Response received in ${requestElapsed}ms`);
       console.log(`[${timestamp}] [PythonClient.optimize] Response status: ${response.status}`);
       console.log(`[${timestamp}] [PythonClient.optimize] Response data keys:`, Object.keys(response.data || {}));
-      
+
       if (response.data && response.data.optimized) {
         const totalElapsed = Date.now() - startTime;
         console.log(`[${new Date().toISOString()}] [PythonClient.optimize] ✓ COMPLETE - Optimized text length: ${response.data.optimized.length} chars (${totalElapsed}ms total)`);
         return response.data.optimized;
       }
-      
+
       console.error(`[${new Date().toISOString()}] [PythonClient.optimize] ✗ Invalid response format:`, response.data);
       throw new Error("Invalid response format");
     } catch (error) {
