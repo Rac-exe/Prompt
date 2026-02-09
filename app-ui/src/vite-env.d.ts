@@ -23,6 +23,8 @@ interface Window {
     onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
     onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
     onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
+    deleteChat: (chatId: string) => void;
+    onChatDeleted: (callback: (data: { chatId: string }) => void) => void;
 
     // Optimization
     onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;

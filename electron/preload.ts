@@ -34,6 +34,8 @@ declare global {
       onChatCreated: (callback: (data: { chat: any }) => void) => void;
       loadMessages: (chatId: string) => void;
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
+      deleteChat: (chatId: string) => void;
+      onChatDeleted: (callback: (data: { chatId: string }) => void) => void;
       signOut: () => void;
 
       // Auth API
@@ -178,6 +180,12 @@ const electronAPI = {
   },
   loadMessages: (chatId: string) => {
     ipcRenderer.send('app:load-messages', chatId);
+  },
+  deleteChat: (chatId: string) => {
+    ipcRenderer.send('app:delete-chat', chatId);
+  },
+  onChatDeleted: (callback: (data: { chatId: string }) => void) => {
+    ipcRenderer.on('chat-deleted', (event, data) => callback(data));
   },
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
     const handler = (event: any, data: any) => callback(data);

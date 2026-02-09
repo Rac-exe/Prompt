@@ -348,6 +348,26 @@ export function registerChatHandlers(
         }
     });
 
+    // App Window: Delete chat
+    ipcMain.on('app:delete-chat', async (event, chatId: string) => {
+        try {
+            console.log('[Chat] Deleting chat:', chatId);
+            await chatService.deleteChat(chatId);
+            if (appWindowManager) {
+                appWindowManager.send('chat-deleted', { chatId });
+                // Reload chats list
+                const chats = await chatService.getChats();
+                appWindowManager.send('chats-loaded', { chats });
+            }
+        } catch (error) {
+            console.error('[Chat] Failed to delete chat:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            if (appWindowManager) {
+                appWindowManager.send('chat-delete-error', { chatId, error: errorMessage });
+            }
+        }
+    });
+
     // App Window: Send message (creates chat if needed, saves message, triggers optimization)
     ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string }) => {
         try {
