@@ -132,6 +132,16 @@ const electronAPI = {
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
     ipcRenderer.on('optimization-complete', (event, data) => callback(data));
   },
+  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('optimization-chunk', handler);
+    return () => ipcRenderer.removeListener('optimization-chunk', handler);
+  },
+  onOptimizationError: (callback: (data: { error: string }) => void) => {
+    const handler = (event: any, data: any) => callback(data);
+    ipcRenderer.on('optimization-error', handler);
+    return () => ipcRenderer.removeListener('optimization-error', handler);
+  },
   onToggleState: (callback: () => void) => {
     ipcRenderer.on('toggle-state', () => callback());
   },

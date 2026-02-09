@@ -45,6 +45,12 @@ export function registerChatHandlers(
 
         console.log('[Chat] Prompt submitted:', promptText.substring(0, 50), chatId ? `(chatId: ${chatId})` : '(no chat context)');
 
+        const panelWindow = floatingPanel.getWindow();
+        if (!panelWindow || panelWindow.isDestroyed()) {
+            console.error('[Chat] Panel window not available');
+            return;
+        }
+
         try {
             // Get personalization prompt if user is authenticated
             let finalPrompt = promptText;
@@ -56,7 +62,7 @@ export function registerChatHandlers(
             }
 
             // Retrieve chat history for context-aware optimization
-            let chatHistory: Array<{ role: string; content: string }> | undefined;
+            let chatHistory: Array<{ role: string; content: string }> | null = null;
             if (authState.isAuthenticated && chatId) {
                 try {
                     const messages = await chatService.getMessages(chatId);
@@ -71,7 +77,21 @@ export function registerChatHandlers(
                 }
             }
 
-            const optimizedText = await pythonClient.optimize(finalPrompt, skipCache, chatHistory);
+            // Use streaming optimization
+            const optimizedText = await pythonClient.optimizeStream(
+                finalPrompt,
+                skipCache,
+                chatHistory,
+                (chunk, accumulated) => {
+                    // Send each chunk to the overlay for progressive display
+                    if (panelWindow && !panelWindow.isDestroyed()) {
+                        panelWindow.webContents.send('optimization-chunk', {
+                            chunk,
+                            accumulated
+                        });
+                    }
+                }
+            );
 
             // Save optimization to database (source: overlay) - only if authenticated
             if (authState.isAuthenticated) {
@@ -106,8 +126,7 @@ export function registerChatHandlers(
                 console.log('[Chat] ℹ️ User not authenticated, optimization not saved to DB');
             }
 
-            // Send result to overlay
-            const panelWindow = floatingPanel.getWindow();
+            // Send completion signal to overlay
             if (panelWindow && !panelWindow.isDestroyed()) {
                 panelWindow.webContents.send('optimization-complete', {
                     original: promptText,
@@ -116,6 +135,12 @@ export function registerChatHandlers(
             }
         } catch (error) {
             console.error('[Chat] Optimization failed:', error);
+            // Send error to overlay
+            if (panelWindow && !panelWindow.isDestroyed()) {
+                panelWindow.webContents.send('optimization-error', {
+                    error: error instanceof Error ? error.message : 'Unknown error'
+                });
+            }
         }
     });
 
@@ -172,7 +197,7 @@ export function registerChatHandlers(
             }
 
             // Retrieve chat history for context-aware optimization
-            let chatHistory: Array<{ role: string; content: string }> | undefined;
+            let chatHistory: Array<{ role: string; content: string }> | null = null;
             if (authState.isAuthenticated && chatId) {
                 try {
                     const messages = await chatService.getMessages(chatId);
@@ -187,7 +212,21 @@ export function registerChatHandlers(
                 }
             }
 
-            const optimizedText = await pythonClient.optimize(finalPrompt, isRegenerate, chatHistory);
+            // Use streaming optimization
+            const optimizedText = await pythonClient.optimizeStream(
+                finalPrompt,
+                isRegenerate,
+                chatHistory,
+                (chunk, accumulated) => {
+                    // Send each chunk to the app window for progressive display
+                    if (appWindowManager) {
+                        appWindowManager.send('optimization-chunk', {
+                            chunk,
+                            accumulated
+                        });
+                    }
+                }
+            );
 
             // Save optimization to database (source: app_window) - only if authenticated
             if (authState.isAuthenticated) {
@@ -212,7 +251,7 @@ export function registerChatHandlers(
                 }
             }
 
-            // Send result to app window
+            // Send completion signal to app window
             if (appWindowManager) {
                 appWindowManager.send('optimization-complete', {
                     original: promptText,
@@ -363,9 +402,23 @@ export function registerChatHandlers(
                 });
             }
 
-            // Trigger optimization
-            console.log('[Chat] 🤖 Triggering optimization...');
-            const optimizedText = await pythonClient.optimize(data.content, false);
+            // Trigger optimization with streaming
+            console.log('[Chat] 🤖 Triggering streaming optimization...');
+            const optimizedText = await pythonClient.optimizeStream(
+                data.content,
+                false,
+                null,
+                (chunk, accumulated) => {
+                    // Send each chunk to the app window for progressive display
+                    if (appWindowManager) {
+                        // console.log(`[Chat] 📤 Sending chunk to app window (${accumulated.length} chars)`);
+                        appWindowManager.send('optimization-chunk', {
+                            chunk,
+                            accumulated
+                        });
+                    }
+                }
+            );
             console.log('[Chat] ✅ Optimization complete');
 
             // Save optimization record to DB (for analytics)

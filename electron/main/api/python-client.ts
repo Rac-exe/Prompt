@@ -70,6 +70,77 @@ export class PythonClient {
     }
   }
 
+  async optimizeStream(
+    prompt: string,
+    skipCache: boolean = false,
+    messages: Array<{ role: string; content: string }> | null = null,
+    onChunk: (chunk: string, accumulated: string) => void
+  ): Promise<string> {
+    const timestamp = new Date().toISOString();
+    console.log(`[${timestamp}] [PythonClient.optimizeStream] START - Prompt length: ${prompt.length} chars, skipCache: ${skipCache}`);
+
+    return new Promise((resolve, reject) => {
+      const WebSocket = require('ws');
+      const wsUrl = `${this.baseUrl.replace('http', 'ws')}/ws/optimize-stream`;
+      console.log(`[${timestamp}] [PythonClient.optimizeStream] Connecting to: ${wsUrl}`);
+
+      const ws = new WebSocket(wsUrl);
+      let accumulatedText = "";
+      let hasReceivedData = false;
+
+      ws.on('open', () => {
+        console.log(`[${timestamp}] [PythonClient.optimizeStream] ✓ WebSocket connected`);
+        // Send prompt data
+        ws.send(JSON.stringify({
+          prompt,
+          skip_cache: skipCache,
+          messages: messages
+        }));
+        console.log(`[${timestamp}] [PythonClient.optimizeStream] ✓ Prompt sent, waiting for chunks...`);
+      });
+
+      ws.on('message', (data: any) => {
+        hasReceivedData = true;
+        const message = JSON.parse(data.toString());
+
+        if (message.type === 'chunk') {
+          accumulatedText = message.accumulated;
+          onChunk(message.content, accumulatedText);
+
+          // Log progress occasionally
+          if (accumulatedText.length % 100 < message.content.length) {
+            console.log(`[${new Date().toISOString()}] [PythonClient.optimizeStream] Received ${accumulatedText.length} chars so far`);
+          }
+        } else if (message.type === 'complete') {
+          console.log(`[${new Date().toISOString()}] [PythonClient.optimizeStream] ✓ COMPLETE - Final text length: ${message.optimized.length} chars`);
+          resolve(message.optimized);
+          ws.close();
+        } else if (message.type === 'error') {
+          console.error(`[${new Date().toISOString()}] [PythonClient.optimizeStream] ✗ ERROR: ${message.message}`);
+          reject(new Error(message.message));
+          ws.close();
+        }
+      });
+
+      ws.on('error', (error: Error) => {
+        console.error(`[${new Date().toISOString()}] [PythonClient.optimizeStream] ✗ WebSocket error:`, error.message);
+        if (!hasReceivedData) {
+          reject(new Error(`WebSocket connection failed: ${error.message}. Please ensure Python service is running.`));
+        } else {
+          reject(error);
+        }
+        ws.close();
+      });
+
+      ws.on('close', () => {
+        console.log(`[${new Date().toISOString()}] [PythonClient.optimizeStream] WebSocket closed`);
+        if (!hasReceivedData) {
+          reject(new Error('WebSocket closed without receiving data'));
+        }
+      });
+    });
+  }
+
   async healthCheck(): Promise<boolean> {
     // Retry logic with delays
     for (let attempt = 0; attempt < 3; attempt++) {

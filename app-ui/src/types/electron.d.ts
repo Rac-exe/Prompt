@@ -21,10 +21,24 @@ export interface ElectronAPI {
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
-  
+
   // Optimization
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
-  
+  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
+  onOptimizationError: (callback: (data: { error: string }) => void) => void;
+
+  // Prompt Library
+  promptLibrary: {
+    getAll: () => Promise<any>;
+    getCollections: () => Promise<any>;
+    createCollection: (name: string, icon?: string) => Promise<any>;
+    savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => Promise<any>;
+  };
+
+  // Settings
+  loadSettings: () => Promise<any>;
+  saveSettings: (settings: any) => Promise<any>;
+
   // User
   requestUserData: () => void;
   onUserDataLoaded: (callback: (user: any) => void) => void;
@@ -33,7 +47,7 @@ export interface ElectronAPI {
   setPersonalizationPrompt: (prompt: string) => void;
   onProfileUpdated: (callback: () => void) => void;
   onPreferencesUpdated: (callback: () => void) => void;
-  
+
   // Utility
   copyToClipboard: (text: string) => void;
   send: (channel: string, data: any) => void;
@@ -45,4 +59,4 @@ declare global {
   }
 }
 
-export {};
+export { };

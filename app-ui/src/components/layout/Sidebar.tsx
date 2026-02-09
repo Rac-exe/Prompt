@@ -17,8 +17,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ProfileMenu } from "./ProfileMenu";
 
 interface SidebarProps {
-  currentView: "chat" | "library" | "settings";
-  onViewChange: (view: "chat" | "library" | "settings") => void;
+  currentView: "chat" | "library" | "settings" | "history";
+  onViewChange: (view: "chat" | "library" | "settings" | "history") => void;
   userEmail: string;
   onLogout: () => void;
   recentChats: { id: string; title: string; date: string }[];

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -12,6 +12,7 @@ import { Message } from "@/components/chat/MessageBubble";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
+import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
 
 // Empty initial data
 const initialRecentChats: { id: string; title: string; date: string }[] = [];
@@ -42,7 +43,7 @@ const Index = () => {
   const [userEmail, setUserEmail] = useState("user@example.com");
 
   // Navigation state
-  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings">("chat");
+  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [recentChats, setRecentChats] = useState<any[]>([]);
 
@@ -58,6 +59,10 @@ const Index = () => {
   // Save modal state
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [promptToSave, setPromptToSave] = useState<Message | null>(null);
+
+  // Debug stats
+  const [generationStats, setGenerationStats] = useState<{ ttft: number | null; total: number | null }>({ ttft: null, total: null });
+  const generationStartTime = useRef<number>(0);
 
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
@@ -125,6 +130,33 @@ const Index = () => {
     }
   }, []);
 
+  const [finalMessageData, setFinalMessageData] = useState<Message | null>(null);
+  const [streamedMessageId, setStreamedMessageId] = useState<string | null>(null); // Track ID of message being streamed
+
+  // Initialize the smooth streaming hook
+  const handleStreamingComplete = useCallback((finalMessage: Message) => {
+    setMessages((prev) => {
+      // Avoid duplicates if already added
+      if (prev.some(m => m.id === finalMessage.id)) return prev;
+      return [...prev, finalMessage];
+    });
+    setStreamedMessageId(null); // Reset filtered ID
+    setIsGenerating(false);
+  }, []);
+
+  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage } = useSmoothStreaming({
+    onStreamingComplete: handleStreamingComplete
+  });
+
+  // Filter history to avoid duplicates
+  // We filter out the message being currently streamed from history to avoid duplicates
+  // if it arrives via other means (like onMessagesLoaded) before streaming finishes.
+  const displayMessages = useMemo(() => {
+    return streamedMessageId
+      ? messages.filter(m => m.id !== streamedMessageId)
+      : messages;
+  }, [messages, streamedMessageId]);
+
   // Listen for message send confirmation (user message saved to DB)
   useEffect(() => {
     if (isElectron && window.electronAPI?.onMessageSent) {
@@ -146,20 +178,44 @@ const Index = () => {
         };
         setMessages((prev) => [...prev, userMessage]);
 
-        // Show generating indicator
+        // Show generating indicator and start streaming
         setIsGenerating(true);
+        generationStartTime.current = performance.now();
+        setGenerationStats({ ttft: null, total: null });
+        startStreaming();
       };
 
       const cleanup = window.electronAPI.onMessageSent(handleMessageSent);
       return cleanup; // Cleanup listener on unmount or dependency change
     }
-  }, [selectedChatId]);
+  }, [selectedChatId, startStreaming]);
+
+  // Listen for streaming chunks (real-time text updates)
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onOptimizationChunk) {
+      const handleOptimizationChunk = (data: { chunk: string; accumulated: string }) => {
+        handleChunk(data.chunk, data.accumulated);
+
+        // Record TTFT (Time To First Token)
+        setGenerationStats(prev => {
+          if (prev.ttft === null && generationStartTime.current > 0) {
+            const ttft = Math.round(performance.now() - generationStartTime.current);
+            return { ...prev, ttft };
+          }
+          return prev;
+        });
+      };
+
+      const cleanup = window.electronAPI.onOptimizationChunk(handleOptimizationChunk);
+      return cleanup;
+    }
+  }, [handleChunk]);
 
   // Listen for assistant response (optimization result saved to DB)
   useEffect(() => {
     if (isElectron && window.electronAPI?.onMessageReceived) {
       const handleMessageReceived = (data: { chatId: string; message: any }) => {
-        console.log('[Index] Assistant message received:', data);
+        console.log('[Index] Assistant message received from DB (Final)');
 
         const assistantMessage: Message = {
           id: data.message.id,
@@ -168,14 +224,26 @@ const Index = () => {
           timestamp: new Date(data.message.createdAt),
         };
 
-        setMessages((prev) => [...prev, assistantMessage]);
-        setIsGenerating(false);
+        // Track this ID to hide it from main history while streaming
+        setStreamedMessageId(assistantMessage.id);
+
+        // Pass to hook for silent finalization
+        handleFinalMessage(assistantMessage);
+
+        // Record Total Time
+        setGenerationStats(prev => {
+          if (generationStartTime.current > 0) {
+            const total = Math.round(performance.now() - generationStartTime.current);
+            return { ...prev, total };
+          }
+          return prev;
+        });
       };
 
       const cleanup = window.electronAPI.onMessageReceived(handleMessageReceived);
-      return cleanup; // Cleanup listener on unmount
+      return cleanup;
     }
-  }, []);
+  }, [handleFinalMessage]);
 
   // Listen for message send errors
   useEffect(() => {
@@ -344,7 +412,11 @@ Your prompt was: "${content}"`;
   };
 
   const handleSavePromptClick = (id: string) => {
-    const message = messages.find((m) => m.id === id);
+    let message = displayMessages.find((m) => m.id === id);
+    if (!message && streamingMessage?.id === id) {
+      message = streamingMessage;
+    }
+
     if (message) {
       setPromptToSave(message);
       setSaveModalOpen(true);
@@ -546,7 +618,9 @@ Your prompt was: "${content}"`;
       default:
         return (
           <ChatView
-            messages={messages}
+            messages={displayMessages}
+            streamingMessage={streamingMessage}
+            generationStats={generationStats}
             onSendMessage={handleSendMessage}
             onCopyPrompt={handleCopyPrompt}
             onSavePrompt={handleSavePromptClick}

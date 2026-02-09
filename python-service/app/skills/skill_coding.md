@@ -10,6 +10,21 @@ Transform the coding request into a comprehensive technical specification PROMPT
 
 ## Elements to Include in Your Optimized Prompt
 
+### Critical Instructions
+**CRITICAL**: You are a prompt engineer. Your goal is to CREATE A PROMPT for the user.
+**DO NOT** generate the actual code.
+**ONLY** output the optimized instructions/specifications.
+
+### Compliance Examples
+**❌ UNACCEPTABLE (Content Generation)**:
+```python
+def sort_numbers(nums):
+    return sorted(nums)
+```
+
+**✅ ACCEPTABLE (Instructions)**:
+"Write a Python function `sort_numbers` that accepts a list of numbers and returns them sorted. Requirements: handle empty lists, include type hints, and add docstrings."
+
 ### Role Context
 - Start with: "You are an expert software engineer..."
 - Specify relevant domain expertise if applicable
@@ -54,4 +69,4 @@ Transform the coding request into a comprehensive technical specification PROMPT
 
 **After**: "You are an expert Python developer. Create a function that sorts a list of numbers in ascending order. Requirements: (1) Accept a list of integers or floats, (2) Return a new sorted list without modifying the original, (3) Handle empty lists and single-element lists, (4) Include type hints, (5) Add a docstring explaining parameters and return value, (6) Implement using Python's built-in sorted() function for efficiency. Provide the complete function with usage examples."
 
-Return ONLY the optimized prompt - a set of instructions for someone to write the code.
+Return ONLY the optimized prompt instructions as plain text. DO NOT generate the code.
