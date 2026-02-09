@@ -360,123 +360,129 @@ async def optimize_prompt(request: OptimizeRequest):
 async def optimize_stream(websocket: WebSocket):
     """
     WebSocket endpoint for streaming prompt optimization.
-    Streams the optimized text as it's being generated for better UX.
+    Maintains a persistent connection for multiple requests.
     """
     await websocket.accept()
     print("[OptimizeStream] WebSocket connection accepted")
     
     try:
-        # Receive prompt data from client
-        data = await websocket.receive_json()
-        prompt_text = data.get("prompt", "").strip()
-        skip_cache = data.get("skip_cache", False)
-        messages = data.get("messages", None)  # Chat history for context
-        
-        print(f"[OptimizeStream] Received prompt: {prompt_text[:50]}... (length: {len(prompt_text)})")
-        print(f"[OptimizeStream] skip_cache: {skip_cache}, has_history: {messages is not None}")
-        
-        if not prompt_text or len(prompt_text) < 3:
-            await websocket.send_json({
-                "type": "error",
-                "message": "Prompt too short (minimum 3 characters)"
-            })
-            await websocket.close()
-            return
-        
-        # Detect prompt type for adaptive optimization
-        prompt_type = detect_prompt_type(prompt_text)
-        optimization_strategy = get_optimization_strategy(prompt_type)
-        
-        print(f"[OptimizeStream] Detected prompt type: {prompt_type}")
-        
-        # Build messages for Ollama
-        ollama_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"}
-        ]
-        
-        # Add chat history if provided
-        if messages and isinstance(messages, list):
-            for msg in messages:
-                if hasattr(msg, 'role') and hasattr(msg, 'content'):
-                    ollama_messages.append({
-                        "role": msg.role,
-                        "content": msg.content
-                    })
-        
-        # Add current user prompt
-        ollama_messages.append({"role": "user", "content": prompt_text})
-        
-        # Use higher temperature for regenerate requests
-        temperature = 1.2 if skip_cache else 0.7
-        
-        print(f"[OptimizeStream] Starting Ollama streaming with temperature={temperature}")
-        
-        # Stream response from Ollama
-        stream = ollama.chat(
-            model="llama3.2",
-            messages=ollama_messages,
-            options={
-                "temperature": temperature,
-                "num_predict": 800
-            },
-            stream=True  # Enable streaming!
-        )
-        
-        # Stream chunks to client
-        accumulated_text = ""
-        chunk_count = 0
-        
-        for chunk in stream:
-            if chunk.get("message"):
-                content = chunk["message"]["content"]
-                accumulated_text += content
-                chunk_count += 1
+        while True:
+            # Receive prompt data from client
+            data = await websocket.receive_json()
+            
+            # Extract request context
+            request_id = data.get("request_id")
+            if not request_id:
+                # Generate one if missing (legacy client support)
+                request_id = str(int(time.time() * 1000))
                 
-                # Send chunk to client
+            prompt_text = data.get("prompt", "").strip()
+            skip_cache = data.get("skip_cache", False)
+            messages = data.get("messages", None)
+            
+            print(f"[OptimizeStream] Processing request {request_id}")
+            print(f"[OptimizeStream] Prompt: {prompt_text[:50]}... (length: {len(prompt_text)})")
+            
+            if not prompt_text or len(prompt_text) < 3:
                 await websocket.send_json({
-                    "type": "chunk",
-                    "content": content,
-                    "accumulated": accumulated_text
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": "Prompt too short (minimum 3 characters)"
+                })
+                continue
+            
+            # Detect prompt type for adaptive optimization
+            prompt_type = detect_prompt_type(prompt_text)
+            optimization_strategy = get_optimization_strategy(prompt_type)
+            
+            print(f"[OptimizeStream] Detected prompt type: {prompt_type}")
+            
+            # Build messages for Ollama
+            ollama_messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"}
+            ]
+            
+            # Add chat history if provided
+            if messages and isinstance(messages, list):
+                for msg in messages:
+                    if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+                         ollama_messages.append({
+                            "role": msg['role'],
+                            "content": msg['content']
+                        })
+                    elif hasattr(msg, 'role') and hasattr(msg, 'content'):
+                        ollama_messages.append({
+                            "role": msg.role,
+                            "content": msg.content
+                        })
+            
+            # Add current user prompt
+            ollama_messages.append({"role": "user", "content": prompt_text})
+            
+            # Use higher temperature for regenerate requests
+            temperature = 1.2 if skip_cache else 0.7
+            
+            print(f"[OptimizeStream] Starting Ollama streaming with temperature={temperature}")
+            
+            # Stream response from Ollama
+            try:
+                stream = ollama.chat(
+                    model="llama3.2",
+                    messages=ollama_messages,
+                    options={
+                        "temperature": temperature,
+                        "num_predict": 800
+                    },
+                    stream=True
+                )
+                
+                accumulated_text = ""
+                chunk_count = 0
+                
+                for chunk in stream:
+                    if chunk.get("message"):
+                        content = chunk["message"]["content"]
+                        accumulated_text += content
+                        chunk_count += 1
+                        
+                        # Send chunk to client with request_id
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "request_id": request_id,
+                            "content": content,
+                            "accumulated": accumulated_text
+                        })
+                
+                # Clean the accumulated text
+                cleaned_text = clean_optimized_text(accumulated_text)
+                
+                # Send completion signal
+                await websocket.send_json({
+                    "type": "complete",
+                    "request_id": request_id,
+                    "optimized": cleaned_text,
+                    "original": prompt_text
                 })
                 
-                # if chunk_count % 10 == 0:
-                #     print(f"[OptimizeStream] Sent {chunk_count} chunks, {len(accumulated_text)} chars so far")
-        
-        print(f"[OptimizeStream] Streaming complete. Total chunks: {chunk_count}, total chars: {len(accumulated_text)}")
-        
-        # Clean the accumulated text
-        cleaned_text = clean_optimized_text(accumulated_text)
-        
-        print(f"[OptimizeStream] Cleaned text length: {len(cleaned_text)} chars")
-        
-        # Send completion signal with final cleaned text
-        await websocket.send_json({
-            "type": "complete",
-            "optimized": cleaned_text,
-            "original": prompt_text
-        })
-        
-        print("[OptimizeStream] ✓ Optimization complete, closing connection")
-        
+                print(f"[OptimizeStream] ✓ Request {request_id} complete. Chunks: {chunk_count}")
+                
+            except Exception as e:
+                print(f"[OptimizeStream] ✗ Error processing request {request_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                await websocket.send_json({
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": f"Optimization failed: {str(e)}"
+                })
+                
     except WebSocketDisconnect:
         print("[OptimizeStream] Client disconnected")
     except Exception as e:
-        print(f"[OptimizeStream] ✗ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        try:
-            await websocket.send_json({
-                "type": "error",
-                "message": f"Optimization failed: {str(e)}"
-            })
-        except:
-            pass  # Connection might be closed
+        print(f"[OptimizeStream] ✗ Fatal connection error: {e}")
     finally:
-        try:
-            await websocket.close()
-        except:
-            pass
+        pass # Connection closed
 
 @app.get("/health")
 async def health():

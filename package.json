@@ -11,7 +11,7 @@
     "dev:ui": "cd app-ui && npm run dev",
     "electron": "electron .",
     "dev": "npm run build && npm run electron",
-    "python:dev": "cd python-service && .\\venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001",
+    "python:dev": "cd python-service && .\\venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
     "python:dev:mac": "cd python-service && ./venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
     "python:install": "cd python-service && python -m venv venv && .\\venv\\Scripts\\python.exe -m pip install -r requirements.txt",
     "start": "npm run build && npm run electron",

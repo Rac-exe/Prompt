@@ -110,6 +110,11 @@ const electronAPI = {
   onStateUpdate: (callback: (state: any) => void) => {
     ipcRenderer.on('update-state', (event, state) => callback(state));
   },
+  onSetContextKey: (callback: (key: string) => void) => {
+    const handler = (event: any, key: string) => callback(key);
+    ipcRenderer.on('set-context-key', handler);
+    return () => ipcRenderer.removeListener('set-context-key', handler);
+  },
   startTranscription: () => {
     ipcRenderer.send('floating-panel:transcription-start');
   },
