@@ -16,13 +16,11 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/settings";
+import { useAuth } from "@/context/AuthContext";
 
-interface SettingsViewProps {
-  userEmail: string;
-  onLogout: () => void;
-}
+export const SettingsView = () => {
+  const { user, signOut } = useAuth();
 
-export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
   const [settings, setSettings] = useState<SettingsData>({
     theme: "dark",
     fontSize: "medium",
@@ -78,6 +76,11 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
     }
   };
 
+  const getUserInitials = () => {
+    const name = user?.profile?.name || "User";
+    return name.slice(0, 2).toUpperCase();
+  };
+
   const updateSetting = <K extends keyof SettingsData>(
     key: K,
     value: SettingsData[K]
@@ -123,7 +126,7 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
                     <Label htmlFor="username" className="text-foreground">Username</Label>
                     <Input
                       id="username"
-                      defaultValue="Racoon"
+                      defaultValue={user?.profile?.name || "User"}
                       className="bg-secondary border-border"
                     />
                   </div>
@@ -132,7 +135,7 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
                     <Input
                       id="email"
                       type="email"
-                      value={userEmail}
+                      value={user?.profile?.email || ""}
                       disabled
                       className="bg-secondary border-border"
                     />
@@ -392,8 +395,9 @@ export const SettingsView = ({ userEmail, onLogout }: SettingsViewProps) => {
             </Button>
             <Button
               variant="outline"
-              onClick={() => {
-                setSettings(loadSettings());
+              onClick={async () => {
+                const loaded = await loadSettings();
+                setSettings(loaded);
                 setIsDirty(false);
               }}
               className="border-border"

@@ -13,6 +13,7 @@ import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
+import { useAuth } from "@/context/AuthContext";
 
 // Empty initial data
 const initialRecentChats: { id: string; title: string; date: string }[] = [];
@@ -39,8 +40,7 @@ const Index = () => {
   // Initialize settings after authentication
   useInitializeSettings();
 
-  // User state (auth is handled by AuthWrapper)
-  const [userEmail, setUserEmail] = useState("user@example.com");
+  const { user, signOut } = useAuth();
 
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history">("chat");
@@ -313,36 +313,6 @@ const Index = () => {
       .sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [chatSessions]);
 
-  // Auth handlers
-  const handleLogout = () => {
-    // Clear local state
-    setUserEmail("");
-    setMessages([]);
-    setRecentChats([]);
-    setChatSessions([]);
-    setSavedPrompts([]);
-    setCurrentView("chat");
-
-    // Sign out via Electron (AuthWrapper will handle UI transition)
-    if (isElectron && window.electronAPI?.signOut) {
-      window.electronAPI.signOut();
-
-      // Reload the page after a short delay to ensure auth state is cleared
-      // This forces the AuthWrapper to re-check auth and show login page
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
-    } else {
-      // Fallback for non-Electron environment - just reload
-      window.location.reload();
-    }
-
-    toast({
-      title: "Signed out",
-      description: "Please log in again.",
-    });
-  };
-
   // Chat handlers
   const handleNewChat = () => {
     console.log('[Index] Starting new chat');
@@ -609,10 +579,7 @@ Your prompt was: "${content}"`;
         );
       case "settings":
         return (
-          <SettingsView
-            userEmail={userEmail}
-            onLogout={handleLogout}
-          />
+          <SettingsView />
         );
       case "chat":
       default:
@@ -639,8 +606,6 @@ Your prompt was: "${content}"`;
           <Sidebar
             currentView={currentView}
             onViewChange={setCurrentView}
-            userEmail={userEmail}
-            onLogout={handleLogout}
             recentChats={recentChats}
             onSelectChat={setSelectedChatId}
             selectedChatId={selectedChatId}

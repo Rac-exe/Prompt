@@ -19,8 +19,6 @@ import { ProfileMenu } from "./ProfileMenu";
 interface SidebarProps {
   currentView: "chat" | "library" | "settings" | "history";
   onViewChange: (view: "chat" | "library" | "settings" | "history") => void;
-  userEmail: string;
-  onLogout: () => void;
   recentChats: { id: string; title: string; date: string }[];
   onSelectChat: (id: string) => void;
   selectedChatId: string | null;
@@ -32,8 +30,6 @@ interface SidebarProps {
 export const Sidebar = ({
   currentView,
   onViewChange,
-  userEmail,
-  onLogout,
   recentChats,
   onSelectChat,
   selectedChatId,
@@ -221,10 +217,8 @@ export const Sidebar = ({
       {/* User Section with Profile Menu */}
       <div className="p-3 border-t border-sidebar-border">
         <ProfileMenu
-          userEmail={userEmail}
           onSettingsClick={handleSettingsClick}
           onHelpClick={handleHelpClick}
-          onLogout={onLogout}
           collapsed={collapsed}
         />
       </div>
