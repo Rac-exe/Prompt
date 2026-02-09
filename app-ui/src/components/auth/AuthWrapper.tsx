@@ -14,7 +14,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
 
   useEffect(() => {
     console.log('[AuthWrapper] Initializing');
-    
+
     // Check if we're in Electron
     if (!window.electronAPI) {
       console.error('[AuthWrapper] window.electronAPI not found');
@@ -30,7 +30,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         hasUser: !!data.user,
         error: data.error
       });
-      
+
       if (data.error) {
         setError(data.error);
         setAuthView('login');
@@ -84,6 +84,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         onLoginSuccess={() => {
           // Don't set authView here - let the auth state change event handle it
         }}
+        error={error}
       />
     );
   }
