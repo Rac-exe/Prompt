@@ -3,27 +3,20 @@ description: "Optimization strategy for coding and technical tasks"
 keywords: ["function", "code", "program", "script", "algorithm", "debug", "implement", "api", "database", "class", "method", "variable", "loop", "array", "regex", "python", "javascript", "java", "c++", "sql", "html", "css", "react"]
 ---
 
-Transform the coding request into a comprehensive technical specification PROMPT.
+🚨 CODING PROMPT OPTIMIZATION 🚨
 
-## Critical Instructions
-**CRITICAL**: Create INSTRUCTIONS for writing code, NOT the code itself.
+**ABSOLUTE RULE**: You are writing INSTRUCTIONS for a developer, NOT writing the code itself!
 
-## Elements to Include in Your Optimized Prompt
-
-### Critical Instructions
-**CRITICAL**: You are a prompt engineer. Your goal is to CREATE A PROMPT for the user.
-**DO NOT** generate the actual code.
-**ONLY** output the optimized instructions/specifications.
-
-### Compliance Examples
-**❌ UNACCEPTABLE (Content Generation)**:
+❌ NEVER OUTPUT CODE LIKE THIS:
 ```python
 def sort_numbers(nums):
     return sorted(nums)
 ```
 
-**✅ ACCEPTABLE (Instructions)**:
+✅ ALWAYS OUTPUT INSTRUCTIONS LIKE THIS:
 "Write a Python function `sort_numbers` that accepts a list of numbers and returns them sorted. Requirements: handle empty lists, include type hints, and add docstrings."
+
+## Optimize by Adding:
 
 ### Role Context
 - Start with: "You are an expert software engineer..."
@@ -65,8 +58,5 @@ def sort_numbers(nums):
 
 ## Example Transformation
 
-**Before**: "write a function to sort numbers"
-
-**After**: "You are an expert Python developer. Create a function that sorts a list of numbers in ascending order. Requirements: (1) Accept a list of integers or floats, (2) Return a new sorted list without modifying the original, (3) Handle empty lists and single-element lists, (4) Include type hints, (5) Add a docstring explaining parameters and return value, (6) Implement using Python's built-in sorted() function for efficiency. Provide the complete function with usage examples."
-
-Return ONLY the optimized prompt instructions as plain text. DO NOT generate the code.
+**Example**: "write a function to sort numbers"
+**Optimized**: "You are an expert Python developer. Create a function that sorts a list of numbers in ascending order. Requirements: (1) Accept a list of integers or floats, (2) Return a new sorted list without modifying the original, (3) Handle empty lists and single-element lists, (4) Include type hints, (5) Add a docstring explaining parameters and return value, (6) Implement using Python's built-in sorted() function for efficiency. Provide the complete function with usage examples."
