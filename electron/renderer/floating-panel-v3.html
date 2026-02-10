@@ -198,7 +198,7 @@
       </div>
 
       <!-- Content - Scrollable container -->
-      <div class="flex-1 flex flex-col overflow-y-auto custom-scroll" style="max-height: 700px;">
+      <div id="main-scroll-container" class="flex-1 flex flex-col overflow-y-auto custom-scroll">
         <div class="px-6 py-3 space-y-3">
 
           <!-- YOUR PROMPT Section -->
@@ -275,7 +275,7 @@
               <!-- Optimized text display (NO POPUP - displays inline) -->
               <div id="optimized-text-container"
                 class="bg-[#141414] rounded-xl border border-gray-800 p-3 custom-scroll"
-                style="max-height: 400px; min-height: 60px; overflow-y: auto; overflow-x: hidden;">
+                style="max-height: 300px; min-height: 60px; overflow-y: auto; overflow-x: hidden;">
                 <p id="optimized-text" class="text-sm text-white leading-relaxed whitespace-pre-wrap break-words"
                   style="min-height: 1rem; will-change: contents;">
                   Click generate to optimize your prompt
@@ -381,24 +381,39 @@
         }
       } else if (newState === 'expanded') {
         expandedState.classList.add('active');
-        // Fixed height - use 600px when optimized section is shown, 240px otherwise
+
+        // Calculate required height based on content
         const hasOptimized = optimizedSection.classList.contains('expanded');
-        const height = hasOptimized ? 600 : 240;
+        // Base height for input mode
+        let targetHeight = 240;
+
+        if (hasOptimized) {
+          // If optimized, give it more space but cap it
+          targetHeight = 650;
+        }
 
         if (window.electronAPI?.send) {
           window.electronAPI.send('floating-panel:resize-and-reposition', {
             width: 560,
-            height: height,
+            height: targetHeight,
             fromState: currentState
           });
         }
 
-        // Focus textarea after transition (single attempt is usually sufficient)
+        // Force focus textarea after transition (single attempt is usually sufficient)
         requestAnimationFrame(() => {
           setTimeout(() => {
             if (promptTextarea) {
               promptTextarea.focus();
               console.log('[State] Focused textarea after transition to expanded');
+
+              // Force layout update/check for scrollbars
+              const scrollContainer = document.getElementById('main-scroll-container');
+              if (scrollContainer) {
+                const currentScroll = scrollContainer.scrollTop;
+                scrollContainer.scrollTop = currentScroll + 1;
+                scrollContainer.scrollTop = currentScroll;
+              }
             }
           }, 150);
         });
@@ -413,15 +428,22 @@
     function showOptimizedSection() {
       optimizedSection.classList.add('expanded');
 
-      // Use fixed height for stability (no dynamic calculation)
-      // Total height: 600px (provides good balance without auto-resizing)
+      // Use fixed height for stability
       if (window.electronAPI?.send) {
         window.electronAPI.send('floating-panel:resize-and-reposition', {
           width: 560,
-          height: 600,
+          height: 650,
           fromState: currentState
         });
       }
+
+      // Force scroll to bottom after transition
+      setTimeout(() => {
+        const scrollContainer = document.getElementById('main-scroll-container');
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+      }, 350);
     }
 
     function hideOptimizedSection() {
