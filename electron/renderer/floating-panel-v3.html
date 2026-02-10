@@ -353,16 +353,6 @@
 
               <!-- Action buttons -->
               <div class="flex items-center gap-2 mt-2">
-                <!-- Retry button -->
-                <button id="retry-button"
-                  class="w-10 h-10 rounded-xl bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors border border-transparent"
-                  title="Retry" style="-webkit-app-region: no-drag;">
-                  <svg class="w-4 h-4 text-secondary-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-
                 <!-- Copy button -->
                 <button id="copy-button"
                   class="flex-1 h-10 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-colors border border-transparent"
@@ -423,7 +413,7 @@
     const optimizedSection = document.getElementById('optimized-section');
     const optimizedText = document.getElementById('optimized-text');
     const statusIndicator = document.getElementById('status-indicator');
-    const retryButton = document.getElementById('retry-button');
+    // const retryButton = document.getElementById('retry-button'); // REMOVED
     const copyButton = document.getElementById('copy-button');
     const replaceButton = document.getElementById('replace-button');
     const copyInputBtn = document.getElementById('copy-input-btn');
@@ -451,6 +441,19 @@
         }
       } else if (newState === 'expanded') {
         expandedState.classList.add('active');
+
+        // CRITICAL: Always enable inputs when expanding
+        // This ensures the panel is never stuck in a disabled state
+        if (promptTextarea) promptTextarea.disabled = false;
+        if (generateButton) generateButton.disabled = false;
+
+        // Reset optimizing state if it was stuck
+        if (isOptimizing) {
+          console.warn('[State] Resetting stuck optimizing state');
+          isOptimizing = false;
+          setStatus('ready', 'Ready');
+          setGenerateButtonState('idle');
+        }
 
         // Calculate required height based on content
         const hasOptimized = optimizedSection.classList.contains('expanded');
@@ -583,7 +586,7 @@
       // Update UI
       setStatus('optimizing', isRegenerate ? 'Regenerating' : 'Optimizing');
       generateButton.disabled = true;
-      retryButton.disabled = true;
+      // retryButton.disabled = true; // REMOVED
       promptTextarea.disabled = true;
 
       // Show "thinking" state IN THE OPTIMIZED TEXT AREA
@@ -603,7 +606,7 @@
           setStatus('waiting', 'Error');
           isOptimizing = false;
           generateButton.disabled = false;
-          retryButton.disabled = false;
+          // retryButton.disabled = false; // REMOVED
           promptTextarea.disabled = false;
         }
       }
@@ -732,12 +735,13 @@
     });
 
     // Retry button (Regenerate) - The one in the optimized section
-    retryButton.addEventListener('click', () => {
-      if (originalPrompt && !isOptimizing) {
-        setGenerateButtonState('loading');
-        optimizePrompt(originalPrompt, true);
-      }
-    });
+    // retryButton listener removed as button is deleted
+    // retryButton.addEventListener('click', () => {
+    //   if (originalPrompt && !isOptimizing) {
+    //     setGenerateButtonState('loading');
+    //     optimizePrompt(originalPrompt, true);
+    //   }
+    // });
 
     // New Separate Regenerate Icon Button (next to Generate)
     if (regenerateIconBtn) {
@@ -860,7 +864,25 @@
       window.electronAPI.onExpandToInput(() => {
         console.log('[IPC] Received expand-to-input event');
         transitionToState('expanded');
+
+        // CRITICAL FIX: Force enable input and reset state
+        // This ensures that if the panel was closed while disabled, it re-enables
+        promptTextarea.disabled = false;
+        generateButton.disabled = false;
+
+        // We don't necessarily want to clear the prompt if they are coming back to it?
+        // User workflow: open -> type -> close -> open again -> should see text?
+        // Current logic: promptTextarea.value = ''; (lines 853)
+        // If we want to clear it:
         promptTextarea.value = '';
+
+        // Reset optimizing state just in case
+        if (isOptimizing) {
+          isOptimizing = false;
+          setStatus('ready', 'Ready');
+          setGenerateButtonState('idle');
+        }
+
         hideOptimizedSection();
 
         // Force focus on textarea after transition
@@ -914,42 +936,48 @@
         optimizedPrompt = data.optimized || data.optimizedText;
         setStatus('ready', 'Optimized');
 
-        // Animate the text typing
-        typeText(optimizedText, optimizedPrompt);
+        // Streaming handles the display, so we just ensure the final text is correct
+        // and remove any typing animation which would look weird after streaming
+        optimizedText.textContent = optimizedPrompt;
+
+        // Auto-scroll to bottom one last time
+        const scrollContainer = document.getElementById('optimized-text-container');
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
       });
     }
 
     // Listen for streaming updates
     if (window.electronAPI?.onTranscriptionUpdate) {
       window.electronAPI.onTranscriptionUpdate((data) => {
-        console.log('[IPC] Received transcription update:', data);
+        // ... existing code ...
+      });
+    }
 
-        if (data.type === 'status') {
-          if (data.status === 'listening') {
-            startListening();
-          } else if (data.status === 'stopped') {
-            stopListening();
-          }
-        } else if (data.type === 'transcription') {
-          if (data.text) {
-            promptTextarea.value = data.text;
-          }
-        } else if (data.type === 'final') {
-          if (data.text) {
-            promptTextarea.value = data.text;
-            stopListening();
-            // Auto-submit after voice input
-            setTimeout(() => {
-              optimizePrompt(data.text);
-            }, 500);
-          }
-        } else if (data.type === 'error') {
-          console.error('[Transcription] Error:', data.message);
-          stopListening();
-          promptTextarea.placeholder = "Error: " + data.message;
-          setTimeout(() => {
-            promptTextarea.placeholder = "happy prompting...";
-          }, 3000);
+    // LISTENER FOR OPTIMIZATION CHUNKS (STREAMING)
+    if (window.electronAPI?.onOptimizationChunk) {
+      window.electronAPI.onOptimizationChunk((data) => {
+        // console.log('[IPC] Received chunk:', data.chunk);
+
+        // Ensure we are in optimizing state
+        if (!isOptimizing) return;
+
+        // On first chunk, clear the "Thinking..." text if it's there
+        const currentText = optimizedText.innerHTML;
+        if (currentText.includes('thinking-dots') || currentText === '') {
+          optimizedText.innerHTML = ''; // Clear properly
+          optimizedText.textContent = '';
+        }
+
+        // Append chunk
+        // Use textContent to avoid HTML injection, but appended
+        optimizedText.textContent += data.chunk;
+
+        // Auto-scroll to bottom
+        const scrollContainer = document.getElementById('optimized-text-container');
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
         }
       });
     }

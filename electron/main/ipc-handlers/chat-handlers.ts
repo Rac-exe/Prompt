@@ -93,6 +93,15 @@ export function registerChatHandlers(
                 }
             );
 
+            // CRITICAL FIX: Send completion signal to overlay IMMEDIATELY after generation
+            // Do not wait for DB saving, which might hang or be slow
+            if (panelWindow && !panelWindow.isDestroyed()) {
+                panelWindow.webContents.send('optimization-complete', {
+                    original: promptText,
+                    optimized: optimizedText,
+                });
+            }
+
             // Save optimization to database (source: overlay) - only if authenticated
             if (authState.isAuthenticated) {
                 try {
@@ -124,14 +133,6 @@ export function registerChatHandlers(
                 }
             } else {
                 console.log('[Chat] ℹ️ User not authenticated, optimization not saved to DB');
-            }
-
-            // Send completion signal to overlay
-            if (panelWindow && !panelWindow.isDestroyed()) {
-                panelWindow.webContents.send('optimization-complete', {
-                    original: promptText,
-                    optimized: optimizedText,
-                });
             }
         } catch (error) {
             console.error('[Chat] Optimization failed:', error);
