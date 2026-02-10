@@ -1,22 +1,70 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Quick Optimize</title>
+  <title>Prmpt</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Link the shared Design System CSS -->
+  <link rel="stylesheet" href="design-system.css">
 
   <script>
     tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           fontFamily: {
             sans: ['Inter', 'sans-serif'],
           },
+          colors: {
+            border: "hsl(var(--border))",
+            input: "hsl(var(--input))",
+            ring: "hsl(var(--ring))",
+            background: "hsl(var(--background))",
+            foreground: "hsl(var(--foreground))",
+            primary: {
+              DEFAULT: "hsl(var(--primary))",
+              foreground: "hsl(var(--primary-foreground))",
+            },
+            secondary: {
+              DEFAULT: "hsl(var(--secondary))",
+              foreground: "hsl(var(--secondary-foreground))",
+            },
+            destructive: {
+              DEFAULT: "hsl(var(--destructive))",
+              foreground: "hsl(var(--destructive-foreground))",
+            },
+            muted: {
+              DEFAULT: "hsl(var(--muted))",
+              foreground: "hsl(var(--muted-foreground))",
+            },
+            accent: {
+              DEFAULT: "hsl(var(--accent))",
+              foreground: "hsl(var(--accent-foreground))",
+            },
+            popover: {
+              DEFAULT: "hsl(var(--popover))",
+              foreground: "hsl(var(--popover-foreground))",
+            },
+            card: {
+              DEFAULT: "hsl(var(--card))",
+              foreground: "hsl(var(--card-foreground))",
+            },
+            emerald: {
+              DEFAULT: "hsl(var(--emerald))",
+              soft: "hsl(var(--emerald-soft))",
+            }
+          },
+          borderRadius: {
+            lg: "var(--radius)",
+            md: "calc(var(--radius) - 2px)",
+            sm: "calc(var(--radius) - 4px)",
+          },
         },
       },
+      plugins: [],
     };
   </script>
 
@@ -32,6 +80,7 @@
       background: transparent;
       overflow: hidden;
       -webkit-app-region: no-drag;
+      color: hsl(var(--foreground));
     }
 
     /* Loading spinner animation */
@@ -109,21 +158,21 @@
     }
 
     ::-webkit-scrollbar-thumb {
-      background: rgba(148, 163, 184, 0.2);
+      background: hsl(var(--muted));
       border-radius: 10px;
       border: 2px solid transparent;
       background-clip: padding-box;
     }
 
     ::-webkit-scrollbar-thumb:hover {
-      background: rgba(148, 163, 184, 0.4);
+      background: hsl(var(--muted-foreground) / 0.6);
       background-clip: padding-box;
     }
 
     /* Thin scrollbar that appears on hover */
     .custom-scroll {
       scrollbar-width: thin;
-      scrollbar-color: rgba(148, 163, 184, 0.2) transparent;
+      scrollbar-color: hsl(var(--muted)) transparent;
     }
 
     .custom-scroll::-webkit-scrollbar {
@@ -155,16 +204,17 @@
   <div id="collapsed-state" class="state-container active" style="width: 64px; height: 64px;">
     <div id="collapsed-drag-handle" class="w-full h-full flex items-center justify-center cursor-move">
       <!-- Logo button -->
+      <!-- Updated gradient to Emerald to match Premium Emerald theme -->
       <button id="logo-button"
-        class="w-12 h-12 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 hover:from-purple-500 hover:to-purple-700 flex items-center justify-center shadow-[0_0_20px_rgba(147,51,234,0.4)] transition-all hover:scale-110 group relative"
-        style="-webkit-app-region: no-drag;">
+        class="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 hover:from-emerald-300 hover:to-emerald-500 flex items-center justify-center transition-all hover:scale-110 group relative border border-emerald-500/20"
+        style="-webkit-app-region: no-drag; box-shadow: 0 0 20px hsl(var(--emerald) / 0.4);">
         <!-- Sparkle icon -->
         <svg class="w-6 h-6 text-white sparkle-icon" fill="currentColor" viewBox="0 0 24 24">
           <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
         </svg>
         <!-- Glow effect on hover -->
         <div
-          class="absolute inset-0 rounded-full bg-purple-400 opacity-0 group-hover:opacity-20 blur-lg transition-opacity">
+          class="absolute inset-0 rounded-full bg-emerald-400 opacity-0 group-hover:opacity-30 blur-lg transition-opacity">
         </div>
       </button>
     </div>
@@ -174,24 +224,27 @@
   <!-- EXPANDED STATE: Single Panel (560px × variable) -->
   <!-- ============================================ -->
   <div id="expanded-state" class="state-container" style="width: 560px; min-height: 240px;">
-    <div class="w-full h-full flex flex-col bg-[#0a0a0a] rounded-3xl shadow-2xl border border-gray-800">
+    <!-- Replaced hardcoded black with bg-background and border-border -->
+    <div class="w-full h-full flex flex-col bg-background rounded-3xl shadow-2xl border border-border">
 
       <!-- Header -->
       <div id="expanded-drag-handle"
-        class="flex items-center justify-between px-6 py-3 border-b border-gray-800 cursor-move">
+        class="flex items-center justify-between px-6 py-3 border-b border-border cursor-move">
         <div class="flex items-center gap-3">
+          <!-- Small orb in header - also updated to Emerald -->
           <div
-            class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-600 to-purple-800 flex items-center justify-center">
+            class="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center shadow-[0_0_10px_hsl(var(--emerald)/0.3)]">
             <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
             </svg>
           </div>
-          <h2 class="text-white text-sm font-semibold">Quick Optimize</h2>
+          <!-- Renamed to Prmpt -->
+          <h2 class="text-foreground text-sm font-semibold tracking-wide">Prmpt</h2>
         </div>
         <button id="close-button"
-          class="w-7 h-7 rounded-full hover:bg-gray-800 flex items-center justify-center transition-colors"
+          class="w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
           style="-webkit-app-region: no-drag;">
-          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
@@ -204,21 +257,21 @@
           <!-- YOUR PROMPT Section -->
           <div>
             <div class="flex items-center justify-between mb-2">
-              <label class="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Your Prompt</label>
+              <label class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Your Prompt</label>
               <div class="flex items-center gap-2">
                 <!-- Mic button -->
-                <button id="mic-button" class="p-1 rounded-lg hover:bg-gray-800 transition-colors" title="Voice Input"
+                <button id="mic-button" class="p-1 rounded-lg hover:bg-white/10 transition-colors" title="Voice Input"
                   style="-webkit-app-region: no-drag;">
-                  <svg id="mic-icon" class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor"
+                  <svg id="mic-icon" class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor"
                     viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                   </svg>
                 </button>
                 <!-- Copy button -->
-                <button id="copy-input-btn" class="p-1 rounded-lg hover:bg-gray-800 transition-colors" title="Copy"
+                <button id="copy-input-btn" class="p-1 rounded-lg hover:bg-white/10 transition-colors" title="Copy"
                   style="-webkit-app-region: no-drag;">
-                  <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
@@ -226,17 +279,18 @@
               </div>
             </div>
 
-            <!-- Input area -->
-            <div class="bg-[#141414] rounded-xl border border-gray-800 p-3">
+            <!-- Input area - Removed hardcoded dark grey, used bg-card/bg-surface -->
+            <div class="bg-card rounded-xl border border-border p-3">
               <textarea id="prompt-textarea" placeholder="happy prompting..."
-                class="w-full bg-transparent text-white text-sm outline-none placeholder-gray-500 resize-none custom-scroll"
+                class="w-full bg-transparent text-foreground text-sm outline-none placeholder-muted-foreground resize-none custom-scroll"
                 style="min-height: 50px; max-height: 120px;"></textarea>
             </div>
 
             <!-- Generate actions -->
             <div class="flex items-center gap-2 mt-2">
+              <!-- Generate button: Use bg-primary text-primary-foreground -->
               <button id="generate-button"
-                class="flex-1 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                class="flex-1 h-10 bg-primary hover:bg-emerald-600 text-primary-foreground text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_hsl(var(--emerald)/0.3)] hover:shadow-[0_0_20px_hsl(var(--emerald)/0.5)]"
                 style="-webkit-app-region: no-drag;">
                 <svg id="generate-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
@@ -252,8 +306,9 @@
               </button>
 
               <!-- Regenerate button (Initially hidden) -->
+              <!-- Use card background and border -->
               <button id="regenerate-icon-btn"
-                class="hidden w-12 h-10 bg-[#1c1c1c] border border-gray-800 hover:bg-gray-800 text-white rounded-xl flex items-center justify-center transition-all disabled:opacity-50"
+                class="hidden w-12 h-10 bg-card border border-border hover:bg-white/5 text-foreground rounded-xl flex items-center justify-center transition-all disabled:opacity-50"
                 title="Regenerate Original" style="-webkit-app-region: no-drag;">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -265,30 +320,32 @@
 
           <!-- OPTIMIZED PROMPT Section (hidden initially, expands smoothly) -->
           <div id="optimized-section" class="expand-section">
-            <div class="pt-3 border-t border-gray-800">
+            <div class="pt-3 border-t border-border">
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
-                  <label class="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Optimized Prompt</label>
+                  <label class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Optimized
+                    Prompt</label>
                   <!-- Status indicator -->
-                  <div id="status-indicator" class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-gray-800">
+                  <div id="status-indicator"
+                    class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/5 border border-white/5">
                     <div class="w-1.5 h-1.5 rounded-full bg-gray-500"></div>
-                    <span class="text-[9px] text-gray-400 font-medium">Waiting</span>
+                    <span class="text-[9px] text-muted-foreground font-medium">Waiting</span>
                   </div>
                 </div>
-                <button id="copy-optimized-btn" class="p-1 rounded-lg hover:bg-gray-800 transition-colors" title="Copy"
+                <button id="copy-optimized-btn" class="p-1 rounded-lg hover:bg-white/10 transition-colors" title="Copy"
                   style="-webkit-app-region: no-drag;">
-                  <svg class="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
                 </button>
               </div>
 
-              <!-- Optimized text display (NO POPUP - displays inline) -->
-              <div id="optimized-text-container"
-                class="bg-[#141414] rounded-xl border border-gray-800 p-3 custom-scroll"
+              <!-- Optimized text display -->
+              <!-- Use bg-card -->
+              <div id="optimized-text-container" class="bg-card rounded-xl border border-border p-3 custom-scroll"
                 style="max-height: 300px; min-height: 60px; overflow-y: auto; overflow-x: hidden;">
-                <p id="optimized-text" class="text-sm text-white leading-relaxed whitespace-pre-wrap break-words"
+                <p id="optimized-text" class="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words"
                   style="min-height: 1rem; will-change: contents;">
                   Click generate to optimize your prompt
                 </p>
@@ -298,9 +355,9 @@
               <div class="flex items-center gap-2 mt-2">
                 <!-- Retry button -->
                 <button id="retry-button"
-                  class="w-10 h-10 rounded-xl bg-gray-800 hover:bg-gray-700 flex items-center justify-center transition-colors"
+                  class="w-10 h-10 rounded-xl bg-secondary hover:bg-secondary/80 flex items-center justify-center transition-colors border border-transparent"
                   title="Retry" style="-webkit-app-region: no-drag;">
-                  <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4 text-secondary-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                       d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
@@ -308,7 +365,7 @@
 
                 <!-- Copy button -->
                 <button id="copy-button"
-                  class="flex-1 h-10 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  class="flex-1 h-10 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-colors border border-transparent"
                   style="-webkit-app-region: no-drag;">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -319,7 +376,7 @@
 
                 <!-- Replace Original button -->
                 <button id="replace-button"
-                  class="flex-1 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)]"
+                  class="flex-1 h-10 bg-primary hover:bg-emerald-600 text-primary-foreground text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-[0_0_15px_hsl(var(--emerald)/0.3)] hover:shadow-[0_0_20px_hsl(var(--emerald)/0.5)]"
                   style="-webkit-app-region: no-drag;">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                     <path stroke-linecap="round" stroke-linejoin="round"
@@ -481,12 +538,15 @@
       if (status === 'waiting') {
         dot.className = 'w-1.5 h-1.5 rounded-full bg-gray-500';
         text.textContent = label || 'Waiting';
+        text.className = 'text-[9px] text-muted-foreground font-medium';
       } else if (status === 'optimizing') {
-        dot.className = 'w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-primary animate-pulse'; // Uses primary (Emerald)
         text.textContent = label || 'Optimizing';
+        text.className = 'text-[9px] text-primary font-medium';
       } else if (status === 'ready') {
-        dot.className = 'w-1.5 h-1.5 rounded-full bg-green-500';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-primary'; // Uses primary (Emerald)
         text.textContent = label || 'Ready';
+        text.className = 'text-[9px] text-primary font-medium';
       }
     }
 
@@ -705,14 +765,20 @@
         const originalText = span.textContent;
         span.textContent = 'Copied!';
         button.classList.add('bg-green-900/30', 'text-green-400');
-        button.classList.remove('bg-gray-800', 'hover:bg-gray-700');
+        button.classList.remove('bg-gray-800', 'hover:bg-gray-700'); // removed specific utility class
+        if (button.classList.contains('bg-secondary')) {
+          button.classList.remove('bg-secondary');
+          button.classList.add('bg-emerald-900/50', 'text-emerald-400');
+        }
       }
 
       setTimeout(() => {
         button.innerHTML = originalContent;
         if (!isIconOnly) {
-          button.classList.remove('bg-green-900/30', 'text-green-400');
-          button.classList.add('bg-gray-800', 'hover:bg-gray-700');
+          if (button.classList.contains('bg-emerald-900/50')) {
+            button.classList.remove('bg-emerald-900/50', 'text-emerald-400');
+            button.classList.add('bg-secondary');
+          }
         }
       }, 2000);
     }
@@ -767,8 +833,8 @@
 
     function startListening() {
       isListening = true;
-      micButton.classList.add('bg-red-600');
-      micButton.classList.remove('hover:bg-gray-800');
+      micButton.classList.add('bg-destructive', 'text-destructive-foreground');
+      micButton.classList.remove('hover:bg-white/10');
 
       if (window.electronAPI?.startTranscription) {
         window.electronAPI.startTranscription();
@@ -777,8 +843,8 @@
 
     function stopListening() {
       isListening = false;
-      micButton.classList.remove('bg-red-600');
-      micButton.classList.add('hover:bg-gray-800');
+      micButton.classList.remove('bg-destructive', 'text-destructive-foreground');
+      micButton.classList.add('hover:bg-white/10');
 
       if (window.electronAPI?.stopTranscription) {
         window.electronAPI.stopTranscription();
@@ -798,188 +864,117 @@
         hideOptimizedSection();
 
         // Force focus on textarea after transition
-        setTimeout(() => {
-          if (promptTextarea) {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
             promptTextarea.focus();
             console.log('[IPC] Focused textarea after expand-to-input');
-          }
-        }, 100);
-      });
-    }
-
-    // Listen for focus-input event
-    if (window.electronAPI?.onFocusInput) {
-      window.electronAPI.onFocusInput(() => {
-        console.log('[IPC] Received focus-input event');
-        if (promptTextarea) {
-          promptTextarea.focus();
-          // Also try to select any existing text
-          promptTextarea.select();
-          console.log('[IPC] Focused and selected textarea');
-        }
-      });
-    }
-
-    // Listen for toggle-state event
-    if (window.electronAPI?.onToggleState) {
-      window.electronAPI.onToggleState(() => {
-        console.log('[IPC] Received toggle-state event');
-        if (currentState === 'collapsed') {
-          transitionToState('expanded');
-        } else {
-          hideOptimizedSection();
-          transitionToState('collapsed');
-        }
-      });
-    }
-
-    // Listen for optimization-complete event (DISPLAY INLINE - NO POPUP)
-    if (window.electronAPI?.onOptimizationComplete) {
-      console.log('[FloatingPanel] Setting up onOptimizationComplete listener');
-      let listenerRegistered = false;
-
-      if (!listenerRegistered) {
-        listenerRegistered = true;
-        window.electronAPI.onOptimizationComplete(async (data) => {
-          console.log('[FloatingPanel] ===== RECEIVED OPTIMIZATION RESULT =====');
-          console.log('[FloatingPanel] Original:', data.original?.substring(0, 50));
-          console.log('[FloatingPanel] Optimized length:', data.optimized?.length);
-
-          // Validate the response
-          if (!data.optimized || typeof data.optimized !== 'string') {
-            console.error('[FloatingPanel] Invalid optimization result:', data);
-            optimizedText.textContent = 'Error: Invalid optimization result';
-            setStatus('waiting', 'Error');
-            isOptimizing = false;
-            setGenerateButtonState('idle');
-            generateButton.disabled = false;
-            retryButton.disabled = false;
-            promptTextarea.disabled = false;
-            return;
-          }
-
-          optimizedPrompt = data.optimized;
-          hasGeneratedOnce = true;
-
-          // Make sure optimized section is visible
-          if (!optimizedSection.classList.contains('expanded')) {
-            console.log('[FloatingPanel] Expanding optimized section');
-            showOptimizedSection();
-          }
-
-          // Type out the optimized text IN THE OPTIMIZED SECTION (not in a popup)
-          console.log('[FloatingPanel] Starting to type optimized text');
-          await typeText(optimizedText, optimizedPrompt);
-          console.log('[FloatingPanel] Typing complete');
-
-          setStatus('ready', 'Ready');
-          isOptimizing = false;
-          setGenerateButtonState('idle');
-          generateButton.disabled = false;
-          retryButton.disabled = false;
-          promptTextarea.disabled = false;
+          }, 150);
         });
-      }
-    } else {
-      console.error('[FloatingPanel] electronAPI.onOptimizationComplete is NOT available!');
+      });
     }
 
-    // Listen for transcription updates
+    // Listen for set-prompt-text event (e.g. from overlay)
+    // Listen for set-prompt-text event
+    if (window.electronAPI?.onSetPromptText) {
+      window.electronAPI.onSetPromptText((text) => {
+        console.log('[IPC] Received set-prompt-text event');
+        if (text) {
+          promptTextarea.value = text;
+          // Auto-expand and start optimizing if text is provided
+          transitionToState('expanded');
+          optimizePrompt(text);
+        }
+      });
+    }
+
+    // Listen for optimization complete
+    if (window.electronAPI?.onOptimizationComplete) {
+      window.electronAPI.onOptimizationComplete((data) => {
+        console.log('[IPC] Received optimization-complete event');
+
+        // Only process if we are currently optimizing
+        if (!isOptimizing) return;
+
+        isOptimizing = false;
+        hasGeneratedOnce = true;
+        setGenerateButtonState('idle'); // Generate button goes back to idle or shows regenerate
+        retryButton.disabled = false;
+        promptTextarea.disabled = false;
+
+        // Ensure buttons are enabled
+        generateButton.disabled = false;
+
+        if (data.error) {
+          optimizedText.textContent = 'Error: ' + data.error;
+          setStatus('waiting', 'Error');
+          return;
+        }
+
+        // FIX: The main process returns 'optimized', not 'optimizedText'
+        optimizedPrompt = data.optimized || data.optimizedText;
+        setStatus('ready', 'Optimized');
+
+        // Animate the text typing
+        typeText(optimizedText, optimizedPrompt);
+      });
+    }
+
+    // Listen for streaming updates
     if (window.electronAPI?.onTranscriptionUpdate) {
       window.electronAPI.onTranscriptionUpdate((data) => {
-        if (data.type === 'transcription' && promptTextarea) {
-          promptTextarea.value = data.accumulated || data.text;
-        } else if (data.type === 'final' && promptTextarea) {
-          promptTextarea.value = data.text;
-        } else if (data.type === 'status') {
-          if (data.status === 'listening' && !isListening) {
+        console.log('[IPC] Received transcription update:', data);
+
+        if (data.type === 'status') {
+          if (data.status === 'listening') {
             startListening();
-          } else if (data.status === 'stopped' && isListening) {
+          } else if (data.status === 'stopped') {
             stopListening();
+          }
+        } else if (data.type === 'transcription') {
+          if (data.text) {
+            promptTextarea.value = data.text;
+          }
+        } else if (data.type === 'final') {
+          if (data.text) {
+            promptTextarea.value = data.text;
+            stopListening();
+            // Auto-submit after voice input
+            setTimeout(() => {
+              optimizePrompt(data.text);
+            }, 500);
           }
         } else if (data.type === 'error') {
           console.error('[Transcription] Error:', data.message);
           stopListening();
+          promptTextarea.placeholder = "Error: " + data.message;
+          setTimeout(() => {
+            promptTextarea.placeholder = "happy prompting...";
+          }, 3000);
         }
       });
     }
 
-    // ESC key - dismiss panel
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        console.log('[Keyboard] ESC pressed');
-        if (window.electronAPI?.send) {
-          window.electronAPI.send('floating-panel:dismiss', {});
-        }
-      }
-    });
-
-    // Mouse tracking
+    // ==========================================
+    // CLICK-THROUGH MANAGEMENT (CRITICAL FIX)
+    // ==========================================
+    // These listeners ensure the window captures mouse events when hovered,
+    // and lets them pass through when not hovered.
     document.body.addEventListener('mouseenter', () => {
+      console.log('[Mouse] Enter body - enabling clicks');
       if (window.electronAPI?.send) {
         window.electronAPI.send('floating-panel:set-clickable', true);
       }
     });
 
     document.body.addEventListener('mouseleave', () => {
+      console.log('[Mouse] Leave body - disabling clicks');
       if (window.electronAPI?.send) {
         window.electronAPI.send('floating-panel:set-clickable', false);
       }
     });
 
-    // ==========================================
-    // DRAG FUNCTIONALITY
-    // ==========================================
-    let isDragging = false;
-    let dragStartX = 0;
-    let dragStartY = 0;
-
-    function setupDragHandlers(dragHandle, excludeSelector = null) {
-      if (!dragHandle) return;
-
-      dragHandle.addEventListener('mousedown', (e) => {
-        if (excludeSelector && e.target.closest(excludeSelector)) {
-          return;
-        }
-
-        isDragging = true;
-        dragStartX = e.clientX;
-        dragStartY = e.clientY;
-
-        if (window.electronAPI?.send) {
-          window.electronAPI.send('floating-panel:drag-start', { x: dragStartX, y: dragStartY });
-        }
-
-        e.preventDefault();
-      });
-    }
-
-    setupDragHandlers(document.getElementById('collapsed-drag-handle'), '#logo-button');
-    setupDragHandlers(document.getElementById('expanded-drag-handle'), 'button');
-
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-
-      // Note: We no longer send drag-move events to the main process
-      // to avoid IPC bottleneck. The main process now uses a high-frequency
-      // timer triggered by drag-start for buttery smooth movement.
-    });
-
-    document.addEventListener('mouseup', (e) => {
-      if (!isDragging) return;
-
-      isDragging = false;
-
-      if (window.electronAPI?.send) {
-        window.electronAPI.send('floating-panel:drag-end', { x: e.clientX, y: e.clientY });
-      }
-    });
-
-    // ==========================================
-    // INITIALIZE
-    // ==========================================
-    console.log('[FloatingPanel] Initialized - Single panel design (NO POPUP)');
-    setStatus('waiting', 'Waiting');
+    // Initial log
+    console.log('[FloatingPanel v3] Script loaded');
   </script>
 </body>
 
