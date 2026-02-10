@@ -233,22 +233,34 @@
                 style="min-height: 50px; max-height: 120px;"></textarea>
             </div>
 
-            <!-- Generate button -->
-            <button id="generate-button"
-              class="w-full mt-2 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              style="-webkit-app-region: no-drag;">
-              <svg id="generate-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-              </svg>
-              <svg id="generate-spinner" class="w-4 h-4 hidden animate-spin" xmlns="http://www.w3.org/2000/svg"
-                fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
-                </path>
-              </svg>
-              <span id="generate-text">GENERATE</span>
-            </button>
+            <!-- Generate actions -->
+            <div class="flex items-center gap-2 mt-2">
+              <button id="generate-button"
+                class="flex-1 h-10 bg-white hover:bg-gray-100 text-black text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                style="-webkit-app-region: no-drag;">
+                <svg id="generate-icon" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
+                </svg>
+                <svg id="generate-spinner" class="w-4 h-4 hidden animate-spin" xmlns="http://www.w3.org/2000/svg"
+                  fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                  </path>
+                </svg>
+                <span id="generate-text">GENERATE</span>
+              </button>
+
+              <!-- Regenerate button (Initially hidden) -->
+              <button id="regenerate-icon-btn"
+                class="hidden w-12 h-10 bg-[#1c1c1c] border border-gray-800 hover:bg-gray-800 text-white rounded-xl flex items-center justify-center transition-all disabled:opacity-50"
+                title="Regenerate Original" style="-webkit-app-region: no-drag;">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- OPTIMIZED PROMPT Section (hidden initially, expands smoothly) -->
@@ -347,6 +359,7 @@
     const closeButton = document.getElementById('close-button');
     const promptTextarea = document.getElementById('prompt-textarea');
     const generateButton = document.getElementById('generate-button');
+    const regenerateIconBtn = document.getElementById('regenerate-icon-btn');
     const micButton = document.getElementById('mic-button');
     const micIcon = document.getElementById('mic-icon');
 
@@ -617,11 +630,22 @@
           generateIcon.classList.add('hidden');
           generateSpinner.classList.remove('hidden');
           generateText.textContent = 'GENERATING...';
+          // Disable separate regenerate button while loading
+          if (regenerateIconBtn) regenerateIconBtn.disabled = true;
           break;
         case 'idle':
           generateIcon.classList.remove('hidden');
           generateSpinner.classList.add('hidden');
-          generateText.textContent = hasGeneratedOnce ? 'REGENERATE' : 'GENERATE';
+          // Always keep text as GENERATE
+          generateText.textContent = 'GENERATE';
+
+          // Show regenerate button if we have generated once
+          if (hasGeneratedOnce && regenerateIconBtn) {
+            regenerateIconBtn.classList.remove('hidden');
+            regenerateIconBtn.disabled = false;
+            // The generate button is already forced to flex-1, so it will shrink slightly
+            // but we can animate width if needed. Flex layout handles it cleanly.
+          }
           break;
       }
     }
@@ -647,13 +671,23 @@
       }
     });
 
-    // Retry button (Regenerate)
+    // Retry button (Regenerate) - The one in the optimized section
     retryButton.addEventListener('click', () => {
       if (originalPrompt && !isOptimizing) {
         setGenerateButtonState('loading');
         optimizePrompt(originalPrompt, true);
       }
     });
+
+    // New Separate Regenerate Icon Button (next to Generate)
+    if (regenerateIconBtn) {
+      regenerateIconBtn.addEventListener('click', () => {
+        if (originalPrompt && !isOptimizing) {
+          setGenerateButtonState('loading');
+          optimizePrompt(originalPrompt, true);
+        }
+      });
+    }
 
     // Helper for visual feedback
     function showCopyFeedback(button) {
