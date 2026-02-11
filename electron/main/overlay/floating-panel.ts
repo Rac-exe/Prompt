@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain, app, screen } from "electron";
 import * as path from "path";
+import * as fs from "fs";
 import { SnapPositionCalculator, SnapPosition, ScreenCoordinates } from "./snap-positions";
 import { EventEmitter } from "events";
 import WebSocket from "ws";
@@ -21,13 +22,46 @@ export class FloatingPanel extends EventEmitter {
   private isTranscribing: boolean = false;
   private sessionId: string | null = null;
   private collapsedPosition: { x: number; y: number } | null = null; // Remember orb position
+  private windowStatePath: string;
 
   private dragTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
     this.snapCalculator = new SnapPositionCalculator();
+    this.windowStatePath = path.join(app.getPath('userData'), 'floating-panel-state.json');
     this.setupIPC();
+  }
+
+  /**
+   * Load saved window state
+   */
+  private loadWindowState(): { x: number; y: number } | null {
+    try {
+      if (fs.existsSync(this.windowStatePath)) {
+        const data = fs.readFileSync(this.windowStatePath, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error('[FloatingPanel] Failed to load window state:', error);
+    }
+    return null;
+  }
+
+  /**
+   * Save window state
+   */
+  private saveWindowState() {
+    if (!this.window || this.window.isDestroyed()) return;
+    try {
+      const bounds = this.window.getBounds();
+      // Only save x, y. Width/height are dynamic based on state.
+      const state = { x: bounds.x, y: bounds.y };
+      fs.writeFileSync(this.windowStatePath, JSON.stringify(state));
+      // console.log('[FloatingPanel] Saved window state:', state);
+    } catch (error) {
+      console.error('[FloatingPanel] Failed to save window state:', error);
+    }
   }
 
   /**
@@ -40,7 +74,31 @@ export class FloatingPanel extends EventEmitter {
     }
 
     const { width, height } = this.snapCalculator.getDimensions();
-    const position = this.snapCalculator.getPosition(this.currentPosition);
+
+    // Default position
+    let position = this.snapCalculator.getPosition(this.currentPosition);
+
+    // Try to restore saved position
+    const savedState = this.loadWindowState();
+    if (savedState) {
+      // Verify coordinates are on some screen
+      const nearestDisplay = screen.getDisplayNearestPoint({ x: savedState.x, y: savedState.y });
+      const bounds = nearestDisplay.workArea;
+
+      // Ensure top-left is within bounds
+      const isVisible =
+        savedState.x >= bounds.x &&
+        savedState.x < bounds.x + bounds.width &&
+        savedState.y >= bounds.y &&
+        savedState.y < bounds.y + bounds.height;
+
+      if (isVisible) {
+        position = { x: savedState.x, y: savedState.y };
+        console.log('[FloatingPanel] Restored saved position:', position);
+      } else {
+        console.log('[FloatingPanel] Saved position off-screen, using default:', position);
+      }
+    }
 
     this.window = new BrowserWindow({
       width,
@@ -99,11 +157,11 @@ export class FloatingPanel extends EventEmitter {
     // Start drag
     ipcMain.on("floating-panel:drag-start", (event) => {
       if (!this.window || this.isDragging) return;
-      
+
       this.isDragging = true;
       const cursor = screen.getCursorScreenPoint();
       const bounds = this.window.getBounds();
-      
+
       // Offset from cursor to window top-left
       this.dragStartPosition = {
         x: cursor.x - bounds.x,
@@ -139,7 +197,7 @@ export class FloatingPanel extends EventEmitter {
 
         const finalX = Math.floor(targetX);
         const finalY = Math.floor(targetY);
-        
+
         // Only move if position changed significantly
         if (finalX !== currentX || finalY !== currentY) {
           this.window.setPosition(finalX, finalY);
@@ -166,6 +224,8 @@ export class FloatingPanel extends EventEmitter {
       if (this.window) {
         const bounds = this.window.getBounds();
         console.log("[FloatingPanel] Drag ended at:", { x: bounds.x, y: bounds.y });
+        this.saveWindowState(); // SAVE STATE ON DRAG END
+        this.collapsedPosition = { x: bounds.x, y: bounds.y }; // Update collapsed position logic too
       }
     });
 
@@ -303,11 +363,11 @@ Write-Host "SUCCESS"
       `;
 
       await execAsync(`osascript -e '${script}'`);
-      
+
       // Also use Electron's built-in focus methods
       this.window.focus();
       this.window.moveTop();
-      
+
       console.log('[FloatingPanel] macOS focus applied successfully');
     } catch (error) {
       console.error('[FloatingPanel] Failed to force focus via macOS API:', error);
@@ -353,33 +413,47 @@ Write-Host "SUCCESS"
    */
   showAndFocusInput() {
     this.show();
-    
+
     // Wait for window to be ready, then expand and focus textarea
+    // Wait for window to be ready, then expand and focus textarea
+    // Increased delay to ensure renderer is ready to receive IPC
     setTimeout(() => {
       if (this.window && !this.window.isDestroyed()) {
-        // Send expand-to-input event to renderer
-        this.window.webContents.send("expand-to-input");
-        
-        // Focus the window
-        this.window.focus();
-        
-        // Focus the textarea in the renderer
-        setTimeout(() => {
-          if (this.window && !this.window.isDestroyed()) {
-            this.window.webContents.send("focus-input");
-            
-            // Also execute JS directly to ensure focus
-            this.window.webContents.executeJavaScript(`
-              const textarea = document.getElementById('prompt-textarea');
-              if (textarea) {
-                textarea.focus();
-                console.log('[FloatingPanel] Textarea focused via executeJavaScript');
-              }
-            `).catch(err => console.error('[FloatingPanel] Focus JS error:', err));
-          }
-        }, 150);
+        try {
+          // Send expand-to-input event to renderer
+          this.window.webContents.send("expand-to-input");
+
+          // Focus the window
+          this.window.focus();
+
+          // Focus the textarea in the renderer
+          setTimeout(() => {
+            if (this.window && !this.window.isDestroyed()) {
+              this.window.webContents.send("focus-input");
+
+              // Also execute JS directly to ensure focus, but wrap in try-catch block inside renderer
+              // to avoid main process errors if DOM isn't ready
+              this.window.webContents.executeJavaScript(`
+                try {
+                    const textarea = document.getElementById('prompt-textarea');
+                    if (textarea) {
+                        textarea.focus();
+                        textarea.select(); // Also select text if any
+                        console.log('[FloatingPanel] Textarea focused via executeJavaScript');
+                    } else {
+                        console.warn('[FloatingPanel] Textarea not found during focus attempt');
+                    }
+                } catch (e) {
+                    console.error('[FloatingPanel] Focus error:', e);
+                }
+                `).catch(err => console.error('[FloatingPanel] Focus JS error suppressed:', err));
+            }
+          }, 200); // Increased from 150 to 200
+        } catch (e) {
+          console.error('[FloatingPanel] Error in showAndFocusInput:', e);
+        }
       }
-    }, 100);
+    }, 150); // Increased from 100 to 150
   }
 
   /**
@@ -558,11 +632,11 @@ Write-Host "SUCCESS"
         try {
           const message = JSON.parse(data.toString());
           console.log("[FloatingPanel] Transcription message:", message.type);
-          
+
           if (this.window && !this.window.isDestroyed()) {
             this.window.webContents.send("transcription-update", message);
           }
-          
+
           // Emit events for app.ts listeners
           if (message.type === "transcription") {
             this.emit("transcription-update", message.accumulated);
@@ -573,7 +647,7 @@ Write-Host "SUCCESS"
           console.error("[FloatingPanel] Failed to parse WebSocket message:", error);
         }
       });
-      
+
       ws.on("error", (error: Error) => {
         console.error("[FloatingPanel] WebSocket error:", error);
         this.isTranscribing = false;
@@ -590,7 +664,7 @@ Write-Host "SUCCESS"
         console.log("[FloatingPanel] WebSocket closed");
         this.isTranscribing = false;
         this.transcriptionWebSocket = null;
-        
+
         if (this.window && !this.window.isDestroyed()) {
           this.window.webContents.send("transcription-update", {
             type: "status",
@@ -598,11 +672,11 @@ Write-Host "SUCCESS"
           });
         }
       });
-      
+
     } catch (error) {
       console.error("[FloatingPanel] Failed to start transcription:", error);
       this.isTranscribing = false;
-      
+
       if (this.window && !this.window.isDestroyed()) {
         this.window.webContents.send("transcription-update", {
           type: "error",

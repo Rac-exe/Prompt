@@ -7,8 +7,20 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  MoreHorizontal,
+  Trash2,
+  Pencil,
+  Archive,
+  Share
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -17,10 +29,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ProfileMenu } from "./ProfileMenu";
 
 interface SidebarProps {
-  currentView: "chat" | "library" | "settings";
-  onViewChange: (view: "chat" | "library" | "settings") => void;
-  userEmail: string;
-  onLogout: () => void;
+  currentView: "chat" | "library" | "settings" | "history";
+  onViewChange: (view: "chat" | "library" | "settings" | "history") => void;
   recentChats: { id: string; title: string; date: string }[];
   onSelectChat: (id: string) => void;
   selectedChatId: string | null;
@@ -32,8 +42,6 @@ interface SidebarProps {
 export const Sidebar = ({
   currentView,
   onViewChange,
-  userEmail,
-  onLogout,
   recentChats,
   onSelectChat,
   selectedChatId,
@@ -179,39 +187,77 @@ export const Sidebar = ({
               recentChats.map((chat) => {
                 const isSelected = selectedChatId === chat.id;
 
-                const chatButton = (
-                  <Button
-                    key={chat.id}
-                    variant="ghost"
-                    className={cn(
-                      "w-full justify-start h-9 text-sm transition-button",
-                      isSelected && "bg-sidebar-accent text-emerald",
-                      !isSelected && "text-sidebar-foreground hover:text-foreground hover:bg-sidebar-accent/50",
-                      collapsed && "justify-center px-2"
-                    )}
-                    onClick={() => {
-                      onSelectChat(chat.id);
-                      onViewChange("chat");
-                    }}
-                    data-testid={`chat-${chat.id}`}
-                  >
-                    <MessageSquare className="w-4 h-4 flex-shrink-0" />
+                const ChatItem = (
+                  <div key={chat.id} className="group relative">
+                    <Button
+                      variant="ghost"
+                      className={cn(
+                        "w-full justify-start h-9 text-sm transition-button pr-8",
+                        isSelected && "bg-sidebar-accent text-emerald",
+                        !isSelected && "text-sidebar-foreground hover:text-foreground hover:bg-sidebar-accent/50",
+                        collapsed && "justify-center px-2"
+                      )}
+                      onClick={() => {
+                        onSelectChat(chat.id);
+                        onViewChange("chat");
+                      }}
+                      data-testid={`chat-${chat.id}`}
+                    >
+                      <MessageSquare className="w-4 h-4 flex-shrink-0" />
+                      {!collapsed && (
+                        <span className="ml-3 truncate">{chat.title}</span>
+                      )}
+                    </Button>
+
                     {!collapsed && (
-                      <span className="ml-3 truncate">{chat.title}</span>
+                      <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground">
+                              <MoreHorizontal className="h-3 w-3" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-48 bg-card border-border">
+                            <DropdownMenuItem className="cursor-pointer text-foreground focus:bg-sidebar-accent">
+                              <Share className="mr-2 h-4 w-4" />
+                              <span>Share</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="cursor-pointer text-foreground focus:bg-sidebar-accent">
+                              <Pencil className="mr-2 h-4 w-4" />
+                              <span>Rename</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem className="cursor-pointer text-foreground focus:bg-sidebar-accent">
+                              <Archive className="mr-2 h-4 w-4" />
+                              <span>Archive</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator className="bg-border" />
+                            <DropdownMenuItem
+                              className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.electronAPI.deleteChat(chat.id);
+                              }}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              <span>Delete</span>
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     )}
-                  </Button>
+                  </div>
                 );
 
                 if (collapsed) {
                   return (
                     <Tooltip key={chat.id}>
-                      <TooltipTrigger asChild>{chatButton}</TooltipTrigger>
+                      <TooltipTrigger asChild>{ChatItem}</TooltipTrigger>
                       <TooltipContent side="right">{chat.title}</TooltipContent>
                     </Tooltip>
                   );
                 }
 
-                return chatButton;
+                return ChatItem;
               })
             )}
           </div>
@@ -221,10 +267,8 @@ export const Sidebar = ({
       {/* User Section with Profile Menu */}
       <div className="p-3 border-t border-sidebar-border">
         <ProfileMenu
-          userEmail={userEmail}
           onSettingsClick={handleSettingsClick}
           onHelpClick={handleHelpClick}
-          onLogout={onLogout}
           collapsed={collapsed}
         />
       </div>

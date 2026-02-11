@@ -7,6 +7,8 @@ import { MessageBubble, Message } from "./MessageBubble";
 
 interface ChatViewProps {
   messages: Message[];
+  streamingMessage?: Message | null;
+  generationStats?: { ttft: number | null; total: number | null };
   onSendMessage: (content: string) => void;
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
@@ -17,6 +19,8 @@ interface ChatViewProps {
 
 export const ChatView = ({
   messages,
+  streamingMessage,
+  generationStats,
   onSendMessage,
   onCopyPrompt,
   onSavePrompt,
@@ -58,6 +62,12 @@ export const ChatView = ({
           <span className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
             System Operational
           </span>
+          {generationStats && (generationStats.ttft || generationStats.total) && (
+            <div className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground/70 font-mono">
+              {generationStats.ttft && <span>TTFT: {generationStats.ttft}ms</span>}
+              {generationStats.total && <span>Total: {generationStats.total}ms</span>}
+            </div>
+          )}
         </div>
       </div>
 
@@ -92,11 +102,23 @@ export const ChatView = ({
                   isSaved={savedPromptIds.includes(message.id)}
                 />
               ))}
+
               {isGenerating && (
                 <div className="flex items-center gap-2 text-muted-foreground animate-fade-in">
                   <Loader2 className="w-4 h-4 animate-spin text-emerald" />
                   <span className="text-sm">Optimizing your prompt...</span>
                 </div>
+              )}
+
+              {streamingMessage && (
+                <MessageBubble
+                  key={streamingMessage.id}
+                  message={streamingMessage}
+                  onCopy={() => onCopyPrompt(streamingMessage.id)}
+                  onSave={() => onSavePrompt(streamingMessage.id)}
+                  onFeedback={onFeedback}
+                  isSaved={false}
+                />
               )}
             </div>
           </ScrollArea>

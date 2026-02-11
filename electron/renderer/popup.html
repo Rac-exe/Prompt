@@ -2,288 +2,191 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <!-- Tailwind + Inter setup -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
-    rel="stylesheet"
-  >
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    * {
-      box-sizing: border-box;
-    }
-    body {
-      margin: 0;
-      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background-color: #1a1a1a;
-    }
+    body { font-family: "Inter", sans-serif; }
+    /* Hide scrollbar for Chrome/Safari/Opera */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    /* Hide scrollbar for IE, Edge and Firefox */
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
   </style>
 </head>
-<body class="w-full h-full flex items-center justify-center bg-transparent">
-  <div id="popup-container" class="w-[400px] rounded-[20px] bg-[#FEF0FA] p-[32px] flex flex-col gap-4 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.08)] cursor-move">
-      <!-- Mini input bar inside card -->
-      <div class="flex h-[42px] w-full items-center rounded-[100px] bg-white/60 border border-[#E5E7EB] px-[2px]">
-        <div class="ml-[10px] w-[28px] h-[28px]">
-          <img src="../../images.jpg" alt="Star" class="w-full h-full">
+<body class="w-full h-full bg-transparent overflow-hidden">
+  <div id="popup-container" class="w-full h-full bg-zinc-950 border border-zinc-800 rounded-xl flex flex-col shadow-2xl overflow-hidden">
+      
+      <!-- Header / Drag Handle -->
+      <div class="flex items-center justify-between px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 cursor-move" id="drag-handle">
+        <div class="flex items-center gap-2">
+          <div class="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></div>
+          <span class="text-xs font-medium text-zinc-400">Prompt Optimizer</span>
         </div>
-        <span class="flex-1 px-3 text-[14px] font-semibold text-[#6B7280] opacity-60">
-          happy prompting...
-        </span>
-        <div class="mr-[10px] flex gap-1">
-          <!-- Mic icon from Lucide -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#6B7280]">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-            <line x1="12" y1="19" x2="12" y2="23"></line>
-            <line x1="8" y1="23" x2="16" y2="23"></line>
-          </svg>
-          <!-- LayoutDashboard icon from Lucide -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#6B7280]">
-            <rect x="3" y="3" width="7" height="7"></rect>
-            <rect x="14" y="3" width="7" height="7"></rect>
-            <rect x="14" y="14" width="7" height="7"></rect>
-            <rect x="3" y="14" width="7" height="7"></rect>
-          </svg>
+        <div id="status-text" class="text-xs text-zinc-500">Ready</div>
+      </div>
+
+      <!-- Content Area -->
+      <div class="flex-1 overflow-y-auto p-4 no-scrollbar">
+        <div class="prose prose-invert prose-sm max-w-none">
+          <p id="optimized" class="text-zinc-100 whitespace-pre-wrap leading-relaxed">Waiting for prompt...</p>
         </div>
       </div>
 
-      <!-- Status -->
-      <div id="status-text" class="text-[14px] text-[#6B7280]">
-        Optimizing...
-      </div>
-
-      <!-- Optimized text -->
-      <p
-        id="optimized"
-        class="text-[14px] leading-relaxed text-[#111827] whitespace-pre-wrap"
-      ></p>
-
-      <!-- Actions -->
-      <div class="flex justify-end gap-[12px] mt-2">
-        <button
-          id="try-again-btn"
-          type="button"
-          class="w-[64px] h-[42px] flex items-center justify-center rounded-[12px] bg-[#CB91C2] hover:opacity-90 transition shadow-sm"
-          title="Refresh optimization"
-        >
-          <!-- RefreshCcw icon from Lucide -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
-            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-            <path d="M21 3v5h-5"></path>
-            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-            <path d="M8 16H3v5"></path>
-          </svg>
+      <!-- Footer / Actions -->
+      <div class="p-3 bg-zinc-900/50 border-t border-zinc-800 flex justify-end gap-2">
+        
+        <!-- Refresh -->
+        <button id="try-again-btn" class="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors" title="Regenerate">
+          <svg class="w-4 h-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16l5 0l0 5"/></svg>
         </button>
 
-        <button
-          id="copy-btn"
-          type="button"
-          class="w-[64px] h-[42px] flex items-center justify-center rounded-[12px] bg-[#CB91C2] hover:opacity-90 transition shadow-sm"
-          title="Copy to clipboard"
-        >
-          <!-- Copy icon from Lucide -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-          </svg>
+        <!-- Copy -->
+        <button id="copy-btn" class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-zinc-300 bg-zinc-800 hover:bg-zinc-700 hover:text-white rounded-lg transition-colors border border-zinc-700" title="Copy to clipboard">
+          <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          Copy
         </button>
 
-        <button
-          id="replace-btn"
-          type="button"
-          class="w-[64px] h-[42px] flex items-center justify-center rounded-[12px] bg-[#9B51E0] hover:opacity-90 transition shadow-sm"
-          title="Replace original text"
-        >
-          <!-- Check icon from Lucide -->
-          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
-            <polyline points="20 6 9 17 4 12"></polyline>
-          </svg>
+        <!-- Replace -->
+        <button id="replace-btn" class="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors shadow-lg shadow-purple-900/20" title="Replace text">
+          <svg class="w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          Replace
         </button>
       </div>
-    </div>
   </div>
 
   <script>
     const params = new URLSearchParams(window.location.search);
     const original = params.get("original") || "";
     const optimized = params.get("optimized") || "";
+    
+    // Elements
+    const elements = {
+      optimized: document.getElementById("optimized"),
+      status: document.getElementById("status-text"),
+      btns: {
+        refresh: document.getElementById("try-again-btn"),
+        copy: document.getElementById("copy-btn"),
+        replace: document.getElementById("replace-btn")
+      },
+      container: document.getElementById("popup-container")
+    };
 
-    const optimizedEl = document.getElementById("optimized");
-    const statusEl = document.getElementById("status-text");
-    const inputEl = document.getElementById("prompt-input");
+    // State
+    const state = {
+      contextKey: null
+    };
 
-    if (inputEl && original) {
-      inputEl.value = original;
-    }
-
+    // Init Logic
     if (optimized) {
-      optimizedEl.textContent = optimized;
-      statusEl.textContent = "Optimized prompt";
+      elements.optimized.textContent = optimized;
+      elements.status.textContent = "Complete";
     } else {
-      optimizedEl.textContent = original;
+      elements.optimized.textContent = "Optimizing...";
     }
 
-    // ESC key to dismiss popup (Grammarly pattern)
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        if (window.electronAPI && window.electronAPI.dismiss) {
-          window.electronAPI.dismiss();
-        }
-      }
-    });
+    // Set Context Key
+    if (window.electronAPI) {
+        window.electronAPI.onSetContextKey((key) => {
+            state.contextKey = key;
+            // Store global reference for drag code (legacy support)
+            window.__contextKey = key; 
+        });
+        
+        window.electronAPI.onOptimizationChunk((data) => {
+             elements.optimized.textContent = data.accumulated;
+             elements.status.textContent = "Generating...";
+        });
 
-    // Copy button - copies to clipboard using IPC (works without focus)
-    document.getElementById("copy-btn").addEventListener("click", () => {
-      const textToUse = optimized || original;
-      if (textToUse) {
-        if (window.electronAPI && window.electronAPI.copyToClipboard) {
-          // Use IPC to copy (works even when window not focused)
-          window.electronAPI.copyToClipboard(textToUse);
+        window.electronAPI.onOptimizationComplete((data) => {
+             elements.optimized.textContent = data.optimized;
+             elements.status.textContent = "Done";
+        });
+        
+        window.electronAPI.onOptimizationError((data) => {
+             elements.optimized.textContent = "Error: " + data.error;
+             elements.status.textContent = "Error";
+             elements.status.classList.add("text-red-500");
+        });
+    }
 
-          // Enhanced visual feedback
-          const copyBtn = document.getElementById("copy-btn");
-          const originalContent = copyBtn.innerHTML;
+    // --- Actions ---
 
-          // Change to success state
-          copyBtn.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
-              <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-          `;
-          copyBtn.style.backgroundColor = "#10B981";
-          copyBtn.style.transform = "scale(1.05)";
-
-          // Reset after 1.5 seconds (don't auto-close popup for better UX)
-          setTimeout(() => {
-            copyBtn.innerHTML = originalContent;
-            copyBtn.style.backgroundColor = "";
-            copyBtn.style.transform = "";
-          }, 1500);
-
-        } else {
-          // Fallback to navigator.clipboard (requires focus)
-          navigator.clipboard.writeText(textToUse).then(() => {
-            // Enhanced visual feedback
-            const copyBtn = document.getElementById("copy-btn");
-            const originalContent = copyBtn.innerHTML;
-
-            // Change to success state
-            copyBtn.innerHTML = `
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-white">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            `;
-            copyBtn.style.backgroundColor = "#10B981";
-            copyBtn.style.transform = "scale(1.05)";
-
-            // Reset after 1.5 seconds
-            setTimeout(() => {
-              copyBtn.innerHTML = originalContent;
-              copyBtn.style.backgroundColor = "";
-              copyBtn.style.transform = "";
-            }, 1500);
-          }).catch(err => {
-            console.error("Failed to copy:", err);
-            alert("Failed to copy to clipboard");
-          });
-        }
-      }
-    });
-
-    // Replace button - replaces original text with optimized text
-    document.getElementById("replace-btn").addEventListener("click", () => {
-      const textToUse = optimized || original;
-      if (window.electronAPI && textToUse) {
-        window.electronAPI.replaceTextInPlace(original, textToUse);
-        // Show brief feedback before closing
-        const replaceBtn = document.getElementById("replace-btn");
-        replaceBtn.style.backgroundColor = "#10B981";
-        setTimeout(() => {
-          if (window.electronAPI) {
-            window.electronAPI.dismiss();
-          }
-        }, 500);
-      } else if (textToUse) {
-        alert("Text replacement not available. Copying to clipboard instead.");
-        navigator.clipboard.writeText(textToUse);
-      }
-    });
-
-    document.getElementById("try-again-btn").addEventListener("click", () => {
-      // Trigger re-optimization with the original prompt text
-      if (window.electronAPI && window.electronAPI.reOptimize) {
-        // Show loading state
-        const tryAgainBtn = document.getElementById("try-again-btn");
-        tryAgainBtn.style.backgroundColor = "#9B51E0";
-        statusEl.textContent = "Re-optimizing...";
-        optimizedEl.textContent = "Generating new optimization...";
-
-        // Request re-optimization
-        window.electronAPI.reOptimize(original);
-
-        // Note: The popup will be dismissed and a new one will appear with fresh optimization
-      } else if (window.electronAPI) {
-        window.electronAPI.dismiss();
-      }
-    });
-
-    // ==========================================
-    // DRAG FUNCTIONALITY
-    // ==========================================
+    // DRAG
     let isDragging = false;
     let dragStartX = 0;
     let dragStartY = 0;
 
-    const popupContainer = document.getElementById('popup-container');
-
-    if (popupContainer) {
-      popupContainer.addEventListener('mousedown', (e) => {
-        // Don't start drag if clicking on buttons
-        if (e.target.closest('button')) {
-          return;
-        }
-
+    const dragHandle = document.getElementById('drag-handle');
+    
+    dragHandle.addEventListener('mousedown', (e) => {
         isDragging = true;
         dragStartX = e.clientX;
         dragStartY = e.clientY;
-
-        if (window.electronAPI?.send) {
-          window.electronAPI.send('popup:drag-start', {
-            contextKey: (globalThis as any).__contextKey,
-            x: dragStartX,
-            y: dragStartY
-          });
+        
+        if (window.electronAPI && state.contextKey) {
+            window.electronAPI.send('popup:drag-start', {
+                contextKey: state.contextKey,
+                x: dragStartX,
+                y: dragStartY
+            });
         }
-
-        e.preventDefault();
-      });
-    }
+    });
 
     document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-
-      if (window.electronAPI?.send) {
-        window.electronAPI.send('popup:drag-move', {
-          contextKey: (globalThis as any).__contextKey,
-          x: e.clientX,
-          y: e.clientY
-        });
-      }
+        if (!isDragging) return;
+        if (window.electronAPI && state.contextKey) {
+            window.electronAPI.send('popup:drag-move', {
+                contextKey: state.contextKey,
+                x: e.clientX,
+                y: e.clientY
+            });
+        }
     });
 
     document.addEventListener('mouseup', (e) => {
-      if (!isDragging) return;
-
-      isDragging = false;
-
-      if (window.electronAPI?.send) {
-        window.electronAPI.send('popup:drag-end', {
-          contextKey: (globalThis as any).__contextKey,
-          x: e.clientX,
-          y: e.clientY
-        });
-      }
+        if (!isDragging) return;
+        isDragging = false;
+        if (window.electronAPI && state.contextKey) {
+            window.electronAPI.send('popup:drag-end', {
+                contextKey: state.contextKey,
+                x: e.clientX,
+                y: e.clientY
+            });
+        }
     });
+
+    // BUTTONS
+    elements.btns.copy.addEventListener('click', () => {
+        const text = elements.optimized.textContent;
+        if (window.electronAPI) {
+            window.electronAPI.copyToClipboard(text);
+            const originalText = elements.btns.copy.innerHTML;
+            elements.btns.copy.innerHTML = `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17 4 12"/></svg> Copied`;
+            setTimeout(() => elements.btns.copy.innerHTML = originalText, 1500);
+        }
+    });
+
+    elements.btns.replace.addEventListener('click', () => {
+        const text = elements.optimized.textContent;
+        if (window.electronAPI && state.contextKey) {
+             window.electronAPI.replaceTextInPlace(original, text);
+        }
+    });
+
+    elements.btns.refresh.addEventListener('click', () => {
+        if (window.electronAPI && window.electronAPI.reOptimize) {
+             elements.status.textContent = "Regenerating...";
+             elements.optimized.textContent = "";
+             window.electronAPI.reOptimize(original);
+        }
+    });
+
+    // CLOSE ON ESC
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (window.electronAPI) window.electronAPI.dismiss();
+        }
+    });
+
   </script>
 </body>
 </html>

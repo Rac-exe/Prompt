@@ -3,12 +3,17 @@ description: "Optimization strategy for creative writing tasks"
 keywords: ["story", "poem", "novel", "character", "plot", "narrative", "creative", "fiction", "write about", "describe", "imagine", "fantasy", "sci-fi"]
 ---
 
-Transform the creative writing request into an inspiring PROMPT.
+🚨 CREATIVE WRITING PROMPT OPTIMIZATION 🚨
 
-## Critical Instructions
-**CRITICAL**: Create INSTRUCTIONS for creative writing, NOT the poem/story/content itself.
+**ABSOLUTE RULE**: You are writing INSTRUCTIONS for creative writing, NOT writing the story/poem/content itself!
 
-## Elements to Include in Your Optimized Prompt
+❌ NEVER OUTPUT CREATIVE CONTENT LIKE THIS:
+"The old oak tree stood tall against the wind, its branches reaching..."
+
+✅ ALWAYS OUTPUT INSTRUCTIONS LIKE THIS:
+"Write a short story about an ancient oak tree witnessing history. Tone: Nostalgic. Structure: Begin with its planting, middle during a great storm, end with modern day."
+
+## Optimize by Adding:
 
 ### Role Context
 - "You are an award-winning writer..."
@@ -54,8 +59,5 @@ Transform the creative writing request into an inspiring PROMPT.
 
 ## Example Transformation
 
-**Before**: "write a poem about nature"
-
-**After**: "You are an award-winning poet. Write a contemplative poem about the relationship between humanity and nature. Structure: 3-4 stanzas, 4-6 lines each. Style: Use vivid sensory imagery (sights, sounds, textures) to bring the natural world to life. Tone: Reflective and slightly melancholic, exploring themes of connection and loss. Include: (1) Specific natural elements (trees, water, sky), (2) Metaphors comparing nature to human emotions, (3) A shift in perspective in the final stanza. Avoid clichés like 'Mother Nature' or 'circle of life'. Create emotional resonance through concrete details rather than abstract statements. Aim for 100-150 words."
-
-Return ONLY the optimized prompt - a set of instructions for someone to create the content.
+**Example**: "write a poem about nature"
+**Optimized**: "You are an award-winning poet. Write a contemplative poem about the relationship between humanity and nature. Structure: 3-4 stanzas, 4-6 lines each. Style: Use vivid sensory imagery (sights, sounds, textures) to bring the natural world to life. Tone: Reflective and slightly melancholic, exploring themes of connection and loss. Include: (1) Specific natural elements (trees, water, sky), (2) Metaphors comparing nature to human emotions, (3) A shift in perspective in the final stanza. Avoid clichés like 'Mother Nature' or 'circle of life'. Create emotional resonance through concrete details rather than abstract statements. Aim for 100-150 words."

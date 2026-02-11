@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,20 +8,38 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 interface LoginPageProps {
   onSwitchToSignup: () => void;
   onLoginSuccess: () => void;
+  error?: string | null;
 }
 
-export function LoginPage({ onSwitchToSignup, onLoginSuccess }: LoginPageProps) {
+export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalError }: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [internalError, setInternalError] = useState('');
+  const { toast } = useToast();
+
+  // Handle external errors (from AuthWrapper)
+  useEffect(() => {
+    if (externalError) {
+      setIsLoading(false);
+      // Clear password field for security, and email if desired (user requested both)
+      setPassword('');
+      setEmail('');
+      toast({
+        variant: "destructive",
+        title: "Login Failed",
+        description: externalError,
+        duration: 4000,
+      });
+    }
+  }, [externalError, toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (isLoading) return; // Prevent duplicate submissions
-    
-    setError('');
+
+    setInternalError('');
     setIsLoading(true);
 
     try {
@@ -29,13 +48,25 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess }: LoginPageProps) 
         window.electronAPI.signIn({ email, password });
         // The response will come through onAuthStateChange listener in AuthWrapper
       } else {
-        setError('This app requires Electron to run');
+        const msg = 'This app requires Electron to run';
+        setInternalError(msg);
         setIsLoading(false);
+        toast({
+          variant: "destructive",
+          title: "System Error",
+          description: msg,
+        });
       }
     } catch (err) {
       console.error('[LoginPage] Error during login:', err);
-      setError('An unexpected error occurred');
+      const msg = 'An unexpected error occurred';
+      setInternalError(msg);
       setIsLoading(false);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: msg,
+      });
     }
   };
 
@@ -50,11 +81,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess }: LoginPageProps) 
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="p-3 text-sm text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-                {error}
-              </div>
-            )}
+            {/* Inline error removed in favor of Toast */}
 
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>

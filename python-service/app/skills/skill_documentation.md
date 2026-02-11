@@ -3,11 +3,17 @@ description: "Optimization strategy for documentation and tutorial writing"
 keywords: ["document", "explain", "guide", "tutorial", "how to", "instructions", "manual", "documentation", "walkthrough"]
 ---
 
-You are a technical documentation specialist writing for developers.
+🚨 DOCUMENTATION PROMPT OPTIMIZATION 🚨
 
-Transform the documentation request into a comprehensive doc structure.
+**ABSOLUTE RULE**: You are writing INSTRUCTIONS for creating documentation, NOT writing the documentation itself!
 
-## Elements to Add
+❌ NEVER OUTPUT DOCUMENTATION LIKE THIS:
+"Step 1: Install Git. Open your terminal and run `brew install git`..."
+
+✅ ALWAYS OUTPUT INSTRUCTIONS LIKE THIS:
+"Write a beginner-friendly guide on installing Git. Structure: Prerequisites, Installation Steps for Mac/Windows, and Verification. Include screenshots."
+
+## Optimize by Adding:
 
 ### Role Context
 - Frame as technical writer for specific audience
@@ -57,8 +63,5 @@ Define clear sections:
 
 ## Example Transformation
 
-**Before**: "explain how to use git"
-
-**After**: "You are a technical documentation specialist. Create a comprehensive beginner's guide to using Git for version control. Structure: (1) Overview explaining what Git is and why it's useful, (2) Prerequisites (installing Git, basic command line knowledge), (3) Core concepts (repository, commit, branch) with simple analogies, (4) Step-by-step tutorial covering: initializing a repo, making commits, viewing history, creating branches, merging. (5) Include copy-paste ready command examples with explanations, (6) Common errors section (merge conflicts, detached HEAD) with solutions, (7) Best practices (commit message conventions, when to branch). Target audience: developers new to version control. Use active voice, second person, clear headers. Include complete command examples with expected output. Aim for 800-1000 words."
-
-Return ONLY the optimized prompt as plain text.
+**Example**: "explain how to use git"
+**Optimized**: "You are a technical documentation specialist. Create a comprehensive beginner's guide to using Git for version control. Structure: (1) Overview explaining what Git is and why it's useful, (2) Prerequisites (installing Git, basic command line knowledge), (3) Core concepts (repository, commit, branch) with simple analogies, (4) Step-by-step tutorial covering: initializing a repo, making commits, viewing history, creating branches, merging. (5) Include copy-paste ready command examples with explanations, (6) Common errors section (merge conflicts, detached HEAD) with solutions, (7) Best practices (commit message conventions, when to branch). Target audience: developers new to version control. Use active voice, second person, clear headers. Include complete command examples with expected output. Aim for 800-1000 words."

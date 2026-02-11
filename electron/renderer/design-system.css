@@ -1,0 +1,110 @@
+/* Prompt Weaver - Premium Emerald Design System */
+/* Copied from app-ui/src/index.css to ensure consistency between App and Floating Panel */
+
+:root {
+  /* Light mode - soft and muted */
+  --background: 0 0% 100%;
+  --foreground: 210 24% 16%;
+
+  --card: 0 0% 98%;
+  --card-foreground: 210 24% 16%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 210 24% 16%;
+
+  --primary: 150 60% 45%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 210 14% 89%;
+  --secondary-foreground: 210 24% 16%;
+
+  --muted: 210 14% 95%;
+  --muted-foreground: 215 16% 47%;
+
+  --accent: 150 60% 96%;
+  --accent-foreground: 150 60% 25%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 150 60% 45%;
+
+  --radius: 0.75rem;
+
+  /* Custom tokens - Light */
+  --surface: 0 0% 98%;
+  --surface-hover: 210 14% 95%;
+  --glow-primary: 150 60% 45%;
+  --success: 150 60% 45%;
+  --success-foreground: 0 0% 100%;
+  --emerald: 150 60% 45%;
+  --emerald-soft: 150 50% 65%;
+  --glass-overlay: 150 60% 45% / 0.06;
+}
+
+.dark {
+  /* Dark mode - premium emerald on refined black */
+  --background: 217 33% 7%;
+  --foreground: 210 20% 98%;
+
+  --card: 217 33% 10%;
+  --card-foreground: 210 20% 98%;
+
+  --popover: 217 33% 10%;
+  --popover-foreground: 210 20% 98%;
+
+  --primary: 150 80% 60%;
+  --primary-foreground: 217 33% 7%;
+
+  --secondary: 217 33% 12%;
+  --secondary-foreground: 210 20% 98%;
+
+  --muted: 217 33% 15%;
+  --muted-foreground: 215 20% 65%;
+
+  --accent: 217 33% 18%;
+  --accent-foreground: 210 20% 98%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --border: 217 33% 15%;
+  --input: 217 33% 15%;
+  --ring: 150 80% 60%;
+
+  --radius: 0.75rem;
+
+  /* Custom tokens - Dark */
+  --surface: 217 33% 12%;
+  --surface-hover: 217 33% 15%;
+  --glow-primary: 150 80% 60%;
+  --success: 150 80% 60%;
+  --success-foreground: 217 33% 7%;
+  --emerald: 150 80% 60%;
+  --emerald-soft: 150 70% 75%;
+  --glass-overlay: 150 80% 60% / 0.06;
+}
+
+
+/* Utility Classes for Glows (Matching app-ui) */
+.glow-primary {
+  box-shadow: 0 0 20px hsl(var(--emerald) / 0.3),
+              0 0 40px hsl(var(--emerald) / 0.15);
+}
+
+.glow-primary-subtle {
+  box-shadow: 0 0 10px hsl(var(--emerald) / 0.2);
+}
+
+.text-gradient-primary {
+  background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.bg-gradient-primary {
+  background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+}

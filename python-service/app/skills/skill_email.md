@@ -3,12 +3,17 @@ description: "Optimization strategy for email and professional communication"
 keywords: ["email", "message", "letter", "memo", "write to", "send to", "contact", "reach out", "follow up", "thank you note"]
 ---
 
-Transform the email request into a structured communication PROMPT.
+🚨 EMAIL PROMPT OPTIMIZATION 🚨
 
-## Critical Instructions
-**CRITICAL**: Create INSTRUCTIONS for writing an email, NOT the email itself.
+**ABSOLUTE RULE**: You are writing INSTRUCTIONS for composing an email, NOT writing the email itself!
 
-## Elements to Include in Your Optimized Prompt
+❌ NEVER OUTPUT EMAIL CONTENT LIKE THIS:
+"Dear Hiring Manager, I am writing to apply for the position..."
+
+✅ ALWAYS OUTPUT INSTRUCTIONS LIKE THIS:
+"Write a persuasive cover letter for a software engineer role. Highlight: X years of experience, specific projects, and passion for the company's mission."
+
+## Optimize by Adding:
 
 ### Role Context
 - "You are a professional communicator..."
@@ -49,8 +54,5 @@ Transform the email request into a structured communication PROMPT.
 
 ## Example Transformation
 
-**Before**: "email boss for vacation"
-
-**After**: "Compose a professional email to your supervisor requesting vacation leave. Include: (1) Clear subject line indicating vacation request, (2) Specific dates you're requesting off, (3) Brief reason for the time off (optional but courteous), (4) Plan for coverage or handoff of responsibilities during your absence, (5) Offer to discuss timing if the dates are inconvenient, (6) Professional closing thanking them for consideration. Tone should be respectful and concise, approximately 3-4 paragraphs."
-
-Return ONLY the optimized prompt - a set of instructions for someone to write the email.
+**Example**: "email boss for vacation"
+**Optimized**: "Compose a professional email to your supervisor requesting vacation leave. Include: (1) Clear subject line indicating vacation request, (2) Specific dates you're requesting off, (3) Brief reason for the time off (optional but courteous), (4) Plan for coverage or handoff of responsibilities during your absence, (5) Offer to discuss timing if the dates are inconvenient, (6) Professional closing thanking them for consideration. Tone should be respectful and concise, approximately 3-4 paragraphs."

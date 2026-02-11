@@ -302,13 +302,13 @@ export class OverlayManager extends EventEmitter {
 
     // Create popup
     const popup = new BrowserWindow({
-      width: 550,
-      height: 350,
+      width: 600,
+      height: 450,
       frame: false,
       transparent: true,
       alwaysOnTop: true,
       skipTaskbar: true,
-      resizable: false,
+      resizable: true,
       focusable: true, // Changed to true to enable click-outside detection via blur event
       // Note: This means popup will briefly steal focus from underlying app (like Notepad)
       // However, text replacement happens before popup is shown, so this is safe
@@ -375,7 +375,7 @@ export class OverlayManager extends EventEmitter {
 
   showError(context: PromptContext, message: string) {
     const key = this.getContextKey(context);
-    
+
     // Hide highlight
     this.hideHighlight(context);
 
@@ -417,7 +417,7 @@ export class OverlayManager extends EventEmitter {
     const boundsY = context.window?.bounds?.y ?? 0;
     const estimatedX = (isNaN(context.estimatedCursorX) ? boundsX + 50 : context.estimatedCursorX);
     const estimatedY = (isNaN(context.estimatedCursorY) ? boundsY + 100 : context.estimatedCursorY);
-    
+
     return {
       x: estimatedX,
       y: estimatedY - 25
@@ -428,10 +428,10 @@ export class OverlayManager extends EventEmitter {
     // Position popup above the highlight, or below if not enough space
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-    
+
     const popupWidth = 550;
     const popupHeight = 350;
-    
+
     let x = context.estimatedCursorX;
     let y = context.estimatedCursorY - popupHeight - 10;
 
@@ -508,14 +508,14 @@ export class OverlayManager extends EventEmitter {
       // For MVP: Copy to clipboard and show instruction
       // In production, implement actual keyboard simulation
       await this.textReplacer.copyToClipboard(newText);
-      
+
       // Try to simulate paste (this is a placeholder - needs native module)
       console.log("Text copied to clipboard. Simulating paste...");
       console.log("Note: Full keyboard simulation requires native module");
-      
+
       // TODO: Implement actual keyboard simulation
       // For now, user can manually paste (Ctrl+V / Cmd+V)
-      
+
     } catch (error) {
       console.error("Text replacement error:", error);
       throw error;

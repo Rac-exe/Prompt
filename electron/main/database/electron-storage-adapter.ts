@@ -13,12 +13,12 @@ export class ElectronStorageAdapter {
     // Store in Electron's userData directory
     const userDataPath = app.getPath('userData');
     const storageDir = join(userDataPath, '.supabase');
-    
+
     // Create directory if it doesn't exist
     if (!existsSync(storageDir)) {
       mkdirSync(storageDir, { recursive: true });
     }
-    
+
     this.storagePath = join(storageDir, 'session.json');
     console.log('[ElectronStorageAdapter] Storage path:', this.storagePath);
   }
@@ -33,8 +33,8 @@ export class ElectronStorageAdapter {
       const data = readFileSync(this.storagePath, 'utf-8');
       const parsed = JSON.parse(data);
       const value = parsed[key] || null;
-      
-      console.log('[ElectronStorageAdapter] getItem:', key, value ? 'found' : 'not found');
+
+      // console.log('[ElectronStorageAdapter] getItem:', key, value ? 'found' : 'not found');
       return value;
     } catch (error) {
       console.error('[ElectronStorageAdapter] Error reading session:', error);
@@ -45,19 +45,19 @@ export class ElectronStorageAdapter {
   async setItem(key: string, value: string): Promise<void> {
     try {
       let data: Record<string, string> = {};
-      
+
       // Read existing data
       if (existsSync(this.storagePath)) {
         const existing = readFileSync(this.storagePath, 'utf-8');
         data = JSON.parse(existing);
       }
-      
+
       // Update key
       data[key] = value;
-      
+
       // Write to file
       writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf-8');
-      console.log('[ElectronStorageAdapter] setItem:', key, 'saved');
+      // console.log('[ElectronStorageAdapter] setItem:', key, 'saved');
     } catch (error) {
       console.error('[ElectronStorageAdapter] Error saving session:', error);
       throw error;
@@ -72,9 +72,9 @@ export class ElectronStorageAdapter {
 
       const data = JSON.parse(readFileSync(this.storagePath, 'utf-8'));
       delete data[key];
-      
+
       writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf-8');
-      console.log('[ElectronStorageAdapter] removeItem:', key, 'removed');
+      // console.log('[ElectronStorageAdapter] removeItem:', key, 'removed');
     } catch (error) {
       console.error('[ElectronStorageAdapter] Error removing session:', error);
       throw error;

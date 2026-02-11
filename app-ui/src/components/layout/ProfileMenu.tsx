@@ -9,22 +9,23 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/context/AuthContext";
 
 interface ProfileMenuProps {
-  userEmail: string;
   onSettingsClick: () => void;
   onHelpClick: () => void;
-  onLogout: () => void;
   collapsed?: boolean;
 }
 
 export const ProfileMenu = ({
-  userEmail,
   onSettingsClick,
   onHelpClick,
-  onLogout,
   collapsed = false,
 }: ProfileMenuProps) => {
+  const { user, signOut } = useAuth();
+  const userEmail = user?.profile?.email || "user@example.com";
+  const userInitial = (user?.profile?.name?.[0] || userEmail[0] || "U").toUpperCase();
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -36,7 +37,7 @@ export const ProfileMenu = ({
         >
           <Avatar className="h-8 w-8">
             <AvatarFallback className="bg-emerald/20 text-emerald text-sm">
-              {userEmail[0].toUpperCase()}
+              {userInitial}
             </AvatarFallback>
           </Avatar>
           {!collapsed && (
@@ -71,7 +72,7 @@ export const ProfileMenu = ({
         </DropdownMenuItem>
         <DropdownMenuSeparator className="bg-border" />
         <DropdownMenuItem
-          onClick={onLogout}
+          onClick={signOut}
           className="cursor-pointer text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive"
         >
           <LogOut className="w-4 h-4 mr-2" />

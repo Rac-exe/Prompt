@@ -16,80 +16,14 @@ import queue
 import asyncio
 import os
 import torch
-from pathlib import Path
 
 app = FastAPI()
 
 # ============================================
-# SKILL MANAGER - Load optimization strategies from skill files
+# SKILL MANAGER - DISABLED (using simple system prompt instead)
 # ============================================
-
-class SkillManager:
-    """Manages loading and retrieval of skill-based optimization strategies."""
-    
-    def __init__(self, skills_dir: str = "app/skills"):
-        self.skills_dir = Path(skills_dir)
-        self.skills = {}
-        self.skill_keywords = {}
-        self.load_skills()
-    
-    def load_skills(self):
-        """Load all skill files from the skills directory."""
-        if not self.skills_dir.exists():
-            print(f"[SkillManager] WARNING: Skills directory not found: {self.skills_dir}")
-            return
-        
-        skill_files = list(self.skills_dir.glob("skill_*.md"))
-        print(f"[SkillManager] Loading {len(skill_files)} skill files...")
-        
-        for skill_file in skill_files:
-            skill_name = skill_file.stem.replace("skill_", "")
-            try:
-                with open(skill_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # Parse frontmatter (YAML between ---)
-                keywords = []
-                strategy_content = content
-                
-                if content.startswith('---'):
-                    parts = content.split('---', 2)
-                    if len(parts) >= 3:
-                        frontmatter = parts[1]
-                        strategy_content = parts[2].strip()
-                        
-                        # Extract keywords from frontmatter
-                        for line in frontmatter.split('\n'):
-                            if line.strip().startswith('keywords:'):
-                                # Parse keywords list
-                                keywords_str = line.split('keywords:', 1)[1].strip()
-                                if keywords_str.startswith('['):
-                                    # Parse JSON-style list
-                                    import json
-                                    try:
-                                        keywords = json.loads(keywords_str)
-                                    except:
-                                        pass
-                
-                self.skills[skill_name] = strategy_content
-                self.skill_keywords[skill_name] = keywords
-                print(f"[SkillManager] ✓ Loaded skill '{skill_name}' ({len(keywords)} keywords)")
-                
-            except Exception as e:
-                print(f"[SkillManager] ✗ Failed to load {skill_file.name}: {e}")
-        
-        print(f"[SkillManager] Successfully loaded {len(self.skills)} skills")
-    
-    def get_strategy(self, skill_name: str) -> str:
-        """Get the optimization strategy for a specific skill."""
-        return self.skills.get(skill_name, self.skills.get('general', ''))
-    
-    def get_keywords(self, skill_name: str) -> list:
-        """Get the keywords for a specific skill."""
-        return self.skill_keywords.get(skill_name, [])
-
-# Initialize SkillManager
-skill_manager = SkillManager()
+# Skill system has been disabled to use a single, clear system prompt
+# which prevents the LLM from generating content instead of optimizing prompts
 
 
 # CORS middleware to allow Electron to communicate
@@ -160,9 +94,141 @@ def detect_prompt_type(prompt: str) -> str:
 def get_optimization_strategy(prompt_type: str) -> str:
     """
     Returns the specialized system prompt for the detected prompt type.
-    Now loads from skill files via SkillManager.
     """
-    return skill_manager.get_strategy(prompt_type)
+
+    strategies = {
+        'coding': """Transform the coding request into a comprehensive technical specification PROMPT.
+
+CRITICAL: Create INSTRUCTIONS for writing code, NOT the code itself.
+
+Include these elements in your optimized prompt:
+- Role context: "You are an expert software engineer..."
+- Clear requirements: What the code should do
+- Technical specifications: Language, frameworks, algorithms
+- Edge cases: What scenarios to handle
+- Code quality requirements: Type hints, docstrings, error handling
+- Testing approach: What to validate
+- Output structure: Function signature, implementation, usage example
+
+Return ONLY the optimized prompt - a set of instructions for someone to write the code.""",
+
+        'email': """Transform the email request into a structured communication PROMPT.
+
+CRITICAL: Create INSTRUCTIONS for writing an email, NOT the email itself.
+
+Include these elements in your optimized prompt:
+- Role context: "You are a professional communicator..."
+- Email structure: Subject line, opening, body, closing
+- Tone requirements: Professional, concise, respectful
+- Content to include: Purpose, key details, call-to-action
+- Length guidance: Typically 3-4 paragraphs
+- Audience consideration: Relationship to recipient
+- Any specific requirements from the original request
+
+Return ONLY the optimized prompt - a set of instructions for someone to write the email.""",
+
+        'analysis': """You are a senior data analyst specializing in business intelligence.
+
+Transform the analysis request into a comprehensive analytical framework.
+
+Add these elements:
+- Role context: Frame as senior analyst with domain expertise
+- Chain of thought: Request step-by-step analytical approach
+- Framework: Provide structure (overview → trends → root causes → insights → recommendations)
+- Depth: Request specific numbers, percentages, comparisons
+- Output structure: Organize findings logically with executive summary
+- Actionable insights: Emphasize practical recommendations
+- Visualization: Suggest appropriate charts/graphs if relevant
+
+Output format: Structured analytical prompt with clear methodology.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'creative': """Transform the creative writing request into an inspiring PROMPT.
+
+CRITICAL: Create INSTRUCTIONS for creative writing, NOT the poem/story/content itself.
+
+Include these elements in your optimized prompt:
+- Role context: "You are an award-winning writer..."
+- What to create: Poem, story, character description, etc.
+- Structure: Narrative arc, stanza format, story beats
+- Style and tone: Voice, mood, point of view
+- Specific elements: Setting, themes, sensory details
+- Constraints: Word count, format, pacing
+- Quality guidance: Avoid clichés, create emotional resonance
+- Theme or message: What the piece should convey
+
+Return ONLY the optimized prompt - a set of instructions for someone to create the content.""",
+
+        'image': """You are a professional visual designer and art director.
+
+Transform the image request into a detailed visual specification.
+
+Add these elements:
+- Visual details: Expand with lighting, colors, textures, atmosphere
+- Composition: Suggest framing, perspective, focal points (rule of thirds, etc.)
+- Subject details: Enhance with specific characteristics, poses, expressions
+- Environment: Add background, setting, context elements
+- Mood/atmosphere: Specify emotional tone and feeling
+- Technical specs: Mention style (photorealistic, artistic, etc.), quality level
+- Lighting: Detail light sources, shadows, time of day
+
+Output format: Rich, descriptive prompt optimized for image generation.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'documentation': """You are a technical documentation specialist writing for developers.
+
+Transform the documentation request into a comprehensive doc structure.
+
+Add these elements:
+- Role context: Frame as technical writer for specific audience
+- Structure: Define sections (overview, prerequisites, step-by-step, examples, troubleshooting)
+- Clarity: Request active voice, second person, clear headers
+- Code examples: Specify need for copy-paste ready examples
+- Completeness: Request edge cases, common errors, best practices
+- Audience level: Specify assumed knowledge level
+- Format: Use bullet points, numbered steps, code blocks appropriately
+
+Output format: Structured documentation prompt with clear organization.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'business': """You are an experienced business professional and project manager.
+
+Transform the business communication into a strategic, professional prompt.
+
+Add these elements:
+- Role context: Frame as experienced business professional
+- Structure: Define logical flow (situation → impact → action → outcome)
+- Tone: Specify professional, solution-focused communication
+- Stakeholder focus: Consider audience needs and concerns
+- Clarity: Request specific details (dates, metrics, actions)
+- Accountability: Balance transparency with confidence
+- Next steps: Include clear actions and follow-up plan
+
+Output format: Professional business communication prompt with strategic framing.
+
+Return ONLY the optimized prompt as plain text.""",
+
+        'general': """You are an expert prompt optimization specialist.
+
+Transform the request into a clearer, more specific, and more effective version.
+
+Enhancement approach:
+- Add clarity: Make vague requests specific
+- Add structure: Organize complex requests logically
+- Add context: Include relevant background or constraints
+- Add guidance: Specify desired format, tone, or approach
+- Remove ambiguity: Clarify unclear elements
+- Maintain intent: Preserve the original meaning exactly
+
+Output format: Clear, actionable prompt that will generate better results.
+
+Return ONLY the optimized prompt as plain text."""
+    }
+
+    return strategies.get(prompt_type, strategies['general'])
 
 
 # Main system prompt that orchestrates the adaptive optimization
@@ -284,35 +350,17 @@ async def optimize_prompt(request: OptimizeRequest):
         print(f"[Optimize] Detected prompt type: {prompt_type}")
         print(f"[Optimize] Applying {prompt_type} optimization strategy")
 
-        # Check if we have chat history (context-aware mode)
-        has_history = request.messages and len(request.messages) > 0
-        if has_history:
-            print(f"[Optimize] Context-aware mode: {len(request.messages)} previous messages")
-        
         # Use higher temperature for regenerate requests to ensure different results
         temperature = 1.2 if request.skip_cache else 0.7
-
-        # Build messages array for Ollama
-        ollama_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"},
-        ]
-        
-        # If we have chat history, include it for context
-        if has_history:
-            for msg in request.messages:
-                ollama_messages.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
-        
-        # Add the current user prompt
-        ollama_messages.append({"role": "user", "content": prompt_text})
 
         # Call Ollama with adaptive system prompt
         response = ollama.chat(
             model="llama3.2",  # Default model - user should configure
-            messages=ollama_messages,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"},
+                {"role": "user", "content": prompt_text}
+            ],
             options={
                 "temperature": temperature,
                 "num_predict": 800  # Increased from 500 to allow for richer optimizations
@@ -354,6 +402,134 @@ async def optimize_prompt(request: OptimizeRequest):
                 detail="Model not found. Please ensure Ollama is running and the model is installed (e.g., 'ollama pull llama3.2')"
             )
         raise HTTPException(status_code=500, detail=f"Optimization failed: {error_msg}")
+
+@app.websocket("/ws/optimize-stream")
+async def optimize_stream(websocket: WebSocket):
+    """
+    WebSocket endpoint for streaming prompt optimization.
+    Maintains a persistent connection for multiple requests.
+    """
+    await websocket.accept()
+    print("[OptimizeStream] WebSocket connection accepted")
+    
+    try:
+        while True:
+            # Receive prompt data from client
+            data = await websocket.receive_json()
+            
+            # Extract request context
+            request_id = data.get("request_id")
+            if not request_id:
+                # Generate one if missing (legacy client support)
+                request_id = str(int(time.time() * 1000))
+                
+            prompt_text = data.get("prompt", "").strip()
+            skip_cache = data.get("skip_cache", False)
+            messages = data.get("messages", None)
+            
+            print(f"[OptimizeStream] Processing request {request_id}")
+            print(f"[OptimizeStream] Prompt: {prompt_text[:50]}... (length: {len(prompt_text)})")
+            
+            if not prompt_text or len(prompt_text) < 3:
+                await websocket.send_json({
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": "Prompt too short (minimum 3 characters)"
+                })
+                continue
+            
+            # Detect prompt type for adaptive optimization
+            prompt_type = detect_prompt_type(prompt_text)
+            optimization_strategy = get_optimization_strategy(prompt_type)
+            
+            print(f"[OptimizeStream] Detected prompt type: {prompt_type}")
+            
+            # Build messages for Ollama with adaptive strategy
+            ollama_messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"}
+            ]
+            
+            # Add chat history if provided
+            if messages and isinstance(messages, list):
+                for msg in messages:
+                    if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
+                         ollama_messages.append({
+                            "role": msg['role'],
+                            "content": msg['content']
+                        })
+                    elif hasattr(msg, 'role') and hasattr(msg, 'content'):
+                        ollama_messages.append({
+                            "role": msg.role,
+                            "content": msg.content
+                        })
+            
+            # Add current user prompt
+            ollama_messages.append({"role": "user", "content": prompt_text})
+            
+            # Use higher temperature for regenerate requests
+            temperature = 1.2 if skip_cache else 0.7
+            
+            print(f"[OptimizeStream] Starting Ollama streaming with temperature={temperature}")
+            
+            # Stream response from Ollama
+            try:
+                stream = ollama.chat(
+                    model="llama3.2",
+                    messages=ollama_messages,
+                    options={
+                        "temperature": temperature,
+                        "num_predict": 800
+                    },
+                    stream=True
+                )
+                
+                accumulated_text = ""
+                chunk_count = 0
+                
+                for chunk in stream:
+                    if chunk.get("message"):
+                        content = chunk["message"]["content"]
+                        accumulated_text += content
+                        chunk_count += 1
+                        
+                        # Send chunk to client with request_id
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "request_id": request_id,
+                            "content": content,
+                            "accumulated": accumulated_text
+                        })
+                
+                # Clean the accumulated text
+                cleaned_text = clean_optimized_text(accumulated_text)
+                
+                # Send completion signal
+                await websocket.send_json({
+                    "type": "complete",
+                    "request_id": request_id,
+                    "optimized": cleaned_text,
+                    "original": prompt_text
+                })
+                
+                print(f"[OptimizeStream] ✓ Request {request_id} complete. Chunks: {chunk_count}")
+                
+            except Exception as e:
+                print(f"[OptimizeStream] ✗ Error processing request {request_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                await websocket.send_json({
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": f"Optimization failed: {str(e)}"
+                })
+                
+    except WebSocketDisconnect:
+        print("[OptimizeStream] Client disconnected")
+    except Exception as e:
+        print(f"[OptimizeStream] ✗ Fatal connection error: {e}")
+    finally:
+        pass # Connection closed
 
 @app.get("/health")
 async def health():
