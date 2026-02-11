@@ -686,6 +686,36 @@
     const generateText = document.getElementById('generate-text');
     let hasGeneratedOnce = false;
 
+    // ==========================================
+    // DRAG HANDLERS
+    // ==========================================
+    const collapsedHandle = document.getElementById('collapsed-drag-handle');
+    const expandedHandle = document.getElementById('expanded-drag-handle');
+
+    function setupDrag(element) {
+      if (!element) return;
+
+      element.addEventListener('mousedown', (e) => {
+        // Ignore if clicking a button inside the handle
+        if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+
+        if (e.button === 0) { // Left click only
+          if (window.electronAPI?.send) {
+            window.electronAPI.send('floating-panel:drag-start');
+          }
+        }
+      });
+    }
+
+    setupDrag(collapsedHandle);
+    setupDrag(expandedHandle);
+
+    window.addEventListener('mouseup', () => {
+      if (window.electronAPI?.send) {
+        window.electronAPI.send('floating-panel:drag-end');
+      }
+    });
+
     // Update generate button state
     function setGenerateButtonState(state) {
       switch (state) {

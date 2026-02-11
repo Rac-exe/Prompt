@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain, app, screen } from "electron";
 import * as path from "path";
+import * as fs from "fs";
 import { SnapPositionCalculator, SnapPosition, ScreenCoordinates } from "./snap-positions";
 import { EventEmitter } from "events";
 import WebSocket from "ws";
@@ -21,13 +22,46 @@ export class FloatingPanel extends EventEmitter {
   private isTranscribing: boolean = false;
   private sessionId: string | null = null;
   private collapsedPosition: { x: number; y: number } | null = null; // Remember orb position
+  private windowStatePath: string;
 
   private dragTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
     this.snapCalculator = new SnapPositionCalculator();
+    this.windowStatePath = path.join(app.getPath('userData'), 'floating-panel-state.json');
     this.setupIPC();
+  }
+
+  /**
+   * Load saved window state
+   */
+  private loadWindowState(): { x: number; y: number } | null {
+    try {
+      if (fs.existsSync(this.windowStatePath)) {
+        const data = fs.readFileSync(this.windowStatePath, 'utf8');
+        return JSON.parse(data);
+      }
+    } catch (error) {
+      console.error('[FloatingPanel] Failed to load window state:', error);
+    }
+    return null;
+  }
+
+  /**
+   * Save window state
+   */
+  private saveWindowState() {
+    if (!this.window || this.window.isDestroyed()) return;
+    try {
+      const bounds = this.window.getBounds();
+      // Only save x, y. Width/height are dynamic based on state.
+      const state = { x: bounds.x, y: bounds.y };
+      fs.writeFileSync(this.windowStatePath, JSON.stringify(state));
+      // console.log('[FloatingPanel] Saved window state:', state);
+    } catch (error) {
+      console.error('[FloatingPanel] Failed to save window state:', error);
+    }
   }
 
   /**
@@ -40,7 +74,31 @@ export class FloatingPanel extends EventEmitter {
     }
 
     const { width, height } = this.snapCalculator.getDimensions();
-    const position = this.snapCalculator.getPosition(this.currentPosition);
+
+    // Default position
+    let position = this.snapCalculator.getPosition(this.currentPosition);
+
+    // Try to restore saved position
+    const savedState = this.loadWindowState();
+    if (savedState) {
+      // Verify coordinates are on some screen
+      const nearestDisplay = screen.getDisplayNearestPoint({ x: savedState.x, y: savedState.y });
+      const bounds = nearestDisplay.workArea;
+
+      // Ensure top-left is within bounds
+      const isVisible =
+        savedState.x >= bounds.x &&
+        savedState.x < bounds.x + bounds.width &&
+        savedState.y >= bounds.y &&
+        savedState.y < bounds.y + bounds.height;
+
+      if (isVisible) {
+        position = { x: savedState.x, y: savedState.y };
+        console.log('[FloatingPanel] Restored saved position:', position);
+      } else {
+        console.log('[FloatingPanel] Saved position off-screen, using default:', position);
+      }
+    }
 
     this.window = new BrowserWindow({
       width,
@@ -166,6 +224,8 @@ export class FloatingPanel extends EventEmitter {
       if (this.window) {
         const bounds = this.window.getBounds();
         console.log("[FloatingPanel] Drag ended at:", { x: bounds.x, y: bounds.y });
+        this.saveWindowState(); // SAVE STATE ON DRAG END
+        this.collapsedPosition = { x: bounds.x, y: bounds.y }; // Update collapsed position logic too
       }
     });
 
