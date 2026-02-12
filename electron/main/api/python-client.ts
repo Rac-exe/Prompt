@@ -158,14 +158,15 @@ export class PythonClient extends EventEmitter {
       }, timeoutMs);
 
       // SILENCE DETECTION TIMEOUT
-      // If no chunks received for 2.5 seconds, assume stream is done
+      // If no chunks received for 3.5 seconds AFTER first chunk, assume stream is done
       let silenceTimeoutId: NodeJS.Timeout | null = null;
+      let hasReceivedFirstChunk = false;
 
       const resetSilenceTimeout = () => {
         if (silenceTimeoutId) clearTimeout(silenceTimeoutId);
         silenceTimeoutId = setTimeout(() => {
           if (this.activeRequests.has(requestId)) {
-            console.log(`[PythonClient] Request ${requestId} silence detected (2.5s), auto-resolving`);
+            console.log(`[PythonClient] Request ${requestId} silence detected (3.5s), auto-resolving`);
             const req = this.activeRequests.get(requestId);
             this.activeRequests.delete(requestId);
 
@@ -175,27 +176,32 @@ export class PythonClient extends EventEmitter {
             if (req && req.accumulated && req.accumulated.length > 0) {
               resolve(req.accumulated);
             } else {
-              // Should rarely happen if silence detected after start, but if 2.5s silence at start...
-              // Maybe reject or just resolve empty? Resolve empty is safer.
+              // Silence before any data - this shouldn't happen
+              console.warn(`[PythonClient] Request ${requestId} timed out with no data received`);
               resolve("");
             }
           }
-        }, 2500);
+        }, 3500);
       };
 
-      // Initialize silence timer
-      resetSilenceTimeout();
+      // DON'T initialize silence timer immediately - wait for first chunk
+      // This prevents false positives when server is slow to respond initially
 
       // Update the accumulated value in the map reference whenever chunk arrives
-      // (The wrapper above captures it in closure, but we also want it properties for the close handler)
-      // Actually, the simplest way is to update the object we just set.
       const requestObj = this.activeRequests.get(requestId);
       if (requestObj) {
         requestObj.onChunk = (chunk, acc) => {
           requestObj.accumulated = acc;
           onChunk(chunk, acc);
-          // Reset silence timer on every chunk
-          resetSilenceTimeout();
+          
+          // Start silence timer only after first chunk arrives
+          if (!hasReceivedFirstChunk) {
+            hasReceivedFirstChunk = true;
+            resetSilenceTimeout();
+          } else {
+            // Reset silence timer on subsequent chunks
+            resetSilenceTimeout();
+          }
         };
       }
 
