@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prmpt Overlay</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="design-system.css">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: {
+            border: "hsl(var(--border))",
+            input: "hsl(var(--input))",
+            ring: "hsl(var(--ring))",
+            background: "hsl(var(--background))",
+            foreground: "hsl(var(--foreground))",
+            primary: {
+              DEFAULT: "hsl(var(--primary))",
+              foreground: "hsl(var(--primary-foreground))",
+            },
+            secondary: {
+              DEFAULT: "hsl(var(--secondary))",
+              foreground: "hsl(var(--secondary-foreground))",
+            },
+            muted: {
+              DEFAULT: "hsl(var(--muted))",
+              foreground: "hsl(var(--muted-foreground))",
+            },
+            card: {
+              DEFAULT: "hsl(var(--card))",
+              foreground: "hsl(var(--card-foreground))",
+            },
+            destructive: {
+              DEFAULT: "hsl(var(--destructive))",
+              foreground: "hsl(var(--destructive-foreground))",
+            },
+            emerald: {
+              DEFAULT: "hsl(var(--emerald))",
+              soft: "hsl(var(--emerald-soft))",
+            }
+          },
+          borderRadius: {
+            lg: "var(--radius)",
+            md: "calc(var(--radius) - 2px)",
+            sm: "calc(var(--radius) - 4px)",
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: transparent;
+      overflow: hidden;
+      color: hsl(var(--foreground));
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: hsl(var(--muted));
+      border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: hsl(var(--muted-foreground) / 0.5);
+    }
+
+    /* View transitions */
+    .view { display: none; }
+    .view.active { display: flex; }
+
+    /* Loading spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 1s linear infinite; }
+
+    /* Thinking dots */
+    @keyframes thinking { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
+    .thinking-dots::after { content: '.'; animation: thinking 1.5s infinite; }
+
+    /* Smooth section expand */
+    .result-section {
+      max-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-height 0.35s ease, opacity 0.3s ease;
+    }
+    .result-section.visible {
+      max-height: 500px;
+      opacity: 1;
+    }
+
+    /* Textarea auto-height */
+    textarea {
+      field-sizing: content;
+      min-height: 60px;
+      max-height: 140px;
+    }
+
+    /* Success flash */
+    @keyframes flash-success {
+      0% { background-color: hsl(var(--emerald) / 0.2); }
+      100% { background-color: transparent; }
+    }
+    .flash-success { animation: flash-success 1.5s ease-out; }
+
+    /* Subtle fade-in for the whole panel */
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(6px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .panel-enter { animation: fade-in 0.15s ease-out; }
+  </style>
+</head>
+
+<body>
+  <div id="panel" class="panel-enter" style="width: 520px;">
+    <div class="flex flex-col bg-background rounded-2xl shadow-2xl border border-border overflow-hidden"
+         style="box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5), 0 0 0 1px hsl(var(--border));">
+
+      <!-- ===== HEADER (draggable) ===== -->
+      <div class="flex items-center justify-between px-5 py-3 border-b border-border"
+           style="-webkit-app-region: drag;">
+        <div class="flex items-center gap-2.5">
+          <div class="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center"
+               style="box-shadow: 0 0 12px hsl(var(--emerald) / 0.35);">
+            <svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+            </svg>
+          </div>
+          <span class="text-sm font-semibold text-foreground tracking-wide">Prmpt</span>
+        </div>
+        <button id="btn-close"
+                class="w-7 h-7 rounded-full hover:bg-muted flex items-center justify-center transition-colors"
+                style="-webkit-app-region: no-drag;">
+          <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- ===== AUTH GATE VIEW ===== -->
+      <div id="view-auth" class="view flex-col items-center justify-center px-8 py-14 text-center gap-5">
+        <div class="w-14 h-14 rounded-full bg-muted flex items-center justify-center">
+          <svg class="w-7 h-7 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-lg font-semibold text-foreground mb-1">Login Required</h3>
+          <p class="text-sm text-muted-foreground leading-relaxed">
+            Sign in to use the prompt optimizer overlay.
+          </p>
+        </div>
+        <button id="btn-open-app"
+                class="h-10 px-6 bg-primary text-primary-foreground text-sm font-semibold rounded-xl transition-all hover:opacity-90"
+                style="-webkit-app-region: no-drag; box-shadow: 0 0 15px hsl(var(--emerald) / 0.3);">
+          Open App to Login
+        </button>
+      </div>
+
+      <!-- ===== MAIN VIEW (authenticated) ===== -->
+      <div id="view-main" class="view flex-col">
+        <div class="flex flex-col px-5 py-4 gap-3 overflow-y-auto" style="max-height: 540px;">
+
+          <!-- Input Section -->
+          <div>
+            <label class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
+              Your Prompt
+            </label>
+            <div class="bg-card rounded-xl border border-border p-3">
+              <textarea id="prompt-input"
+                        placeholder="Type your prompt here..."
+                        class="w-full bg-transparent text-foreground text-sm outline-none placeholder-muted-foreground resize-none leading-relaxed"
+                        style="-webkit-app-region: no-drag;"></textarea>
+            </div>
+
+            <!-- Generate actions -->
+            <div class="flex items-center gap-2 mt-2.5">
+              <button id="btn-generate"
+                      class="flex-1 h-10 bg-primary hover:bg-emerald-600 text-primary-foreground text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                      style="-webkit-app-region: no-drag; box-shadow: 0 0 15px hsl(var(--emerald) / 0.3);">
+                <svg id="icon-generate" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+                </svg>
+                <svg id="icon-spinner" class="w-4 h-4 hidden animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                </svg>
+                <span id="btn-generate-text">GENERATE</span>
+              </button>
+
+              <button id="btn-regenerate"
+                      class="hidden w-10 h-10 bg-card border border-border hover:bg-muted text-foreground rounded-xl items-center justify-center transition-all disabled:opacity-40"
+                      title="Regenerate"
+                      style="-webkit-app-region: no-drag;">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Result Section (hidden initially, expands after optimization) -->
+          <div id="result-section" class="result-section">
+            <div class="pt-3 border-t border-border">
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="flex items-center gap-2">
+                  <label class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                    Optimized Prompt
+                  </label>
+                  <div id="status-badge" class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-muted/50">
+                    <div id="status-dot" class="w-1.5 h-1.5 rounded-full bg-gray-500"></div>
+                    <span id="status-text" class="text-[9px] text-muted-foreground font-medium">Waiting</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Optimized text display -->
+              <div id="result-container"
+                   class="bg-card rounded-xl border border-border p-3 overflow-y-auto"
+                   style="max-height: 220px; min-height: 60px;">
+                <p id="result-text"
+                   class="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words"
+                   style="min-height: 1em;"></p>
+              </div>
+
+              <!-- Action buttons -->
+              <div class="flex items-center gap-2 mt-2.5">
+                <button id="btn-copy"
+                        class="flex-1 h-10 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-colors"
+                        style="-webkit-app-region: no-drag;">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                  </svg>
+                  <span id="btn-copy-text">Copy</span>
+                </button>
+
+                <button id="btn-save"
+                        class="flex-1 h-10 bg-primary hover:bg-emerald-600 text-primary-foreground text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-40"
+                        style="-webkit-app-region: no-drag; box-shadow: 0 0 15px hsl(var(--emerald) / 0.3);">
+                  <svg id="icon-save" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                  </svg>
+                  <span id="btn-save-text">Save</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // STATE
+    // ==========================================
+    let isAuthenticated = false;
+    let isOptimizing = false;
+    let currentOriginal = '';
+    let currentOptimized = '';
+    let hasGeneratedOnce = false;
+
+    // ==========================================
+    // DOM REFS
+    // ==========================================
+    const viewAuth     = document.getElementById('view-auth');
+    const viewMain     = document.getElementById('view-main');
+    const btnClose     = document.getElementById('btn-close');
+    const btnOpenApp   = document.getElementById('btn-open-app');
+    const promptInput  = document.getElementById('prompt-input');
+    const btnGenerate  = document.getElementById('btn-generate');
+    const btnGenerateText = document.getElementById('btn-generate-text');
+    const iconGenerate = document.getElementById('icon-generate');
+    const iconSpinner  = document.getElementById('icon-spinner');
+    const btnRegenerate = document.getElementById('btn-regenerate');
+    const resultSection = document.getElementById('result-section');
+    const resultText   = document.getElementById('result-text');
+    const resultContainer = document.getElementById('result-container');
+    const statusDot    = document.getElementById('status-dot');
+    const statusText   = document.getElementById('status-text');
+    const btnCopy      = document.getElementById('btn-copy');
+    const btnCopyText  = document.getElementById('btn-copy-text');
+    const btnSave      = document.getElementById('btn-save');
+    const btnSaveText  = document.getElementById('btn-save-text');
+    const iconSave     = document.getElementById('icon-save');
+
+    // ==========================================
+    // VIEW MANAGEMENT
+    // ==========================================
+    function showView(view) {
+      viewAuth.classList.remove('active');
+      viewMain.classList.remove('active');
+      view.classList.add('active');
+    }
+
+    function resetToInput() {
+      // Clear previous state
+      promptInput.value = '';
+      currentOriginal = '';
+      currentOptimized = '';
+      isOptimizing = false;
+      resultText.textContent = '';
+      resultSection.classList.remove('visible');
+      setGenerateIdle();
+      promptInput.disabled = false;
+      btnGenerate.disabled = false;
+
+      // Focus textarea
+      requestAnimationFrame(() => {
+        setTimeout(() => promptInput.focus(), 80);
+      });
+    }
+
+    // ==========================================
+    // STATUS BADGE
+    // ==========================================
+    function setStatus(type, label) {
+      statusText.textContent = label;
+      if (type === 'optimizing') {
+        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-primary animate-pulse';
+        statusText.className = 'text-[9px] text-primary font-medium';
+      } else if (type === 'ready') {
+        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-primary';
+        statusText.className = 'text-[9px] text-primary font-medium';
+      } else if (type === 'error') {
+        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-destructive';
+        statusText.className = 'text-[9px] text-destructive font-medium';
+      } else {
+        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-gray-500';
+        statusText.className = 'text-[9px] text-muted-foreground font-medium';
+      }
+    }
+
+    // ==========================================
+    // GENERATE BUTTON STATE
+    // ==========================================
+    function setGenerateLoading() {
+      iconGenerate.classList.add('hidden');
+      iconSpinner.classList.remove('hidden');
+      btnGenerateText.textContent = 'GENERATING...';
+      btnGenerate.disabled = true;
+      promptInput.disabled = true;
+      if (btnRegenerate) btnRegenerate.disabled = true;
+    }
+
+    function setGenerateIdle() {
+      iconGenerate.classList.remove('hidden');
+      iconSpinner.classList.add('hidden');
+      btnGenerateText.textContent = 'GENERATE';
+      btnGenerate.disabled = false;
+      promptInput.disabled = false;
+
+      if (hasGeneratedOnce && btnRegenerate) {
+        btnRegenerate.classList.remove('hidden');
+        btnRegenerate.classList.add('flex');
+        btnRegenerate.disabled = false;
+      }
+    }
+
+    // ==========================================
+    // OPTIMIZATION
+    // ==========================================
+    function startOptimization(text, isRegenerate) {
+      if (!text.trim() || isOptimizing) return;
+
+      isOptimizing = true;
+      currentOriginal = text;
+      currentOptimized = '';
+
+      // Show result section with thinking state
+      resultSection.classList.add('visible');
+      resultText.innerHTML = '<span class="thinking-dots text-muted-foreground">Optimizing</span>';
+      setStatus('optimizing', isRegenerate ? 'Regenerating' : 'Optimizing');
+      setGenerateLoading();
+
+      // Send to main process
+      if (window.electronAPI?.overlay?.optimize) {
+        window.electronAPI.overlay.optimize({ text, isRegenerate: !!isRegenerate });
+      }
+    }
+
+    // ==========================================
+    // COPY FEEDBACK
+    // ==========================================
+    function showCopyFeedback() {
+      const prev = btnCopyText.textContent;
+      btnCopyText.textContent = '✓ Copied!';
+      btnCopy.classList.add('flash-success');
+      setTimeout(() => {
+        btnCopyText.textContent = prev;
+        btnCopy.classList.remove('flash-success');
+      }, 1800);
+    }
+
+    // ==========================================
+    // SAVE FEEDBACK
+    // ==========================================
+    function showSaveFeedback(success) {
+      if (success) {
+        btnSaveText.textContent = '✓ Saved!';
+        btnSave.classList.add('flash-success');
+        setTimeout(() => {
+          btnSaveText.textContent = 'Save';
+          btnSave.disabled = false;
+          btnSave.classList.remove('flash-success');
+        }, 2000);
+      } else {
+        btnSaveText.textContent = 'Failed';
+        setTimeout(() => {
+          btnSaveText.textContent = 'Save';
+          btnSave.disabled = false;
+        }, 2000);
+      }
+    }
+
+    // ==========================================
+    // EVENT LISTENERS
+    // ==========================================
+
+    // Close button & Escape key
+    btnClose.addEventListener('click', () => {
+      if (window.electronAPI?.overlay?.close) window.electronAPI.overlay.close();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (window.electronAPI?.overlay?.close) window.electronAPI.overlay.close();
+      }
+    });
+
+    // Open App (auth gate)
+    btnOpenApp.addEventListener('click', () => {
+      if (window.electronAPI?.overlay?.openApp) window.electronAPI.overlay.openApp();
+    });
+
+    // Generate button
+    btnGenerate.addEventListener('click', () => {
+      const text = promptInput.value.trim();
+      if (text) startOptimization(text, false);
+    });
+
+    // Enter key to generate (Shift+Enter for newline)
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const text = promptInput.value.trim();
+        if (text && !isOptimizing) startOptimization(text, false);
+      }
+    });
+
+    // Regenerate button
+    btnRegenerate.addEventListener('click', () => {
+      if (currentOriginal && !isOptimizing) {
+        startOptimization(currentOriginal, true);
+      }
+    });
+
+    // Copy button
+    btnCopy.addEventListener('click', () => {
+      if (currentOptimized) {
+        if (window.electronAPI?.overlay?.copy) {
+          window.electronAPI.overlay.copy(currentOptimized);
+        }
+        showCopyFeedback();
+      }
+    });
+
+    // Save button
+    btnSave.addEventListener('click', async () => {
+      if (!currentOptimized) return;
+
+      btnSave.disabled = true;
+      btnSaveText.textContent = 'Saving...';
+
+      try {
+        const title = currentOriginal.substring(0, 60) + (currentOriginal.length > 60 ? '...' : '');
+        const result = await window.electronAPI.overlay.save({
+          title: title,
+          content: currentOptimized,
+        });
+        showSaveFeedback(true);
+      } catch (err) {
+        showSaveFeedback(false);
+      }
+    });
+
+    // ==========================================
+    // IPC LISTENERS
+    // ==========================================
+
+    // Overlay opened (sent each time overlay is shown)
+    if (window.electronAPI?.overlay?.onOpened) {
+      window.electronAPI.overlay.onOpened((data) => {
+        isAuthenticated = data.isAuthenticated;
+
+        if (isAuthenticated) {
+          showView(viewMain);
+          resetToInput();
+        } else {
+          showView(viewAuth);
+        }
+      });
+    }
+
+    // Auth state update (sent if user logs in/out while overlay exists)
+    if (window.electronAPI?.overlay?.onAuthState) {
+      window.electronAPI.overlay.onAuthState((data) => {
+        isAuthenticated = data.isAuthenticated;
+
+        if (!isAuthenticated && viewMain.classList.contains('active')) {
+          showView(viewAuth);
+        }
+      });
+    }
+
+    // Streaming optimization chunk
+    if (window.electronAPI?.overlay?.onOptimizationChunk) {
+      window.electronAPI.overlay.onOptimizationChunk((data) => {
+        if (!isOptimizing) return;
+
+        // On first chunk, clear thinking text
+        if (resultText.innerHTML.includes('thinking-dots')) {
+          resultText.textContent = '';
+        }
+
+        resultText.textContent += data.chunk;
+
+        // Auto-scroll
+        resultContainer.scrollTop = resultContainer.scrollHeight;
+      });
+    }
+
+    // Optimization complete
+    if (window.electronAPI?.overlay?.onOptimizationComplete) {
+      window.electronAPI.overlay.onOptimizationComplete((data) => {
+        isOptimizing = false;
+        hasGeneratedOnce = true;
+        currentOptimized = data.optimized || '';
+
+        // Set final text (in case streaming missed something)
+        resultText.textContent = currentOptimized;
+        resultContainer.scrollTop = resultContainer.scrollHeight;
+
+        setStatus('ready', 'Optimized');
+        setGenerateIdle();
+      });
+    }
+
+    // Optimization error
+    if (window.electronAPI?.overlay?.onOptimizationError) {
+      window.electronAPI.overlay.onOptimizationError((data) => {
+        isOptimizing = false;
+
+        resultSection.classList.add('visible');
+        resultText.textContent = 'Error: ' + (data.error || 'Unknown error');
+        setStatus('error', 'Failed');
+        setGenerateIdle();
+      });
+    }
+  </script>
+</body>
+
+</html>

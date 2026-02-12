@@ -1,6 +1,6 @@
 import { app, globalShortcut, ipcMain } from 'electron';
 import { AppWindowManager } from './windows/app-window-manager';
-import { FloatingPanel } from './overlay/floating-panel';
+import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
 import { PythonClient } from './api/python-client';
 import { SupabaseClientManager } from './database/supabase-client';
@@ -17,6 +17,7 @@ import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/aut
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
+import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -28,28 +29,15 @@ dotenv.config();
 // GLOBAL STATE
 // ============================================
 let appWindowManager: AppWindowManager;
-let floatingPanel: FloatingPanel;
+let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
 let pythonClient: PythonClient;
-
-// Services
-let chatService: ChatService;
-let optimizationService: OptimizationService;
-let userService: UserService;
-let authService: AuthService;
-let settingsService: SettingsService;
-let promptLibraryService: PromptLibraryService;
-
-// key tracking...
 
 // Keystroke tracking for @prompt detection
 let typedBuffer = '';
 const TRIGGER_PHRASE = '@prompt';
 const MAX_BUFFER_SIZE = 50;
 let shiftPressed = false;
-
-// Current optimization context
-
 
 // ============================================
 // KEY CODE MAPPING
@@ -118,8 +106,6 @@ const SHIFT_MAP: { [key: string]: string } = {
 // KEYSTROKE DETECTION
 // ============================================
 function startKeystrokeDetection() {
-  console.log('[Main] Starting keystroke detection...');
-
   uIOhook.on('keydown', (event: any) => {
     if (event.keycode === UiohookKey.Shift || event.keycode === UiohookKey.ShiftRight) {
       shiftPressed = true;
@@ -151,8 +137,7 @@ function startKeystrokeDetection() {
     }
 
     if (typedBuffer.toLowerCase().endsWith(TRIGGER_PHRASE)) {
-      console.log('[Main] @prompt detected! Showing overlay...');
-      showOverlay();
+      overlayManager.open(authState.isAuthenticated);
       typedBuffer = '';
     }
   });
@@ -164,54 +149,18 @@ function startKeystrokeDetection() {
   });
 
   uIOhook.start();
-  console.log('[Main] Keystroke detection started');
 }
 
 function stopKeystrokeDetection() {
-  console.log('[Main] Stopping keystroke detection...');
   uIOhook.stop();
 }
 
 // ============================================
 // OVERLAY CONTROL
 // ============================================
-function showOverlay() {
-  if (floatingPanel) {
-    floatingPanel.showAndFocusInput();
-  }
-}
-
-function hideOverlay() {
-  if (floatingPanel) {
-    floatingPanel.hide();
-  }
-}
-
 function toggleOverlay() {
-  if (floatingPanel) {
-    const window = floatingPanel.getWindow();
-    if (window && window.isVisible()) {
-      hideOverlay();
-    } else {
-      showOverlay();
-    }
-  }
+  overlayManager.toggle(authState.isAuthenticated);
 }
-
-// ============================================
-// AUTH HELPERS
-// ============================================
-
-// ============================================
-// IPC HANDLERS
-// ============================================
-
-
-// ============================================
-// PROMPT LIBRARY IPC HANDLERS
-// ============================================
-// NOTE: These handlers have been moved to ./ipc-handlers/prompt-library-handlers.ts
-// They are automatically registered on import at the top of this file
 
 // ============================================
 // INITIALIZATION
@@ -219,7 +168,7 @@ function toggleOverlay() {
 async function initialize() {
   console.log('[Main] Initializing Prompt Optimizer...');
 
-  // Initialize Supabase (replace with your credentials)
+  // Initialize Supabase
   const SUPABASE_URL = process.env.SUPABASE_URL || '';
   const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || '';
 
@@ -231,68 +180,12 @@ async function initialize() {
 
   SupabaseClientManager.initialize(SUPABASE_URL, SUPABASE_KEY);
 
-  // Initialize services
-  chatService = new ChatService();
-  optimizationService = new OptimizationService();
-  userService = new UserService();
-  authService = new AuthService();
-  settingsService = new SettingsService();
-  promptLibraryService = new PromptLibraryService();
-
-  // Create app window manager EARLY so handlers can use it
+  // Create app window manager
   appWindowManager = new AppWindowManager();
 
-  // Register Auth Handlers
-  registerAuthHandlers(appWindowManager);
-
-  // Register User & Settings Handlers
-  registerUserHandlers(appWindowManager);
-  registerSettingsHandlers();
-
-  // ============================================
-  // SESSION MANAGEMENT & AUTO-RESTORE
-  // ============================================
-  try {
-    // Check for existing session and restore if valid
-    const hasSession = await checkAndRestoreSession(appWindowManager);
-
-    if (hasSession) {
-      console.log('[Main] ✅ Session restored, user logged in');
-    } else {
-      console.log('[Main] ℹ️ No session found, user needs to log in');
-    }
-
-    // Set up auth state change listener
-    authService.onAuthStateChange(async (event, session) => {
-      console.log('[Main] Auth state changed:', event);
-
-      if (event === 'SIGNED_IN' && session) {
-        authState.isAuthenticated = true;
-        authState.currentUserId = session.user.id;
-        // logic is now handled by auth-handlers side effects or renderer reload
-        // But we might need to notify renderer if this event comes from outside IPC
-        if (appWindowManager) {
-          // We can implement handleSuccessfulAuth here too if needed, 
-          // but usually SIGNED_IN comes from our own signIn call which handles it.
-          // If it comes from token refresh or auto-login, we might need it.
-        }
-      } else if (event === 'SIGNED_OUT') {
-        authState.isAuthenticated = false;
-        authState.currentUserId = null;
-
-        if (appWindowManager) {
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: false,
-            user: null,
-          });
-        }
-      } else if (event === 'TOKEN_REFRESHED' && session) {
-        console.log('[Main] ✅ Session token refreshed');
-      }
-    });
-  } catch (error) {
-    console.error('[Main] Auth initialization error:', error);
-  }
+  // Create overlay manager (pre-load hidden window for instant open)
+  overlayManager = new OverlayWindowManager();
+  overlayManager.preload();
 
   // Initialize Python client
   pythonClient = new PythonClient('http://127.0.0.1:8001');
@@ -308,22 +201,64 @@ async function initialize() {
     console.warn('[Main] Could not connect to Python service');
   }
 
-  // Create floating panel (overlay)
-  floatingPanel = new FloatingPanel();
-  floatingPanel.create();
-  floatingPanel.hide();
-  console.log('[Main] Floating panel created (hidden)');
+  // ============================================
+  // REGISTER IPC HANDLERS
+  // ============================================
+  registerAuthHandlers(appWindowManager);
+  registerUserHandlers(appWindowManager);
+  registerSettingsHandlers();
+  registerChatHandlers(appWindowManager, pythonClient);
+  registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
 
-  // Setup IPC handlers
-  // Register Chat & Optimization Handlers
-  registerChatHandlers(appWindowManager, pythonClient, floatingPanel);
+  // ============================================
+  // SESSION MANAGEMENT & AUTH STATE SYNC
+  // ============================================
+  try {
+    const authService = new AuthService();
+    const hasSession = await checkAndRestoreSession(appWindowManager);
 
-  // Start keystroke detection for @prompt
+    if (hasSession) {
+      console.log('[Main] Session restored, user logged in');
+    } else {
+      console.log('[Main] No session found, user needs to log in');
+    }
+
+    // Listen for auth state changes and sync to overlay
+    authService.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        authState.isAuthenticated = true;
+        authState.currentUserId = session.user.id;
+        // Notify overlay of auth change
+        overlayManager.sendAuthState(true);
+      } else if (event === 'SIGNED_OUT') {
+        authState.isAuthenticated = false;
+        authState.currentUserId = null;
+
+        if (appWindowManager) {
+          appWindowManager.send('auth:state-changed', {
+            isAuthenticated: false,
+            user: null,
+          });
+        }
+        // Notify overlay of auth change
+        overlayManager.sendAuthState(false);
+      } else if (event === 'TOKEN_REFRESHED' && session) {
+        console.log('[Main] Session token refreshed');
+      }
+    });
+  } catch (error) {
+    console.error('[Main] Auth initialization error:', error);
+  }
+
+  // ============================================
+  // KEYSTROKE DETECTION
+  // ============================================
   startKeystrokeDetection();
 
-  // Register global hotkey Ctrl+5
+  // ============================================
+  // GLOBAL HOTKEY: Ctrl+5 to toggle overlay
+  // ============================================
   const registered = globalShortcut.register('CommandOrControl+5', () => {
-    console.log('[Main] Ctrl+5 pressed');
     toggleOverlay();
   });
 
@@ -333,11 +268,9 @@ async function initialize() {
     console.error('[Main] Failed to register global hotkey');
   }
 
-  // NOTE: appWindowManager already created above
-
-  // Create system tray
-
-  // Create system tray
+  // ============================================
+  // SYSTEM TRAY
+  // ============================================
   systemTray = new SystemTray(
     () => appWindowManager.show(),  // Open app
     () => toggleOverlay(),          // Toggle overlay
@@ -361,8 +294,8 @@ async function shutdown() {
   stopKeystrokeDetection();
   globalShortcut.unregisterAll();
 
-  if (floatingPanel) {
-    floatingPanel.destroy();
+  if (overlayManager) {
+    overlayManager.destroy();
   }
 
   if (appWindowManager) {
@@ -385,7 +318,6 @@ app.whenReady().then(async () => {
 
 // CRITICAL: Keep running in background when all windows closed
 app.on('window-all-closed', () => {
-  console.log('[Main] All windows closed - staying in background');
   // Do NOT call app.quit() here!
   // The app should continue running with just the overlay and tray
 });

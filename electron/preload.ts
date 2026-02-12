@@ -3,26 +3,28 @@ import { contextBridge, ipcRenderer } from 'electron';
 // Declare window type for TypeScript
 declare global {
   interface Window {
-    __contextKey?: string;
     electronAPI: {
-      // Overlay-specific API
-      replaceText: (text: string) => void;
-      replaceTextInPlace: (originalText: string, newText: string) => void;
-      copyToClipboard: (text: string) => void;
-      reOptimize: (originalText: string) => void;
-      dismiss: () => void;
-      onStateUpdate: (callback: (state: any) => void) => void;
-      startTranscription: () => void;
-      stopTranscription: () => void;
-      onTranscriptionUpdate: (callback: (data: any) => void) => void;
-      setPromptText: (text: string) => void;
-      resizeWindow: (width: number, height: number) => void;
-      onExpandToInput: (callback: () => void) => void;
-      onFocusInput: (callback: () => void) => void;
-      onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
-      onToggleState: (callback: () => void) => void;
+      // ============================================
+      // OVERLAY API (for overlay.html)
+      // ============================================
+      overlay: {
+        optimize: (data: { text: string; isRegenerate?: boolean }) => void;
+        save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
+        copy: (text: string) => void;
+        close: () => void;
+        openApp: () => void;
+        checkAuth: () => Promise<{ isAuthenticated: boolean }>;
+        getCollections: () => Promise<any>;
+        onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => void;
+        onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
+        onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
+        onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
+        onOptimizationError: (callback: (data: { error: string }) => void) => void;
+      };
 
-      // App window-specific API
+      // ============================================
+      // APP WINDOW API
+      // ============================================
       optimizePrompt: (text: string, isRegenerate?: boolean) => void;
       saveToChat: (originalText: string, optimizedText: string) => void;
       requestUserData: () => void;
@@ -37,6 +39,12 @@ declare global {
       deleteChat: (chatId: string) => void;
       onChatDeleted: (callback: (data: { chatId: string }) => void) => void;
       signOut: () => void;
+      copyToClipboard: (text: string) => void;
+
+      // Streaming optimization (app window)
+      onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
+      onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
+      onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
 
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
@@ -74,87 +82,52 @@ declare global {
   }
 }
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
+// Expose protected methods to the renderer process
 const electronAPI = {
   // ============================================
-  // OVERLAY-SPECIFIC API
+  // OVERLAY API (clean IPC contract)
   // ============================================
-  replaceText: (text: string) => {
-    const contextKey = (globalThis as any).__contextKey;
-    if (contextKey) {
-      ipcRenderer.send('replace-text', { contextKey, text });
-    }
-  },
-  replaceTextInPlace: (originalText: string, newText: string) => {
-    const contextKey = (globalThis as any).__contextKey;
-    if (contextKey) {
-      ipcRenderer.send('replace-text-in-place', { contextKey, originalText, newText });
-    }
-  },
-  copyToClipboard: (text: string) => {
-    ipcRenderer.send('copy-to-clipboard', text);
-  },
-  reOptimize: (originalText: string) => {
-    const contextKey = (globalThis as any).__contextKey;
-    if (contextKey) {
-      ipcRenderer.send('re-optimize', { contextKey, originalText });
-    }
-  },
-  dismiss: () => {
-    const contextKey = (globalThis as any).__contextKey;
-    if (contextKey) {
-      ipcRenderer.send('dismiss-overlay', contextKey);
-    }
-  },
-  onStateUpdate: (callback: (state: any) => void) => {
-    ipcRenderer.on('update-state', (event, state) => callback(state));
-  },
-  onSetContextKey: (callback: (key: string) => void) => {
-    const handler = (event: any, key: string) => callback(key);
-    ipcRenderer.on('set-context-key', handler);
-    return () => ipcRenderer.removeListener('set-context-key', handler);
-  },
-  startTranscription: () => {
-    ipcRenderer.send('floating-panel:transcription-start');
-  },
-  stopTranscription: () => {
-    ipcRenderer.send('floating-panel:transcription-stop');
-  },
-  onTranscriptionUpdate: (callback: (data: any) => void) => {
-    ipcRenderer.on('transcription-update', (event, data) => callback(data));
-  },
-  setPromptText: (text: string) => {
-    ipcRenderer.send('floating-panel:set-prompt-text', text);
-  },
-  resizeWindow: (width: number, height: number) => {
-    ipcRenderer.send('floating-panel:resize', { width, height });
-  },
-  onExpandToInput: (callback: () => void) => {
-    ipcRenderer.on('expand-to-input', () => callback());
-  },
-  onFocusInput: (callback: () => void) => {
-    ipcRenderer.on('focus-input', () => callback());
-  },
-  onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
-    ipcRenderer.on('optimization-complete', (event, data) => callback(data));
-  },
-  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
-    const handler = (event: any, data: any) => callback(data);
-    ipcRenderer.on('optimization-chunk', handler);
-    return () => ipcRenderer.removeListener('optimization-chunk', handler);
-  },
-  onOptimizationError: (callback: (data: { error: string }) => void) => {
-    const handler = (event: any, data: any) => callback(data);
-    ipcRenderer.on('optimization-error', handler);
-    return () => ipcRenderer.removeListener('optimization-error', handler);
-  },
-  onToggleState: (callback: () => void) => {
-    ipcRenderer.on('toggle-state', () => callback());
+  overlay: {
+    optimize: (data: { text: string; isRegenerate?: boolean }) => {
+      ipcRenderer.send('overlay:optimize', data);
+    },
+    save: (data: { title: string; content: string; collectionId?: string }) => {
+      return ipcRenderer.invoke('overlay:save', data);
+    },
+    copy: (text: string) => {
+      ipcRenderer.send('overlay:copy', { text });
+    },
+    close: () => {
+      ipcRenderer.send('overlay:close');
+    },
+    openApp: () => {
+      ipcRenderer.send('overlay:open-app');
+    },
+    checkAuth: () => {
+      return ipcRenderer.invoke('overlay:check-auth');
+    },
+    getCollections: () => {
+      return ipcRenderer.invoke('overlay:get-collections');
+    },
+    onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
+      ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
+    },
+    onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => {
+      ipcRenderer.on('overlay:auth-state', (_event, data) => callback(data));
+    },
+    onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
+      ipcRenderer.on('overlay:optimization-chunk', (_event, data) => callback(data));
+    },
+    onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => {
+      ipcRenderer.on('overlay:optimization-complete', (_event, data) => callback(data));
+    },
+    onOptimizationError: (callback: (data: { error: string }) => void) => {
+      ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
+    },
   },
 
   // ============================================
-  // APP WINDOW-SPECIFIC API
+  // APP WINDOW API
   // ============================================
   optimizePrompt: (text: string, isRegenerate: boolean = false) => {
     ipcRenderer.send('app:optimize-prompt', text, isRegenerate);
@@ -166,22 +139,22 @@ const electronAPI = {
     ipcRenderer.send('app:request-user-data');
   },
   onUserDataLoaded: (callback: (user: any) => void) => {
-    ipcRenderer.on('user-data-loaded', (event, user) => callback(user));
+    ipcRenderer.on('user-data-loaded', (_event, user) => callback(user));
   },
   onChatSaved: (callback: (data: { chatId: string }) => void) => {
-    ipcRenderer.on('chat-saved', (event, data) => callback(data));
+    ipcRenderer.on('chat-saved', (_event, data) => callback(data));
   },
   loadChats: () => {
     ipcRenderer.send('app:load-chats');
   },
   onChatsLoaded: (callback: (data: { chats: any[] }) => void) => {
-    ipcRenderer.on('chats-loaded', (event, data) => callback(data));
+    ipcRenderer.on('chats-loaded', (_event, data) => callback(data));
   },
   createChat: (title?: string) => {
     ipcRenderer.send('app:create-chat', title);
   },
   onChatCreated: (callback: (data: { chat: any }) => void) => {
-    ipcRenderer.on('chat-created', (event, data) => callback(data));
+    ipcRenderer.on('chat-created', (_event, data) => callback(data));
   },
   loadMessages: (chatId: string) => {
     ipcRenderer.send('app:load-messages', chatId);
@@ -190,10 +163,10 @@ const electronAPI = {
     ipcRenderer.send('app:delete-chat', chatId);
   },
   onChatDeleted: (callback: (data: { chatId: string }) => void) => {
-    ipcRenderer.on('chat-deleted', (event, data) => callback(data));
+    ipcRenderer.on('chat-deleted', (_event, data) => callback(data));
   },
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
-    const handler = (event: any, data: any) => callback(data);
+    const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('messages-loaded', handler);
     return () => ipcRenderer.removeListener('messages-loaded', handler);
   },
@@ -201,22 +174,40 @@ const electronAPI = {
     ipcRenderer.send('app:send-message', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
-    const handler = (event: any, data: any) => callback(data);
+    const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-sent', handler);
     return () => ipcRenderer.removeListener('message-sent', handler);
   },
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => {
-    const handler = (event: any, data: any) => callback(data);
+    const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-received', handler);
     return () => ipcRenderer.removeListener('message-received', handler);
   },
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => {
-    const handler = (event: any, data: any) => callback(data);
+    const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-send-error', handler);
     return () => ipcRenderer.removeListener('message-send-error', handler);
   },
+  copyToClipboard: (text: string) => {
+    ipcRenderer.send('app:copy-to-clipboard', text);
+  },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
+  },
+
+  // Streaming optimization (app window uses these channels)
+  onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
+    ipcRenderer.on('optimization-complete', (_event, data) => callback(data));
+  },
+  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('optimization-chunk', handler);
+    return () => ipcRenderer.removeListener('optimization-chunk', handler);
+  },
+  onOptimizationError: (callback: (data: { error: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('optimization-error', handler);
+    return () => ipcRenderer.removeListener('optimization-error', handler);
   },
 
   // ============================================
@@ -232,11 +223,8 @@ const electronAPI = {
     ipcRenderer.send('auth:check');
   },
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
-    // Remove any existing listeners first to prevent duplicates
     ipcRenderer.removeAllListeners('auth:state-changed');
-    // Add the new listener
-    ipcRenderer.on('auth:state-changed', (event, data) => {
-      console.log('[Preload] 📥 Auth state change event received, forwarding to renderer:', data);
+    ipcRenderer.on('auth:state-changed', (_event, data) => {
       callback(data);
     });
   },
@@ -296,7 +284,7 @@ const electronAPI = {
       ipcRenderer.invoke('prompt-library:toggle-favorite', { promptId }),
   },
   onPromptLibraryLoaded: (callback: (data: any) => void) => {
-    ipcRenderer.on('prompt-library:loaded', (event, data) => callback(data));
+    ipcRenderer.on('prompt-library:loaded', (_event, data) => callback(data));
   },
 
   // ============================================
@@ -308,8 +296,3 @@ const electronAPI = {
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
-
-// Listen for context key from main process
-ipcRenderer.on('set-context-key', (event, contextKey: string) => {
-  (globalThis as any).__contextKey = contextKey;
-});
