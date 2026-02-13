@@ -318,7 +318,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 10px 12px;
+      padding: 10px 14px;
       border-radius: 10px;
       cursor: pointer;
       background: transparent;
@@ -338,11 +338,12 @@
       border-color: hsl(var(--emerald) / 0.4);
     }
 
-    .collection-icon {
-      font-size: 16px;
-      width: 24px;
-      text-align: center;
-      flex-shrink: 0;
+    .collection-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
     }
 
     .new-collection-row {
@@ -610,8 +611,22 @@
 
         <div class="divider" style="margin: 0 14px;"></div>
 
+        <!-- Title Input -->
+        <div style="padding: 12px 14px 4px;">
+          <label style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 6px;">
+            Title
+          </label>
+          <input id="save-title-input" class="new-collection-input" type="text" placeholder="Give your prompt a title..." maxlength="80"
+                 style="width: 100%; height: 38px;">
+        </div>
+
         <!-- Collection List -->
-        <div id="collection-list" class="collection-list" style="margin-top: 8px;">
+        <div style="padding: 4px 14px 0;">
+          <label style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 6px;">
+            Collection
+          </label>
+        </div>
+        <div id="collection-list" class="collection-list">
           <div style="padding: 24px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">
             Loading collections...
           </div>
@@ -696,6 +711,7 @@
     const collectionListEl    = document.getElementById('collection-list');
     const newCollectionInput  = document.getElementById('new-collection-input');
     const btnAddCollection    = document.getElementById('btn-add-collection');
+    const saveTitleInput      = document.getElementById('save-title-input');
 
     // ==========================================
     // VIEW MANAGEMENT
@@ -826,10 +842,21 @@
     // COLLECTION PICKER MODAL
     // ==========================================
 
+    function updateConfirmState() {
+      // Enable confirm only when both a title and a collection are set
+      modalConfirm.disabled = !(selectedCollectionId && saveTitleInput.value.trim());
+    }
+
+    saveTitleInput.addEventListener('input', updateConfirmState);
+
     async function openCollectionPicker() {
       selectedCollectionId = null;
       modalConfirm.disabled = true;
       modalBackdrop.classList.add('open');
+
+      // Pre-fill title from the original prompt
+      const autoTitle = currentOriginal.substring(0, 80).trim();
+      saveTitleInput.value = autoTitle;
 
       // Render loading
       collectionListEl.innerHTML = '<div style="padding: 24px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">Loading collections...</div>';
@@ -846,7 +873,9 @@
       modalBackdrop.classList.remove('open');
       selectedCollectionId = null;
       newCollectionInput.value = '';
+      saveTitleInput.value = '';
       btnAddCollection.disabled = true;
+      modalConfirmText.textContent = 'Save to Collection';
     }
 
     function renderCollections(collections) {
@@ -860,15 +889,13 @@
         const btn = document.createElement('button');
         btn.className = 'collection-item';
         if (col.id === selectedCollectionId) btn.classList.add('selected');
-        btn.innerHTML = '<span class="collection-icon">' + (col.icon || '📁') + '</span>'
-          + '<span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(col.name) + '</span>'
-          + '<span style="font-size: 10px; color: hsl(var(--muted-foreground));">' + (col.prompts_count || 0) + '</span>';
+        btn.innerHTML = '<svg style="width: 14px; height: 14px; flex-shrink: 0; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>'
+          + '<span class="collection-name">' + escapeHtml(col.name) + '</span>';
         btn.addEventListener('click', () => {
           selectedCollectionId = col.id;
-          // Update selection visuals
           collectionListEl.querySelectorAll('.collection-item').forEach(el => el.classList.remove('selected'));
           btn.classList.add('selected');
-          modalConfirm.disabled = false;
+          updateConfirmState();
         });
         collectionListEl.appendChild(btn);
       });
@@ -906,8 +933,8 @@
         const newCol = await window.electronAPI.overlay.createCollection(name);
         collectionsCache.unshift(newCol);
         selectedCollectionId = newCol.id;
-        modalConfirm.disabled = false;
         renderCollections(collectionsCache);
+        updateConfirmState();
         newCollectionInput.value = '';
         btnAddCollection.textContent = 'Create';
       } catch (err) {
@@ -925,13 +952,13 @@
     });
 
     modalConfirm.addEventListener('click', async () => {
-      if (!selectedCollectionId || !currentOptimized) return;
+      const title = saveTitleInput.value.trim();
+      if (!selectedCollectionId || !currentOptimized || !title) return;
 
       modalConfirm.disabled = true;
       modalConfirmText.textContent = 'Saving...';
 
       try {
-        const title = currentOriginal.substring(0, 60) + (currentOriginal.length > 60 ? '...' : '');
         await window.electronAPI.overlay.save({
           title: title,
           content: currentOptimized,
