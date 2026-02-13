@@ -166,5 +166,15 @@ export function registerOverlayHandlers(
     return await getPromptLibraryService().getCollections();
   });
 
+  // ============================================
+  // overlay:create-collection — Create a new collection from the overlay
+  // ============================================
+  ipcMain.handle('overlay:create-collection', async (_event, data: { name: string; icon?: string }) => {
+    if (!authState.isAuthenticated) {
+      throw new Error('Not authenticated');
+    }
+    return await getPromptLibraryService().createCollection(data.name, data.icon || '📁');
+  });
+
   console.log('[OverlayHandlers] IPC handlers registered');
 }

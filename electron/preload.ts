@@ -15,6 +15,7 @@ declare global {
         openApp: () => void;
         checkAuth: () => Promise<{ isAuthenticated: boolean }>;
         getCollections: () => Promise<any>;
+        createCollection: (name: string, icon?: string) => Promise<any>;
         onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => void;
         onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
@@ -118,6 +119,9 @@ const electronAPI = {
     },
     getCollections: () => {
       return ipcRenderer.invoke('overlay:get-collections');
+    },
+    createCollection: (name: string, icon?: string) => {
+      return ipcRenderer.invoke('overlay:create-collection', { name, icon });
     },
     onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
       ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
