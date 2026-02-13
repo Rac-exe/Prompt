@@ -5,265 +5,457 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prmpt Overlay</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="design-system.css">
-
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: { sans: ['Inter', 'sans-serif'] },
-          colors: {
-            border: "hsl(var(--border))",
-            input: "hsl(var(--input))",
-            ring: "hsl(var(--ring))",
-            background: "hsl(var(--background))",
-            foreground: "hsl(var(--foreground))",
-            primary: {
-              DEFAULT: "hsl(var(--primary))",
-              foreground: "hsl(var(--primary-foreground))",
-            },
-            secondary: {
-              DEFAULT: "hsl(var(--secondary))",
-              foreground: "hsl(var(--secondary-foreground))",
-            },
-            muted: {
-              DEFAULT: "hsl(var(--muted))",
-              foreground: "hsl(var(--muted-foreground))",
-            },
-            card: {
-              DEFAULT: "hsl(var(--card))",
-              foreground: "hsl(var(--card-foreground))",
-            },
-            destructive: {
-              DEFAULT: "hsl(var(--destructive))",
-              foreground: "hsl(var(--destructive-foreground))",
-            },
-            emerald: {
-              DEFAULT: "hsl(var(--emerald))",
-              soft: "hsl(var(--emerald-soft))",
-            }
-          },
-          borderRadius: {
-            lg: "var(--radius)",
-            md: "calc(var(--radius) - 2px)",
-            sm: "calc(var(--radius) - 4px)",
-          },
-        },
-      },
-    };
-  </script>
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: 'Inter', sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       background: transparent;
       overflow: hidden;
       color: hsl(var(--foreground));
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
-    /* Custom scrollbar */
-    ::-webkit-scrollbar { width: 6px; }
+    /* ======== PANEL SHELL ======== */
+    .overlay-panel {
+      width: 480px;
+      border-radius: 20px;
+      background: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
+      box-shadow:
+        0 0 0 1px hsl(var(--border) / 0.5),
+        0 8px 40px -8px rgba(0, 0, 0, 0.55),
+        0 30px 60px -15px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 hsl(0 0% 100% / 0.03);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Subtle top-edge accent line */
+    .overlay-panel::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 24px;
+      right: 24px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.5), transparent);
+      z-index: 10;
+    }
+
+    /* ======== SCROLLBAR ======== */
+    ::-webkit-scrollbar { width: 5px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
-      background: hsl(var(--muted));
+      background: hsl(var(--muted-foreground) / 0.2);
       border-radius: 10px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: hsl(var(--muted-foreground) / 0.5);
+      background: hsl(var(--muted-foreground) / 0.35);
     }
 
-    /* View transitions */
+    /* ======== VIEW TRANSITIONS ======== */
     .view { display: none; }
     .view.active { display: flex; }
 
-    /* Loading spinner */
+    /* ======== ANIMATIONS ======== */
     @keyframes spin { to { transform: rotate(360deg); } }
-    .animate-spin { animation: spin 1s linear infinite; }
+    .animate-spin { animation: spin 0.8s linear infinite; }
 
-    /* Thinking dots */
-    @keyframes thinking { 0%,20%{content:'.'} 40%{content:'..'} 60%,100%{content:'...'} }
-    .thinking-dots::after { content: '.'; animation: thinking 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .animate-pulse { animation: pulse 1.5s ease-in-out infinite; }
 
-    /* Smooth section expand */
+    @keyframes thinking {
+      0%, 20% { content: '.'; }
+      40% { content: '..'; }
+      60%, 100% { content: '...'; }
+    }
+    .thinking-dots::after { content: '.'; animation: thinking 1.4s infinite; }
+
+    @keyframes fade-slide-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .panel-enter { animation: fade-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1); }
+
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    @keyframes mic-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 hsl(0 72% 51% / 0.4); }
+      50% { box-shadow: 0 0 0 6px hsl(0 72% 51% / 0); }
+    }
+
+    /* ======== RESULT EXPAND ======== */
     .result-section {
       max-height: 0;
       opacity: 0;
       overflow: hidden;
-      transition: max-height 0.35s ease, opacity 0.3s ease;
+      transition: max-height 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
     }
     .result-section.visible {
-      max-height: 500px;
+      max-height: 600px;
       opacity: 1;
     }
 
-    /* Textarea auto-height */
+    /* ======== TEXTAREA ======== */
     textarea {
       field-sizing: content;
-      min-height: 60px;
-      max-height: 140px;
+      min-height: 72px;
+      max-height: 150px;
     }
 
-    /* Success flash */
+    /* ======== FLASH ANIMATION ======== */
     @keyframes flash-success {
-      0% { background-color: hsl(var(--emerald) / 0.2); }
+      0% { background-color: hsl(var(--emerald) / 0.15); }
       100% { background-color: transparent; }
     }
     .flash-success { animation: flash-success 1.5s ease-out; }
 
-    /* Subtle fade-in for the whole panel */
-    @keyframes fade-in {
-      from { opacity: 0; transform: translateY(6px) scale(0.98); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
+    /* ======== BUTTON STYLES ======== */
+    .btn-primary {
+      background: linear-gradient(135deg, hsl(var(--emerald)), hsl(150 70% 38%));
+      color: white;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.2s ease;
     }
-    .panel-enter { animation: fade-in 0.15s ease-out; }
+    .btn-primary:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 0 20px hsl(var(--emerald) / 0.35);
+    }
+    .btn-primary:active {
+      transform: scale(0.98);
+    }
+    .btn-primary:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      filter: none;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: hsl(var(--secondary));
+      color: hsl(var(--secondary-foreground));
+      font-weight: 500;
+      border: 1px solid hsl(var(--border));
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-secondary:hover {
+      background: hsl(var(--muted));
+      border-color: hsl(var(--muted-foreground) / 0.2);
+    }
+    .btn-secondary:active {
+      transform: scale(0.98);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: hsl(var(--muted-foreground));
+      transition: all 0.15s ease;
+    }
+    .btn-ghost:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    /* ======== REGENERATE ======== */
+    .btn-regenerate {
+      background: hsl(var(--card));
+      border: 1.5px solid hsl(var(--emerald) / 0.4);
+      color: hsl(var(--emerald));
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-regenerate:hover {
+      background: hsl(var(--emerald) / 0.1);
+      border-color: hsl(var(--emerald) / 0.7);
+      box-shadow: 0 0 16px hsl(var(--emerald) / 0.15);
+    }
+    .btn-regenerate:active {
+      transform: scale(0.97);
+    }
+    .btn-regenerate:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    /* ======== VOICE BUTTON ======== */
+    .btn-voice {
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn-voice:hover {
+      background: hsl(var(--muted));
+    }
+    .btn-voice.listening {
+      background: hsl(0 72% 51% / 0.08);
+      border-color: hsl(0 72% 51% / 0.3);
+      animation: mic-pulse 2s ease-in-out infinite;
+    }
+
+    /* ======== INPUT AREA ======== */
+    .input-area {
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      border-radius: 14px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .input-area:focus-within {
+      border-color: hsl(var(--emerald) / 0.4);
+      box-shadow: 0 0 0 3px hsl(var(--emerald) / 0.08);
+    }
+
+    /* ======== RESULT BOX ======== */
+    .result-box {
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      border-radius: 14px;
+      position: relative;
+    }
+    .result-box::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 16px;
+      right: 16px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.2), transparent);
+    }
+
+    /* ======== STATUS PILL ======== */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+    .status-pill.optimizing {
+      background: hsl(var(--emerald) / 0.1);
+      color: hsl(var(--emerald));
+    }
+    .status-pill.ready {
+      background: hsl(var(--emerald) / 0.1);
+      color: hsl(var(--emerald));
+    }
+    .status-pill.error {
+      background: hsl(0 72% 51% / 0.1);
+      color: hsl(0 72% 51%);
+    }
+    .status-pill.waiting {
+      background: hsl(var(--muted));
+      color: hsl(var(--muted-foreground));
+    }
+
+    /* ======== DIVIDER ======== */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+    }
+
+    /* ======== AUTH VIEW ======== */
+    .auth-icon-ring {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, hsl(var(--muted)), hsl(var(--secondary)));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .auth-icon-ring::after {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, hsl(var(--emerald) / 0.3), transparent);
+      z-index: -1;
+    }
   </style>
 </head>
 
 <body>
-  <div id="panel" class="panel-enter" style="width: 520px;">
-    <div class="flex flex-col bg-background rounded-2xl shadow-2xl border border-border overflow-hidden"
-         style="box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5), 0 0 0 1px hsl(var(--border));">
+  <div id="panel" class="panel-enter">
+    <div class="overlay-panel">
 
-      <!-- ===== HEADER (draggable) ===== -->
-      <div class="flex items-center justify-between px-5 py-3 border-b border-border"
-           style="-webkit-app-region: drag;">
-        <div class="flex items-center gap-2.5">
-          <div class="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center"
-               style="box-shadow: 0 0 12px hsl(var(--emerald) / 0.35);">
-            <svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+      <!-- ===== HEADER ===== -->
+      <div style="-webkit-app-region: drag; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <!-- Logo -->
+          <div style="width: 28px; height: 28px; border-radius: 10px; background: linear-gradient(135deg, hsl(var(--emerald)), hsl(150 70% 38%)); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px hsl(var(--emerald) / 0.3);">
+            <svg style="width: 14px; height: 14px; color: white;" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
             </svg>
           </div>
-          <span class="text-sm font-semibold text-foreground tracking-wide">Prmpt</span>
+          <div>
+            <span style="font-size: 13px; font-weight: 700; color: hsl(var(--foreground)); letter-spacing: -0.01em;">Prmpt</span>
+            <span style="font-size: 10px; font-weight: 500; color: hsl(var(--muted-foreground)); margin-left: 6px; letter-spacing: 0.02em;">OVERLAY</span>
+          </div>
         </div>
-        <button id="btn-close"
-                class="w-7 h-7 rounded-full hover:bg-muted flex items-center justify-center transition-colors"
-                style="-webkit-app-region: no-drag;">
-          <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        <button id="btn-close" class="btn-ghost"
+                style="-webkit-app-region: no-drag; width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+          <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
           </svg>
         </button>
       </div>
 
+      <div class="divider"></div>
+
       <!-- ===== AUTH GATE VIEW ===== -->
-      <div id="view-auth" class="view flex-col items-center justify-center px-8 py-14 text-center gap-5">
-        <div class="w-14 h-14 rounded-full bg-muted flex items-center justify-center">
-          <svg class="w-7 h-7 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div id="view-auth" class="view" style="flex-direction: column; align-items: center; justify-content: center; padding: 48px 32px; text-align: center; gap: 20px;">
+        <div class="auth-icon-ring">
+          <svg style="width: 28px; height: 28px; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                   d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
           </svg>
         </div>
         <div>
-          <h3 class="text-lg font-semibold text-foreground mb-1">Login Required</h3>
-          <p class="text-sm text-muted-foreground leading-relaxed">
-            Sign in to use the prompt optimizer overlay.
+          <h3 style="font-size: 17px; font-weight: 700; color: hsl(var(--foreground)); margin-bottom: 6px; letter-spacing: -0.02em;">Login Required</h3>
+          <p style="font-size: 13px; color: hsl(var(--muted-foreground)); line-height: 1.5; max-width: 260px; margin: 0 auto;">
+            Sign in to your account to use the prompt optimizer.
           </p>
         </div>
-        <button id="btn-open-app"
-                class="h-10 px-6 bg-primary text-primary-foreground text-sm font-semibold rounded-xl transition-all hover:opacity-90"
-                style="-webkit-app-region: no-drag; box-shadow: 0 0 15px hsl(var(--emerald) / 0.3);">
+        <button id="btn-open-app" class="btn-primary"
+                style="-webkit-app-region: no-drag; height: 40px; padding: 0 24px; border-radius: 12px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+          </svg>
           Open App to Login
         </button>
       </div>
 
-      <!-- ===== MAIN VIEW (authenticated) ===== -->
-      <div id="view-main" class="view flex-col">
-        <div class="flex flex-col px-5 py-4 gap-3 overflow-y-auto" style="max-height: 540px;">
+      <!-- ===== MAIN VIEW ===== -->
+      <div id="view-main" class="view" style="flex-direction: column;">
+        <div style="display: flex; flex-direction: column; padding: 16px 18px; gap: 14px; overflow-y: auto; max-height: 540px;">
 
-          <!-- Input Section -->
+          <!-- INPUT SECTION -->
           <div>
-            <label class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-              Your Prompt
-            </label>
-            <div class="bg-card rounded-xl border border-border p-3">
-              <textarea id="prompt-input"
-                        placeholder="Type your prompt here..."
-                        class="w-full bg-transparent text-foreground text-sm outline-none placeholder-muted-foreground resize-none leading-relaxed"
-                        style="-webkit-app-region: no-drag;"></textarea>
+            <!-- Label row with voice button -->
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+              <span style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
+                Your Prompt
+              </span>
+
+              <!-- Voice Button -->
+              <button id="btn-voice" class="btn-voice"
+                      title="Voice Input"
+                      style="-webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground));">
+                <svg id="icon-mic" style="width: 13px; height: 13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                </svg>
+                <svg id="icon-mic-listening" style="width: 13px; height: 13px; color: hsl(0 72% 51%); display: none;" fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="5"/>
+                </svg>
+                <span id="voice-status-text">Voice</span>
+              </button>
             </div>
 
-            <!-- Generate actions -->
-            <div class="flex items-center gap-2 mt-2.5">
-              <button id="btn-generate"
-                      class="flex-1 h-10 bg-primary hover:bg-emerald-600 text-primary-foreground text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                      style="-webkit-app-region: no-drag; box-shadow: 0 0 15px hsl(var(--emerald) / 0.3);">
-                <svg id="icon-generate" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+            <!-- Textarea -->
+            <div class="input-area" style="padding: 12px 14px;">
+              <textarea id="prompt-input"
+                        placeholder="Describe what you need optimized..."
+                        style="-webkit-app-region: no-drag; width: 100%; background: transparent; color: hsl(var(--foreground)); font-size: 13px; line-height: 1.6; outline: none; resize: none; border: none; font-family: inherit;">
+              </textarea>
+            </div>
+
+            <!-- Action Buttons -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+              <!-- Generate -->
+              <button id="btn-generate" class="btn-primary"
+                      style="-webkit-app-region: no-drag; flex: 1; height: 42px; border-radius: 12px; font-size: 13px; letter-spacing: 0.03em; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <svg id="icon-generate" style="width: 15px; height: 15px;" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
                 </svg>
-                <svg id="icon-spinner" class="w-4 h-4 hidden animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                <svg id="icon-spinner" style="width: 15px; height: 15px; display: none;" fill="none" viewBox="0 0 24 24" class="animate-spin">
+                  <circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
+                  <path style="opacity: 0.8;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
                 </svg>
-                <span id="btn-generate-text">GENERATE</span>
+                <span id="btn-generate-text">Optimize</span>
               </button>
 
-              <button id="btn-regenerate"
-                      class="hidden w-10 h-10 bg-card border border-border hover:bg-muted text-foreground rounded-xl items-center justify-center transition-all disabled:opacity-40"
-                      title="Regenerate"
-                      style="-webkit-app-region: no-drag;">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <!-- Regenerate -->
+              <button id="btn-regenerate" class="btn-regenerate"
+                      title="Regenerate with different results"
+                      style="-webkit-app-region: no-drag; display: none; height: 42px; padding: 0 16px; border-radius: 12px; font-size: 12px; align-items: center; gap: 6px;">
+                <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                 </svg>
+                <span>Redo</span>
               </button>
             </div>
           </div>
 
-          <!-- Result Section (hidden initially, expands after optimization) -->
+          <!-- RESULT SECTION (expands after optimization) -->
           <div id="result-section" class="result-section">
-            <div class="pt-3 border-t border-border">
-              <div class="flex items-center justify-between mb-1.5">
-                <div class="flex items-center gap-2">
-                  <label class="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    Optimized Prompt
-                  </label>
-                  <div id="status-badge" class="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-muted/50">
-                    <div id="status-dot" class="w-1.5 h-1.5 rounded-full bg-gray-500"></div>
-                    <span id="status-text" class="text-[9px] text-muted-foreground font-medium">Waiting</span>
-                  </div>
-                </div>
-              </div>
+            <div class="divider" style="margin-bottom: 14px;"></div>
 
-              <!-- Optimized text display -->
-              <div id="result-container"
-                   class="bg-card rounded-xl border border-border p-3 overflow-y-auto"
-                   style="max-height: 220px; min-height: 60px;">
-                <p id="result-text"
-                   class="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words"
-                   style="min-height: 1em;"></p>
-              </div>
-
-              <!-- Action buttons -->
-              <div class="flex items-center gap-2 mt-2.5">
-                <button id="btn-copy"
-                        class="flex-1 h-10 bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-colors"
-                        style="-webkit-app-region: no-drag;">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-                  </svg>
-                  <span id="btn-copy-text">Copy</span>
-                </button>
-
-                <button id="btn-save"
-                        class="flex-1 h-10 bg-primary hover:bg-emerald-600 text-primary-foreground text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-40"
-                        style="-webkit-app-region: no-drag; box-shadow: 0 0 15px hsl(var(--emerald) / 0.3);">
-                  <svg id="icon-save" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                          d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
-                  </svg>
-                  <span id="btn-save-text">Save</span>
-                </button>
+            <!-- Result header -->
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+              <span style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
+                Optimized Result
+              </span>
+              <div id="status-badge" class="status-pill waiting">
+                <div id="status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: currentColor;"></div>
+                <span id="status-text">Waiting</span>
               </div>
             </div>
+
+            <!-- Result text -->
+            <div id="result-container" class="result-box"
+                 style="padding: 14px 16px; overflow-y: auto; max-height: 200px; min-height: 48px;">
+              <p id="result-text"
+                 style="font-size: 13px; color: hsl(var(--foreground)); line-height: 1.65; white-space: pre-wrap; word-break: break-word; min-height: 1em; margin: 0;"></p>
+            </div>
+
+            <!-- Action bar -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
+              <button id="btn-copy" class="btn-secondary"
+                      style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+                <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                </svg>
+                <span id="btn-copy-text">Copy</span>
+              </button>
+
+              <button id="btn-save" class="btn-primary"
+                      style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <svg id="icon-save" style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                </svg>
+                <span id="btn-save-text">Save to Library</span>
+              </button>
+            </div>
           </div>
+
         </div>
       </div>
+
     </div>
   </div>
 
@@ -276,6 +468,8 @@
     let currentOriginal = '';
     let currentOptimized = '';
     let hasGeneratedOnce = false;
+    let isListening = false;
+    let transcriptionSessionId = null;
 
     // ==========================================
     // DOM REFS
@@ -290,9 +484,14 @@
     const iconGenerate = document.getElementById('icon-generate');
     const iconSpinner  = document.getElementById('icon-spinner');
     const btnRegenerate = document.getElementById('btn-regenerate');
+    const btnVoice     = document.getElementById('btn-voice');
+    const iconMic      = document.getElementById('icon-mic');
+    const iconMicListening = document.getElementById('icon-mic-listening');
+    const voiceStatusText = document.getElementById('voice-status-text');
     const resultSection = document.getElementById('result-section');
     const resultText   = document.getElementById('result-text');
     const resultContainer = document.getElementById('result-container');
+    const statusBadge  = document.getElementById('status-badge');
     const statusDot    = document.getElementById('status-dot');
     const statusText   = document.getElementById('status-text');
     const btnCopy      = document.getElementById('btn-copy');
@@ -311,7 +510,6 @@
     }
 
     function resetToInput() {
-      // Clear previous state
       promptInput.value = '';
       currentOriginal = '';
       currentOptimized = '';
@@ -322,54 +520,40 @@
       promptInput.disabled = false;
       btnGenerate.disabled = false;
 
-      // Focus textarea
       requestAnimationFrame(() => {
         setTimeout(() => promptInput.focus(), 80);
       });
     }
 
     // ==========================================
-    // STATUS BADGE
+    // STATUS PILL
     // ==========================================
     function setStatus(type, label) {
       statusText.textContent = label;
-      if (type === 'optimizing') {
-        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-primary animate-pulse';
-        statusText.className = 'text-[9px] text-primary font-medium';
-      } else if (type === 'ready') {
-        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-primary';
-        statusText.className = 'text-[9px] text-primary font-medium';
-      } else if (type === 'error') {
-        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-destructive';
-        statusText.className = 'text-[9px] text-destructive font-medium';
-      } else {
-        statusDot.className = 'w-1.5 h-1.5 rounded-full bg-gray-500';
-        statusText.className = 'text-[9px] text-muted-foreground font-medium';
-      }
+      statusBadge.className = 'status-pill ' + type;
     }
 
     // ==========================================
     // GENERATE BUTTON STATE
     // ==========================================
     function setGenerateLoading() {
-      iconGenerate.classList.add('hidden');
-      iconSpinner.classList.remove('hidden');
-      btnGenerateText.textContent = 'GENERATING...';
+      iconGenerate.style.display = 'none';
+      iconSpinner.style.display = 'block';
+      btnGenerateText.textContent = 'Optimizing...';
       btnGenerate.disabled = true;
       promptInput.disabled = true;
-      if (btnRegenerate) btnRegenerate.disabled = true;
+      btnRegenerate.disabled = true;
     }
 
     function setGenerateIdle() {
-      iconGenerate.classList.remove('hidden');
-      iconSpinner.classList.add('hidden');
-      btnGenerateText.textContent = 'GENERATE';
+      iconGenerate.style.display = 'block';
+      iconSpinner.style.display = 'none';
+      btnGenerateText.textContent = 'Optimize';
       btnGenerate.disabled = false;
       promptInput.disabled = false;
 
-      if (hasGeneratedOnce && btnRegenerate) {
-        btnRegenerate.classList.remove('hidden');
-        btnRegenerate.classList.add('flex');
+      if (hasGeneratedOnce) {
+        btnRegenerate.style.display = 'flex';
         btnRegenerate.disabled = false;
       }
     }
@@ -384,20 +568,18 @@
       currentOriginal = text;
       currentOptimized = '';
 
-      // Show result section with thinking state
       resultSection.classList.add('visible');
-      resultText.innerHTML = '<span class="thinking-dots text-muted-foreground">Optimizing</span>';
-      setStatus('optimizing', isRegenerate ? 'Regenerating' : 'Optimizing');
+      resultText.innerHTML = '<span class="thinking-dots" style="color: hsl(var(--muted-foreground));">Thinking</span>';
+      setStatus(isRegenerate ? 'optimizing' : 'optimizing', isRegenerate ? 'Regenerating' : 'Optimizing');
       setGenerateLoading();
 
-      // Send to main process
       if (window.electronAPI?.overlay?.optimize) {
         window.electronAPI.overlay.optimize({ text, isRegenerate: !!isRegenerate });
       }
     }
 
     // ==========================================
-    // COPY FEEDBACK
+    // COPY / SAVE FEEDBACK
     // ==========================================
     function showCopyFeedback() {
       const prev = btnCopyText.textContent;
@@ -409,22 +591,19 @@
       }, 1800);
     }
 
-    // ==========================================
-    // SAVE FEEDBACK
-    // ==========================================
     function showSaveFeedback(success) {
       if (success) {
         btnSaveText.textContent = '✓ Saved!';
         btnSave.classList.add('flash-success');
         setTimeout(() => {
-          btnSaveText.textContent = 'Save';
+          btnSaveText.textContent = 'Save to Library';
           btnSave.disabled = false;
           btnSave.classList.remove('flash-success');
         }, 2000);
       } else {
         btnSaveText.textContent = 'Failed';
         setTimeout(() => {
-          btnSaveText.textContent = 'Save';
+          btnSaveText.textContent = 'Save to Library';
           btnSave.disabled = false;
         }, 2000);
       }
@@ -434,7 +613,6 @@
     // EVENT LISTENERS
     // ==========================================
 
-    // Close button & Escape key
     btnClose.addEventListener('click', () => {
       if (window.electronAPI?.overlay?.close) window.electronAPI.overlay.close();
     });
@@ -445,18 +623,15 @@
       }
     });
 
-    // Open App (auth gate)
     btnOpenApp.addEventListener('click', () => {
       if (window.electronAPI?.overlay?.openApp) window.electronAPI.overlay.openApp();
     });
 
-    // Generate button
     btnGenerate.addEventListener('click', () => {
       const text = promptInput.value.trim();
       if (text) startOptimization(text, false);
     });
 
-    // Enter key to generate (Shift+Enter for newline)
     promptInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -465,14 +640,12 @@
       }
     });
 
-    // Regenerate button
     btnRegenerate.addEventListener('click', () => {
       if (currentOriginal && !isOptimizing) {
         startOptimization(currentOriginal, true);
       }
     });
 
-    // Copy button
     btnCopy.addEventListener('click', () => {
       if (currentOptimized) {
         if (window.electronAPI?.overlay?.copy) {
@@ -482,7 +655,6 @@
       }
     });
 
-    // Save button
     btnSave.addEventListener('click', async () => {
       if (!currentOptimized) return;
 
@@ -502,10 +674,57 @@
     });
 
     // ==========================================
+    // VOICE INPUT
+    // ==========================================
+
+    function startVoiceInput() {
+      if (isListening) return;
+
+      isListening = true;
+      transcriptionSessionId = Date.now().toString();
+
+      // UI update
+      iconMic.style.display = 'none';
+      iconMicListening.style.display = 'block';
+      voiceStatusText.textContent = 'Listening...';
+      voiceStatusText.style.color = 'hsl(0 72% 51%)';
+      btnVoice.classList.add('listening');
+
+      if (window.electronAPI?.transcription?.start) {
+        window.electronAPI.transcription.start(transcriptionSessionId);
+      }
+    }
+
+    function stopVoiceInput() {
+      if (!isListening) return;
+
+      isListening = false;
+
+      iconMic.style.display = 'block';
+      iconMicListening.style.display = 'none';
+      voiceStatusText.textContent = 'Voice';
+      voiceStatusText.style.color = '';
+      btnVoice.classList.remove('listening');
+
+      if (window.electronAPI?.transcription?.stop) {
+        window.electronAPI.transcription.stop();
+      }
+
+      transcriptionSessionId = null;
+    }
+
+    btnVoice.addEventListener('click', () => {
+      if (isListening) {
+        stopVoiceInput();
+      } else {
+        startVoiceInput();
+      }
+    });
+
+    // ==========================================
     // IPC LISTENERS
     // ==========================================
 
-    // Overlay opened (sent each time overlay is shown)
     if (window.electronAPI?.overlay?.onOpened) {
       window.electronAPI.overlay.onOpened((data) => {
         isAuthenticated = data.isAuthenticated;
@@ -519,7 +738,6 @@
       });
     }
 
-    // Auth state update (sent if user logs in/out while overlay exists)
     if (window.electronAPI?.overlay?.onAuthState) {
       window.electronAPI.overlay.onAuthState((data) => {
         isAuthenticated = data.isAuthenticated;
@@ -530,40 +748,42 @@
       });
     }
 
-    // Streaming optimization chunk
+    if (window.electronAPI?.transcription?.onTranscription) {
+      window.electronAPI.transcription.onTranscription((data) => {
+        if (data.text) {
+          promptInput.value = data.accumulated || data.text;
+          promptInput.scrollTop = promptInput.scrollHeight;
+        }
+      });
+    }
+
     if (window.electronAPI?.overlay?.onOptimizationChunk) {
       window.electronAPI.overlay.onOptimizationChunk((data) => {
         if (!isOptimizing) return;
 
-        // On first chunk, clear thinking text
         if (resultText.innerHTML.includes('thinking-dots')) {
           resultText.textContent = '';
         }
 
         resultText.textContent += data.chunk;
-
-        // Auto-scroll
         resultContainer.scrollTop = resultContainer.scrollHeight;
       });
     }
 
-    // Optimization complete
     if (window.electronAPI?.overlay?.onOptimizationComplete) {
       window.electronAPI.overlay.onOptimizationComplete((data) => {
         isOptimizing = false;
         hasGeneratedOnce = true;
         currentOptimized = data.optimized || '';
 
-        // Set final text (in case streaming missed something)
         resultText.textContent = currentOptimized;
         resultContainer.scrollTop = resultContainer.scrollHeight;
 
-        setStatus('ready', 'Optimized');
+        setStatus('ready', 'Done');
         setGenerateIdle();
       });
     }
 
-    // Optimization error
     if (window.electronAPI?.overlay?.onOptimizationError) {
       window.electronAPI.overlay.onOptimizationError((data) => {
         isOptimizing = false;

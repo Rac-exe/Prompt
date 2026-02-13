@@ -3,6 +3,7 @@ import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
 import { PythonClient } from './api/python-client';
+import { TranscriptionClient } from './api/transcription-client';
 import { SupabaseClientManager } from './database/supabase-client';
 import { ChatService } from './database/services/chat-service';
 import { OptimizationService } from './database/services/optimization-service';
@@ -32,6 +33,7 @@ let appWindowManager: AppWindowManager;
 let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
 let pythonClient: PythonClient;
+let transcriptionClient: TranscriptionClient;
 
 // Keystroke tracking for @prompt detection
 let typedBuffer = '';
@@ -201,6 +203,46 @@ async function initialize() {
     console.warn('[Main] Could not connect to Python service');
   }
 
+  // Initialize Transcription client
+  transcriptionClient = new TranscriptionClient('ws://127.0.0.1:8001');
+  console.log('[Main] Transcription client initialized');
+
+  // ============================================
+  // TRANSCRIPTION IPC HANDLERS
+  // ============================================
+  ipcMain.on('transcription:start', async (event, sessionId: string) => {
+    try {
+      console.log('[Main] Starting transcription session:', sessionId);
+      
+      await transcriptionClient.startTranscription(
+        sessionId,
+        (data) => {
+          // Forward transcription updates to all windows
+          overlayManager.send('transcription:update', data);
+          appWindowManager.send('transcription:update', data);
+        },
+        (error) => {
+          // Forward errors
+          overlayManager.send('transcription:error', error);
+          appWindowManager.send('transcription:error', error);
+        }
+      );
+    } catch (error) {
+      console.error('[Main] Failed to start transcription:', error);
+      overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
+      appWindowManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
+    }
+  });
+
+  ipcMain.on('transcription:stop', async () => {
+    try {
+      console.log('[Main] Stopping transcription');
+      await transcriptionClient.stopTranscription();
+    } catch (error) {
+      console.error('[Main] Failed to stop transcription:', error);
+    }
+  });
+
   // ============================================
   // REGISTER IPC HANDLERS
   // ============================================
@@ -294,6 +336,11 @@ async function shutdown() {
   stopKeystrokeDetection();
   globalShortcut.unregisterAll();
 
+  // Disconnect transcription client
+  if (transcriptionClient) {
+    transcriptionClient.disconnect();
+  }
+
   if (overlayManager) {
     overlayManager.destroy();
   }
@@ -310,42 +357,45 @@ async function shutdown() {
 }
 
 // ============================================
-// APP LIFECYCLE
+// SINGLE INSTANCE LOCK (must be first, before any event listeners)
 // ============================================
-app.whenReady().then(async () => {
-  await initialize();
-});
-
-// CRITICAL: Keep running in background when all windows closed
-app.on('window-all-closed', () => {
-  // Do NOT call app.quit() here!
-  // The app should continue running with just the overlay and tray
-});
-
-app.on('activate', async () => {
-  // macOS: Show app window when dock icon clicked
-  if (appWindowManager) {
-    appWindowManager.show();
-  }
-});
-
-app.on('before-quit', async () => {
-  await shutdown();
-});
-
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-});
-
-// Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // Show app window if user tries to open another instance
     if (appWindowManager) {
       appWindowManager.show();
+    }
+  });
+
+  // ============================================
+  // APP LIFECYCLE
+  // ============================================
+  app.whenReady().then(async () => {
+    await initialize();
+  });
+
+  // CRITICAL: Keep running in background when all windows closed
+  app.on('window-all-closed', () => {
+    // Do NOT call app.quit() here!
+    // The app should continue running with just the overlay and tray
+  });
+
+  app.on('activate', async () => {
+    // macOS: Show app window when dock icon clicked
+    if (appWindowManager) {
+      appWindowManager.show();
+    }
+  });
+
+  app.on('before-quit', async () => {
+    await shutdown();
+  });
+
+  app.on('will-quit', () => {
+    if (app.isReady()) {
+      globalShortcut.unregisterAll();
     }
   });
 }

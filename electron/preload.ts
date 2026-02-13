@@ -23,6 +23,16 @@ declare global {
       };
 
       // ============================================
+      // TRANSCRIPTION API (voice input)
+      // ============================================
+      transcription: {
+        start: (sessionId: string) => void;
+        stop: () => void;
+        onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+        onError: (callback: (error: string) => void) => void;
+      };
+
+      // ============================================
       // APP WINDOW API
       // ============================================
       optimizePrompt: (text: string, isRegenerate?: boolean) => void;
@@ -123,6 +133,24 @@ const electronAPI = {
     },
     onOptimizationError: (callback: (data: { error: string }) => void) => {
       ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
+    },
+  },
+
+  // ============================================
+  // TRANSCRIPTION API (voice input)
+  // ============================================
+  transcription: {
+    start: (sessionId: string) => {
+      ipcRenderer.send('transcription:start', sessionId);
+    },
+    stop: () => {
+      ipcRenderer.send('transcription:stop');
+    },
+    onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => {
+      ipcRenderer.on('transcription:update', (_event, data) => callback(data));
+    },
+    onError: (callback: (error: string) => void) => {
+      ipcRenderer.on('transcription:error', (_event, error) => callback(error));
     },
   },
 

@@ -52,6 +52,14 @@ interface Window {
     onProfileUpdated: (callback: () => void) => void;
     onPreferencesUpdated: (callback: () => void) => void;
 
+    // Transcription (Voice Input)
+    transcription: {
+      start: (sessionId: string) => void;
+      stop: () => void;
+      onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+      onError: (callback: (error: string) => void) => void;
+    };
+
     // Utility
     copyToClipboard: (text: string) => void;
     send: (channel: string, data: any) => void;
