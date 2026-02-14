@@ -48,7 +48,11 @@ declare global {
       loadMessages: (chatId: string) => void;
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
       deleteChat: (chatId: string) => void;
-      onChatDeleted: (callback: (data: { chatId: string }) => void) => void;
+      onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
+      onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
+      renameChat: (chatId: string, title: string) => void;
+      onChatRenamed: (callback: (data: { chatId: string; title: string }) => void) => (() => void);
+      onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
       signOut: () => void;
       copyToClipboard: (text: string) => void;
 
@@ -195,7 +199,27 @@ const electronAPI = {
     ipcRenderer.send('app:delete-chat', chatId);
   },
   onChatDeleted: (callback: (data: { chatId: string }) => void) => {
-    ipcRenderer.on('chat-deleted', (_event, data) => callback(data));
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('chat-deleted', handler);
+    return () => ipcRenderer.removeListener('chat-deleted', handler);
+  },
+  onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('chat-delete-error', handler);
+    return () => ipcRenderer.removeListener('chat-delete-error', handler);
+  },
+  renameChat: (chatId: string, title: string) => {
+    ipcRenderer.send('app:rename-chat', { chatId, title });
+  },
+  onChatRenamed: (callback: (data: { chatId: string; title: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('chat-renamed', handler);
+    return () => ipcRenderer.removeListener('chat-renamed', handler);
+  },
+  onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('chat-rename-error', handler);
+    return () => ipcRenderer.removeListener('chat-rename-error', handler);
   },
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => {
     const handler = (_event: any, data: any) => callback(data);

@@ -130,6 +130,84 @@ const Index = () => {
     }
   }, []);
 
+  // Listen for chat renamed events
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onChatRenamed) {
+      const handleChatRenamed = (data: { chatId: string; title: string }) => {
+        console.log('[Index] Chat renamed:', data);
+        // Update local state immediately for responsive feel
+        setRecentChats(prev =>
+          prev.map(c => c.id === data.chatId ? { ...c, title: data.title } : c)
+        );
+        // Update current chat title if we're viewing the renamed chat
+        if (selectedChatId === data.chatId) {
+          setCurrentChatTitle(data.title);
+        }
+        toast({
+          title: "Chat renamed",
+          description: `Chat renamed to "${data.title}".`,
+        });
+      };
+      const cleanup = window.electronAPI.onChatRenamed(handleChatRenamed);
+      return cleanup;
+    }
+  }, [selectedChatId]);
+
+  // Listen for chat rename errors
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onChatRenameError) {
+      const handleRenameError = (data: { chatId: string; error: string }) => {
+        console.error('[Index] Chat rename error:', data);
+        toast({
+          title: "Rename failed",
+          description: data.error || "Failed to rename chat. Please try again.",
+          variant: "destructive",
+        });
+      };
+      const cleanup = window.electronAPI.onChatRenameError(handleRenameError);
+      return cleanup;
+    }
+  }, []);
+
+  // Listen for chat deleted events
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onChatDeleted) {
+      const handleChatDeleted = (data: { chatId: string }) => {
+        console.log('[Index] Chat deleted:', data);
+        // Remove from local state
+        setRecentChats(prev => prev.filter(c => c.id !== data.chatId));
+        // If the deleted chat was selected, clear the view
+        if (selectedChatId === data.chatId) {
+          setSelectedChatId(null);
+          setMessages([]);
+          setCurrentChatTitle('');
+        }
+        toast({
+          title: "Chat deleted",
+          description: "Chat has been permanently removed.",
+        });
+      };
+      const cleanup = window.electronAPI.onChatDeleted(handleChatDeleted);
+      return cleanup;
+    }
+  }, [selectedChatId]);
+
+  // Listen for chat delete errors
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onChatDeleteError) {
+      const handleDeleteError = (data: { chatId: string; error: string }) => {
+        console.error('[Index] Chat delete error:', data);
+        toast({
+          title: "Delete failed",
+          description: data.error || "Failed to delete chat. Please try again.",
+          variant: "destructive",
+        });
+      };
+      const cleanup = window.electronAPI.onChatDeleteError(handleDeleteError);
+      return cleanup;
+    }
+  }, []);
+
   const [finalMessageData, setFinalMessageData] = useState<Message | null>(null);
   const [streamedMessageId, setStreamedMessageId] = useState<string | null>(null); // Track ID of message being streamed
 
@@ -312,6 +390,45 @@ const Index = () => {
       }))
       .sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [chatSessions]);
+
+  // Chat management handlers
+  const handleRenameChat = useCallback((chatId: string, newTitle: string) => {
+    console.log('[Index] Renaming chat:', { chatId, newTitle });
+    if (isElectron && window.electronAPI?.renameChat) {
+      window.electronAPI.renameChat(chatId, newTitle);
+    } else {
+      // Fallback for web mode
+      setRecentChats(prev =>
+        prev.map(c => c.id === chatId ? { ...c, title: newTitle } : c)
+      );
+      if (selectedChatId === chatId) {
+        setCurrentChatTitle(newTitle);
+      }
+      toast({
+        title: "Chat renamed",
+        description: `Chat renamed to "${newTitle}".`,
+      });
+    }
+  }, [selectedChatId]);
+
+  const handleDeleteChat = useCallback((chatId: string) => {
+    console.log('[Index] Deleting chat:', chatId);
+    if (isElectron && window.electronAPI?.deleteChat) {
+      window.electronAPI.deleteChat(chatId);
+    } else {
+      // Fallback for web mode
+      setRecentChats(prev => prev.filter(c => c.id !== chatId));
+      if (selectedChatId === chatId) {
+        setSelectedChatId(null);
+        setMessages([]);
+        setCurrentChatTitle('');
+      }
+      toast({
+        title: "Chat deleted",
+        description: "Chat has been permanently removed.",
+      });
+    }
+  }, [selectedChatId]);
 
   // Chat handlers
   const handleNewChat = () => {
@@ -610,6 +727,8 @@ Your prompt was: "${content}"`;
             onSelectChat={setSelectedChatId}
             selectedChatId={selectedChatId}
             onNewChat={handleNewChat}
+            onRenameChat={handleRenameChat}
+            onDeleteChat={handleDeleteChat}
           />
         }
       >

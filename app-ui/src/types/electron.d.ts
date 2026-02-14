@@ -21,6 +21,12 @@ export interface ElectronAPI {
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
+  deleteChat: (chatId: string) => void;
+  onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
+  onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
+  renameChat: (chatId: string, title: string) => void;
+  onChatRenamed: (callback: (data: { chatId: string; title: string }) => void) => (() => void);
+  onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
 
   // Optimization
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;

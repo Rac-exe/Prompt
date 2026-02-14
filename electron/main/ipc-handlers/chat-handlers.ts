@@ -185,6 +185,27 @@ export function registerChatHandlers(
     });
 
     // ============================================
+    // APP WINDOW: Rename chat
+    // ============================================
+    ipcMain.on('app:rename-chat', async (event, data: { chatId: string; title: string }) => {
+        try {
+            await chatService.updateChatTitle(data.chatId, data.title);
+            if (appWindowManager) {
+                appWindowManager.send('chat-renamed', { chatId: data.chatId, title: data.title });
+                // Reload chats list to reflect the new name
+                const chats = await chatService.getChats();
+                appWindowManager.send('chats-loaded', { chats });
+            }
+        } catch (error) {
+            console.error('[Chat] Failed to rename chat:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            if (appWindowManager) {
+                appWindowManager.send('chat-rename-error', { chatId: data.chatId, error: errorMessage });
+            }
+        }
+    });
+
+    // ============================================
     // APP WINDOW: Delete chat
     // ============================================
     ipcMain.on('app:delete-chat', async (event, chatId: string) => {
@@ -217,7 +238,9 @@ export function registerChatHandlers(
                 if (!authState.isAuthenticated) {
                     throw new Error('User must be authenticated to create chat');
                 }
-                const title = data.content.slice(0, 50) + (data.content.length > 50 ? '...' : '');
+                // Limit title to first 4 words (like ChatGPT style)
+                const words = data.content.trim().split(/\s+/).slice(0, 4);
+                const title = words.join(' ');
                 chat = await chatService.createChat(title);
                 chatId = chat.id;
             } else {
