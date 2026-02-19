@@ -19,6 +19,7 @@ import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
+import { sendKeystrokeSync } from './utils/windows-key-sender';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -139,8 +140,25 @@ function startKeystrokeDetection() {
     }
 
     if (typedBuffer.toLowerCase().endsWith(TRIGGER_PHRASE)) {
-      overlayManager.open(authState.isAuthenticated);
+      // Clear buffer immediately to prevent double-triggers
       typedBuffer = '';
+      
+      // CRITICAL WINDOWS FOCUS-STEAL FIX:
+      // The final 't' character was intercepted by uIOhook BEFORE the target
+      // app could process it. We must:
+      // 1. Manually inject the 't' keystroke back into the focused app
+      // 2. Open overlay IMMEDIATELY (synchronously)
+      // 
+      // This MUST remain synchronous (no setTimeout/Promise) because:
+      // - We are still inside the OS input frame from the original key event
+      // - Windows only allows focus stealing within this frame
+      // - Any async boundary (setTimeout/Promise) exits the frame → focus blocked
+      // 
+      // Architecture matches: Raycast, PowerToys Run, text expanders
+      sendKeystrokeSync('t');
+      
+      // Open overlay synchronously - still in same input frame
+      overlayManager.open(authState.isAuthenticated);
     }
   });
 
