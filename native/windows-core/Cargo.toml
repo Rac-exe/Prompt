@@ -1,0 +1,39 @@
+[package]
+name = "windows-core"
+version = "0.1.0"
+edition = "2021"
+
+# cdylib produces the .node/.dll shared library for Node.js N-API
+[lib]
+crate-type = ["cdylib"]
+
+# ── Core napi-rs dependencies ──────────────────────────────────────────────
+[dependencies]
+# napi4 is the minimum feature level required for ThreadsafeFunction
+# (needed in later phases for cross-thread callbacks from the hook thread).
+napi = { version = "2", default-features = false, features = ["napi4"] }
+napi-derive = "2"
+
+# Win32 bindings — only compiled on Windows targets.
+# We declare only the features (Win32 modules) we actually use so compile
+# times stay reasonable.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_Threading",
+] }
+
+# ── Build dependencies ─────────────────────────────────────────────────────
+[build-dependencies]
+# napi-build emits the linker directives that make the .node file link
+# correctly against node.exe (resolves NAPI symbols at runtime).
+napi-build = "2"
+
+# ── Profile ───────────────────────────────────────────────────────────────
+[profile.release]
+# Strip debug info from the .node binary for a smaller file.
+strip = true
+opt-level = 3
+lto = true

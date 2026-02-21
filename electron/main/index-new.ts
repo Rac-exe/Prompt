@@ -11,7 +11,6 @@ import { UserService } from './database/services/user-service';
 import { AuthService } from './database/services/auth-service';
 import { SettingsService } from './database/services/settings-service';
 import { PromptLibraryService } from './database/services/prompt-library-service';
-import { uIOhook, UiohookKey } from 'uiohook-napi';
 import * as dotenv from 'dotenv';
 import { authState } from './utils/auth-state';
 import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
@@ -19,160 +18,39 @@ import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
-import { sendKeystrokeSync } from './utils/windows-key-sender';
+import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
 
 // Load environment variables from .env file
 dotenv.config();
-
-// ============================================
-// GLOBAL STATE
-// ============================================
 let appWindowManager: AppWindowManager;
 let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
 let pythonClient: PythonClient;
 let transcriptionClient: TranscriptionClient;
 
-// Keystroke tracking for @prompt detection
-let typedBuffer = '';
-const TRIGGER_PHRASE = '@prompt';
-const MAX_BUFFER_SIZE = 50;
-let shiftPressed = false;
 
 // ============================================
-// KEY CODE MAPPING
-// ============================================
-const KEYCODE_MAP: { [key: number]: string } = {
-  [UiohookKey.Backquote]: '`',
-  [UiohookKey['1']]: '1',
-  [UiohookKey['2']]: '2',
-  [UiohookKey['3']]: '3',
-  [UiohookKey['4']]: '4',
-  [UiohookKey['5']]: '5',
-  [UiohookKey['6']]: '6',
-  [UiohookKey['7']]: '7',
-  [UiohookKey['8']]: '8',
-  [UiohookKey['9']]: '9',
-  [UiohookKey['0']]: '0',
-  [UiohookKey.Minus]: '-',
-  [UiohookKey.Equal]: '=',
-  [UiohookKey.Backspace]: '\b',
-  [UiohookKey.Q]: 'q',
-  [UiohookKey.W]: 'w',
-  [UiohookKey.E]: 'e',
-  [UiohookKey.R]: 'r',
-  [UiohookKey.T]: 't',
-  [UiohookKey.Y]: 'y',
-  [UiohookKey.U]: 'u',
-  [UiohookKey.I]: 'i',
-  [UiohookKey.O]: 'o',
-  [UiohookKey.P]: 'p',
-  [UiohookKey.BracketLeft]: '[',
-  [UiohookKey.BracketRight]: ']',
-  [UiohookKey.Backslash]: '\\',
-  [UiohookKey.A]: 'a',
-  [UiohookKey.S]: 's',
-  [UiohookKey.D]: 'd',
-  [UiohookKey.F]: 'f',
-  [UiohookKey.G]: 'g',
-  [UiohookKey.H]: 'h',
-  [UiohookKey.J]: 'j',
-  [UiohookKey.K]: 'k',
-  [UiohookKey.L]: 'l',
-  [UiohookKey.Semicolon]: ';',
-  [UiohookKey.Quote]: "'",
-  [UiohookKey.Z]: 'z',
-  [UiohookKey.X]: 'x',
-  [UiohookKey.C]: 'c',
-  [UiohookKey.V]: 'v',
-  [UiohookKey.B]: 'b',
-  [UiohookKey.N]: 'n',
-  [UiohookKey.M]: 'm',
-  [UiohookKey.Comma]: ',',
-  [UiohookKey.Period]: '.',
-  [UiohookKey.Slash]: '/',
-  [UiohookKey.Space]: ' ',
-  [UiohookKey.Enter]: '\n',
-};
-
-const SHIFT_MAP: { [key: string]: string } = {
-  '`': '~', '1': '!', '2': '@', '3': '#', '4': '$', '5': '%',
-  '6': '^', '7': '&', '8': '*', '9': '(', '0': ')', '-': '_',
-  '=': '+', '[': '{', ']': '}', '\\': '|', ';': ':', "'": '"',
-  ',': '<', '.': '>', '/': '?',
-};
-
-// ============================================
-// KEYSTROKE DETECTION
+// KEYSTROKE DETECTION (Rust native bridge)
 // ============================================
 function startKeystrokeDetection() {
-  uIOhook.on('keydown', (event: any) => {
-    if (event.keycode === UiohookKey.Shift || event.keycode === UiohookKey.ShiftRight) {
-      shiftPressed = true;
-      return;
-    }
+  if (!isNativeBridgeAvailable()) {
+    console.warn('[Main] Native bridge not available — @prompt hook disabled. Run: npm run native:build');
+    return;
+  }
 
-    let char = KEYCODE_MAP[event.keycode];
-    if (!char) return;
-
-    if (event.shiftKey || shiftPressed) {
-      if (char.length === 1 && /[a-z]/.test(char)) {
-        char = char.toUpperCase();
-      } else if (SHIFT_MAP[char]) {
-        char = SHIFT_MAP[char];
-      }
-    }
-
-    if (char === '\b') {
-      typedBuffer = typedBuffer.slice(0, -1);
-      return;
-    }
-
-    if (char === '\n') return;
-
-    typedBuffer += char;
-
-    if (typedBuffer.length > MAX_BUFFER_SIZE) {
-      typedBuffer = typedBuffer.slice(-MAX_BUFFER_SIZE);
-    }
-
-    if (typedBuffer.toLowerCase().endsWith(TRIGGER_PHRASE)) {
-      // Clear buffer immediately to prevent double-triggers
-      typedBuffer = '';
-      
-      // CRITICAL WINDOWS FOCUS-STEAL FIX:
-      // The final 't' character was intercepted by uIOhook BEFORE the target
-      // app could process it. We must:
-      // 1. Manually inject the 't' keystroke back into the focused app
-      // 2. Open overlay IMMEDIATELY (synchronously)
-      // 
-      // This MUST remain synchronous (no setTimeout/Promise) because:
-      // - We are still inside the OS input frame from the original key event
-      // - Windows only allows focus stealing within this frame
-      // - Any async boundary (setTimeout/Promise) exits the frame → focus blocked
-      // 
-      // Architecture matches: Raycast, PowerToys Run, text expanders
-      sendKeystrokeSync('t');
-      
-      // Open overlay synchronously - still in same input frame
-      overlayManager.open(authState.isAuthenticated);
-    }
+  startHook((anchor: TriggerAnchor) => {
+    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
+    overlayManager.open(authState.isAuthenticated);
   });
 
-  uIOhook.on('keyup', (event: any) => {
-    if (event.keycode === UiohookKey.Shift || event.keycode === UiohookKey.ShiftRight) {
-      shiftPressed = false;
-    }
-  });
-
-  uIOhook.start();
+  console.log('[Main] Native keyboard hook started');
 }
 
 function stopKeystrokeDetection() {
-  uIOhook.stop();
+  stopHook();
 }
 
 // ============================================
@@ -231,7 +109,7 @@ async function initialize() {
   ipcMain.on('transcription:start', async (event, sessionId: string) => {
     try {
       console.log('[Main] Starting transcription session:', sessionId);
-      
+
       await transcriptionClient.startTranscription(
         sessionId,
         (data) => {

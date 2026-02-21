@@ -13,6 +13,7 @@ declare global {
         copy: (text: string) => void;
         close: () => void;
         openApp: () => void;
+        insert: (text: string) => Promise<{ success: boolean; fallback?: string }>;
         checkAuth: () => Promise<{ isAuthenticated: boolean }>;
         getCollections: () => Promise<any>;
         createCollection: (name: string, icon?: string) => Promise<any>;
@@ -117,6 +118,9 @@ const electronAPI = {
     },
     openApp: () => {
       ipcRenderer.send('overlay:open-app');
+    },
+    insert: (text: string) => {
+      return ipcRenderer.invoke('overlay:insert', { text });
     },
     checkAuth: () => {
       return ipcRenderer.invoke('overlay:check-auth');

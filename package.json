@@ -4,6 +4,8 @@
   "description": "Global desktop app for AI prompt optimization with Supabase",
   "main": "dist/main/index-new.js",
   "scripts": {
+    "native:build": "cd native/windows-core && npm install && npm run build",
+    "native:build:debug": "cd native/windows-core && npm install && npm run build:debug",
     "install:ui": "cd app-ui && npm install",
     "build:ui": "cd app-ui && npm run build",
     "build:electron": "tsc",

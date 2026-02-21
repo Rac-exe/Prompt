@@ -5,11 +5,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prmpt Overlay</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="design-system.css">
 
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -48,48 +53,117 @@
     }
 
     /* ======== SCROLLBAR ======== */
-    ::-webkit-scrollbar { width: 5px; }
-    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
     ::-webkit-scrollbar-thumb {
       background: hsl(var(--muted-foreground) / 0.2);
       border-radius: 10px;
     }
+
     ::-webkit-scrollbar-thumb:hover {
       background: hsl(var(--muted-foreground) / 0.35);
     }
 
     /* ======== VIEW TRANSITIONS ======== */
-    .view { display: none; }
-    .view.active { display: flex; }
+    .view {
+      display: none;
+    }
+
+    .view.active {
+      display: flex;
+    }
 
     /* ======== ANIMATIONS ======== */
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .animate-spin { animation: spin 0.8s linear infinite; }
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
 
-    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-    .animate-pulse { animation: pulse 1.5s ease-in-out infinite; }
+    .animate-spin {
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.4;
+      }
+    }
+
+    .animate-pulse {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
 
     @keyframes thinking {
-      0%, 20% { content: '.'; }
-      40% { content: '..'; }
-      60%, 100% { content: '...'; }
+
+      0%,
+      20% {
+        content: '.';
+      }
+
+      40% {
+        content: '..';
+      }
+
+      60%,
+      100% {
+        content: '...';
+      }
     }
-    .thinking-dots::after { content: '.'; animation: thinking 1.4s infinite; }
+
+    .thinking-dots::after {
+      content: '.';
+      animation: thinking 1.4s infinite;
+    }
 
     @keyframes fade-slide-in {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
-    .panel-enter { animation: fade-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1); }
+
+    .panel-enter {
+      animation: fade-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
 
     @keyframes shimmer {
-      0% { background-position: -200% 0; }
-      100% { background-position: 200% 0; }
+      0% {
+        background-position: -200% 0;
+      }
+
+      100% {
+        background-position: 200% 0;
+      }
     }
 
     @keyframes mic-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 hsl(0 72% 51% / 0.4); }
-      50% { box-shadow: 0 0 0 6px hsl(0 72% 51% / 0); }
+
+      0%,
+      100% {
+        box-shadow: 0 0 0 0 hsl(0 72% 51% / 0.4);
+      }
+
+      50% {
+        box-shadow: 0 0 0 6px hsl(0 72% 51% / 0);
+      }
     }
 
     /* ======== RESULT EXPAND ======== */
@@ -99,6 +173,7 @@
       overflow: hidden;
       transition: max-height 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
     }
+
     .result-section.visible {
       max-height: 600px;
       opacity: 1;
@@ -113,10 +188,18 @@
 
     /* ======== FLASH ANIMATION ======== */
     @keyframes flash-success {
-      0% { background-color: hsl(var(--emerald) / 0.15); }
-      100% { background-color: transparent; }
+      0% {
+        background-color: hsl(var(--emerald) / 0.15);
+      }
+
+      100% {
+        background-color: transparent;
+      }
     }
-    .flash-success { animation: flash-success 1.5s ease-out; }
+
+    .flash-success {
+      animation: flash-success 1.5s ease-out;
+    }
 
     /* ======== BUTTON STYLES ======== */
     .btn-primary {
@@ -129,13 +212,16 @@
       overflow: hidden;
       transition: all 0.2s ease;
     }
+
     .btn-primary:hover {
       filter: brightness(1.1);
       box-shadow: 0 0 20px hsl(var(--emerald) / 0.35);
     }
+
     .btn-primary:active {
       transform: scale(0.98);
     }
+
     .btn-primary:disabled {
       opacity: 0.4;
       cursor: not-allowed;
@@ -151,10 +237,12 @@
       cursor: pointer;
       transition: all 0.2s ease;
     }
+
     .btn-secondary:hover {
       background: hsl(var(--muted));
       border-color: hsl(var(--muted-foreground) / 0.2);
     }
+
     .btn-secondary:active {
       transform: scale(0.98);
     }
@@ -166,6 +254,7 @@
       color: hsl(var(--muted-foreground));
       transition: all 0.15s ease;
     }
+
     .btn-ghost:hover {
       background: hsl(var(--muted));
       color: hsl(var(--foreground));
@@ -180,14 +269,17 @@
       cursor: pointer;
       transition: all 0.2s ease;
     }
+
     .btn-regenerate:hover {
       background: hsl(var(--emerald) / 0.1);
       border-color: hsl(var(--emerald) / 0.7);
       box-shadow: 0 0 16px hsl(var(--emerald) / 0.15);
     }
+
     .btn-regenerate:active {
       transform: scale(0.97);
     }
+
     .btn-regenerate:disabled {
       opacity: 0.35;
       cursor: not-allowed;
@@ -200,9 +292,11 @@
       cursor: pointer;
       transition: all 0.2s ease;
     }
+
     .btn-voice:hover {
       background: hsl(var(--muted));
     }
+
     .btn-voice.listening {
       background: hsl(0 72% 51% / 0.08);
       border-color: hsl(0 72% 51% / 0.3);
@@ -216,6 +310,7 @@
       border-radius: 14px;
       transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
+
     .input-area:focus-within {
       border-color: hsl(var(--emerald) / 0.4);
       box-shadow: 0 0 0 3px hsl(var(--emerald) / 0.08);
@@ -228,6 +323,7 @@
       border-radius: 14px;
       position: relative;
     }
+
     .result-box::before {
       content: '';
       position: absolute;
@@ -250,18 +346,22 @@
       letter-spacing: 0.03em;
       text-transform: uppercase;
     }
+
     .status-pill.optimizing {
       background: hsl(var(--emerald) / 0.1);
       color: hsl(var(--emerald));
     }
+
     .status-pill.ready {
       background: hsl(var(--emerald) / 0.1);
       color: hsl(var(--emerald));
     }
+
     .status-pill.error {
       background: hsl(0 72% 51% / 0.1);
       color: hsl(0 72% 51%);
     }
+
     .status-pill.waiting {
       background: hsl(var(--muted));
       color: hsl(var(--muted-foreground));
@@ -283,7 +383,10 @@
       align-items: center;
       justify-content: center;
     }
-    .modal-backdrop.open { display: flex; }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
 
     .modal-panel {
       width: 360px;
@@ -330,9 +433,11 @@
       text-align: left;
       font-family: inherit;
     }
+
     .collection-item:hover {
       background: hsl(var(--muted));
     }
+
     .collection-item.selected {
       background: hsl(var(--emerald) / 0.08);
       border-color: hsl(var(--emerald) / 0.4);
@@ -366,9 +471,11 @@
       outline: none;
       transition: border-color 0.15s ease;
     }
+
     .new-collection-input:focus {
       border-color: hsl(var(--emerald) / 0.5);
     }
+
     .new-collection-input::placeholder {
       color: hsl(var(--muted-foreground));
     }
@@ -387,9 +494,11 @@
       white-space: nowrap;
       font-family: inherit;
     }
+
     .btn-add-collection:hover {
       background: hsl(var(--muted));
     }
+
     .btn-add-collection:disabled {
       opacity: 0.4;
       cursor: not-allowed;
@@ -411,6 +520,34 @@
       pointer-events: none;
     }
 
+    /* ======== INSERT / REPLACE BUTTON ======== */
+    .btn-insert {
+      background: linear-gradient(135deg, hsl(221 83% 53%), hsl(250 80% 58%));
+      color: white;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.2s ease;
+    }
+
+    .btn-insert:hover {
+      filter: brightness(1.12);
+      box-shadow: 0 0 20px hsl(221 83% 53% / 0.4);
+    }
+
+    .btn-insert:active {
+      transform: scale(0.97);
+    }
+
+    .btn-insert:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      filter: none;
+      box-shadow: none;
+    }
+
     /* ======== AUTH VIEW ======== */
     .auth-icon-ring {
       width: 64px;
@@ -422,6 +559,7 @@
       justify-content: center;
       position: relative;
     }
+
     .auth-icon-ring::after {
       content: '';
       position: absolute;
@@ -438,23 +576,27 @@
     <div class="overlay-panel">
 
       <!-- ===== HEADER ===== -->
-      <div style="-webkit-app-region: drag; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;">
+      <div
+        style="-webkit-app-region: drag; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <!-- Logo -->
-          <div style="width: 28px; height: 28px; border-radius: 10px; background: linear-gradient(135deg, hsl(var(--emerald)), hsl(150 70% 38%)); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px hsl(var(--emerald) / 0.3);">
+          <div
+            style="width: 28px; height: 28px; border-radius: 10px; background: linear-gradient(135deg, hsl(var(--emerald)), hsl(150 70% 38%)); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px hsl(var(--emerald) / 0.3);">
             <svg style="width: 14px; height: 14px; color: white;" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
             </svg>
           </div>
           <div>
-            <span style="font-size: 13px; font-weight: 700; color: hsl(var(--foreground)); letter-spacing: -0.01em;">Prmpt</span>
-            <span style="font-size: 10px; font-weight: 500; color: hsl(var(--muted-foreground)); margin-left: 6px; letter-spacing: 0.02em;">OVERLAY</span>
+            <span
+              style="font-size: 13px; font-weight: 700; color: hsl(var(--foreground)); letter-spacing: -0.01em;">Prmpt</span>
+            <span
+              style="font-size: 10px; font-weight: 500; color: hsl(var(--muted-foreground)); margin-left: 6px; letter-spacing: 0.02em;">OVERLAY</span>
           </div>
         </div>
         <button id="btn-close" class="btn-ghost"
-                style="-webkit-app-region: no-drag; width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+          style="-webkit-app-region: no-drag; width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
           <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
@@ -462,23 +604,28 @@
       <div class="divider"></div>
 
       <!-- ===== AUTH GATE VIEW ===== -->
-      <div id="view-auth" class="view" style="flex-direction: column; align-items: center; justify-content: center; padding: 48px 32px; text-align: center; gap: 20px;">
+      <div id="view-auth" class="view"
+        style="flex-direction: column; align-items: center; justify-content: center; padding: 48px 32px; text-align: center; gap: 20px;">
         <div class="auth-icon-ring">
-          <svg style="width: 28px; height: 28px; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg style="width: 28px; height: 28px; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor"
+            viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                  d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/>
+              d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
           </svg>
         </div>
         <div>
-          <h3 style="font-size: 17px; font-weight: 700; color: hsl(var(--foreground)); margin-bottom: 6px; letter-spacing: -0.02em;">Login Required</h3>
-          <p style="font-size: 13px; color: hsl(var(--muted-foreground)); line-height: 1.5; max-width: 260px; margin: 0 auto;">
+          <h3
+            style="font-size: 17px; font-weight: 700; color: hsl(var(--foreground)); margin-bottom: 6px; letter-spacing: -0.02em;">
+            Login Required</h3>
+          <p
+            style="font-size: 13px; color: hsl(var(--muted-foreground)); line-height: 1.5; max-width: 260px; margin: 0 auto;">
             Sign in to your account to use the prompt optimizer.
           </p>
         </div>
         <button id="btn-open-app" class="btn-primary"
-                style="-webkit-app-region: no-drag; height: 40px; padding: 0 24px; border-radius: 12px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          style="-webkit-app-region: no-drag; height: 40px; padding: 0 24px; border-radius: 12px; font-size: 13px; display: flex; align-items: center; gap: 8px;">
           <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
           </svg>
           Open App to Login
         </button>
@@ -486,26 +633,29 @@
 
       <!-- ===== MAIN VIEW ===== -->
       <div id="view-main" class="view" style="flex-direction: column;">
-        <div style="display: flex; flex-direction: column; padding: 16px 18px; gap: 14px; overflow-y: auto; max-height: 540px;">
+        <div
+          style="display: flex; flex-direction: column; padding: 16px 18px; gap: 14px; overflow-y: auto; max-height: 540px;">
 
           <!-- INPUT SECTION -->
           <div>
             <!-- Label row with voice button -->
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-              <span style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
+              <span
+                style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
                 Your Prompt
               </span>
 
               <!-- Voice Button -->
-              <button id="btn-voice" class="btn-voice"
-                      title="Voice Input"
-                      style="-webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground));">
-                <svg id="icon-mic" style="width: 13px; height: 13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <button id="btn-voice" class="btn-voice" title="Voice Input"
+                style="-webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground));">
+                <svg id="icon-mic" style="width: 13px; height: 13px;" fill="none" stroke="currentColor"
+                  viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                 </svg>
-                <svg id="icon-mic-listening" style="width: 13px; height: 13px; color: hsl(0 72% 51%); display: none;" fill="currentColor" viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="5"/>
+                <svg id="icon-mic-listening" style="width: 13px; height: 13px; color: hsl(0 72% 51%); display: none;"
+                  fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="5" />
                 </svg>
                 <span id="voice-status-text">Voice</span>
               </button>
@@ -513,9 +663,8 @@
 
             <!-- Textarea -->
             <div class="input-area" style="padding: 12px 14px;">
-              <textarea id="prompt-input"
-                        placeholder="Describe what you need optimized..."
-                        style="-webkit-app-region: no-drag; width: 100%; background: transparent; color: hsl(var(--foreground)); font-size: 13px; line-height: 1.6; outline: none; resize: none; border: none; font-family: inherit;">
+              <textarea id="prompt-input" placeholder="Describe what you need optimized..."
+                style="-webkit-app-region: no-drag; width: 100%; background: transparent; color: hsl(var(--foreground)); font-size: 13px; line-height: 1.6; outline: none; resize: none; border: none; font-family: inherit;">
               </textarea>
             </div>
 
@@ -523,24 +672,25 @@
             <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
               <!-- Generate -->
               <button id="btn-generate" class="btn-primary"
-                      style="-webkit-app-region: no-drag; flex: 1; height: 42px; border-radius: 12px; font-size: 13px; letter-spacing: 0.03em; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                style="-webkit-app-region: no-drag; flex: 1; height: 42px; border-radius: 12px; font-size: 13px; letter-spacing: 0.03em; display: flex; align-items: center; justify-content: center; gap: 8px;">
                 <svg id="icon-generate" style="width: 15px; height: 15px;" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+                  <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
                 </svg>
-                <svg id="icon-spinner" style="width: 15px; height: 15px; display: none;" fill="none" viewBox="0 0 24 24" class="animate-spin">
-                  <circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/>
-                  <path style="opacity: 0.8;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                <svg id="icon-spinner" style="width: 15px; height: 15px; display: none;" fill="none" viewBox="0 0 24 24"
+                  class="animate-spin">
+                  <circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
+                  <path style="opacity: 0.8;" fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
                 <span id="btn-generate-text">Optimize</span>
               </button>
 
               <!-- Regenerate -->
-              <button id="btn-regenerate" class="btn-regenerate"
-                      title="Regenerate with different results"
-                      style="-webkit-app-region: no-drag; display: none; height: 42px; padding: 0 16px; border-radius: 12px; font-size: 12px; align-items: center; gap: 6px;">
+              <button id="btn-regenerate" class="btn-regenerate" title="Regenerate with different results"
+                style="-webkit-app-region: no-drag; display: none; height: 42px; padding: 0 16px; border-radius: 12px; font-size: 12px; align-items: center; gap: 6px;">
                 <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
                 <span>Redo</span>
               </button>
@@ -553,38 +703,53 @@
 
             <!-- Result header -->
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-              <span style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
+              <span
+                style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
                 Optimized Result
               </span>
               <div id="status-badge" class="status-pill waiting">
-                <div id="status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: currentColor;"></div>
+                <div id="status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: currentColor;">
+                </div>
                 <span id="status-text">Waiting</span>
               </div>
             </div>
 
             <!-- Result text -->
             <div id="result-container" class="result-box"
-                 style="padding: 14px 16px; overflow-y: auto; max-height: 200px; min-height: 48px;">
+              style="padding: 14px 16px; overflow-y: auto; max-height: 200px; min-height: 48px;">
               <p id="result-text"
-                 style="font-size: 13px; color: hsl(var(--foreground)); line-height: 1.65; white-space: pre-wrap; word-break: break-word; min-height: 1em; margin: 0;"></p>
+                style="font-size: 13px; color: hsl(var(--foreground)); line-height: 1.65; white-space: pre-wrap; word-break: break-word; min-height: 1em; margin: 0;">
+              </p>
             </div>
 
             <!-- Action bar -->
             <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
               <button id="btn-copy" class="btn-secondary"
-                      style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+                style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
                 <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
                 <span id="btn-copy-text">Copy</span>
               </button>
 
-              <button id="btn-save" class="btn-primary"
-                      style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <svg id="icon-save" style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <!-- Replace in original app -->
+              <button id="btn-insert" class="btn-insert" title="Replace @prompt with optimized text in the original app"
+                style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <svg id="icon-insert" style="width: 14px; height: 14px;" fill="none" stroke="currentColor"
+                  viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                    d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+                </svg>
+                <span id="btn-insert-text">Replace</span>
+              </button>
+
+              <button id="btn-save" class="btn-primary"
+                style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <svg id="icon-save" style="width: 14px; height: 14px;" fill="none" stroke="currentColor"
+                  viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                 </svg>
                 <span id="btn-save-text">Save to Library</span>
               </button>
@@ -600,11 +765,12 @@
     <div id="modal-backdrop" class="modal-backdrop">
       <div class="modal-panel">
         <div class="modal-header">
-          <span style="font-size: 14px; font-weight: 700; color: hsl(var(--foreground)); letter-spacing: -0.01em;">Save to Collection</span>
+          <span style="font-size: 14px; font-weight: 700; color: hsl(var(--foreground)); letter-spacing: -0.01em;">Save
+            to Collection</span>
           <button id="modal-close" class="btn-ghost"
-                  style="width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+            style="width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
             <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
@@ -613,16 +779,18 @@
 
         <!-- Title Input -->
         <div style="padding: 12px 14px 4px;">
-          <label style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 6px;">
+          <label
+            style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 6px;">
             Title
           </label>
-          <input id="save-title-input" class="new-collection-input" type="text" placeholder="Give your prompt a title..." maxlength="80"
-                 style="width: 100%; height: 38px;">
+          <input id="save-title-input" class="new-collection-input" type="text"
+            placeholder="Give your prompt a title..." maxlength="80" style="width: 100%; height: 38px;">
         </div>
 
         <!-- Collection List -->
         <div style="padding: 4px 14px 0;">
-          <label style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 6px;">
+          <label
+            style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 6px;">
             Collection
           </label>
         </div>
@@ -635,21 +803,22 @@
         <!-- New Collection Inline -->
         <div class="divider" style="margin: 2px 14px 0;"></div>
         <div class="new-collection-row">
-          <input id="new-collection-input" class="new-collection-input" type="text" placeholder="New collection name..." maxlength="50">
+          <input id="new-collection-input" class="new-collection-input" type="text" placeholder="New collection name..."
+            maxlength="50">
           <button id="btn-add-collection" class="btn-add-collection" disabled>Create</button>
         </div>
 
         <!-- Footer -->
         <div class="modal-footer">
           <button id="modal-cancel" class="btn-secondary"
-                  style="flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center;">
+            style="flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center;">
             Cancel
           </button>
           <button id="modal-confirm" class="btn-primary" disabled
-                  style="flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            style="flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
             <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
             </svg>
             <span id="modal-confirm-text">Save to Collection</span>
           </button>
@@ -676,42 +845,44 @@
     // ==========================================
     // DOM REFS
     // ==========================================
-    const viewAuth     = document.getElementById('view-auth');
-    const viewMain     = document.getElementById('view-main');
-    const btnClose     = document.getElementById('btn-close');
-    const btnOpenApp   = document.getElementById('btn-open-app');
-    const promptInput  = document.getElementById('prompt-input');
-    const btnGenerate  = document.getElementById('btn-generate');
+    const viewAuth = document.getElementById('view-auth');
+    const viewMain = document.getElementById('view-main');
+    const btnClose = document.getElementById('btn-close');
+    const btnOpenApp = document.getElementById('btn-open-app');
+    const promptInput = document.getElementById('prompt-input');
+    const btnGenerate = document.getElementById('btn-generate');
     const btnGenerateText = document.getElementById('btn-generate-text');
     const iconGenerate = document.getElementById('icon-generate');
-    const iconSpinner  = document.getElementById('icon-spinner');
+    const iconSpinner = document.getElementById('icon-spinner');
     const btnRegenerate = document.getElementById('btn-regenerate');
-    const btnVoice     = document.getElementById('btn-voice');
-    const iconMic      = document.getElementById('icon-mic');
+    const btnVoice = document.getElementById('btn-voice');
+    const iconMic = document.getElementById('icon-mic');
     const iconMicListening = document.getElementById('icon-mic-listening');
     const voiceStatusText = document.getElementById('voice-status-text');
     const resultSection = document.getElementById('result-section');
-    const resultText   = document.getElementById('result-text');
+    const resultText = document.getElementById('result-text');
     const resultContainer = document.getElementById('result-container');
-    const statusBadge  = document.getElementById('status-badge');
-    const statusDot    = document.getElementById('status-dot');
-    const statusText   = document.getElementById('status-text');
-    const btnCopy      = document.getElementById('btn-copy');
-    const btnCopyText  = document.getElementById('btn-copy-text');
-    const btnSave      = document.getElementById('btn-save');
-    const btnSaveText  = document.getElementById('btn-save-text');
-    const iconSave     = document.getElementById('icon-save');
+    const statusBadge = document.getElementById('status-badge');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const btnCopy = document.getElementById('btn-copy');
+    const btnCopyText = document.getElementById('btn-copy-text');
+    const btnInsert = document.getElementById('btn-insert');
+    const btnInsertText = document.getElementById('btn-insert-text');
+    const btnSave = document.getElementById('btn-save');
+    const btnSaveText = document.getElementById('btn-save-text');
+    const iconSave = document.getElementById('icon-save');
 
     // Modal refs
-    const modalBackdrop       = document.getElementById('modal-backdrop');
-    const modalClose          = document.getElementById('modal-close');
-    const modalCancel         = document.getElementById('modal-cancel');
-    const modalConfirm        = document.getElementById('modal-confirm');
-    const modalConfirmText    = document.getElementById('modal-confirm-text');
-    const collectionListEl    = document.getElementById('collection-list');
-    const newCollectionInput  = document.getElementById('new-collection-input');
-    const btnAddCollection    = document.getElementById('btn-add-collection');
-    const saveTitleInput      = document.getElementById('save-title-input');
+    const modalBackdrop = document.getElementById('modal-backdrop');
+    const modalClose = document.getElementById('modal-close');
+    const modalCancel = document.getElementById('modal-cancel');
+    const modalConfirm = document.getElementById('modal-confirm');
+    const modalConfirmText = document.getElementById('modal-confirm-text');
+    const collectionListEl = document.getElementById('collection-list');
+    const newCollectionInput = document.getElementById('new-collection-input');
+    const btnAddCollection = document.getElementById('btn-add-collection');
+    const saveTitleInput = document.getElementById('save-title-input');
 
     // ==========================================
     // VIEW MANAGEMENT
@@ -734,6 +905,11 @@
       resetSaveButton();
       promptInput.disabled = false;
       btnGenerate.disabled = false;
+
+      // Reset Replace button — may have been left disabled/modified from previous session
+      btnInsert.disabled = false;
+      btnInsertText.textContent = 'Replace';
+      btnInsert.style.background = '';
 
       requestAnimationFrame(() => {
         setTimeout(() => promptInput.focus(), 80);
@@ -1017,6 +1193,48 @@
           window.electronAPI.overlay.copy(currentOptimized);
         }
         showCopyFeedback();
+      }
+    });
+
+    // ==========================================
+    // REPLACE — send optimized text back into the original window
+    // ==========================================
+    btnInsert.addEventListener('click', async () => {
+      if (!currentOptimized || btnInsert.disabled) return;
+
+      // Show in-progress state
+      btnInsert.disabled = true;
+      btnInsertText.textContent = 'Replacing...';
+
+      try {
+        const result = await window.electronAPI.overlay.insert(currentOptimized);
+
+        if (result && result.success) {
+          // Success feedback — overlay will close (handled by Rust), just show tick
+          btnInsertText.textContent = '✓ Replaced!';
+          btnInsert.style.background = 'linear-gradient(135deg, hsl(142 76% 36%), hsl(158 64% 30%))';
+        } else if (result && result.fallback === 'clipboard') {
+          // Native bridge unavailable — text was copied instead
+          btnInsertText.textContent = '📋 Copied (no native bridge)';
+          setTimeout(() => {
+            btnInsertText.textContent = 'Replace';
+            btnInsert.disabled = false;
+            btnInsert.style.background = '';
+          }, 2500);
+        } else {
+          // Returned false — window may have been closed
+          btnInsertText.textContent = '✗ Window lost focus';
+          setTimeout(() => {
+            btnInsertText.textContent = 'Replace';
+            btnInsert.disabled = false;
+          }, 2000);
+        }
+      } catch (err) {
+        btnInsertText.textContent = '✗ Failed';
+        setTimeout(() => {
+          btnInsertText.textContent = 'Replace';
+          btnInsert.disabled = false;
+        }, 2000);
       }
     });
 

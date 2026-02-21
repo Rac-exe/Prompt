@@ -5,6 +5,7 @@ import { AppWindowManager } from '../windows/app-window-manager';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { authState } from '../utils/auth-state';
+import { replaceAtLastAnchor, isNativeBridgeAvailable } from '../utils/native-bridge';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -27,6 +28,9 @@ import { authState } from '../utils/auth-state';
 //   overlay:optimization-chunk    — Streaming optimization chunk
 //   overlay:optimization-complete — Optimization finished
 //   overlay:optimization-error    — Optimization failed
+//
+// Renderer → Main (invoke, with return value):
+//   overlay:insert  — Close overlay + inject optimized text into original window
 
 // Lazy-load services (created after Supabase init)
 let promptLibraryService: PromptLibraryService | null = null;
@@ -174,6 +178,43 @@ export function registerOverlayHandlers(
       throw new Error('Not authenticated');
     }
     return await getPromptLibraryService().createCollection(data.name, data.icon || '📁');
+  });
+
+  // ============================================
+  // overlay:insert — Close overlay, inject text into original window
+  // ============================================
+  //
+  // Called by the renderer when the user confirms the optimized text.
+  // Flow:
+  //   1. Close the overlay immediately (so it doesn't interfere with focus).
+  //   2. Call replaceAtLastAnchor(text) → Rust takes over:
+  //        SetForegroundWindow(anchor.hwnd)
+  //        Shift+Left × trigger_len   (selects "@prompt")
+  //        KEYEVENTF_UNICODE injection (types replacement text)
+  //   3. Returns { success: boolean } to renderer.
+  //
+  // Fallback: if native bridge is unavailable, write to clipboard instead.
+  ipcMain.handle('overlay:insert', (_event, data: { text: string }) => {
+    if (!data?.text) {
+      return { success: false, error: 'No text provided' };
+    }
+
+    // Close overlay BEFORE calling replaceAtLastAnchor so it doesn't stay on top
+    // of the window we are about to inject into.
+    overlayManager.close();
+
+    if (isNativeBridgeAvailable()) {
+      const success = replaceAtLastAnchor(data.text);
+      if (!success) {
+        console.warn('[Overlay] replaceAtLastAnchor failed — window may have lost focus or been closed');
+      }
+      return { success };
+    }
+
+    // Fallback for when native module is not built.
+    clipboard.writeText(data.text);
+    console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
+    return { success: false, fallback: 'clipboard' };
   });
 
   console.log('[OverlayHandlers] IPC handlers registered');
