@@ -40,3 +40,23 @@ export declare function stopHook(): void
  * Electron main thread blocking briefly is acceptable — the renderer is unaffected.
  */
 export declare function replaceAtLastAnchor(text: string): boolean
+/**
+ * Force-focus an Electron window by its native HWND.
+ *
+ * Electron's BrowserWindow.focus() is asynchronous and works through the
+ * Chromium message pump — it may be ignored if another app currently holds
+ * foreground, because Windows only allows the foreground process to grant
+ * foreground status (SetForegroundWindow from a non-foreground process fails).
+ *
+ * This function runs the canonical Win32 foreground-steal sequence:
+ *   1. AllowSetForegroundWindow(ASFW_ANY)   — relax the foreground lock
+ *   2. AttachThreadInput(foreground→ours)   — bridge input queues
+ *   3. SetForegroundWindow(target)          — claim foreground
+ *   4. BringWindowToTop(target)             — ensure Z-order
+ *   5. ShowWindow(target, SW_SHOW)          — make visible
+ *   6. DetachThreadInput                    — clean up bridge
+ *
+ * Returns true if SetForegroundWindow reported success; false otherwise.
+ * Call this immediately before or after Electron's window.show() for best results.
+ */
+export declare function forceFocusWindow(hwnd: number): boolean

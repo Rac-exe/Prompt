@@ -310,9 +310,10 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { getActiveWindowTitle, startHook, stopHook, replaceAtLastAnchor } = nativeBinding
+const { getActiveWindowTitle, startHook, stopHook, replaceAtLastAnchor, forceFocusWindow } = nativeBinding
 
 module.exports.getActiveWindowTitle = getActiveWindowTitle
 module.exports.startHook = startHook
 module.exports.stopHook = stopHook
 module.exports.replaceAtLastAnchor = replaceAtLastAnchor
+module.exports.forceFocusWindow = forceFocusWindow

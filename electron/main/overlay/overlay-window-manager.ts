@@ -1,5 +1,6 @@
 import { BrowserWindow, screen, app } from 'electron';
 import * as path from 'path';
+import { forceFocusWindow } from '../utils/native-bridge';
 
 /**
  * OverlayWindowManager
@@ -84,7 +85,16 @@ export class OverlayWindowManager {
   /**
    * Open the overlay and send current auth state.
    */
-  open(isAuthenticated: boolean) {
+  /**
+   * Open the overlay and send current auth state.
+   *
+   * @param isAuthenticated - Current auth state to send to renderer.
+   * @param anchorHwnd      - Optional: HWND of the window that triggered the open.
+   *                          When provided, forceFocusWindow() steals focus from it
+   *                          so the overlay reliably receives keyboard input even
+   *                          during fast typing (bypasses Electron's async focus queue).
+   */
+  open(isAuthenticated: boolean, anchorHwnd?: number) {
     if (!this.window || this.window.isDestroyed()) {
       this.createWindow();
 
@@ -97,8 +107,20 @@ export class OverlayWindowManager {
       this.send('overlay:opened', { isAuthenticated });
     }
 
+    // Step 1: Make the window visible first so it has a valid HWND in the Z-order.
     this.window!.show();
-    this.window!.focus();
+
+    // Step 2: Win32-level focus steal.
+    // forceFocusWindow() calls AllowSetForegroundWindow + AttachThreadInput +
+    // SetForegroundWindow synchronously in the Rust thread — this works even when
+    // the target app currently holds the foreground lock (which Electron's
+    // async focus() call often cannot break during fast typing).
+    const overlayHwnd = this.window!.getNativeWindowHandle().readBigInt64LE(0);
+    const focused = forceFocusWindow(Number(overlayHwnd));
+    if (!focused) {
+      // AttachThreadInput fallback failed — try Electron's own focus as last resort.
+      this.window!.focus();
+    }
   }
 
   /**

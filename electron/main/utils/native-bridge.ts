@@ -21,6 +21,7 @@ interface NativeBridge {
     startHook(callback: (anchor: TriggerAnchor) => void): void;
     stopHook(): void;
     replaceAtLastAnchor(text: string): boolean;
+    forceFocusWindow(hwnd: number): boolean;
 }
 
 // ─── Stub (used when .node binary is absent) ─────────────────────────────────
@@ -31,6 +32,10 @@ const STUB: NativeBridge = {
     stopHook: () => { },
     replaceAtLastAnchor: () => {
         console.warn('[NativeBridge] replaceAtLastAnchor called but native module not loaded');
+        return false;
+    },
+    forceFocusWindow: () => {
+        console.warn('[NativeBridge] forceFocusWindow called but native module not loaded');
         return false;
     },
 };
@@ -94,4 +99,13 @@ export function isNativeBridgeAvailable(): boolean {
  */
 export function replaceAtLastAnchor(text: string): boolean {
     return loadBridge().replaceAtLastAnchor(text);
+}
+
+/**
+ * Force-focus a native window by HWND using the Win32 foreground-steal sequence.
+ * AttachThreadInput + AllowSetForegroundWindow + SetForegroundWindow.
+ * Call this BEFORE or alongside Electron's window.show() for reliable focus.
+ */
+export function forceFocusWindow(hwnd: number): boolean {
+    return loadBridge().forceFocusWindow(hwnd);
 }

@@ -34,6 +34,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
     KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
 };
 
+// KBDLLHOOKSTRUCT.flags bit masks (not exported as named constants in windows-0.58)
+// LLKHF_EXTENDED  = 0x01 — extended key (not needed here)
+// LLKHF_INJECTED  = 0x10 — event was synthetically injected (e.g. our SendInput)
+// LLKHF_ALTDOWN   = 0x20 — Alt held (not needed here)
+// LLKHF_UP        = 0x80 — key-up (vs key-down)
+const LLKHF_INJECTED: u32 = 0x10;
+// KBDLLHOOKSTRUCT does not expose a separate "repeat" field.
+// Win32 LL keyboard hooks do NOT deduplicate key-repeats at the LL level—
+// each auto-repeat generates a fresh WM_KEYDOWN with the same vkCode.
+// We detect repeats ourselves via the KBDLLHOOKSTRUCT.flags bit:
+//   when the key is still down during the event, dwExtraInfo is unchanged.
+// Per MSDN, auto-repeat LL events are indistinguishable from first-presses
+// at the WH_KEYBOARD_LL level — the "repeat count" in WM_KEYDOWN lparam is
+// NOT available here. We rely on LLKHF_INJECTED suppression only here;
+// the buffer's rolling-window design naturally handles the rest.
+
 use crate::buffer::RollingBuffer;
 use crate::keymap::vk_to_char;
 
@@ -81,6 +97,16 @@ unsafe extern "system" fn ll_keyboard_proc(
     if code == HC_ACTION as i32 {
         let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         let vk = info.vkCode;
+        let flags = info.flags.0; // KBDLLHOOKSTRUCT.flags is a u32 bitfield
+
+        // Ignore events injected by SendInput (our own replacement keystrokes).
+        // Without this guard, the KEYEVENTF_UNICODE events we inject during
+        // replacement would feed back into the detection buffer and could
+        // corrupt it or re-trigger detection on replayed characters.
+        if flags & LLKHF_INJECTED != 0 {
+            return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+        }
+
         let is_keydown =
             wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN;
 

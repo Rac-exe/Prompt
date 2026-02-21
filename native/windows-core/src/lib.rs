@@ -117,3 +117,69 @@ pub fn replace_at_last_anchor(text: String) -> bool {
     #[cfg(target_os = "windows")]
     { replacement::replace_at_last_anchor(&text) }
 }
+
+/// Force-focus an Electron window by its native HWND.
+///
+/// Electron's BrowserWindow.focus() is asynchronous and works through the
+/// Chromium message pump — it may be ignored if another app currently holds
+/// foreground, because Windows only allows the foreground process to grant
+/// foreground status (SetForegroundWindow from a non-foreground process fails).
+///
+/// This function runs the canonical Win32 foreground-steal sequence:
+///   1. AllowSetForegroundWindow(ASFW_ANY)   — relax the foreground lock
+///   2. AttachThreadInput(foreground→ours)   — bridge input queues
+///   3. SetForegroundWindow(target)          — claim foreground
+///   4. BringWindowToTop(target)             — ensure Z-order
+///   5. ShowWindow(target, SW_SHOW)          — make visible
+///   6. DetachThreadInput                    — clean up bridge
+///
+/// Returns true if SetForegroundWindow reported success; false otherwise.
+/// Call this immediately before or after Electron's window.show() for best results.
+#[napi]
+pub fn force_focus_window(hwnd: i64) -> bool {
+    #[cfg(not(target_os = "windows"))]
+    { let _ = hwnd; return false; }
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            AllowSetForegroundWindow, BringWindowToTop, GetForegroundWindow,
+            GetWindowThreadProcessId, SetForegroundWindow, ShowWindow, SW_SHOW, ASFW_ANY,
+        };
+        use windows::Win32::System::Threading::{
+            AttachThreadInput, GetCurrentThreadId,
+        };
+
+        let target = HWND(hwnd as *mut _);
+        if target.0.is_null() {
+            return false;
+        }
+
+        // Relax the foreground lock so any process can call SetForegroundWindow.
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
+
+        // Get the thread that currently owns the foreground window.
+        let fg_hwnd = GetForegroundWindow();
+        let fg_thread = GetWindowThreadProcessId(fg_hwnd, None);
+        let our_thread = GetCurrentThreadId();
+
+        // Attach our input queue to the foreground thread's queue.
+        // This is necessary because SetForegroundWindow only works when
+        // the calling thread is attached to the foreground thread's input.
+        let attached = fg_thread != 0
+            && fg_thread != our_thread
+            && AttachThreadInput(fg_thread, our_thread, true).as_bool();
+
+        let ok = SetForegroundWindow(target).as_bool();
+        let _ = BringWindowToTop(target);
+        let _ = ShowWindow(target, SW_SHOW);
+
+        // Always detach — leaving threads attached causes input routing bugs.
+        if attached {
+            let _ = AttachThreadInput(fg_thread, our_thread, false);
+        }
+
+        ok
+    }
+}
