@@ -61,11 +61,11 @@ use std::mem::size_of;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY,
-    VK_LEFT, VK_SHIFT,
+    KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    VK_BACK, VK_CONTROL, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, IsWindow,
@@ -131,7 +131,9 @@ unsafe fn execute_replacement(anchor: AnchorData, text: &str) -> bool {
     if !SetForegroundWindow(hwnd).as_bool() {
         eprintln!("[Replacement] SetForegroundWindow failed — proceeding anyway");
     }
-    std::thread::sleep(std::time::Duration::from_millis(30));
+    // 60ms settle — rich editors (Cursor, VS Code) need time to restore
+    // focus AND caret position after overlay window closes.
+    std::thread::sleep(std::time::Duration::from_millis(60));
 
     // ── Step 1: read window class ─────────────────────────────────────────────
     // Class detection happens BEFORE any SendInput so that path A (Edit) never
@@ -418,7 +420,7 @@ unsafe fn textpattern_select_inner(
 
     println!(
         "[Replacement:UIA] Path B — TextPattern.Select() OK. hwnd={:#x}. \
-         Now injecting {} replacement chars via SendInput.",
+         Now pasting {} replacement chars via clipboard.",
         anchor_hwnd.0 as usize,
         text.chars().count()
     );
@@ -426,115 +428,199 @@ unsafe fn textpattern_select_inner(
     // ── Small settle delay before injection ──────────────────────────────────
     // UIA Select() is asynchronous with respect to the target app's message
     // pump. A brief yield gives the target app time to process the selection
-    // event before our SendInput characters arrive at the input queue.
-    // This avoids a race where the first character arrives before the editor
-    // has updated its selection state.
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    // event before our paste arrives.
+    std::thread::sleep(std::time::Duration::from_millis(30));
 
-    // ── Type replacement over the selection via guarded SendInput ─────────────
-    // At this point the app has the trigger phrase selected. Injecting unicode
-    // keystrokes is equivalent to the user typing — the app's key handler:
-    //   - Deletes the selected text (trigger)
-    //   - Inserts each character
-    //   - Advances the caret correctly
-    //   - Records each operation in the undo stack
-    // This is why undo works: the app sees N individual key events, not a
-    // single opaque string replacement.
-    inject_unicode_with_fg_guard(anchor_hwnd, anchor_hwnd.0 as isize, text)
+    // ── Paste replacement over the selection via clipboard ───────────────────
+    // Clipboard paste is instant regardless of text length — the app receives
+    // a single WM_PASTE / Ctrl+V event instead of N individual key events.
+    // This eliminates the laggy character-by-character typing effect.
+    inject_via_clipboard_paste(anchor_hwnd, text)
 }
 
 // ─── PATH C helper ────────────────────────────────────────────────────────────
 
-/// Fallback: Shift+Left×N to select trigger, then guarded unicode injection.
+/// Fallback: Backspace×N to delete trigger, then clipboard paste.
+///
+/// WHY BACKSPACE INSTEAD OF SHIFT+LEFT (SELECTION):
+/// Shift+Left×N sends 2N+2 key events as a single batch (Shift↓, Left↓↑ × N, Shift↑).
+/// Rich editors like Cursor's agent chat silently drop or mishandle batched selection
+/// events — the selection never forms, so the subsequent paste inserts text WITHOUT
+/// removing @prompt. Backspace is universally reliable: every text input handles it
+/// consistently, regardless of editor model (ContentEditable, Monaco, ProseMirror).
 unsafe fn inject_via_guarded_sendinput(hwnd: HWND, anchor: &AnchorData, text: &str) -> bool {
-    // Phase 1: select trigger phrase with Shift+Left×trigger_len.
-    let select = build_shift_select(anchor.trigger_len);
-    let sent = send_inputs(&select);
-    if sent == 0 && !select.is_empty() {
-        eprintln!("[Replacement:SendInput] Shift+Left blocked — UIPI elevation mismatch?");
+    // Phase 1: delete trigger phrase with Backspace × trigger_len.
+    // Each backspace deletes one character behind the caret — works in every editor.
+    let backspaces = build_backspace_delete(anchor.trigger_len);
+    let sent = send_inputs(&backspaces);
+    if sent == 0 && !backspaces.is_empty() {
+        eprintln!("[Replacement:SendInput] Backspace blocked — UIPI elevation mismatch?");
         return false;
     }
     if text.is_empty() { return true; }
 
-    // Phase 2: inject with foreground guard.
-    inject_unicode_with_fg_guard(hwnd, anchor.hwnd, text)
+    // 40ms delay — let the editor process the backspaces before paste arrives.
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    // Phase 2: paste via clipboard (instant, no character-by-character lag).
+    inject_via_clipboard_paste(hwnd, text)
 }
 
-/// Inject `text` as KEYEVENTF_UNICODE events in chunks, aborting if the original
-/// window loses foreground between chunks (prevents cross-app character leakage).
+/// Inject replacement text via clipboard paste (Ctrl+V).
 ///
-/// CHUNK_SIZE controls the granularity of the foreground check.
-/// 64 chars → check roughly every 64 * 2 key events.
-unsafe fn inject_unicode_with_fg_guard(hwnd: HWND, expected_hwnd: isize, text: &str) -> bool {
-    const CHUNK_SIZE: usize = 64;
+/// This is dramatically faster than character-by-character SendInput:
+///   - SendInput for 280 chars = 560 key events, visible typing lag
+///   - Clipboard paste = 4 key events (Ctrl↓ V↓ V↑ Ctrl↑), instant
+///
+/// The user's clipboard is temporarily overwritten but restored after paste.
+unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
+        SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+        GMEM_MOVEABLE,
+    };
 
-    let chars: Vec<char> = text.chars().collect();
-    let mut injected = 0usize;
+    const CF_UNICODETEXT: u32 = 13;
 
-    for chunk in chars.chunks(CHUNK_SIZE) {
-        // Foreground guard — abort if user switched windows.
-        // SendInput routes to the CURRENT foreground, so if the window changed
-        // the remaining characters would land in the wrong app.
-        let fg_now = GetForegroundWindow();
-        if fg_now.0 != hwnd.0 {
-            eprintln!(
-                "[Replacement:SendInput] Foreground changed at char {injected}/{} — \
-                 aborting. expected={:#x} got={:#x}",
-                text.chars().count(),
-                expected_hwnd,
-                fg_now.0 as usize,
-            );
+    // Foreground guard
+    let fg_now = GetForegroundWindow();
+    if fg_now.0 != hwnd.0 {
+        eprintln!(
+            "[Replacement:Clipboard] Foreground changed before paste — aborting. \
+             expected={:#x} got={:#x}",
+            hwnd.0 as usize,
+            fg_now.0 as usize,
+        );
+        return false;
+    }
+
+    // ── Step 1: Save current clipboard content ──────────────────────────────
+    let mut saved_clipboard: Option<Vec<u16>> = None;
+
+    if OpenClipboard(HWND(std::ptr::null_mut())).is_ok() {
+        let h = GetClipboardData(CF_UNICODETEXT);
+        if let Ok(handle) = h {
+            if !handle.0.is_null() {
+                // GetClipboardData returns HANDLE; reinterpret as HGLOBAL for GlobalLock
+                let hglob = HGLOBAL(handle.0);
+                let ptr = GlobalLock(hglob);
+                if !ptr.is_null() {
+                    let size = GlobalSize(hglob);
+                    let len_u16 = size / 2;
+                    let slice = std::slice::from_raw_parts(ptr as *const u16, len_u16);
+                    saved_clipboard = Some(slice.to_vec());
+                    let _ = GlobalUnlock(hglob);
+                }
+            }
+        }
+        let _ = CloseClipboard();
+    }
+
+    // ── Step 2: Set replacement text to clipboard ───────────────────────────
+    let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let byte_len = utf16.len() * 2;
+
+    if OpenClipboard(HWND(std::ptr::null_mut())).is_err() {
+        eprintln!("[Replacement:Clipboard] Failed to open clipboard for write");
+        return false;
+    }
+
+    let _ = EmptyClipboard();
+
+    let hmem = match GlobalAlloc(GMEM_MOVEABLE, byte_len) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("[Replacement:Clipboard] GlobalAlloc failed: {e}");
+            let _ = CloseClipboard();
             return false;
         }
+    };
 
-        let chunk_str: String = chunk.iter().collect();
-        let inputs = build_unicode_type(&chunk_str);
-        let sent = send_inputs(&inputs);
-        if sent == 0 && !inputs.is_empty() {
-            eprintln!("[Replacement:SendInput] Type blocked at char {injected}");
-            return false;
-        }
-        injected += chunk.len();
+    let ptr = GlobalLock(hmem);
+    if ptr.is_null() {
+        // Cannot free hmem after failed lock — just close clipboard
+        let _ = CloseClipboard();
+        eprintln!("[Replacement:Clipboard] GlobalLock failed");
+        return false;
+    }
+    std::ptr::copy_nonoverlapping(utf16.as_ptr() as *const u8, ptr as *mut u8, byte_len);
+    let _ = GlobalUnlock(hmem);
+
+    // SetClipboardData takes ownership of hmem — do NOT free it.
+    // HANDLE and HGLOBAL both wrap *mut c_void, so reinterpret.
+    let set_result = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0));
+    let _ = CloseClipboard();
+
+    if set_result.is_err() {
+        eprintln!("[Replacement:Clipboard] SetClipboardData failed");
+        return false;
+    }
+
+    // ── Step 3: Send Ctrl+V to paste ────────────────────────────────────────
+    // 4 key events total — instant replacement regardless of text length.
+    let paste_inputs = [
+        key_vk(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),     // Ctrl down
+        key_vk(VK_V, KEYBD_EVENT_FLAGS(0)),            // V down
+        key_vk(VK_V, KEYEVENTF_KEYUP),                // V up
+        key_vk(VK_CONTROL, KEYEVENTF_KEYUP),           // Ctrl up
+    ];
+
+    let sent = send_inputs(&paste_inputs);
+    if sent == 0 {
+        eprintln!("[Replacement:Clipboard] SendInput Ctrl+V failed");
+        return false;
     }
 
     println!(
-        "[Replacement:SendInput] Injected {} chars into hwnd={:#x}",
+        "[Replacement:Clipboard] Pasted {} chars into hwnd={:#x} (instant)",
         text.chars().count(),
-        expected_hwnd
+        hwnd.0 as usize
     );
+
+    // ── Step 4: Restore original clipboard (after a short delay) ────────────
+    // Give the target app time to process the paste before we swap clipboard.
+    if let Some(saved) = saved_clipboard {
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            unsafe {
+                if OpenClipboard(HWND(std::ptr::null_mut())).is_ok() {
+                    let _ = EmptyClipboard();
+                    let byte_len = saved.len() * 2;
+                    if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, byte_len) {
+                        let ptr = GlobalLock(hmem);
+                        if !ptr.is_null() {
+                            std::ptr::copy_nonoverlapping(
+                                saved.as_ptr() as *const u8,
+                                ptr as *mut u8,
+                                byte_len,
+                            );
+                            let _ = GlobalUnlock(hmem);
+                            let _ = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0));
+                        }
+                    }
+                    let _ = CloseClipboard();
+                }
+            }
+        });
+    }
+
     true
 }
 
 // ─── Input builders ───────────────────────────────────────────────────────────
 
-fn build_shift_select(trigger_len: u32) -> Vec<INPUT> {
+/// Build Backspace × N key events to delete the trigger phrase.
+/// More reliable than Shift+Left selection — works in every editor including
+/// Cursor, VS Code, Discord, and rich contenteditable fields.
+fn build_backspace_delete(trigger_len: u32) -> Vec<INPUT> {
     let n = trigger_len as usize;
-    let mut v = Vec::with_capacity(2 + n * 2);
-    v.push(key_vk(VK_SHIFT, KEYBD_EVENT_FLAGS(0)));
+    let mut v = Vec::with_capacity(n * 2);
     for _ in 0..n {
-        v.push(key_vk(VK_LEFT, KEYEVENTF_EXTENDEDKEY));
-        v.push(key_vk(VK_LEFT, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP));
-    }
-    v.push(key_vk(VK_SHIFT, KEYEVENTF_KEYUP));
-    v
-}
-
-fn build_unicode_type(text: &str) -> Vec<INPUT> {
-    let mut v = Vec::new();
-    for ch in text.chars() {
-        let cp = ch as u32;
-        if cp <= 0xFFFF {
-            v.push(key_unicode(cp as u16, KEYBD_EVENT_FLAGS(0)));
-            v.push(key_unicode(cp as u16, KEYEVENTF_KEYUP));
-        } else {
-            let code = cp - 0x10000;
-            let high = (0xD800 + (code >> 10)) as u16;
-            let low  = (0xDC00 + (code & 0x3FF)) as u16;
-            v.push(key_unicode(high, KEYBD_EVENT_FLAGS(0)));
-            v.push(key_unicode(high, KEYEVENTF_KEYUP));
-            v.push(key_unicode(low, KEYBD_EVENT_FLAGS(0)));
-            v.push(key_unicode(low, KEYEVENTF_KEYUP));
-        }
+        v.push(key_vk(VK_BACK, KEYBD_EVENT_FLAGS(0)));
+        v.push(key_vk(VK_BACK, KEYEVENTF_KEYUP));
     }
     v
 }
@@ -551,21 +637,7 @@ fn key_vk(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     }
 }
 
-#[inline]
-fn key_unicode(scan: u16, extra_flags: KEYBD_EVENT_FLAGS) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: VIRTUAL_KEY(0),
-                wScan: scan,
-                dwFlags: KEYEVENTF_UNICODE | extra_flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
-}
+// key_unicode removed — clipboard paste replaced character-by-character injection.
 
 #[inline]
 unsafe fn send_inputs(inputs: &[INPUT]) -> u32 {
