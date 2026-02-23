@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { Send, Loader2, Sparkles } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Send, Loader2, Sparkles, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,14 +29,34 @@ export const ChatView = ({
   isGenerating,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
+  const [isListening, setIsListening] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const transcriptionSetup = useRef(false);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Set up transcription listener once
+  useEffect(() => {
+    const isElectron = !!(window as any).electronAPI;
+    if (!isElectron || transcriptionSetup.current) return;
+    transcriptionSetup.current = true;
+
+    window.electronAPI?.transcription?.onTranscription?.((data: { text: string; accumulated: string; type: string }) => {
+      if (data.accumulated || data.text) {
+        setInput(data.accumulated || data.text);
+      }
+    });
+
+    window.electronAPI?.transcription?.onError?.((error: string) => {
+      console.error('[Voice] Transcription error:', error);
+      setIsListening(false);
+    });
+  }, []);
 
   const handleSubmit = () => {
     if (!input.trim() || isGenerating) return;
@@ -50,6 +70,22 @@ export const ChatView = ({
       handleSubmit();
     }
   };
+
+  const toggleVoice = useCallback(() => {
+    const isElectron = !!(window as any).electronAPI;
+    if (!isElectron) return;
+
+    if (isListening) {
+      // Stop
+      window.electronAPI?.transcription?.stop?.();
+      setIsListening(false);
+    } else {
+      // Start
+      const sessionId = Date.now().toString();
+      window.electronAPI?.transcription?.start?.(sessionId);
+      setIsListening(true);
+    }
+  }, [isListening]);
 
   const isEmpty = messages.length === 0;
 
@@ -129,15 +165,35 @@ export const ChatView = ({
       <div className={`p-6 border-t border-border ${isEmpty ? 'flex items-center' : ''}`}>
         <div className="max-w-3xl mx-auto w-full">
           <div className="flex items-end gap-3">
-            <Textarea
-              ref={textareaRef}
-              placeholder="Describe the prompt you need... (e.g., 'Create a technical documentation prompt for API endpoints')"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="flex-1 bg-surface border border-border rounded-xl p-4 resize-y focus-visible:border-emerald/50 focus-visible:glow-emerald placeholder:text-muted-foreground/70 min-h-[60px] max-h-[300px] transition-all"
-              disabled={isGenerating}
-            />
+            <div className="flex-1 relative">
+              <Textarea
+                ref={textareaRef}
+                placeholder="Describe the prompt you need... (e.g., 'Create a technical documentation prompt for API endpoints')"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="w-full bg-surface border border-border rounded-xl p-4 pr-14 resize-y focus-visible:border-emerald/50 focus-visible:glow-emerald placeholder:text-muted-foreground/70 min-h-[60px] max-h-[300px] transition-all"
+                disabled={isGenerating}
+              />
+              {/* Voice button inside textarea */}
+              <button
+                type="button"
+                onClick={toggleVoice}
+                disabled={isGenerating}
+                className={`absolute right-3 bottom-3 z-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed border ${
+                  isListening
+                    ? 'bg-red-500/15 text-red-500 hover:bg-red-500/25 border-red-500/30 animate-pulse'
+                    : 'bg-surface border-border text-muted-foreground hover:bg-muted hover:text-foreground hover:border-emerald/30'
+                }`}
+                title={isListening ? 'Stop listening' : 'Voice input'}
+              >
+                {isListening ? (
+                  <MicOff className="w-[18px] h-[18px]" />
+                ) : (
+                  <Mic className="w-[18px] h-[18px]" />
+                )}
+              </button>
+            </div>
             <Button
               onClick={handleSubmit}
               disabled={!input.trim() || isGenerating}
@@ -154,6 +210,13 @@ export const ChatView = ({
               )}
             </Button>
           </div>
+          {/* Voice status indicator */}
+          {isListening && (
+            <div className="flex items-center gap-2 mt-2 animate-fade-in">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-xs text-red-400 font-medium">Listening — click mic to stop</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

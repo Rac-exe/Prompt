@@ -24,7 +24,11 @@ interface Window {
     onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
     onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
     deleteChat: (chatId: string) => void;
-    onChatDeleted: (callback: (data: { chatId: string }) => void) => void;
+    onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
+    onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
+    renameChat: (chatId: string, title: string) => void;
+    onChatRenamed: (callback: (data: { chatId: string; title: string }) => void) => (() => void);
+    onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
 
     // Optimization
     onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
@@ -51,6 +55,14 @@ interface Window {
     setPersonalizationPrompt: (prompt: string) => void;
     onProfileUpdated: (callback: () => void) => void;
     onPreferencesUpdated: (callback: () => void) => void;
+
+    // Transcription (Voice Input)
+    transcription: {
+      start: (sessionId: string) => void;
+      stop: () => void;
+      onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+      onError: (callback: (error: string) => void) => void;
+    };
 
     // Utility
     copyToClipboard: (text: string) => void;
