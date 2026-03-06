@@ -1,0 +1,10 @@
+{
+  "user_id": "test_user",
+  "tone": "neutral",
+  "detail_level": "medium",
+  "examples_needed": "sometimes",
+  "format_preference": "structured",
+  "domains": [],
+  "patterns": [],
+  "interaction_count": 5
+}
