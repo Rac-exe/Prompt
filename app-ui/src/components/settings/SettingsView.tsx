@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, CreditCard, Palette, Moon, Sun } from "lucide-react";
+import { User, CreditCard, Palette, Moon, Sun, Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,18 +8,46 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/settings";
 import { useAuth } from "@/context/AuthContext";
+import { cn } from "@/lib/utils";
+
+/* ── Reusable section wrapper ─────────────────────────────── */
+const Section = ({ title, description, children }: {
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) => (
+  <div className="space-y-3">
+    <div>
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
+    </div>
+    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+      {children}
+    </div>
+  </div>
+);
+
+/* ── Row inside a Section ──────────────────────────────────── */
+const Row = ({ children, className }: { children: React.ReactNode; className?: string }) => (
+  <div className={cn("px-4 py-3.5 flex items-center justify-between gap-4 border-b border-border last:border-0", className)}>
+    {children}
+  </div>
+);
+
+const RowLabel = ({ label, hint }: { label: string; hint?: string }) => (
+  <div className="space-y-0.5">
+    <Label className="text-sm font-medium text-foreground">{label}</Label>
+    {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+  </div>
+);
 
 export const SettingsView = () => {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
 
   const [settings, setSettings] = useState<SettingsData>({
     theme: "dark",
@@ -29,380 +57,321 @@ export const SettingsView = () => {
   });
   const [isDirty, setIsDirty] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
 
-  // Load settings on mount
   useEffect(() => {
-    const initSettings = async () => {
-      try {
-        const loaded = await loadSettings();
-        setSettings(loaded);
-        setHasLoadedOnce(true);
-      } catch (error) {
-        console.error('[SettingsView] Failed to load settings:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    initSettings();
+    loadSettings()
+      .then((loaded) => { setSettings(loaded); })
+      .catch((err) => console.error('[SettingsView] Failed to load settings:', err))
+      .finally(() => setIsLoading(false));
   }, []);
 
-  // Apply settings when user makes changes (for live preview)
   useEffect(() => {
-    if (isDirty) {
-      applySettings(settings);
-    }
+    if (isDirty) applySettings(settings);
   }, [settings, isDirty]);
+
+  const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
+    setSettings((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+  };
 
   const handleSave = async () => {
     try {
       await saveSettings(settings);
       setIsDirty(false);
-
-      // Apply settings after successful save
       applySettings(settings);
-
-      toast({
-        title: "Settings saved",
-        description: "Your preferences have been updated.",
-      });
+      toast({ title: "Settings saved", description: "Your preferences have been updated." });
     } catch (error) {
-      console.error('[SettingsView] Failed to save settings:', error);
-      toast({
-        title: "Save failed",
-        description: "Could not save settings. Please try again.",
-        variant: "destructive",
-      });
+      toast({ title: "Save failed", description: "Could not save settings.", variant: "destructive" });
     }
   };
 
-  const getUserInitials = () => {
-    const name = user?.profile?.name || "User";
-    return name.slice(0, 2).toUpperCase();
-  };
-
-  const updateSetting = <K extends keyof SettingsData>(
-    key: K,
-    value: SettingsData[K]
-  ) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
-    setIsDirty(true);
-  };
-
   return (
-    <div className="flex-1 flex flex-col h-full">
-      {/* Header */}
-      <div className="p-6 border-b border-border bg-surface/50">
-        <h2 className="text-2xl font-bold text-foreground">Settings</h2>
+    <div className="flex-1 flex flex-col h-full bg-background">
+      {/* ── Page header ── */}
+      <div className="h-12 border-b border-border flex items-center px-6 flex-shrink-0 bg-surface/40">
+        <h2 className="text-sm font-bold text-foreground tracking-tight">Settings</h2>
       </div>
 
-      {/* Tabs Navigation */}
+      {/* ── Tabs ── */}
       <Tabs defaultValue="profile" className="flex-1 flex flex-col overflow-hidden">
-        <div className="px-6 pt-6 flex-shrink-0">
-          <TabsList className="grid w-full max-w-md grid-cols-3 bg-secondary">
-            <TabsTrigger value="profile" className="gap-2">
-              <User className="w-4 h-4" />
+        {/* Tab bar */}
+        <div className="px-6 pt-5 pb-0 flex-shrink-0">
+          <TabsList className="bg-secondary h-9 p-1 rounded-lg gap-0.5">
+            <TabsTrigger
+              value="profile"
+              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+            >
+              <User className="w-3.5 h-3.5 mr-1.5 opacity-70" />
               Profile
             </TabsTrigger>
-            <TabsTrigger value="billing" className="gap-2">
-              <CreditCard className="w-4 h-4" />
+            <TabsTrigger
+              value="billing"
+              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+            >
+              <CreditCard className="w-3.5 h-3.5 mr-1.5 opacity-70" />
               Billing
             </TabsTrigger>
-            <TabsTrigger value="customize" className="gap-2">
-              <Palette className="w-4 h-4" />
+            <TabsTrigger
+              value="customize"
+              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+            >
+              <Palette className="w-3.5 h-3.5 mr-1.5 opacity-70" />
               Customize
             </TabsTrigger>
           </TabsList>
         </div>
 
-        {/* Profile Tab */}
+        {/* ── Profile tab ── */}
         <TabsContent value="profile" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="max-w-2xl mx-auto p-6 space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">Profile Settings</h3>
-                <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="username" className="text-foreground">Username</Label>
-                    <Input
-                      id="username"
-                      defaultValue={user?.profile?.name || "User"}
-                      className="bg-secondary border-border"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email" className="text-foreground">Email Address</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={user?.profile?.email || ""}
-                      disabled
-                      className="bg-secondary border-border"
-                    />
-                    <p className="text-xs text-muted-foreground">Cannot be changed</p>
-                  </div>
-                </div>
-              </div>
+            <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
+              {/* Account info */}
+              <Section title="Account Information">
+                <Row>
+                  <RowLabel label="Username" />
+                  <Input
+                    defaultValue={user?.profile?.name || "User"}
+                    className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
+                  />
+                </Row>
+                <Row>
+                  <RowLabel label="Email Address" hint="Cannot be changed" />
+                  <Input
+                    type="email"
+                    value={user?.profile?.email || ""}
+                    disabled
+                    className="w-48 h-8 text-sm bg-secondary border-border opacity-60"
+                  />
+                </Row>
+              </Section>
 
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">Change Password</h3>
-                <div className="bg-surface border border-border rounded-xl p-6">
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                      <span className="text-blue-500 font-bold">G</span>
+              {/* Password */}
+              <Section title="Authentication">
+                <Row>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/12 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
+                      <span className="text-blue-500 text-xs font-bold">G</span>
                     </div>
-                    <div className="flex-1">
-                      <p className="text-sm text-blue-400 font-medium">Password Managed by Google</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Managed through your Google Account
-                      </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="mt-3 border-border"
-                        onClick={() => window.open("https://myaccount.google.com", "_blank")}
-                      >
-                        Change on Google
-                      </Button>
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Google Account</p>
+                      <p className="text-xs text-muted-foreground">Your password is managed by Google</p>
                     </div>
                   </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold text-destructive mb-4">Delete Account</h3>
-                <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-6">
-                  <p className="text-sm text-destructive mb-3">
-                    Permanently delete your account and all data
-                  </p>
                   <Button
-                    variant="destructive"
-                    size="sm"
+                    variant="outline" size="sm"
+                    className="h-8 text-xs border-border hover:border-border/80"
+                    onClick={() => window.open("https://myaccount.google.com", "_blank")}
                   >
+                    Manage
+                  </Button>
+                </Row>
+              </Section>
+
+              {/* Danger zone */}
+              <Section title="Danger Zone" description="Irreversible actions — proceed with caution">
+                <Row className="border-destructive/15 bg-destructive/4">
+                  <div>
+                    <p className="text-sm font-medium text-destructive">Delete Account</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Permanently remove your account and all data</p>
+                  </div>
+                  <Button variant="destructive" size="sm" className="h-8 text-xs flex-shrink-0">
                     Delete Account
                   </Button>
-                </div>
-              </div>
+                </Row>
+              </Section>
             </div>
           </ScrollArea>
         </TabsContent>
 
-        {/* Billing Tab */}
+        {/* ── Billing tab ── */}
         <TabsContent value="billing" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="max-w-2xl mx-auto p-6 space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">Billing & Subscription</h3>
-                <div className="bg-surface border border-border rounded-xl p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div>
-                      <h4 className="text-base font-semibold text-foreground">Free</h4>
-                      <p className="text-sm text-emerald">Active</p>
-                    </div>
-                    <Button className="bg-emerald text-white hover:bg-emerald/90">
+            <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
+              {/* Current plan */}
+              <Section title="Current Plan">
+                <Row>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Free</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Limited daily prompt generations</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-muted text-emerald text-[10px] font-semibold uppercase tracking-wide">
+                      <span className="w-1 h-1 rounded-full bg-emerald" />
+                      Active
+                    </span>
+                    <Button
+                      size="sm"
+                      className="h-8 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm"
+                    >
                       Upgrade to Pro
                     </Button>
                   </div>
-                  <p className="text-sm text-muted-foreground">Limited daily prompts</p>
-                </div>
-              </div>
+                </Row>
+              </Section>
 
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">Upgrade to Pro</h3>
-                <div className="bg-surface border border-emerald/20 rounded-xl p-6 space-y-4">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-3xl font-bold text-emerald">$9.99</span>
-                    <span className="text-muted-foreground">/month</span>
+              {/* Pro plan card */}
+              <div className="bg-surface border border-emerald/25 rounded-xl p-5 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald/4 rounded-full translate-x-12 -translate-y-12 pointer-events-none" />
+
+                <div className="relative">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald/10 text-emerald text-[10px] font-bold uppercase tracking-wider mb-2">
+                        <Sparkles className="w-2.5 h-2.5" />
+                        Pro Plan
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-3xl font-bold text-foreground">$9.99</span>
+                        <span className="text-sm text-muted-foreground">/ month</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">Cancel anytime</p>
+                    </div>
                   </div>
-                  <p className="text-sm text-muted-foreground">Cancel anytime</p>
-                  <Button className="w-full bg-emerald text-white hover:bg-emerald/90">
+
+                  <div className="space-y-2.5 mb-5">
+                    {[
+                      { label: "Unlimited Prompts", desc: "Generate as many as you need" },
+                      { label: "Premium AI Models", desc: "Claude, GPT-4, Gemini & more" },
+                      { label: "Save & Organize", desc: "Unlimited library collections" },
+                      { label: "Priority Support", desc: "Get help when you need it" },
+                    ].map((feature) => (
+                      <div key={feature.label} className="flex items-start gap-2.5">
+                        <div className="w-4 h-4 rounded-full bg-emerald/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <Check className="w-2.5 h-2.5 text-emerald" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground leading-none">{feature.label}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{feature.desc}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Button className="w-full h-9 bg-emerald hover:bg-emerald/90 text-white font-semibold text-sm glow-emerald-sm">
                     Upgrade Now
                   </Button>
-                  <div className="space-y-2 mt-4">
-                    <div className="flex items-start gap-2">
-                      <span className="text-emerald">∞</span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Unlimited Prompts</p>
-                        <p className="text-xs text-muted-foreground">Generate as many as you need</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="text-emerald">👑</span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Premium AI Models</p>
-                        <p className="text-xs text-muted-foreground">Claude, GPT-4, Gemini & more</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <span className="text-emerald">✓</span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">Save & Organize</p>
-                        <p className="text-xs text-muted-foreground">Create prompt libraries</p>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
           </ScrollArea>
         </TabsContent>
 
-        {/* Customize Tab */}
+        {/* ── Customize tab ── */}
         <TabsContent value="customize" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
-            <div className="max-w-2xl mx-auto p-6 space-y-6">
-              {/* Personalized Prompt Instructions */}
-              <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-6 h-6 rounded bg-emerald/20 flex items-center justify-center flex-shrink-0">
-                    <span className="text-emerald text-sm">📋</span>
-                  </div>
-                  <h3 className="text-lg font-semibold text-foreground">
-                    Personalized Prompt Instructions
-                  </h3>
+            <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
+              {/* Custom instructions */}
+              <Section
+                title="Custom Prompt Instructions"
+                description="Appended to every optimization request as context for the AI"
+              >
+                <div className="p-4">
+                  <Textarea
+                    value={settings.promptInstructions}
+                    onChange={(e) => updateSetting("promptInstructions", e.target.value)}
+                    placeholder="e.g. 'Always use formal tone', 'Include examples', 'Focus on technical accuracy'…"
+                    className="min-h-[100px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/40 leading-relaxed"
+                  />
+                  <p className="text-[10px] text-muted-foreground/50 mt-1.5">
+                    {settings.promptInstructions.length} / 1000 characters
+                  </p>
                 </div>
-                <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-foreground font-medium">Custom Instructions</Label>
-                    <p className="text-xs text-muted-foreground">
-                      These instructions will be appended to every optimization request
-                    </p>
-                    <Textarea
-                      value={settings.promptInstructions}
-                      onChange={(e) => updateSetting("promptInstructions", e.target.value)}
-                      placeholder="Enter custom instructions here... (e.g., 'Always use formal tone', 'Include examples', 'Focus on technical accuracy')"
-                      className="min-h-[120px] bg-secondary border-border font-mono text-sm resize-none"
+              </Section>
+
+              {/* Appearance */}
+              <Section title="Appearance">
+                <Row>
+                  <RowLabel
+                    label={settings.theme === "dark" ? "Dark Mode" : "Light Mode"}
+                    hint="Toggle the application color scheme"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Sun className="w-3.5 h-3.5 text-muted-foreground" />
+                    <Switch
+                      checked={settings.theme === "dark"}
+                      onCheckedChange={(checked) => updateSetting("theme", checked ? "dark" : "light")}
+                      data-testid="theme-toggle"
+                      className="data-[state=checked]:bg-emerald"
                     />
+                    <Moon className="w-3.5 h-3.5 text-muted-foreground" />
                   </div>
-                </div>
-              </div>
+                </Row>
+              </Section>
 
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">
-                  <Palette className="w-5 h-5 inline mr-2 text-emerald" />
-                  Appearance
-                </h3>
-                <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-foreground">
-                        {settings.theme === "dark" ? "Dark Mode" : "Light Mode"}
-                      </Label>
-                      <p className="text-sm text-muted-foreground">
-                        {settings.theme === "dark" ? "Dark color scheme" : "Light color scheme"}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Sun className="w-4 h-4 text-muted-foreground" />
-                      <Switch
-                        checked={settings.theme === "dark"}
-                        onCheckedChange={(checked) =>
-                          updateSetting("theme", checked ? "dark" : "light")
-                        }
-                        data-testid="theme-toggle"
-                      />
-                      <Moon className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Typography */}
+              <Section title="Typography">
+                <Row>
+                  <RowLabel label="Font Size" />
+                  <Select
+                    value={settings.fontSize}
+                    onValueChange={(v) => updateSetting("fontSize", v as SettingsData["fontSize"])}
+                  >
+                    <SelectTrigger className="w-40 h-8 text-xs bg-secondary border-border focus:border-emerald/50 focus:ring-emerald/15">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border-border shadow-elevated rounded-xl">
+                      <SelectItem value="small" className="text-xs">Small (14px)</SelectItem>
+                      <SelectItem value="medium" className="text-xs">Medium (16px)</SelectItem>
+                      <SelectItem value="large" className="text-xs">Large (18px)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Row>
+                <Row>
+                  <RowLabel label="Font Family" hint="Includes accessibility-focused options" />
+                  <Select
+                    value={settings.fontFamily}
+                    onValueChange={(v) => updateSetting("fontFamily", v as SettingsData["fontFamily"])}
+                  >
+                    <SelectTrigger className="w-40 h-8 text-xs bg-secondary border-border focus:border-emerald/50 focus:ring-emerald/15">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover border-border shadow-elevated rounded-xl">
+                      <SelectItem value="inter" className="text-xs">Default (Inter)</SelectItem>
+                      <SelectItem value="mono" className="text-xs">Monospace</SelectItem>
+                      <SelectItem value="serif" className="text-xs">Serif</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Row>
+              </Section>
 
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">Typography</h3>
-                <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  {/* Font Size */}
-                  <div className="space-y-2">
-                    <Label className="text-foreground">Font Size</Label>
-                    <Select
-                      value={settings.fontSize}
-                      onValueChange={(value) =>
-                        updateSetting("fontSize", value as SettingsData["fontSize"])
-                      }
-                    >
-                      <SelectTrigger className="bg-secondary border-border">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-card border-border">
-                        <SelectItem value="small">Small (14px)</SelectItem>
-                        <SelectItem value="medium">Medium (16px)</SelectItem>
-                        <SelectItem value="large">Large (18px)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Font Family */}
-                  <div className="space-y-2">
-                    <Label className="text-foreground">Font Family</Label>
-                    <Select
-                      value={settings.fontFamily}
-                      onValueChange={(value) =>
-                        updateSetting("fontFamily", value as SettingsData["fontFamily"])
-                      }
-                    >
-                      <SelectTrigger className="bg-secondary border-border">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-card border-border">
-                        <SelectItem value="inter">Default Font</SelectItem>
-                        <SelectItem value="mono">Monospace</SelectItem>
-                        <SelectItem value="serif">Serif</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Includes accessibility-focused options for better readability
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold text-foreground mb-4">Interface</h3>
-                <div className="bg-surface border border-border rounded-xl p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-foreground">Beta Features</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Early access to experimental features
-                      </p>
-                    </div>
-                    <Switch defaultChecked={false} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-foreground">Animations</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Enable smooth transitions and animations
-                      </p>
-                    </div>
-                    <Switch defaultChecked={true} />
-                  </div>
-                </div>
-              </div>
+              {/* Interface */}
+              <Section title="Interface">
+                <Row>
+                  <RowLabel label="Beta Features" hint="Early access to experimental features" />
+                  <Switch defaultChecked={false} className="data-[state=checked]:bg-emerald" />
+                </Row>
+                <Row>
+                  <RowLabel label="Animations" hint="Smooth transitions and micro-interactions" />
+                  <Switch defaultChecked={true} className="data-[state=checked]:bg-emerald" />
+                </Row>
+              </Section>
             </div>
           </ScrollArea>
         </TabsContent>
       </Tabs>
 
-      {/* Save Button */}
+      {/* ── Sticky save bar ── */}
       {isDirty && (
-        <div className="p-6 border-t border-border bg-surface/50 animate-slide-up">
-          <div className="max-w-2xl mx-auto flex gap-2">
+        <div className="flex-shrink-0 px-6 py-3.5 border-t border-border bg-surface/60 animate-slide-up flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">You have unsaved changes</p>
+          <div className="flex items-center gap-2">
             <Button
-              onClick={handleSave}
-              className="bg-emerald text-white hover:bg-emerald/90 transition-button glow-emerald"
-            >
-              Save Changes
-            </Button>
-            <Button
-              variant="outline"
+              variant="ghost" size="sm"
+              className="h-8 text-xs text-muted-foreground hover:text-foreground"
               onClick={async () => {
                 const loaded = await loadSettings();
                 setSettings(loaded);
                 setIsDirty(false);
               }}
-              className="border-border"
             >
-              Cancel
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              className="h-8 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm"
+            >
+              Save Changes
             </Button>
           </div>
         </div>

@@ -1,11 +1,7 @@
-import { Settings, HelpCircle, LogOut } from "lucide-react";
+import { Settings, HelpCircle, LogOut, CreditCard } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -17,13 +13,10 @@ interface ProfileMenuProps {
   collapsed?: boolean;
 }
 
-export const ProfileMenu = ({
-  onSettingsClick,
-  onHelpClick,
-  collapsed = false,
-}: ProfileMenuProps) => {
+export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }: ProfileMenuProps) => {
   const { user, signOut } = useAuth();
-  const userEmail = user?.profile?.email || "user@example.com";
+  const userEmail  = user?.profile?.email || "user@example.com";
+  const userName   = user?.profile?.name || userEmail.split("@")[0];
   const userInitial = (user?.profile?.name?.[0] || userEmail[0] || "U").toUpperCase();
 
   return (
@@ -31,51 +24,64 @@ export const ProfileMenu = ({
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center gap-3 p-2 rounded-lg bg-sidebar-accent/50 hover:bg-sidebar-accent transition-button w-full",
-            collapsed && "justify-center"
+            "flex items-center rounded-lg hover:bg-sidebar-accent transition-smooth w-full",
+            collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-1.5"
           )}
         >
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-emerald/20 text-emerald text-sm">
+          <Avatar className="h-7 w-7 flex-shrink-0">
+            <AvatarFallback className="bg-emerald/15 text-emerald text-xs font-semibold">
               {userInitial}
             </AvatarFallback>
           </Avatar>
           {!collapsed && (
             <div className="flex-1 min-w-0 text-left animate-fade-in">
-              <p className="text-sm font-medium text-foreground truncate">{userEmail}</p>
-              <p className="text-xs text-muted-foreground">Free tier</p>
+              <p className="text-[13px] font-medium text-foreground truncate leading-none">{userName}</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5 truncate leading-none">Free plan</p>
             </div>
           )}
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56 bg-card border-border">
-        <DropdownMenuLabel className="text-foreground">
-          <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">{userEmail}</p>
-            <p className="text-xs leading-none text-muted-foreground">Free Plan</p>
+
+      <DropdownMenuContent
+        align={collapsed ? "end" : "start"}
+        side={collapsed ? "right" : "top"}
+        sideOffset={8}
+        className="w-52 bg-popover border-border shadow-elevated rounded-xl p-1"
+      >
+        <DropdownMenuLabel className="px-2 py-2">
+          <p className="text-[13px] font-semibold text-foreground truncate">{userName}</p>
+          <p className="text-xs text-muted-foreground truncate mt-0.5">{userEmail}</p>
+          <div className="inline-flex items-center gap-1.5 mt-1.5 px-1.5 py-0.5 rounded-full bg-emerald-muted">
+            <div className="w-1 h-1 rounded-full bg-emerald" />
+            <span className="text-[10px] font-semibold text-emerald tracking-wide uppercase">Free Plan</span>
           </div>
         </DropdownMenuLabel>
-        <DropdownMenuSeparator className="bg-border" />
+
+        <DropdownMenuSeparator className="bg-border my-1" />
+
         <DropdownMenuItem
           onClick={onSettingsClick}
-          className="cursor-pointer text-foreground hover:bg-sidebar-accent focus:bg-sidebar-accent"
+          className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
         >
-          <Settings className="w-4 h-4 mr-2" />
+          <Settings className="w-3.5 h-3.5 opacity-60" />
           Settings
         </DropdownMenuItem>
+
         <DropdownMenuItem
           onClick={onHelpClick}
-          className="cursor-pointer text-foreground hover:bg-sidebar-accent focus:bg-sidebar-accent"
+          className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
         >
-          <HelpCircle className="w-4 h-4 mr-2" />
+          <HelpCircle className="w-3.5 h-3.5 opacity-60" />
           Help & Docs
         </DropdownMenuItem>
-        <DropdownMenuSeparator className="bg-border" />
+
+        <DropdownMenuSeparator className="bg-border my-1" />
+
         <DropdownMenuItem
           onClick={signOut}
-          className="cursor-pointer text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive"
+          className="cursor-pointer text-sm text-destructive focus:bg-destructive/8 focus:text-destructive gap-2.5 rounded-lg px-2 py-1.5 font-medium"
         >
-          <LogOut className="w-4 h-4 mr-2" />
+          <LogOut className="w-3.5 h-3.5" />
           Sign Out
         </DropdownMenuItem>
       </DropdownMenuContent>

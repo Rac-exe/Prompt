@@ -2,271 +2,268 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Prompt Weaver - Premium Emerald Design System */
+/* ============================================================
+   Prompt Weaver — Premium Design System v2
+   Clean, minimal, professional SaaS aesthetic
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600;700&display=swap');
 
 @layer base {
   :root {
-    /* Light mode - soft and muted */
-    --background: 0 0% 100%;
-    --foreground: 210 24% 16%;
+    /* ─── Light Mode ──────────────────────────────────────── */
+    --background:         0 0% 99%;
+    --foreground:         222 20% 11%;
 
-    --card: 0 0% 98%;
-    --card-foreground: 210 24% 16%;
+    --card:               0 0% 100%;
+    --card-foreground:    222 20% 11%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 210 24% 16%;
+    --popover:            0 0% 100%;
+    --popover-foreground: 222 20% 11%;
 
-    --primary: 150 60% 45%;
+    --primary:            158 64% 40%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 14% 89%;
-    --secondary-foreground: 210 24% 16%;
+    --secondary:          220 14% 96%;
+    --secondary-foreground: 222 20% 11%;
 
-    --muted: 210 14% 95%;
-    --muted-foreground: 215 16% 47%;
+    --muted:              220 14% 96%;
+    --muted-foreground:   220 10% 50%;
 
-    --accent: 150 60% 96%;
-    --accent-foreground: 150 60% 25%;
+    --accent:             158 64% 96%;
+    --accent-foreground:  158 64% 22%;
 
-    --destructive: 0 72% 51%;
+    --destructive:        0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 150 60% 45%;
+    --border:             220 13% 91%;
+    --input:              220 13% 91%;
+    --ring:               158 64% 40%;
 
-    --radius: 0.75rem;
+    --radius: 0.625rem;
 
-    /* Custom tokens - Light */
-    --surface: 0 0% 98%;
-    --surface-hover: 210 14% 95%;
-    --glow-primary: 150 60% 45%;
-    --success: 150 60% 45%;
-    --success-foreground: 0 0% 100%;
-    --emerald: 150 60% 45%;
-    --emerald-soft: 150 50% 65%;
-    --glass-overlay: 150 60% 45% / 0.06;
+    /* Custom tokens — Light */
+    --surface:            0 0% 99%;
+    --surface-hover:      220 14% 97%;
+    --surface-elevated:   0 0% 100%;
+    --emerald:            158 64% 40%;
+    --emerald-soft:       158 52% 58%;
+    --emerald-muted:      158 40% 92%;
 
-    /* Sidebar - Light */
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 215 16% 47%;
-    --sidebar-primary: 150 60% 45%;
+    /* Sidebar — Light */
+    --sidebar-background:         220 20% 97%;
+    --sidebar-foreground:         220 10% 44%;
+    --sidebar-primary:            158 64% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 14% 95%;
-    --sidebar-accent-foreground: 210 24% 16%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 150 60% 45%;
+    --sidebar-accent:             220 14% 93%;
+    --sidebar-accent-foreground:  222 20% 11%;
+    --sidebar-border:             220 13% 91%;
+    --sidebar-ring:               158 64% 40%;
   }
 
   .dark {
-    /* Dark mode - premium emerald on refined black */
-    --background: 217 33% 7%;
-    --foreground: 210 20% 98%;
+    /* ─── Dark Mode ──────────────────────────────────────────
+       Deep navy-black with crisp emerald accent.
+       Uses subtle layering rather than flat black.
+    ──────────────────────────────────────────────────────── */
+    --background:         222 22%  8%;
+    --foreground:         210 18% 94%;
 
-    --card: 217 33% 10%;
-    --card-foreground: 210 20% 98%;
+    --card:               222 22% 10%;
+    --card-foreground:    210 18% 94%;
 
-    --popover: 217 33% 10%;
-    --popover-foreground: 210 20% 98%;
+    --popover:            222 22% 10%;
+    --popover-foreground: 210 18% 94%;
 
-    --primary: 150 80% 60%;
-    --primary-foreground: 217 33% 7%;
+    --primary:            158 70% 52%;
+    --primary-foreground: 222 22%  8%;
 
-    --secondary: 217 33% 12%;
-    --secondary-foreground: 210 20% 98%;
+    --secondary:          222 22% 13%;
+    --secondary-foreground: 210 18% 94%;
 
-    --muted: 217 33% 15%;
-    --muted-foreground: 215 20% 65%;
+    --muted:              222 22% 14%;
+    --muted-foreground:   215 16% 58%;
 
-    --accent: 217 33% 18%;
-    --accent-foreground: 210 20% 98%;
+    --accent:             222 22% 16%;
+    --accent-foreground:  210 18% 94%;
 
-    --destructive: 0 72% 51%;
+    --destructive:        0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 217 33% 15%;
-    --input: 217 33% 15%;
-    --ring: 150 80% 60%;
+    --border:             222 22% 15%;
+    --input:              222 22% 15%;
+    --ring:               158 70% 52%;
 
-    --radius: 0.75rem;
+    --radius: 0.625rem;
 
-    /* Custom tokens - Dark */
-    --surface: 217 33% 12%;
-    --surface-hover: 217 33% 15%;
-    --glow-primary: 150 80% 60%;
-    --success: 150 80% 60%;
-    --success-foreground: 217 33% 7%;
-    --emerald: 150 80% 60%;
-    --emerald-soft: 150 70% 75%;
-    --glass-overlay: 150 80% 60% / 0.06;
+    /* Custom tokens — Dark */
+    --surface:            222 22% 11%;
+    --surface-hover:      222 22% 13%;
+    --surface-elevated:   222 22% 14%;
+    --emerald:            158 70% 52%;
+    --emerald-soft:       158 58% 68%;
+    --emerald-muted:      158 40% 16%;
 
-    /* Sidebar - Dark */
-    --sidebar-background: 217 33% 6%;
-    --sidebar-foreground: 215 20% 65%;
-    --sidebar-primary: 150 80% 60%;
-    --sidebar-primary-foreground: 217 33% 7%;
-    --sidebar-accent: 217 33% 12%;
-    --sidebar-accent-foreground: 210 20% 98%;
-    --sidebar-border: 217 33% 12%;
-    --sidebar-ring: 150 80% 60%;
+    /* Sidebar — Dark */
+    --sidebar-background:         222 24%  6%;
+    --sidebar-foreground:         215 16% 56%;
+    --sidebar-primary:            158 70% 52%;
+    --sidebar-primary-foreground: 222 22%  8%;
+    --sidebar-accent:             222 22% 11%;
+    --sidebar-accent-foreground:  210 18% 94%;
+    --sidebar-border:             222 22% 12%;
+    --sidebar-ring:               158 70% 52%;
   }
 }
 
+/* ─── Base Layer ────────────────────────────────────────────── */
 @layer base {
   * {
-    @apply border-border;
+    @apply border-border outline-ring/60;
   }
 
   html {
     @apply dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    font-size: 15px;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
   }
 
-  /* Custom scrollbar - thin, subtle, modern */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  h1, h2, h3, h4, h5, h6 {
+    letter-spacing: -0.025em;
+    font-weight: 600;
   }
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
+  /* ─── Scrollbar ─── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted));
-    border-radius: 3px;
-    transition: background 0.2s ease;
+    background: hsl(var(--border));
+    border-radius: 10px;
   }
-
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.4);
+    background: hsl(var(--muted-foreground) / 0.35);
   }
-
-  /* Firefox scrollbar */
   * {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--muted)) transparent;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  /* ─── Focus Styles ─── */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* ─── Selection ─── */
+  ::selection {
+    background: hsl(var(--emerald) / 0.2);
+    color: hsl(var(--foreground));
   }
 }
 
-
+/* ─── Utility Layer ─────────────────────────────────────────── */
 @layer utilities {
-  .glow-primary {
-    box-shadow: 0 0 20px hsl(var(--emerald) / 0.3),
-                0 0 40px hsl(var(--emerald) / 0.15);
-  }
 
-  .glow-primary-subtle {
-    box-shadow: 0 0 10px hsl(var(--emerald) / 0.2);
-  }
-
+  /* ── Glow effects ── */
   .glow-emerald {
-    box-shadow: 0 0 24px hsl(var(--emerald) / 0.4),
-                0 0 12px hsl(var(--emerald) / 0.2);
+    box-shadow:
+      0 0 0 1px hsl(var(--emerald) / 0.2),
+      0 0 16px hsl(var(--emerald) / 0.25),
+      0 0 32px hsl(var(--emerald) / 0.1);
   }
+  .glow-emerald-sm {
+    box-shadow:
+      0 0 0 1px hsl(var(--emerald) / 0.15),
+      0 0 8px  hsl(var(--emerald) / 0.2);
+  }
+  .glow-primary { @apply glow-emerald; }
 
+  /* ── Text gradient ── */
   .text-gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+    background: linear-gradient(
+      135deg,
+      hsl(var(--emerald)) 0%,
+      hsl(var(--emerald-soft)) 100%
+    );
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
+  /* ── Backgrounds ── */
   .bg-gradient-primary {
     background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
   }
-
-  .bg-gradient-surface {
-    background: linear-gradient(180deg, hsl(var(--surface)) 0%, hsl(var(--background)) 100%);
-  }
-
   .bg-glass {
-    background: hsl(var(--glass-overlay));
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: hsl(var(--surface) / 0.8);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
   }
 
-  .border-glow {
-    border-color: hsl(var(--border));
+  /* ── Shadows ── */
+  .shadow-card {
+    box-shadow:
+      0 1px 3px hsl(0 0% 0% / 0.08),
+      0 1px 2px hsl(0 0% 0% / 0.04);
+  }
+  .shadow-card-hover {
+    box-shadow:
+      0 4px 12px hsl(0 0% 0% / 0.12),
+      0 2px 4px  hsl(0 0% 0% / 0.06);
+  }
+  .shadow-elevated {
+    box-shadow:
+      0 8px 24px hsl(0 0% 0% / 0.14),
+      0 2px 8px  hsl(0 0% 0% / 0.08);
   }
 
-  .animate-fade-in {
-    animation: fadeIn 0.3s ease-out;
-  }
-
-  .animate-slide-up {
-    animation: slideUp 0.3s ease-out;
-  }
-
-  .animate-scale-in {
-    animation: scaleIn 0.2s ease-out;
-  }
-
-  .animate-pulse-subtle {
-    animation: pulseSubtle 2s ease-in-out infinite;
-  }
-
-  .animate-button-press {
-    animation: buttonPress 0.15s ease-out;
-  }
+  /* ── Animations ── */
+  .animate-fade-in       { animation: fadeIn  0.25s ease-out; }
+  .animate-fade-in-slow  { animation: fadeIn  0.5s  ease-out; }
+  .animate-slide-up      { animation: slideUp 0.28s ease-out; }
+  .animate-scale-in      { animation: scaleIn 0.2s  ease-out; }
+  .animate-pulse-subtle  { animation: pulseSubtle 2.4s ease-in-out infinite; }
 
   .transition-button {
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .transition-smooth {
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ── Typography helpers ── */
+  .label-xs {
+    @apply text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground;
+  }
+  .label-sm {
+    @apply text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground;
   }
 }
 
+/* ─── Keyframes ─────────────────────────────────────────────── */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
-
 @keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
 }
-
 @keyframes scaleIn {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1);    }
 }
-
 @keyframes pulseSubtle {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
-}
-
-@keyframes buttonPress {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(0.96);
-  }
-  100% {
-    transform: scale(1);
-  }
+  0%, 100% { opacity: 1;   }
+  50%       { opacity: 0.6; }
 }

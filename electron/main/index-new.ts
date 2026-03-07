@@ -149,6 +149,27 @@ async function initialize() {
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
 
   // ============================================
+  // WINDOW CONTROL IPC HANDLERS (frameless window)
+  // ============================================
+  ipcMain.on('window:minimize', () => {
+    const win = appWindowManager.getWindow();
+    if (win && !win.isDestroyed()) win.minimize();
+  });
+
+  ipcMain.on('window:maximize', () => {
+    const win = appWindowManager.getWindow();
+    if (win && !win.isDestroyed()) {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
+    }
+  });
+
+  ipcMain.on('window:close', () => {
+    const win = appWindowManager.getWindow();
+    if (win && !win.isDestroyed()) win.hide();
+  });
+
+  // ============================================
   // SESSION MANAGEMENT & AUTH STATE SYNC
   // ============================================
   try {

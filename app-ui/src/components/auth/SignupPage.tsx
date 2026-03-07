@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Zap, ArrowRight, Loader2 } from 'lucide-react';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
@@ -21,180 +21,223 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
   const [error, setError] = useState('');
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    // Validation
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
       return;
     }
-
     if (formData.password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
     }
-
     if (!formData.name || !formData.dob || !formData.email) {
       setError('Please fill in all fields');
       return;
     }
 
-    // Check if user is at least 13 years old
     const dobDate = new Date(formData.dob);
-    const today = new Date();
-    const age = today.getFullYear() - dobDate.getFullYear();
+    const age = new Date().getFullYear() - dobDate.getFullYear();
     if (age < 13) {
       setError('You must be at least 13 years old to sign up');
       return;
     }
 
     setIsLoading(true);
-
     try {
-      // Check if we're in Electron environment
       if (window.electronAPI) {
-        // Send signup request to Electron
         window.electronAPI.signUp({
           name: formData.name,
           dob: formData.dob,
           email: formData.email,
           password: formData.password,
         });
-        
-        // The response will come through onAuthStateChange listener
-        // which should be set up in the parent component
       } else {
         setError('This app requires Electron to run');
         setIsLoading(false);
       }
-    } catch (err) {
+    } catch {
       setError('An unexpected error occurred');
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Create Account</CardTitle>
-          <CardDescription className="text-center">
-            Sign up for Prompt Optimizer
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="p-3 text-sm text-red-600 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
-                {error}
+    <div className="min-h-screen flex bg-background">
+      {/* Left decorative panel */}
+      <div className="hidden lg:flex lg:w-[42%] bg-sidebar flex-col justify-between p-12 border-r border-sidebar-border relative overflow-hidden">
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `linear-gradient(hsl(var(--foreground)) 1px, transparent 1px),
+                              linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)`,
+            backgroundSize: '48px 48px',
+          }}
+        />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald/6 blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald flex items-center justify-center shadow-lg shadow-emerald/30">
+            <Zap className="w-5 h-5 text-white" />
+          </div>
+          <span className="font-bold text-foreground text-lg tracking-tight">Prompt Weaver</span>
+        </div>
+
+        <div className="relative z-10 space-y-6">
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-muted text-emerald text-xs font-semibold tracking-wide">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald animate-pulse-subtle" />
+              Free to start
+            </div>
+            <h1 className="text-3xl font-bold text-foreground leading-tight">
+              Join thousands of<br />
+              <span className="text-gradient-primary">prompt engineers.</span>
+            </h1>
+            <p className="text-muted-foreground text-sm leading-relaxed max-w-xs">
+              Create an account and start optimizing your prompts for maximum clarity and performance.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            {[
+              { label: 'Unlimited chat history', desc: 'Never lose a great prompt' },
+              { label: 'Smart library', desc: 'Organize with collections' },
+              { label: 'Voice input', desc: 'Dictate your prompts' },
+            ].map((item) => (
+              <div key={item.label} className="flex items-start gap-3">
+                <div className="w-5 h-5 rounded-full bg-emerald/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">{item.label}</p>
+                  <p className="text-xs text-muted-foreground">{item.desc}</p>
+                </div>
               </div>
-            )}
+            ))}
+          </div>
+        </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
+        <p className="relative z-10 text-xs text-muted-foreground/50 italic">
+          "The quality of your output begins with the quality of your input."
+        </p>
+      </div>
+
+      {/* Right form panel */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-[380px] space-y-7 animate-fade-in">
+          {/* Mobile brand */}
+          <div className="flex items-center gap-3 lg:hidden">
+            <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center">
+              <Zap className="w-4 h-4 text-white" />
+            </div>
+            <span className="font-bold text-foreground">Prompt Weaver</span>
+          </div>
+
+          <div className="space-y-1.5">
+            <h2 className="text-2xl font-bold text-foreground tracking-tight">Create your account</h2>
+            <p className="text-sm text-muted-foreground">Free forever. No credit card required.</p>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2.5 p-3.5 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
+              <div className="w-4 h-4 rounded-full bg-destructive/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
+              </div>
+              <p className="text-sm text-destructive leading-snug">{error}</p>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="name" className="text-sm font-medium text-foreground">Full name</Label>
+                <Input
+                  id="name" name="name" type="text" placeholder="John Doe"
+                  value={formData.name} onChange={handleChange}
+                  required autoComplete="name" disabled={isLoading}
+                  className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dob" className="text-sm font-medium text-foreground">Date of birth</Label>
+                <Input
+                  id="dob" name="dob" type="date"
+                  value={formData.dob} onChange={handleChange}
+                  required disabled={isLoading}
+                  max={new Date().toISOString().split('T')[0]}
+                  className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground transition-button"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="email" className="text-sm font-medium text-foreground">Email address</Label>
               <Input
-                id="name"
-                name="name"
-                type="text"
-                placeholder="John Doe"
-                value={formData.name}
-                onChange={handleChange}
-                required
-                autoComplete="name"
-                disabled={isLoading}
+                id="email" name="email" type="email" placeholder="you@example.com"
+                value={formData.email} onChange={handleChange}
+                required autoComplete="email" disabled={isLoading}
+                className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="dob">Date of Birth</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="password" className="text-sm font-medium text-foreground">Password</Label>
               <Input
-                id="dob"
-                name="dob"
-                type="date"
-                value={formData.dob}
-                onChange={handleChange}
-                required
-                disabled={isLoading}
-                max={new Date().toISOString().split('T')[0]}
+                id="password" name="password" type="password" placeholder="••••••••"
+                value={formData.password} onChange={handleChange}
+                required autoComplete="new-password" disabled={isLoading} minLength={6}
+                className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
+              />
+              <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="confirmPassword" className="text-sm font-medium text-foreground">Confirm password</Label>
+              <Input
+                id="confirmPassword" name="confirmPassword" type="password" placeholder="••••••••"
+                value={formData.confirmPassword} onChange={handleChange}
+                required autoComplete="new-password" disabled={isLoading} minLength={6}
+                className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                placeholder="you@example.com"
-                value={formData.email}
-                onChange={handleChange}
-                required
-                autoComplete="email"
-                disabled={isLoading}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                autoComplete="new-password"
-                disabled={isLoading}
-                minLength={6}
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                At least 6 characters
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input
-                id="confirmPassword"
-                name="confirmPassword"
-                type="password"
-                placeholder="••••••••"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                required
-                autoComplete="new-password"
-                disabled={isLoading}
-                minLength={6}
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Creating account...' : 'Sign Up'}
+            <Button
+              type="submit" disabled={isLoading}
+              className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button mt-1"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <span className="flex items-center gap-2">
+                  Create Account
+                  <ArrowRight className="w-4 h-4" />
+                </span>
+              )}
             </Button>
-
-            <div className="text-center text-sm text-gray-600 dark:text-gray-400">
-              Already have an account?{' '}
-              <button
-                type="button"
-                onClick={onSwitchToLogin}
-                className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
-                disabled={isLoading}
-              >
-                Sign in
-              </button>
-            </div>
           </form>
-        </CardContent>
-      </Card>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-border" />
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="bg-background px-3 text-muted-foreground">Already have an account?</span>
+            </div>
+          </div>
+
+          <Button
+            type="button" variant="outline" onClick={onSwitchToLogin} disabled={isLoading}
+            className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button"
+          >
+            Sign in instead
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

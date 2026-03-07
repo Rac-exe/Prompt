@@ -53,6 +53,7 @@ export default {
         },
         surface: "hsl(var(--surface))",
         "surface-hover": "hsl(var(--surface-hover))",
+        "surface-elevated": "hsl(var(--surface-elevated))",
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",
@@ -60,6 +61,7 @@ export default {
         emerald: {
           DEFAULT: "hsl(var(--emerald))",
           soft: "hsl(var(--emerald-soft))",
+          muted: "hsl(var(--emerald-muted))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
@@ -99,6 +101,9 @@ export default {
       boxShadow: {
         glow: "0 0 20px hsl(var(--primary) / 0.3)",
         "glow-sm": "0 0 10px hsl(var(--primary) / 0.2)",
+        card: "0 1px 3px hsl(0 0% 0% / 0.08), 0 1px 2px hsl(0 0% 0% / 0.04)",
+        "card-hover": "0 4px 12px hsl(0 0% 0% / 0.12), 0 2px 4px hsl(0 0% 0% / 0.06)",
+        elevated: "0 8px 24px hsl(0 0% 0% / 0.14), 0 2px 8px hsl(0 0% 0% / 0.08)",
       },
     },
   },

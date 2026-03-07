@@ -1,44 +1,25 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  Zap,
-  Plus,
-  Library,
-  MessageSquare,
-  ChevronLeft,
-  ChevronRight,
-  Loader2,
-  AlertCircle,
-  MoreVertical,
-  Trash2,
-  Pencil,
-  Check,
-  X,
+  Zap, Plus, Library, MessageSquare,
+  PanelLeftClose, PanelLeftOpen,
+  Loader2, AlertCircle, MoreHorizontal,
+  Trash2, Pencil, Check, X,
 } from "lucide-react";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProfileMenu } from "./ProfileMenu";
 
-/** Truncate a title to at most 4 words for sidebar display */
 function shortTitle(title: string): string {
   const words = title.trim().split(/\s+/);
   if (words.length <= 4) return title.trim();
@@ -59,49 +40,22 @@ interface SidebarProps {
 }
 
 export const Sidebar = ({
-  currentView,
-  onViewChange,
-  recentChats,
-  onSelectChat,
-  selectedChatId,
-  onNewChat,
-  onRenameChat,
-  onDeleteChat,
-  chatsLoading = false,
-  chatsError,
+  currentView, onViewChange, recentChats, onSelectChat,
+  selectedChatId, onNewChat, onRenameChat, onDeleteChat,
+  chatsLoading = false, chatsError,
 }: SidebarProps) => {
   const [collapsed, setCollapsed] = useState(false);
-
-  // Rename state
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
-
-  // Delete confirmation state
   const [deleteChatId, setDeleteChatId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-
-  // Track which dropdown is open so the dots icon stays visible
   const [openDropdownChatId, setOpenDropdownChatId] = useState<string | null>(null);
 
   const navItems = [
     { id: "chat" as const, label: "New Chat", icon: Plus, action: onNewChat },
     { id: "library" as const, label: "Prompt Library", icon: Library },
   ];
-
-  const handleHelpClick = () => {
-    window.open("https://docs.promptweaver.app", "_blank");
-  };
-
-  const handleSettingsClick = () => {
-    onViewChange("settings");
-  };
-
-  // --- Rename handlers ---
-  const startRename = (chatId: string, currentTitle: string) => {
-    setRenamingChatId(chatId);
-    setRenameValue(currentTitle);
-  };
 
   useEffect(() => {
     if (renamingChatId && renameInputRef.current) {
@@ -110,16 +64,16 @@ export const Sidebar = ({
     }
   }, [renamingChatId]);
 
+  const startRename = (chatId: string, currentTitle: string) => {
+    setRenamingChatId(chatId);
+    setRenameValue(currentTitle);
+  };
+
   const confirmRename = () => {
     if (!renamingChatId) return;
     const trimmed = renameValue.trim();
-    if (trimmed.length === 0) {
-      cancelRename();
-      return;
-    }
-    if (onRenameChat) {
-      onRenameChat(renamingChatId, trimmed);
-    }
+    if (!trimmed) { cancelRename(); return; }
+    onRenameChat?.(renamingChatId, trimmed);
     setRenamingChatId(null);
     setRenameValue("");
   };
@@ -130,37 +84,24 @@ export const Sidebar = ({
   };
 
   const handleRenameKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      confirmRename();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      cancelRename();
-    }
+    if (e.key === "Enter")  { e.preventDefault(); confirmRename(); }
+    if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
   };
 
-  // --- Delete handlers ---
   const requestDelete = (chatId: string) => {
     setDeleteChatId(chatId);
     setDeleteDialogOpen(true);
   };
 
   const confirmDelete = () => {
-    if (deleteChatId && onDeleteChat) {
-      onDeleteChat(deleteChatId);
-    }
-    setDeleteDialogOpen(false);
-    setDeleteChatId(null);
-  };
-
-  const cancelDelete = () => {
+    if (deleteChatId) onDeleteChat?.(deleteChatId);
     setDeleteDialogOpen(false);
     setDeleteChatId(null);
   };
 
   const chatToDelete = recentChats.find((c) => c.id === deleteChatId);
 
-  // --- Render a single chat row ---
+  /* ── Chat row ─────────────────────────────────────────────── */
   const renderChatRow = (chat: { id: string; title: string; date: string }) => {
     const isSelected = selectedChatId === chat.id;
     const isDropdownOpen = openDropdownChatId === chat.id;
@@ -168,82 +109,61 @@ export const Sidebar = ({
     return (
       <div
         className={cn(
-          "group flex items-center rounded-md transition-button",
-          isSelected && "bg-sidebar-accent",
-          !isSelected && "hover:bg-sidebar-accent/50"
+          "group flex items-center rounded-lg transition-smooth",
+          isSelected
+            ? "bg-sidebar-accent"
+            : "hover:bg-sidebar-accent/60"
         )}
       >
-        {/* Chat click target */}
         <button
           className={cn(
-            "flex-1 flex items-center gap-3 h-9 px-3 text-sm cursor-pointer",
-            isSelected && "text-emerald",
-            !isSelected && "text-sidebar-foreground hover:text-foreground",
+            "flex-1 flex items-center gap-2.5 h-8 px-2.5 text-[13px] cursor-pointer min-w-0",
+            isSelected ? "text-emerald font-medium" : "text-sidebar-foreground hover:text-sidebar-accent-foreground",
             collapsed && "justify-center px-2"
           )}
-          onClick={() => {
-            onSelectChat(chat.id);
-            onViewChange("chat");
-          }}
+          onClick={() => { onSelectChat(chat.id); onViewChange("chat"); }}
           data-testid={`chat-${chat.id}`}
         >
-          <MessageSquare className="w-4 h-4 flex-shrink-0" />
+          <MessageSquare className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
           {!collapsed && (
-            <span className="whitespace-nowrap text-left">
-              {shortTitle(chat.title)}
-            </span>
+            <span className="truncate text-left">{shortTitle(chat.title)}</span>
           )}
         </button>
 
-        {/* 3-dot menu */}
         {!collapsed && (
           <div
             className={cn(
-              "flex-shrink-0 flex items-center justify-center w-7 transition-opacity duration-150",
-              isDropdownOpen
-                ? "opacity-100"
-                : "opacity-0 group-hover:opacity-100"
+              "flex-shrink-0 flex items-center justify-center w-7 h-7 mr-1 transition-opacity duration-150",
+              isDropdownOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
             )}
           >
-            <DropdownMenu
-              onOpenChange={(open) =>
-                setOpenDropdownChatId(open ? chat.id : null)
-              }
-            >
+            <DropdownMenu onOpenChange={(open) => setOpenDropdownChatId(open ? chat.id : null)}>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="inline-flex items-center justify-center h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-sidebar-accent focus:outline-none"
+                  className="inline-flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-sidebar-accent focus:outline-none transition-smooth"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <MoreVertical className="h-3.5 w-3.5" />
+                  <MoreHorizontal className="h-3.5 w-3.5" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
-                align="start"
-                side="right"
-                sideOffset={4}
-                className="w-48 bg-card border-border z-50"
+                align="start" side="right" sideOffset={6}
+                className="w-44 bg-popover border-border shadow-elevated z-50 rounded-lg"
               >
                 <DropdownMenuItem
-                  className="cursor-pointer text-foreground focus:bg-sidebar-accent"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    startRename(chat.id, chat.title);
-                  }}
+                  className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2 rounded-md"
+                  onClick={(e) => { e.stopPropagation(); startRename(chat.id, chat.title); }}
                 >
-                  <Pencil className="mr-2 h-4 w-4" />
-                  <span>Rename</span>
+                  <Pencil className="h-3.5 w-3.5 opacity-70" />
+                  Rename
                 </DropdownMenuItem>
-                <DropdownMenuSeparator className="bg-border" />
+                <DropdownMenuSeparator className="bg-border my-1" />
                 <DropdownMenuItem
-                  className="cursor-pointer text-destructive focus:bg-destructive/10 focus:text-destructive"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    requestDelete(chat.id);
-                  }}
+                  className="cursor-pointer text-sm text-destructive focus:bg-destructive/8 focus:text-destructive gap-2 rounded-md"
+                  onClick={(e) => { e.stopPropagation(); requestDelete(chat.id); }}
                 >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  <span>Delete</span>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -253,7 +173,6 @@ export const Sidebar = ({
     );
   };
 
-  // --- Render a single chat item (rename mode or normal) ---
   const renderChatItem = (chat: { id: string; title: string; date: string }) => {
     const isRenaming = renamingChatId === chat.id;
 
@@ -266,167 +185,156 @@ export const Sidebar = ({
             onChange={(e) => setRenameValue(e.target.value)}
             onKeyDown={handleRenameKeyDown}
             onBlur={confirmRename}
-            className="h-8 text-sm bg-sidebar-accent border-emerald/50 focus-visible:ring-emerald/30 text-foreground flex-1 min-w-0"
+            className="h-7 text-[13px] bg-sidebar-accent border-emerald/40 focus-visible:ring-emerald/20 text-foreground flex-1 min-w-0 rounded-md"
             maxLength={100}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 flex-shrink-0 text-emerald hover:text-emerald hover:bg-emerald/10"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              confirmRename();
-            }}
+          <button
+            className="w-6 h-6 flex items-center justify-center rounded-md text-emerald hover:bg-emerald/10 transition-smooth flex-shrink-0"
+            onMouseDown={(e) => { e.preventDefault(); confirmRename(); }}
           >
-            <Check className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 flex-shrink-0 text-muted-foreground hover:text-foreground"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              cancelRename();
-            }}
+            <Check className="h-3 w-3" />
+          </button>
+          <button
+            className="w-6 h-6 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground transition-smooth flex-shrink-0"
+            onMouseDown={(e) => { e.preventDefault(); cancelRename(); }}
           >
-            <X className="h-3.5 w-3.5" />
-          </Button>
+            <X className="h-3 w-3" />
+          </button>
         </div>
       );
     }
 
     const row = renderChatRow(chat);
-
     if (collapsed) {
       return (
         <Tooltip key={chat.id}>
           <TooltipTrigger asChild>{row}</TooltipTrigger>
-          <TooltipContent side="right">{chat.title}</TooltipContent>
+          <TooltipContent side="right" className="text-xs">{chat.title}</TooltipContent>
         </Tooltip>
       );
     }
-
     return <div key={chat.id}>{row}</div>;
   };
 
+  /* ── Shell ────────────────────────────────────────────────── */
   return (
     <>
       <div
         className={cn(
-          "h-screen flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300",
-          collapsed ? "w-16" : "w-64"
+          "h-full flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out",
+          collapsed ? "w-[60px]" : "w-[240px]"
         )}
       >
-        {/* Header */}
-        <div className="p-4 flex items-center justify-between">
-          <div className={cn("flex items-center gap-3", collapsed && "justify-center w-full")}>
-            <div className="w-9 h-9 rounded-lg bg-emerald flex items-center justify-center flex-shrink-0">
-              <Zap className="w-5 h-5 text-white" />
+        {/* ── Brand header ── */}
+        <div className={cn(
+          "flex items-center h-14 px-3 border-b border-sidebar-border flex-shrink-0",
+          collapsed ? "justify-center" : "justify-between"
+        )}>
+          <div className={cn("flex items-center gap-2.5 min-w-0", collapsed && "justify-center")}>
+            <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center flex-shrink-0 shadow-sm shadow-emerald/30">
+              <Zap className="w-4 h-4 text-white" />
             </div>
             {!collapsed && (
-              <div className="animate-fade-in">
-                <h1 className="font-bold text-foreground">Prompt Weaver</h1>
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Optimization Studio</p>
+              <div className="min-w-0 animate-fade-in">
+                <p className="text-[13px] font-bold text-foreground leading-none tracking-tight">Prompt Weaver</p>
+                <p className="label-xs mt-0.5">Studio</p>
               </div>
             )}
           </div>
+
           {!collapsed && (
             <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              variant="ghost" size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent flex-shrink-0 transition-smooth"
               onClick={() => setCollapsed(true)}
             >
-              <ChevronLeft className="w-4 h-4" />
+              <PanelLeftClose className="w-4 h-4" />
             </Button>
           )}
         </div>
 
-        {/* Collapse expand button when collapsed */}
+        {/* Expand button when collapsed */}
         {collapsed && (
+          <div className="px-1.5 pt-2 flex-shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
           <Button
-            variant="ghost"
-            size="icon"
-            className="mx-auto h-8 w-8 text-muted-foreground hover:text-foreground mb-2"
+                  variant="ghost" size="icon"
+                  className="h-8 w-full text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-smooth"
             onClick={() => setCollapsed(false)}
           >
-            <ChevronRight className="w-4 h-4" />
+                  <PanelLeftOpen className="w-4 h-4" />
           </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">Expand sidebar</TooltipContent>
+            </Tooltip>
+          </div>
         )}
 
-        {/* Navigation */}
-        <div className="px-3 space-y-1">
+        {/* ── Navigation ── */}
+        <div className={cn("px-2 pt-3 space-y-0.5 flex-shrink-0", collapsed && "px-1.5")}>
           {navItems.map((item) => {
             const isActive = item.id === currentView && item.id !== "chat";
             const Icon = item.icon;
 
             const button = (
-              <Button
+              <button
                 key={item.id}
-                variant={isActive ? "secondary" : "ghost"}
                 className={cn(
-                  "w-full justify-start gap-3 h-10 transition-button",
-                  isActive && "bg-sidebar-accent text-emerald",
-                  !isActive && "text-sidebar-foreground hover:text-foreground hover:bg-sidebar-accent/50",
-                  collapsed && "justify-center px-2"
+                  "w-full flex items-center rounded-lg h-9 text-[13px] font-medium transition-smooth",
+                  collapsed ? "justify-center px-2" : "gap-2.5 px-2.5",
+                  isActive
+                    ? "bg-sidebar-accent text-emerald"
+                    : "text-sidebar-foreground hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/60"
                 )}
                 onClick={() => {
-                  if (item.action) {
-                    item.action();
-                  } else {
-                    onViewChange(item.id);
-                  }
+                  if (item.action) item.action();
+                  else onViewChange(item.id);
                 }}
                 data-testid={`nav-${item.id}`}
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
                 {!collapsed && <span>{item.label}</span>}
-              </Button>
+              </button>
             );
 
             if (collapsed) {
               return (
                 <Tooltip key={item.id}>
                   <TooltipTrigger asChild>{button}</TooltipTrigger>
-                  <TooltipContent side="right">{item.label}</TooltipContent>
+                  <TooltipContent side="right" className="text-xs">{item.label}</TooltipContent>
                 </Tooltip>
               );
             }
-
             return button;
           })}
         </div>
 
-        <Separator className="my-4 bg-sidebar-border" />
-
-        {/* Recent Chats */}
-        <div className="flex-1 min-h-0 overflow-hidden px-3">
+        {/* ── Section divider ── */}
+        <div className={cn("px-3 pt-5 pb-1.5 flex-shrink-0", collapsed && "px-2")}>
+          <div className="border-t border-sidebar-border" />
           {!collapsed && (
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2 px-3">
-              Recent
-            </p>
+            <p className="label-xs mt-3 px-0.5">Recent</p>
           )}
+        </div>
+
+        {/* ── Chat list ── */}
+        <div className={cn("flex-1 min-h-0 overflow-hidden", collapsed ? "px-1.5" : "px-2")}>
           <div className="h-full overflow-y-auto overflow-x-hidden">
-            <div className="space-y-1 pb-4">
+            <div className="space-y-0.5 pb-4">
               {chatsLoading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-5 h-5 animate-spin text-emerald" />
+                  <Loader2 className="w-4 h-4 animate-spin text-emerald" />
                 </div>
               ) : chatsError ? (
-                <div className="flex flex-col items-center justify-center py-8 px-4">
-                  <AlertCircle className="w-5 h-5 text-destructive mb-2" />
-                  {!collapsed && (
-                    <p className="text-xs text-destructive text-center">
-                      Failed to load chats
-                    </p>
-                  )}
+                <div className="flex flex-col items-center justify-center py-8 px-3">
+                  <AlertCircle className="w-4 h-4 text-destructive mb-1.5" />
+                  {!collapsed && <p className="text-xs text-destructive text-center">Failed to load chats</p>}
                 </div>
               ) : recentChats.length === 0 ? (
                 !collapsed && (
-                  <div className="py-8 px-4 text-center">
-                    <p className="text-xs text-muted-foreground">
-                      No recent chats
-                    </p>
+                  <div className="py-8 text-center">
+                    <p className="text-xs text-muted-foreground/60">No recent chats</p>
                   </div>
                 )
               ) : (
@@ -436,39 +344,36 @@ export const Sidebar = ({
           </div>
         </div>
 
-        {/* User Section with Profile Menu */}
-        <div className="p-3 border-t border-sidebar-border">
+        {/* ── User section ── */}
+        <div className={cn("flex-shrink-0 border-t border-sidebar-border", collapsed ? "p-1.5" : "p-2")}>
           <ProfileMenu
-            onSettingsClick={handleSettingsClick}
-            onHelpClick={handleHelpClick}
+            onSettingsClick={() => onViewChange("settings")}
+            onHelpClick={() => window.open("https://docs.promptweaver.app", "_blank")}
             collapsed={collapsed}
           />
         </div>
       </div>
 
-      {/* Delete Confirmation Dialog */}
+      {/* ── Delete dialog ── */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent className="bg-card border-border">
+        <AlertDialogContent className="bg-card border-border shadow-elevated rounded-xl max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-foreground">Delete Chat</AlertDialogTitle>
-            <AlertDialogDescription className="text-muted-foreground">
-              Are you sure you want to delete{" "}
-              <span className="font-medium text-foreground">
-                &ldquo;{chatToDelete?.title}&rdquo;
-              </span>
-              ? This action cannot be undone and all messages in this chat will be permanently removed.
+            <AlertDialogTitle className="text-foreground text-base font-semibold">Delete chat?</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground text-sm leading-relaxed">
+              <span className="font-medium text-foreground">&ldquo;{chatToDelete?.title}&rdquo;</span> and all
+              its messages will be permanently removed. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="gap-2">
             <AlertDialogCancel
-              onClick={cancelDelete}
-              className="bg-sidebar-accent text-foreground border-border hover:bg-sidebar-accent/80"
+              onClick={() => { setDeleteDialogOpen(false); setDeleteChatId(null); }}
+              className="h-9 bg-secondary text-foreground border-border hover:bg-secondary/80 text-sm font-medium"
             >
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="h-9 bg-destructive text-destructive-foreground hover:bg-destructive/90 text-sm font-medium"
             >
               Delete
             </AlertDialogAction>

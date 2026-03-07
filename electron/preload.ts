@@ -92,6 +92,13 @@ declare global {
       };
       onPromptLibraryLoaded: (callback: (data: any) => void) => void;
 
+      // Window controls (frameless window)
+      windowControls: {
+        minimize: () => void;
+        maximize: () => void;
+        close: () => void;
+      };
+
       // Common API
       send: (channel: string, data: any) => void;
     };
@@ -345,6 +352,15 @@ const electronAPI = {
   },
   onPromptLibraryLoaded: (callback: (data: any) => void) => {
     ipcRenderer.on('prompt-library:loaded', (_event, data) => callback(data));
+  },
+
+  // ============================================
+  // WINDOW CONTROLS (frameless window)
+  // ============================================
+  windowControls: {
+    minimize: () => ipcRenderer.send('window:minimize'),
+    maximize: () => ipcRenderer.send('window:maximize'),
+    close:    () => ipcRenderer.send('window:close'),
   },
 
   // ============================================

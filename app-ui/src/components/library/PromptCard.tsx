@@ -38,18 +38,15 @@ export const PromptCard = ({ prompt, onCopy, onEdit, onDelete, onOpen }: PromptC
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
     const blob = new Blob([prompt.content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
     a.download = `${prompt.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast({
-      title: "Downloaded",
-      description: "Prompt saved as .txt file",
-    });
+    toast({ title: "Downloaded", description: "Prompt saved as .txt file" });
   };
 
   const handleShare = (e: React.MouseEvent) => {
@@ -57,94 +54,84 @@ export const PromptCard = ({ prompt, onCopy, onEdit, onDelete, onOpen }: PromptC
     setShareModalOpen(true);
   };
 
-  const handleCardClick = () => {
-    if (onOpen) {
-      onOpen();
-    }
-  };
-
   return (
     <div
       className={cn(
-        "group bg-surface border border-border rounded-xl p-4 transition-all animate-fade-in",
-        onOpen && "cursor-pointer hover:border-emerald/50 hover:bg-surface-hover"
+        "group relative bg-surface border border-border rounded-xl p-4 transition-smooth animate-fade-in",
+        onOpen && "cursor-pointer hover:border-emerald/40 hover:shadow-card-hover"
       )}
-      onClick={handleCardClick}
+      onClick={onOpen}
       data-testid={`prompt-card-${prompt.id}`}
     >
-      <div className="flex items-start justify-between gap-4 mb-2">
-        <h4 className="font-medium text-foreground line-clamp-1">{prompt.title}</h4>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Top row */}
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <h4 className="text-[13px] font-semibold text-foreground line-clamp-1 flex-1 min-w-0 leading-snug">
+          {prompt.title}
+        </h4>
+
+        {/* Actions — revealed on hover */}
+        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-smooth flex-shrink-0">
           <Button
-            variant="ghost"
-            size="icon"
+            variant="ghost" size="icon"
             className={cn(
-              "h-7 w-7 transition-button",
-              copied ? "text-emerald" : "text-muted-foreground hover:text-foreground"
+              "h-6 w-6 rounded-md transition-smooth",
+              copied ? "text-emerald" : "text-muted-foreground hover:text-foreground hover:bg-secondary"
             )}
             onClick={handleCopy}
             data-testid="prompt-copy-button"
           >
-            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground transition-button"
+            variant="ghost" size="icon"
+            className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-smooth"
             onClick={handleDownload}
             data-testid="prompt-download-button"
           >
-            <Download className="w-3.5 h-3.5" />
+            <Download className="w-3 h-3" />
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground transition-button"
+            variant="ghost" size="icon"
+            className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-smooth"
             onClick={handleShare}
             data-testid="prompt-share-button"
           >
-            <Share2 className="w-3.5 h-3.5" />
+            <Share2 className="w-3 h-3" />
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground transition-button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit();
-            }}
+            variant="ghost" size="icon"
+            className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-smooth"
+            onClick={(e) => { e.stopPropagation(); onEdit(); }}
             data-testid="prompt-edit-button"
           >
-            <Pencil className="w-3.5 h-3.5" />
+            <Pencil className="w-3 h-3" />
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-destructive transition-button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
+            variant="ghost" size="icon"
+            className="h-6 w-6 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/8 transition-smooth"
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
             data-testid="prompt-delete-button"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-3 h-3" />
           </Button>
         </div>
       </div>
 
-      <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
+      {/* Content preview */}
+      <p className="text-xs text-muted-foreground line-clamp-2 mb-3 leading-relaxed">
         {prompt.content}
       </p>
 
-      <div className="flex items-center gap-4 text-xs text-muted-foreground/70">
-        <div className="flex items-center gap-1">
-          <Calendar className="w-3 h-3" />
+      {/* Meta row */}
+      <div className="flex items-center gap-3.5">
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
+          <Calendar className="w-2.5 h-2.5" />
           <span>{prompt.createdAt.toLocaleDateString()}</span>
         </div>
         {prompt.sourceChat && (
-          <div className="flex items-center gap-1">
-            <MessageSquare className="w-3 h-3" />
-            <span className="truncate max-w-[150px]">{prompt.sourceChat}</span>
+          <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50 min-w-0">
+            <MessageSquare className="w-2.5 h-2.5 flex-shrink-0" />
+            <span className="truncate max-w-[160px]">{prompt.sourceChat}</span>
           </div>
         )}
       </div>

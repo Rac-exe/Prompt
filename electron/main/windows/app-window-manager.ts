@@ -24,7 +24,9 @@ export class AppWindowManager {
       minWidth: 1200,
       minHeight: 700,
       show: false,
-      backgroundColor: '#000000',
+      frame: false,          // removes native title bar + menu bar entirely
+      autoHideMenuBar: true, // belt-and-suspenders: also hides the menu bar
+      backgroundColor: '#0d1117',
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
