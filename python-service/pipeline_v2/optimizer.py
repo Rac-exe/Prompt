@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Tuple
 
@@ -20,6 +21,7 @@ import litellm
 
 from .context import ChatContext
 from .skills import load_selected_skills
+from .usage_logger import log_usage
 
 litellm.set_verbose = False
 
@@ -91,6 +93,7 @@ def summarize_context(cc: ChatContext, provider: str) -> str:
 
 Compress this conversation into the required JSON format."""
 
+    t0 = time.perf_counter()
     response = litellm.completion(
         model=resolved_model,
         messages=[
@@ -101,6 +104,17 @@ Compress this conversation into the required JSON format."""
         temperature=0.2,
         **extra,
     )
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    if response.usage:
+        log_usage(
+            call_type="summarizer",
+            model=resolved_model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            session_id=cc.session_id,
+            latency_ms=latency_ms,
+        )
     return response.choices[0].message.content.strip()
 
 
@@ -159,19 +173,40 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
 
     # Collect response (stream or not) and output directly
     result = ""
+    usage = None
+    t0 = time.perf_counter()
     if stream:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=1500, temperature=0.7, stream=True, **extra,
+            max_tokens=1500, temperature=0.7, stream=True,
+            stream_options={"include_usage": True}, **extra,
         )
         for chunk in response:
-            result += chunk.choices[0].delta.content or ""
+            delta = chunk.choices[0].delta.content or ""
+            result += delta
+            if hasattr(chunk, "usage") and chunk.usage:
+                usage = chunk.usage
     else:
         response = litellm.completion(
             model=resolved_model, messages=messages,
             max_tokens=1500, temperature=0.7, **extra,
         )
         result = response.choices[0].message.content
+        usage = response.usage
+
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    if usage:
+        log_usage(
+            call_type="optimizer",
+            model=resolved_model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+            session_id=cc.session_id,
+            skills=skill_names,
+            latency_ms=latency_ms,
+        )
 
     print(result.strip())
     return result.strip()
