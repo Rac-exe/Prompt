@@ -1,101 +1,101 @@
-/* Prompt Weaver - Premium Emerald Design System */
+/* Prompt Weaver - Premium Blue Design System */
 /* Copied from app-ui/src/index.css to ensure consistency between App and Floating Panel */
 
 :root {
-  /* Light mode - soft and muted */
-  --background: 0 0% 100%;
-  --foreground: 210 24% 16%;
+  /* Light mode — warm peach theme, no pure white, blue accent */
+  --background: 23 100% 96%;
+  --foreground: 217 33% 17%;
 
-  --card: 0 0% 98%;
-  --card-foreground: 210 24% 16%;
+  --card: 20 100% 98%;
+  --card-foreground: 217 33% 17%;
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 210 24% 16%;
+  --popover: 20 100% 98%;
+  --popover-foreground: 217 33% 17%;
 
-  --primary: 150 60% 45%;
+  --primary: 217 91% 60%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 210 14% 89%;
-  --secondary-foreground: 210 24% 16%;
+  --secondary: 20 60% 95%;
+  --secondary-foreground: 215 20% 35%;
 
-  --muted: 210 14% 95%;
-  --muted-foreground: 215 16% 47%;
+  --muted: 20 50% 94%;
+  --muted-foreground: 215 20% 65%;
 
-  --accent: 150 60% 96%;
-  --accent-foreground: 150 60% 25%;
+  --accent: 214 95% 93%;
+  --accent-foreground: 217 91% 60%;
 
-  --destructive: 0 72% 51%;
+  --destructive: 0 68% 50%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 150 60% 45%;
+  --border: 18 58% 88%;
+  --input: 21 52% 81%;
+  --ring: 217 91% 60%;
 
   --radius: 0.75rem;
 
   /* Custom tokens - Light */
-  --surface: 0 0% 98%;
-  --surface-hover: 210 14% 95%;
-  --glow-primary: 150 60% 45%;
+  --surface: 20 100% 97%;
+  --surface-hover: 19 100% 94%;
+  --glow-primary: 217 91% 60%;
   --success: 150 60% 45%;
   --success-foreground: 0 0% 100%;
-  --emerald: 150 60% 45%;
-  --emerald-soft: 150 50% 65%;
-  --glass-overlay: 150 60% 45% / 0.06;
+  --emerald: 217 91% 60%;
+  --emerald-soft: 221 83% 53%;
+  --glass-overlay: 217 91% 60% / 0.06;
 }
 
 .dark {
-  /* Dark mode - premium emerald on refined black */
-  --background: 217 33% 7%;
-  --foreground: 210 20% 98%;
+  /* Dark mode — near-black with electric-blue accent */
+  --background: 220 8% 5%;
+  --foreground: 210 20% 93%;
 
-  --card: 217 33% 10%;
-  --card-foreground: 210 20% 98%;
+  --card: 220 10% 10%;
+  --card-foreground: 210 20% 93%;
 
-  --popover: 217 33% 10%;
-  --popover-foreground: 210 20% 98%;
+  --popover: 220 10% 10%;
+  --popover-foreground: 210 20% 93%;
 
-  --primary: 150 80% 60%;
-  --primary-foreground: 217 33% 7%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 217 33% 12%;
-  --secondary-foreground: 210 20% 98%;
+  --secondary: 220 10% 9%;
+  --secondary-foreground: 210 20% 93%;
 
-  --muted: 217 33% 15%;
-  --muted-foreground: 215 20% 65%;
+  --muted: 220 10% 11%;
+  --muted-foreground: 215 16% 58%;
 
-  --accent: 217 33% 18%;
-  --accent-foreground: 210 20% 98%;
+  --accent: 220 10% 13%;
+  --accent-foreground: 210 20% 93%;
 
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 217 33% 15%;
-  --input: 217 33% 15%;
-  --ring: 150 80% 60%;
+  --border: 220 10% 14%;
+  --input: 220 10% 14%;
+  --ring: 217 91% 60%;
 
   --radius: 0.75rem;
 
   /* Custom tokens - Dark */
-  --surface: 217 33% 12%;
-  --surface-hover: 217 33% 15%;
-  --glow-primary: 150 80% 60%;
-  --success: 150 80% 60%;
-  --success-foreground: 217 33% 7%;
-  --emerald: 150 80% 60%;
-  --emerald-soft: 150 70% 75%;
-  --glass-overlay: 150 80% 60% / 0.06;
+  --surface: 220 10% 8%;
+  --surface-hover: 220 10% 10%;
+  --glow-primary: 217 91% 60%;
+  --success: 150 60% 45%;
+  --success-foreground: 0 0% 100%;
+  --emerald: 217 91% 60%;
+  --emerald-soft: 217 78% 72%;
+  --glass-overlay: 217 91% 60% / 0.06;
 }
 
 
 /* Utility Classes for Glows (Matching app-ui) */
 .glow-primary {
-  box-shadow: 0 0 20px hsl(var(--emerald) / 0.3),
-              0 0 40px hsl(var(--emerald) / 0.15);
+  box-shadow: 0 0 20px hsl(var(--emerald) / 0.25),
+              0 0 40px hsl(var(--emerald) / 0.1);
 }
 
 .glow-primary-subtle {
-  box-shadow: 0 0 10px hsl(var(--emerald) / 0.2);
+  box-shadow: 0 0 10px hsl(var(--emerald) / 0.18);
 }
 
 .text-gradient-primary {

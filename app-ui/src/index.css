@@ -12,120 +12,123 @@
 @layer base {
   :root {
     /* ─── Light Mode ──────────────────────────────────────────────
-       "Aged paper" — warm off-white base with a cool-green undertone.
-       Surfaces step down in warmth as they get closer to the user,
-       creating natural depth without harsh white flashes.
-       Emerald is deepened slightly so it reads with authority on light.
+       Warm peach light theme — soft, premium, easy on the eyes.
+       No pure white anywhere. Blue brand accent preserved.
+       Peach canvas (#FFF4ED) with warm layered surfaces.
     ──────────────────────────────────────────────────────────────── */
 
-    /* Base canvas — warm stone, not blinding white */
-    --background:         150  8% 95%;
-    --foreground:         210 24% 14%;
+    /* Base canvas — warm peach (#FFF4ED) */
+    --background:         23 100% 96%;
+    --foreground:         217 33% 17%;
 
-    /* Cards sit 1 step lighter — subtle lift */
-    --card:               150  6% 98%;
-    --card-foreground:    210 24% 14%;
+    /* Cards — lighter peach surface (#FFF9F6) */
+    --card:               20 100% 98%;
+    --card-foreground:    217 33% 17%;
 
-    --popover:            150  6% 98%;
-    --popover-foreground: 210 24% 14%;
+    --popover:            20 100% 98%;
+    --popover-foreground: 217 33% 17%;
 
-    --primary:            158 60% 36%;
+    /* Primary — brand blue (#3B82F6) */
+    --primary:            217 91% 60%;
     --primary-foreground: 0   0% 100%;
 
-    /* Secondary — muted warm grey, used for chips/toggles */
-    --secondary:          160 10% 90%;
-    --secondary-foreground: 210 20% 20%;
+    /* Secondary — soft peach for pills / chips */
+    --secondary:          20 60% 95%;
+    --secondary-foreground: 215 20% 35%;
 
-    /* Muted — slightly darker than secondary */
-    --muted:              160 10% 90%;
-    --muted-foreground:   210 12% 44%;
+    /* Muted — quiet UI text (#94A3B8) */
+    --muted:              20 50% 94%;
+    --muted-foreground:   215 20% 65%;
 
-    --accent:             158 40% 90%;
-    --accent-foreground:  158 60% 22%;
+    /* Accent — active / selected items (#DBEAFE bg + #3B82F6 text) */
+    --accent:             214 95% 93%;
+    --accent-foreground:  217 91% 60%;
 
     --destructive:        0 68% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    /* Borders — tinted, not grey */
-    --border:             160 12% 84%;
-    --input:              160 12% 84%;
-    --ring:               158 60% 36%;
+    /* Borders — warm peach subtle (#F2D9CE) and medium (#E8C8B7) */
+    --border:             18 58% 88%;
+    --input:              21 52% 81%;
+    --ring:               217 91% 60%;
 
     --radius: 0.625rem;
 
     /* ── Custom tokens — Light ── */
-    /* Surface steps: background → surface → surface-elevated (each lighter) */
-    --surface:            150  8% 92%;
-    --surface-hover:      160  8% 89%;
-    --surface-elevated:   150  6% 97%;
+    /* Input surface (#FFF7F3), warm hover, elevated = card */
+    --surface:            20 100% 97%;
+    --surface-hover:      19 100% 94%;
+    --surface-elevated:   20 100% 98%;
 
-    --emerald:            158 60% 36%;
-    --emerald-soft:       158 48% 54%;
-    --emerald-muted:      158 36% 86%;
+    /* Blue accent mapped to emerald tokens for component compat */
+    --emerald:            217 91% 60%;
+    --emerald-soft:       221 83% 53%;
+    --emerald-muted:      214 95% 93%;
 
-    /* ── Sidebar — slightly darker warm tone, clearly distinct ── */
-    --sidebar-background:         155 10% 89%;
-    --sidebar-foreground:         210 14% 42%;
-    --sidebar-primary:            158 60% 36%;
+    /* ── Sidebar — deeper peach surface (#FFEDE3) ── */
+    --sidebar-background:         21 100% 95%;
+    --sidebar-foreground:         215 20% 35%;
+    --sidebar-primary:            217 91% 60%;
     --sidebar-primary-foreground: 0   0% 100%;
-    --sidebar-accent:             155 10% 84%;
-    --sidebar-accent-foreground:  210 20% 16%;
-    --sidebar-border:             160 12% 82%;
-    --sidebar-ring:               158 60% 36%;
+    --sidebar-accent:             214 95% 93%;
+    --sidebar-accent-foreground:  217 91% 60%;
+    --sidebar-border:             18 58% 88%;
+    --sidebar-ring:               217 91% 60%;
   }
 
   .dark {
     /* ─── Dark Mode ──────────────────────────────────────────
-       Deep navy-black with crisp emerald accent.
-       Uses subtle layering rather than flat black.
+       Near-black background with vibrant electric-blue accent (#3B82F6).
+       Layered dark surfaces for depth. Modern SaaS aesthetic
+       inspired by Linear, Vercel, and modern AI tools.
     ──────────────────────────────────────────────────────── */
-    --background:         222 22%  8%;
-    --foreground:         210 18% 94%;
+    --background:         220  8%  5%;
+    --foreground:         210 20% 93%;
 
-    --card:               222 22% 10%;
-    --card-foreground:    210 18% 94%;
+    --card:               220 10% 10%;
+    --card-foreground:    210 20% 93%;
 
-    --popover:            222 22% 10%;
-    --popover-foreground: 210 18% 94%;
+    --popover:            220 10% 10%;
+    --popover-foreground: 210 20% 93%;
 
-    --primary:            158 70% 52%;
-    --primary-foreground: 222 22%  8%;
+    --primary:            217 91% 60%;
+    --primary-foreground: 0   0% 100%;
 
-    --secondary:          222 22% 13%;
-    --secondary-foreground: 210 18% 94%;
+    --secondary:          220 10%  9%;
+    --secondary-foreground: 210 20% 93%;
 
-    --muted:              222 22% 14%;
+    --muted:              220 10% 11%;
     --muted-foreground:   215 16% 58%;
 
-    --accent:             222 22% 16%;
-    --accent-foreground:  210 18% 94%;
+    --accent:             220 10% 13%;
+    --accent-foreground:  210 20% 93%;
 
     --destructive:        0 72% 51%;
     --destructive-foreground: 0 0% 100%;
 
-    --border:             222 22% 15%;
-    --input:              222 22% 15%;
-    --ring:               158 70% 52%;
+    --border:             220 10% 14%;
+    --input:              220 10% 14%;
+    --ring:               217 91% 60%;
 
     --radius: 0.625rem;
 
     /* Custom tokens — Dark */
-    --surface:            222 22% 11%;
-    --surface-hover:      222 22% 13%;
-    --surface-elevated:   222 22% 14%;
-    --emerald:            158 70% 52%;
-    --emerald-soft:       158 58% 68%;
-    --emerald-muted:      158 40% 16%;
+    --surface:            220 10%  8%;
+    --surface-hover:      220 10% 10%;
+    --surface-elevated:   220 10% 12%;
+    --emerald:            217 91% 60%;
+    --emerald-soft:       217 78% 72%;
+    --emerald-muted:      217 30% 15%;
 
     /* Sidebar — Dark */
-    --sidebar-background:         222 24%  6%;
-    --sidebar-foreground:         215 16% 56%;
-    --sidebar-primary:            158 70% 52%;
-    --sidebar-primary-foreground: 222 22%  8%;
-    --sidebar-accent:             222 22% 11%;
-    --sidebar-accent-foreground:  210 18% 94%;
-    --sidebar-border:             222 22% 12%;
-    --sidebar-ring:               158 70% 52%;
+    --sidebar-background:         220 10%  4%;
+    --sidebar-foreground:         215 16% 55%;
+    --sidebar-primary:            217 91% 60%;
+    --sidebar-primary-foreground: 0   0% 100%;
+    --sidebar-accent:             220 10%  9%;
+    --sidebar-accent-foreground:  210 20% 93%;
+    --sidebar-border:             220 10% 10%;
+    --sidebar-ring:               217 91% 60%;
   }
 }
 
@@ -187,21 +190,21 @@
 /* ─── Utility Layer ─────────────────────────────────────────── */
 @layer utilities {
 
-  /* ── Glow effects ── */
+  /* ── Glow effects — blue accent ── */
   .glow-emerald {
     box-shadow:
       0 0 0 1px hsl(var(--emerald) / 0.2),
-      0 0 16px hsl(var(--emerald) / 0.25),
-      0 0 32px hsl(var(--emerald) / 0.1);
+      0 0 16px hsl(var(--emerald) / 0.2),
+      0 0 32px hsl(var(--emerald) / 0.08);
   }
   .glow-emerald-sm {
     box-shadow:
       0 0 0 1px hsl(var(--emerald) / 0.15),
-      0 0 8px  hsl(var(--emerald) / 0.2);
+      0 0 8px  hsl(var(--emerald) / 0.18);
   }
   .glow-primary { @apply glow-emerald; }
 
-  /* ── Text gradient ── */
+  /* ── Text gradient — blue accent ── */
   .text-gradient-primary {
     background: linear-gradient(
       135deg,
@@ -223,21 +226,21 @@
     -webkit-backdrop-filter: blur(16px) saturate(180%);
   }
 
-  /* ── Shadows — tinted for light & dark mode ── */
+  /* ── Shadows — cool-tinted for depth ── */
   .shadow-card {
     box-shadow:
-      0 1px 3px hsl(160 20% 20% / 0.07),
-      0 1px 2px hsl(160 20% 20% / 0.04);
+      0 1px 3px hsl(215 30% 10% / 0.12),
+      0 1px 2px hsl(215 30% 10% / 0.06);
   }
   .shadow-card-hover {
     box-shadow:
-      0 4px 12px hsl(160 20% 20% / 0.10),
-      0 2px 4px  hsl(160 20% 20% / 0.05);
+      0 4px 12px hsl(215 30% 10% / 0.16),
+      0 2px 4px  hsl(215 30% 10% / 0.08);
   }
   .shadow-elevated {
     box-shadow:
-      0 8px 24px hsl(160 20% 20% / 0.12),
-      0 2px 8px  hsl(160 20% 20% / 0.07);
+      0 8px 24px hsl(215 30% 10% / 0.2),
+      0 2px 8px  hsl(215 30% 10% / 0.1);
   }
 
   /* ── Animations ── */
