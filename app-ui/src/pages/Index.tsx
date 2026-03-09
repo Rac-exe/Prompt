@@ -440,10 +440,11 @@ const Index = () => {
     setCurrentView("chat");
   };
 
-  const handleSendMessage = useCallback((content: string) => {
+  const handleSendMessage = useCallback((content: string, mode: "fast" | "thinking" = "fast") => {
     console.log('[Index] Sending message:', {
       chatId: selectedChatId,
-      contentLength: content.length
+      contentLength: content.length,
+      mode
     });
 
     // Use new unified send-message API that handles everything
@@ -456,7 +457,8 @@ const Index = () => {
       // 5. Notify renderer via events
       window.electronAPI.sendMessage({
         chatId: selectedChatId,
-        content: content
+        content: content,
+        mode
       });
 
       console.log('[Index] Message sent to Electron main process');

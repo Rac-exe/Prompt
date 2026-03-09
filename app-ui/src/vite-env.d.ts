@@ -11,7 +11,7 @@ interface Window {
     signOut: () => void;
 
     // Chat
-    optimizePrompt: (text: string, isRegenerate?: boolean) => void;
+    optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string) => void;
     saveToChat: (originalText: string, optimizedText: string) => void;
     loadChats: () => void;
     onChatsLoaded: (callback: (data: { chats: any[] }) => void) => void;
@@ -19,7 +19,7 @@ interface Window {
     onChatCreated: (callback: (data: { chat: any }) => void) => void;
     loadMessages: (chatId: string) => void;
     onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
-    sendMessage: (data: { chatId: string | null; content: string }) => void;
+    sendMessage: (data: { chatId: string | null; content: string; mode?: string }) => void;
     onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
     onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
     onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
@@ -61,6 +61,7 @@ interface Window {
       start: (sessionId: string) => void;
       stop: () => void;
       onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+      onStatus: (callback: (status: string) => void) => void;
       onError: (callback: (error: string) => void) => void;
     };
 
