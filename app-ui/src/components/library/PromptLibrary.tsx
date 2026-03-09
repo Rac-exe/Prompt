@@ -1,22 +1,13 @@
 import { useState, useMemo } from "react";
 import {
-  FolderPlus,
-  Star,
-  Folder,
-  MoreVertical,
-  Pencil,
-  Trash2,
-  Library,
-  Search,
+  FolderPlus, Star, Folder, MoreVertical,
+  Pencil, Trash2, Library, Search,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { PromptCard, SavedPrompt } from "./PromptCard";
@@ -41,15 +32,8 @@ interface PromptLibraryProps {
 }
 
 export const PromptLibrary = ({
-  collections,
-  prompts,
-  onCreateCollection,
-  onRenameCollection,
-  onDeleteCollection,
-  onCopyPrompt,
-  onEditPrompt,
-  onDeletePrompt,
-  onOpenPrompt,
+  collections, prompts, onCreateCollection, onRenameCollection,
+  onDeleteCollection, onCopyPrompt, onEditPrompt, onDeletePrompt, onOpenPrompt,
 }: PromptLibraryProps) => {
   const [selectedCollection, setSelectedCollection] = useState<string>("all");
   const [isCreating, setIsCreating] = useState(false);
@@ -74,25 +58,18 @@ export const PromptLibrary = ({
     }
   };
 
-  // Filtered and searched prompts
   const filteredPrompts = useMemo(() => {
     let result =
-      selectedCollection === "all"
-        ? prompts
-        : selectedCollection === "favorites"
-        ? prompts.filter((p) => p.isFavorite)
-        : prompts.filter((p) => p.collectionId === selectedCollection);
+      selectedCollection === "all" ? prompts
+      : selectedCollection === "favorites" ? prompts.filter((p) => p.isFavorite)
+      : prompts.filter((p) => p.collectionId === selectedCollection);
 
-    // Apply search filter with debouncing effect (handled by useMemo)
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
+      const q = searchQuery.toLowerCase();
       result = result.filter(
-        (p) =>
-          p.title.toLowerCase().includes(query) ||
-          p.content.toLowerCase().includes(query)
+        (p) => p.title.toLowerCase().includes(q) || p.content.toLowerCase().includes(q)
       );
     }
-
     return result;
   }, [prompts, selectedCollection, searchQuery]);
 
@@ -102,25 +79,27 @@ export const PromptLibrary = ({
     return Folder;
   };
 
+  const currentCollectionName =
+    collections.find((c) => c.id === selectedCollection)?.name || "All Prompts";
+
   return (
-    <div className="flex-1 flex h-full">
-      {/* Collections sidebar */}
-      <div className="w-64 border-r border-border flex flex-col">
-        <div className="p-4 border-b border-border">
-          <h2 className="text-lg font-semibold text-foreground mb-1">
-            Prompt Library
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Manage your saved prompts
+    <div className="flex-1 flex h-full bg-background">
+      {/* ── Collections sidebar ────────────────────────────── */}
+      <div className="w-[220px] flex-shrink-0 border-r border-border flex flex-col bg-sidebar">
+        {/* Header */}
+        <div className="px-4 py-4 border-b border-sidebar-border flex-shrink-0">
+          <h2 className="text-[13px] font-bold text-foreground tracking-tight">Prompt Library</h2>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            {prompts.length} saved prompt{prompts.length !== 1 ? "s" : ""}
           </p>
         </div>
 
-        <ScrollArea className="flex-1 p-3">
-          <div className="space-y-1">
-            {/* Create new collection - AT TOP */}
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-0.5">
+            {/* Create collection */}
             {isCreating ? (
-              <div className="flex items-center gap-2 px-3 py-2 mb-2">
-                <Folder className="w-4 h-4 text-muted-foreground" />
+              <div className="flex items-center gap-2 px-2 py-1.5">
+                <Folder className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <Input
                   placeholder="Collection name"
                   value={newCollectionName}
@@ -133,23 +112,23 @@ export const PromptLibrary = ({
                     if (e.key === "Enter") handleCreateCollection();
                     if (e.key === "Escape") setIsCreating(false);
                   }}
-                  className="h-6 text-sm bg-background"
+                  className="h-6 text-xs bg-sidebar-accent border-emerald/40 focus-visible:ring-emerald/20"
                   autoFocus
                   data-testid="new-collection-name-input"
                 />
               </div>
             ) : (
-              <Button
-                variant="ghost"
-                className="w-full justify-start gap-2 text-emerald hover:text-emerald hover:bg-sidebar-accent/50 transition-button mb-2"
+              <button
+                className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-emerald hover:bg-sidebar-accent transition-smooth mb-1"
                 onClick={() => setIsCreating(true)}
                 data-testid="create-collection-button"
               >
-                <FolderPlus className="w-4 h-4" />
+                <FolderPlus className="w-3.5 h-3.5 flex-shrink-0" />
                 New Collection
-              </Button>
+              </button>
             )}
 
+            {/* Collection list */}
             {collections.map((collection) => {
               const Icon = getCollectionIcon(collection);
               const isSelected = selectedCollection === collection.id;
@@ -159,37 +138,38 @@ export const PromptLibrary = ({
                 <div
                   key={collection.id}
                   className={cn(
-                    "group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-button",
+                    "group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-smooth",
                     isSelected
-                      ? "bg-secondary text-emerald"
-                      : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                      ? "bg-sidebar-accent text-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
                   )}
                   onClick={() => !isEditing && setSelectedCollection(collection.id)}
                   data-testid={`collection-${collection.id}`}
                 >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
-                  
+                  <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", isSelected && "text-emerald")} />
+
                   {isEditing ? (
                     <Input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
                       onBlur={() => handleRename(collection.id)}
                       onKeyDown={(e) => e.key === "Enter" && handleRename(collection.id)}
-                      className="h-6 text-sm bg-background"
+                      className="h-5 text-xs bg-sidebar-accent border-emerald/40 focus-visible:ring-emerald/20 py-0"
                       autoFocus
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <span className="flex-1 text-sm truncate">{collection.name}</span>
+                    <span className={cn("flex-1 text-[13px] truncate font-medium", isSelected && "text-foreground")}>
+                      {collection.name}
+                    </span>
                   )}
 
                   {!collection.isDefault && !isEditing && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                          variant="ghost" size="icon"
+                          className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-smooth text-muted-foreground hover:text-foreground rounded-md"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <MoreVertical className="w-3 h-3" />
@@ -197,26 +177,24 @@ export const PromptLibrary = ({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
                         align="end"
-                        className="bg-card border-border"
+                        className="bg-popover border-border shadow-elevated rounded-xl w-40 p-1"
                       >
                         <DropdownMenuItem
+                          className="text-xs text-foreground focus:bg-secondary gap-2 rounded-lg cursor-pointer font-medium"
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditingId(collection.id);
                             setEditName(collection.name);
                           }}
                         >
-                          <Pencil className="w-4 h-4 mr-2" />
+                          <Pencil className="w-3 h-3 opacity-60" />
                           Rename
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteCollection(collection.id);
-                          }}
+                          className="text-xs text-destructive focus:bg-destructive/8 focus:text-destructive gap-2 rounded-lg cursor-pointer font-medium"
+                          onClick={(e) => { e.stopPropagation(); onDeleteCollection(collection.id); }}
                         >
-                          <Trash2 className="w-4 h-4 mr-2" />
+                          <Trash2 className="w-3 h-3" />
                           Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -229,56 +207,63 @@ export const PromptLibrary = ({
         </ScrollArea>
       </div>
 
-      {/* Prompts list */}
-      <div className="flex-1 flex flex-col">
-        <div className="p-4 border-b border-border bg-surface/50">
-          <div className="flex items-center justify-between mb-3">
+      {/* ── Prompts panel ──────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Panel header */}
+        <div className="px-5 py-4 border-b border-border flex-shrink-0 bg-surface/30">
+          <div className="flex items-baseline justify-between mb-3">
             <div>
-              <h3 className="text-lg font-semibold text-foreground">
-                {collections.find((c) => c.id === selectedCollection)?.name || "All Prompts"}
-              </h3>
-              <p className="text-sm text-muted-foreground">
+              <h3 className="text-base font-bold text-foreground tracking-tight">{currentCollectionName}</h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
                 {filteredPrompts.length} prompt{filteredPrompts.length !== 1 ? "s" : ""}
+                {searchQuery && " matching"}
               </p>
             </div>
           </div>
-          
-          {/* Search Bar */}
+
+          {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
             <Input
-              placeholder="Search prompts by title or content..."
+              placeholder="Search by title or content…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 bg-secondary border-border"
+              className="pl-9 h-9 bg-surface border-border text-sm focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/50 transition-smooth"
               data-testid="search-prompts-input"
             />
           </div>
         </div>
 
+        {/* Prompt grid */}
         <ScrollArea className="flex-1">
-          <div className="p-4 space-y-3">
+          <div className="p-5">
             {filteredPrompts.length === 0 ? (
-              <div className="text-center py-12">
-                <Library className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-                <p className="text-muted-foreground">
-                  {searchQuery ? "No prompts match your search" : "No prompts saved yet"}
+              <div className="flex flex-col items-center justify-center py-16 text-center animate-fade-in">
+                <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center mb-4">
+                  <Library className="w-6 h-6 text-muted-foreground/40" />
+                </div>
+                <p className="text-sm font-medium text-foreground mb-1">
+                  {searchQuery ? "No matching prompts" : "No prompts yet"}
                 </p>
-                <p className="text-sm text-muted-foreground/70">
-                  {searchQuery ? "Try a different search term" : "Save prompts from chat to see them here"}
+                <p className="text-xs text-muted-foreground max-w-xs">
+                  {searchQuery
+                    ? "Try a different search term or clear the filter"
+                    : "Save prompts from chat conversations to build your library"}
                 </p>
               </div>
             ) : (
-              filteredPrompts.map((prompt) => (
-                <PromptCard
-                  key={prompt.id}
-                  prompt={prompt}
-                  onCopy={() => onCopyPrompt(prompt.id)}
-                  onEdit={() => onEditPrompt(prompt.id)}
-                  onDelete={() => onDeletePrompt(prompt.id)}
-                  onOpen={() => onOpenPrompt?.(prompt.id)}
-                />
-              ))
+              <div className="grid gap-3">
+                {filteredPrompts.map((prompt) => (
+                  <PromptCard
+                    key={prompt.id}
+                    prompt={prompt}
+                    onCopy={() => onCopyPrompt(prompt.id)}
+                    onEdit={() => onEditPrompt(prompt.id)}
+                    onDelete={() => onDeletePrompt(prompt.id)}
+                    onOpen={() => onOpenPrompt?.(prompt.id)}
+                  />
+                ))}
+              </div>
             )}
           </div>
         </ScrollArea>

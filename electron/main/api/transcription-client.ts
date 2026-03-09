@@ -1,9 +1,14 @@
 /**
  * TranscriptionClient
- * 
+ *
  * Manages WebSocket connection to Python Whisper transcription service.
  * Uses the `ws` package (Node.js) — NOT the browser WebSocket API.
- * Provides real-time speech-to-text transcription with live updates.
+ *
+ * Flow:
+ *   start → [status: listening] → [transcription: ...] × N
+ *         → [status: processing] ← fired when user clicks Stop
+ *         → [final: ...] ← last Whisper result
+ *         → [status: stopped]
  */
 const WebSocket = require('ws');
 
@@ -14,25 +19,22 @@ export class TranscriptionClient {
   private maxReconnectAttempts: number = 3;
   private reconnectDelay: number = 1000;
   private currentSessionId: string | null = null;
+
   private onTranscriptionCallback: ((data: { text: string; accumulated: string; type: string }) => void) | null = null;
-  private onErrorCallback: ((error: string) => void) | null = null;
+  private onErrorCallback:         ((error: string) => void) | null = null;
+  private onStatusCallback:        ((status: string) => void) | null = null;
+
   private connectionPromise: Promise<void> | null = null;
 
   constructor(baseUrl: string = 'ws://127.0.0.1:8001') {
     this.baseUrl = baseUrl;
   }
 
-  /**
-   * Ensure WebSocket connection is established
-   */
-  private async ensureConnection(): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      return;
-    }
+  // ── Connection ──────────────────────────────────────────────────────────────
 
-    if (this.connectionPromise) {
-      return this.connectionPromise;
-    }
+  private async ensureConnection(): Promise<void> {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+    if (this.connectionPromise) return this.connectionPromise;
 
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       const wsUrl = `${this.baseUrl}/ws/transcribe`;
@@ -51,22 +53,36 @@ export class TranscriptionClient {
         this.ws.on('message', (rawData: any) => {
           try {
             const data = JSON.parse(rawData.toString());
+            console.log(`[TranscriptionClient] ← ${JSON.stringify(data)}`);
 
-            if (data.type === 'transcription' || data.type === 'final') {
-              if (this.onTranscriptionCallback) {
-                this.onTranscriptionCallback({
-                  text: data.text || '',
-                  accumulated: data.accumulated || data.text || '',
-                  type: data.type
-                });
-              }
-            } else if (data.type === 'error') {
-              console.error('[TranscriptionClient] Server error:', data.message);
-              if (this.onErrorCallback) {
-                this.onErrorCallback(data.message);
-              }
-            } else if (data.type === 'status') {
-              console.log('[TranscriptionClient] Status:', data.status);
+            switch (data.type) {
+              case 'transcription':
+              case 'final':
+                if (this.onTranscriptionCallback) {
+                  this.onTranscriptionCallback({
+                    text:        data.text        || '',
+                    accumulated: data.accumulated || data.text || '',
+                    type:        data.type,
+                  });
+                }
+                break;
+
+              case 'status':
+                console.log(`[TranscriptionClient] Status: ${data.status}`);
+                // Surface every status change to the renderer so it can show
+                // "Listening…", "Processing…", and "Stopped" states.
+                if (this.onStatusCallback) {
+                  this.onStatusCallback(data.status);
+                }
+                break;
+
+              case 'error':
+                console.error('[TranscriptionClient] Server error:', data.message);
+                if (this.onErrorCallback) this.onErrorCallback(data.message);
+                break;
+
+              default:
+                console.warn('[TranscriptionClient] Unknown message type:', data.type);
             }
           } catch (error) {
             console.error('[TranscriptionClient] Failed to parse message:', error);
@@ -84,14 +100,13 @@ export class TranscriptionClient {
           this.ws = null;
           this.connectionPromise = null;
 
-          // Auto-reconnect if we have an active session
           if (this.currentSessionId && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`[TranscriptionClient] Reconnecting (attempt ${this.reconnectAttempts})...`);
+            console.log(`[TranscriptionClient] Reconnecting (attempt ${this.reconnectAttempts})…`);
             setTimeout(() => {
-              this.ensureConnection().catch(err => {
-                console.error('[TranscriptionClient] Reconnect failed:', err);
-              });
+              this.ensureConnection().catch(err =>
+                console.error('[TranscriptionClient] Reconnect failed:', err)
+              );
             }, this.reconnectDelay * this.reconnectAttempts);
           }
         });
@@ -106,47 +121,41 @@ export class TranscriptionClient {
     return this.connectionPromise;
   }
 
-  /**
-   * Start transcription session
-   */
+  // ── Public API ──────────────────────────────────────────────────────────────
+
   async startTranscription(
     sessionId: string,
     onTranscription: (data: { text: string; accumulated: string; type: string }) => void,
-    onError?: (error: string) => void
+    onError?:        (error: string) => void,
+    onStatus?:       (status: string) => void,
   ): Promise<void> {
-    try {
-      // Store callbacks so the message handler can use them
-      this.onTranscriptionCallback = onTranscription;
-      this.onErrorCallback = onError || null;
+    console.log(`[TranscriptionClient] startTranscription — session: ${sessionId}`);
 
+    this.onTranscriptionCallback = onTranscription;
+    this.onErrorCallback         = onError  || null;
+    this.onStatusCallback        = onStatus || null;
+
+    try {
       await this.ensureConnection();
 
-      if (!this.ws) {
-        throw new Error('WebSocket not connected');
-      }
+      if (!this.ws) throw new Error('WebSocket not connected');
 
       this.currentSessionId = sessionId;
 
-      // Send start command
-      this.ws.send(JSON.stringify({
-        action: 'start',
-        session_id: sessionId
-      }));
+      const msg = JSON.stringify({ action: 'start', session_id: sessionId });
+      console.log(`[TranscriptionClient] → ${msg}`);
+      this.ws.send(msg);
 
-      console.log('[TranscriptionClient] Transcription started:', sessionId);
     } catch (error) {
       console.error('[TranscriptionClient] Failed to start transcription:', error);
-      if (onError) {
-        onError(error instanceof Error ? error.message : 'Failed to start transcription');
-      }
+      if (onError) onError(error instanceof Error ? error.message : 'Failed to start transcription');
       throw error;
     }
   }
 
-  /**
-   * Stop transcription session
-   */
   async stopTranscription(): Promise<void> {
+    console.log('[TranscriptionClient] stopTranscription called');
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[TranscriptionClient] No active connection to stop');
       this.currentSessionId = null;
@@ -154,42 +163,34 @@ export class TranscriptionClient {
     }
 
     try {
-      this.ws.send(JSON.stringify({
-        action: 'stop'
-      }));
-
-      console.log('[TranscriptionClient] Transcription stopped');
+      const msg = JSON.stringify({ action: 'stop' });
+      console.log(`[TranscriptionClient] → ${msg}`);
+      this.ws.send(msg);
       this.currentSessionId = null;
     } catch (error) {
       console.error('[TranscriptionClient] Failed to stop transcription:', error);
     }
   }
 
-  /**
-   * Close WebSocket connection entirely
-   */
   disconnect(): void {
-    this.currentSessionId = null;
+    console.log('[TranscriptionClient] disconnect called');
+    this.currentSessionId        = null;
     this.onTranscriptionCallback = null;
-    this.onErrorCallback = null;
+    this.onErrorCallback         = null;
+    this.onStatusCallback        = null;
 
     if (this.ws) {
-      try {
-        this.ws.close();
-      } catch (_) {}
+      try { this.ws.close(); } catch (_) {}
       this.ws = null;
     }
   }
 
-  /**
-   * Check if transcription service is available
-   */
   async healthCheck(): Promise<boolean> {
     try {
       const response = await fetch(`${this.baseUrl.replace('ws://', 'http://')}/health`);
       const data: any = await response.json();
       return data.status === 'ok';
-    } catch (error) {
+    } catch {
       return false;
     }
   }

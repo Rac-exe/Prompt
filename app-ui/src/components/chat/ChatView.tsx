@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Sparkles, Mic, MicOff } from "lucide-react";
+import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble, Message } from "./MessageBubble";
+import { cn } from "@/lib/utils";
 
 interface ChatViewProps {
   messages: Message[];
@@ -17,47 +18,77 @@ interface ChatViewProps {
   isGenerating: boolean;
 }
 
+// Voice states:
+//   idle        — mic is off
+//   listening   — mic is active, audio is being captured
+//   processing  — mic stopped, Whisper is still running
+type VoiceState = "idle" | "listening" | "processing";
+
 export const ChatView = ({
-  messages,
-  streamingMessage,
-  generationStats,
-  onSendMessage,
-  onCopyPrompt,
-  onSavePrompt,
-  onFeedback,
-  savedPromptIds,
-  isGenerating,
+  messages, streamingMessage, generationStats,
+  onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
+  savedPromptIds, isGenerating,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
-  const [isListening, setIsListening] = useState(false);
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const transcriptionSetup = useRef(false);
 
+  // ── Scroll to bottom on new messages ──────────────────────────
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
 
-  // Set up transcription listener once
+  // ── Transcription IPC listeners ───────────────────────────────
+  // Re-register on every mount so listeners are always fresh.
+  // IPC channels use ipcRenderer.on which stacks listeners, so
+  // the preload always pushes to the latest closure.
   useEffect(() => {
     const isElectron = !!(window as any).electronAPI;
-    if (!isElectron || transcriptionSetup.current) return;
-    transcriptionSetup.current = true;
+    if (!isElectron) return;
 
-    window.electronAPI?.transcription?.onTranscription?.((data: { text: string; accumulated: string; type: string }) => {
-      if (data.accumulated || data.text) {
-        setInput(data.accumulated || data.text);
+    console.log('[ChatView] Registering transcription listeners');
+
+    window.electronAPI?.transcription?.onTranscription?.((data) => {
+      console.log(`[ChatView] onTranscription — type=${data.type} text="${data.text}" accumulated="${data.accumulated}"`);
+      const text = (data.accumulated || data.text || "").trim();
+      if (text) {
+        setInput(text);
+        // Final result received — return to idle
+        if (data.type === "final") {
+          console.log('[ChatView] Final transcription received — going idle');
+          setVoiceState("idle");
+        }
       }
     });
 
-    window.electronAPI?.transcription?.onError?.((error: string) => {
-      console.error('[Voice] Transcription error:', error);
-      setIsListening(false);
+    // Status messages from Python: 'listening' | 'processing' | 'stopped'
+    window.electronAPI?.transcription?.onStatus?.((status) => {
+      console.log(`[ChatView] onStatus — ${status}`);
+      if (status === "listening") {
+        setVoiceState("listening");
+        setVoiceError(null);
+      } else if (status === "processing") {
+        setVoiceState("processing");
+      } else if (status === "stopped") {
+        // 'stopped' arrives after 'final' — make sure we're idle
+        setVoiceState("idle");
+      }
+    });
+
+    window.electronAPI?.transcription?.onError?.((error) => {
+      console.error('[ChatView] Transcription error:', error);
+      setVoiceState("idle");
+      setVoiceError(error || "Transcription failed. Please try again.");
+      // Auto-clear the error after 5 s
+      setTimeout(() => setVoiceError(null), 5000);
     });
   }, []);
 
+  // ── Submit ─────────────────────────────────────────────────────
   const handleSubmit = () => {
     if (!input.trim() || isGenerating) return;
     onSendMessage(input.trim());
@@ -71,153 +102,271 @@ export const ChatView = ({
     }
   };
 
+  // ── Voice toggle ───────────────────────────────────────────────
   const toggleVoice = useCallback(() => {
     const isElectron = !!(window as any).electronAPI;
     if (!isElectron) return;
 
-    if (isListening) {
-      // Stop
+    if (voiceState === "listening") {
+      console.log('[ChatView] Stopping voice input');
       window.electronAPI?.transcription?.stop?.();
-      setIsListening(false);
-    } else {
-      // Start
+      // UI immediately shows "processing" — the server confirms it
+      setVoiceState("processing");
+    } else if (voiceState === "idle") {
+      console.log('[ChatView] Starting voice input');
+      setVoiceError(null);
       const sessionId = Date.now().toString();
       window.electronAPI?.transcription?.start?.(sessionId);
-      setIsListening(true);
+      // Server will send status:listening to confirm
     }
-  }, [isListening]);
+    // If processing, ignore click — we're waiting for the result
+  }, [voiceState]);
 
   const isEmpty = messages.length === 0;
 
-  return (
-    <div className="flex-1 flex flex-col h-full">
-      {/* Status bar */}
-      <div className="h-12 border-b border-border flex items-center px-6 bg-surface/50">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-emerald animate-pulse-subtle" />
-          <span className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
-            System Operational
-          </span>
-          {generationStats && (generationStats.ttft || generationStats.total) && (
-            <div className="ml-auto flex items-center gap-3 text-[10px] text-muted-foreground/70 font-mono">
-              {generationStats.ttft && <span>TTFT: {generationStats.ttft}ms</span>}
-              {generationStats.total && <span>Total: {generationStats.total}ms</span>}
-            </div>
-          )}
-        </div>
-      </div>
+  // ── Voice button appearance ────────────────────────────────────
+  const voiceButtonContent = () => {
+    if (voiceState === "listening") {
+      return (
+        <>
+          <MicOff className="w-3.5 h-3.5" />
+          <span>Stop</span>
+        </>
+      );
+    }
+    if (voiceState === "processing") {
+      return (
+        <>
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          <span>Processing…</span>
+        </>
+      );
+    }
+    return (
+      <>
+        <Mic className="w-3.5 h-3.5" />
+        <span>Voice</span>
+      </>
+    );
+  };
 
-      {/* Messages area */}
-      <div className="flex-1 overflow-hidden flex flex-col">
-        {isEmpty ? (
-          <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in">
-            <div className="text-center max-w-xl">
-              <div className="mb-6 inline-block">
-                <Sparkles className="w-16 h-16 text-emerald animate-pulse-subtle" />
-              </div>
-              <h2 className="text-4xl md:text-5xl font-bold text-gradient-primary mb-4">
-                Prompt Optimization Studio
-              </h2>
-              <p className="text-muted-foreground text-lg">
-                Transform your ideas into precisely engineered prompts.
-                <br />
-                Built for clarity, optimized for results.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <ScrollArea className="h-full" ref={scrollRef}>
-            <div className="max-w-3xl mx-auto py-6 px-6 space-y-6">
-              {messages.map((message) => (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  onCopy={() => onCopyPrompt(message.id)}
-                  onSave={() => onSavePrompt(message.id)}
-                  onFeedback={onFeedback}
-                  isSaved={savedPromptIds.includes(message.id)}
-                />
-              ))}
+  const voiceButtonClass = cn(
+    "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[12px] font-medium transition-smooth",
+    "disabled:opacity-40 disabled:cursor-not-allowed",
+    voiceState === "listening"
+      ? "bg-red-500/10 text-red-400 border border-red-500/20"
+      : voiceState === "processing"
+      ? "bg-emerald/8 text-emerald border border-emerald/20 cursor-not-allowed"
+      : "text-muted-foreground hover:text-foreground hover:bg-secondary border border-transparent"
+  );
 
-              {isGenerating && (
-                <div className="flex items-center gap-2 text-muted-foreground animate-fade-in">
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald" />
-                  <span className="text-sm">Optimizing your prompt...</span>
-                </div>
-              )}
-
-              {streamingMessage && (
-                <MessageBubble
-                  key={streamingMessage.id}
-                  message={streamingMessage}
-                  onCopy={() => onCopyPrompt(streamingMessage.id)}
-                  onSave={() => onSavePrompt(streamingMessage.id)}
-                  onFeedback={onFeedback}
-                  isSaved={false}
-                />
-              )}
-            </div>
-          </ScrollArea>
+  // ── Shared input box ───────────────────────────────────────────
+  const inputBox = (
+    <div className="w-full max-w-2xl mx-auto">
+      <div
+        className={cn(
+          "relative bg-surface border border-border rounded-2xl overflow-hidden shadow-card transition-smooth",
+          "focus-within:border-emerald/50 focus-within:shadow-[0_0_0_1px_hsl(var(--emerald)/0.15),0_0_16px_hsl(var(--emerald)/0.12)]"
         )}
-      </div>
+      >
+        {/* Textarea */}
+        <Textarea
+          ref={textareaRef}
+          placeholder={
+            voiceState === "processing"
+              ? "Transcribing your voice…"
+              : "What do you want to generate?"
+          }
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isGenerating || voiceState === "processing"}
+          className={cn(
+            "w-full bg-transparent border-0 rounded-none",
+            "px-4 pt-4 pb-14",
+            "h-[120px] resize-none overflow-y-auto",
+            "focus-visible:ring-0 focus-visible:outline-none",
+            "placeholder:text-muted-foreground/45 text-foreground text-[13.5px] leading-relaxed",
+            voiceState === "processing" && "opacity-60"
+          )}
+        />
 
-      {/* Input area - Centered when empty */}
-      <div className={`p-6 border-t border-border ${isEmpty ? 'flex items-center' : ''}`}>
-        <div className="max-w-3xl mx-auto w-full">
-          <div className="flex items-end gap-3">
-            <div className="flex-1 relative">
-              <Textarea
-                ref={textareaRef}
-                placeholder="Describe the prompt you need... (e.g., 'Create a technical documentation prompt for API endpoints')"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className="w-full bg-surface border border-border rounded-xl p-4 pr-14 resize-y focus-visible:border-emerald/50 focus-visible:glow-emerald placeholder:text-muted-foreground/70 min-h-[60px] max-h-[300px] transition-all"
-                disabled={isGenerating}
-              />
-              {/* Voice button inside textarea */}
-              <button
-                type="button"
-                onClick={toggleVoice}
-                disabled={isGenerating}
-                className={`absolute right-3 bottom-3 z-10 w-10 h-10 rounded-xl flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed border ${
-                  isListening
-                    ? 'bg-red-500/15 text-red-500 hover:bg-red-500/25 border-red-500/30 animate-pulse'
-                    : 'bg-surface border-border text-muted-foreground hover:bg-muted hover:text-foreground hover:border-emerald/30'
-                }`}
-                title={isListening ? 'Stop listening' : 'Voice input'}
-              >
-                {isListening ? (
-                  <MicOff className="w-[18px] h-[18px]" />
-                ) : (
-                  <Mic className="w-[18px] h-[18px]" />
-                )}
-              </button>
-            </div>
+        {/* Bottom toolbar */}
+        <div className="absolute bottom-0 inset-x-0 flex items-center justify-between px-3 py-2.5 border-t border-border/60 bg-surface">
+          {/* Voice button */}
+          <button
+            type="button"
+            onClick={toggleVoice}
+            disabled={isGenerating || voiceState === "processing"}
+            className={voiceButtonClass}
+            title={
+              voiceState === "listening"  ? "Stop recording"
+              : voiceState === "processing" ? "Processing transcription…"
+              : "Voice input"
+            }
+          >
+            {voiceButtonContent()}
+          </button>
+
+          {/* Right side */}
+          <div className="flex items-center gap-2">
+            {/* Listening pulse indicator */}
+            {voiceState === "listening" && (
+              <div className="flex items-center gap-1.5 animate-fade-in">
+                <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-[11px] text-red-400 font-medium">Listening</span>
+              </div>
+            )}
+
+            {/* Processing indicator */}
+            {voiceState === "processing" && (
+              <div className="flex items-center gap-1.5 animate-fade-in">
+                <Loader2 className="w-3 h-3 animate-spin text-emerald" />
+                <span className="text-[11px] text-emerald font-medium">Transcribing…</span>
+              </div>
+            )}
+
             <Button
               onClick={handleSubmit}
-              disabled={!input.trim() || isGenerating}
-              className="bg-emerald text-white hover:bg-emerald/90 active:scale-95 transition-button disabled:opacity-50 disabled:cursor-not-allowed h-[60px] px-6 glow-emerald flex-shrink-0"
+              disabled={!input.trim() || isGenerating || voiceState === "processing"}
+              size="sm"
+              className={cn(
+                "h-7 px-3.5 bg-emerald hover:bg-emerald/90 text-white text-[12px] font-semibold",
+                "rounded-lg transition-smooth",
+                "disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none",
+                "shadow-[0_0_0_1px_hsl(var(--emerald)/0.2),0_0_10px_hsl(var(--emerald)/0.15)]",
+                "hover:shadow-[0_0_0_1px_hsl(var(--emerald)/0.3),0_0_16px_hsl(var(--emerald)/0.25)]"
+              )}
               data-testid="generate-prompt-button"
             >
               {isGenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <>
+                <span className="flex items-center gap-1.5">
                   Generate
-                  <Send className="w-4 h-4 ml-2" />
-                </>
+                  <Send className="w-3 h-3" />
+                </span>
               )}
             </Button>
           </div>
-          {/* Voice status indicator */}
-          {isListening && (
-            <div className="flex items-center gap-2 mt-2 animate-fade-in">
-              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-xs text-red-400 font-medium">Listening — click mic to stop</span>
-            </div>
-          )}
         </div>
+      </div>
+
+      {/* Error banner */}
+      {voiceError && (
+        <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
+          <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+          <span className="text-[12px] text-destructive leading-snug">{voiceError}</span>
+        </div>
+      )}
+
+      {/* Keyboard hint */}
+      <p className="text-[11px] text-muted-foreground/30 text-center mt-2.5 select-none">
+        Shift + Enter for new line · Enter to generate
+      </p>
+    </div>
+  );
+
+  // ── Empty state ────────────────────────────────────────────────
+  if (isEmpty) {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-background">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in-slow">
+          <div className="w-full max-w-2xl mx-auto flex flex-col items-center gap-10">
+
+            {/* Hero */}
+            <div className="flex flex-col items-center gap-5 text-center">
+              <div className="relative inline-flex items-center justify-center">
+                <div className="w-16 h-16 rounded-2xl bg-emerald/10 flex items-center justify-center border border-emerald/20">
+                  <Sparkles className="w-7 h-7 text-emerald" />
+                </div>
+                <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-background border border-border flex items-center justify-center">
+                  <Zap className="w-2.5 h-2.5 text-emerald" />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h2 className="text-[28px] font-bold text-gradient-primary tracking-tight leading-none">
+                  Prompt Optimization Studio
+                </h2>
+                <p className="text-[14px] text-muted-foreground/70 leading-relaxed">
+                  Transform rough ideas into precisely engineered prompts.
+                </p>
+              </div>
+
+              {/* Suggestion chips */}
+              <div className="flex flex-wrap gap-2 justify-center">
+                {[
+                  'Technical documentation',
+                  'Creative writing assistant',
+                  'Code review prompt',
+                  'Data analysis template',
+                ].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    onClick={() => setInput(`Create a ${suggestion.toLowerCase()}`)}
+                    className="px-3 py-1.5 rounded-full text-[12px] font-medium bg-surface border border-border text-muted-foreground hover:text-foreground hover:border-emerald/35 hover:bg-sidebar-accent transition-smooth"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {inputBox}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Conversation state ─────────────────────────────────────────
+  return (
+    <div className="flex-1 flex flex-col h-full bg-background">
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full" ref={scrollRef}>
+          <div className="max-w-3xl mx-auto py-8 px-6 space-y-6">
+            {messages.map((message) => (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onCopy={() => onCopyPrompt(message.id)}
+                onSave={() => onSavePrompt(message.id)}
+                onFeedback={onFeedback}
+                isSaved={savedPromptIds.includes(message.id)}
+              />
+            ))}
+
+            {isGenerating && !streamingMessage && (
+              <div className="flex items-center gap-3 animate-fade-in pl-1">
+                <div className="w-8 h-8 rounded-lg bg-emerald/10 border border-emerald/20 flex items-center justify-center flex-shrink-0">
+                  <Loader2 className="w-4 h-4 animate-spin text-emerald" />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald/60 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald/60 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald/60 animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            )}
+
+            {streamingMessage && (
+              <MessageBubble
+                key={streamingMessage.id}
+                message={streamingMessage}
+                onCopy={() => onCopyPrompt(streamingMessage.id)}
+                onSave={() => onSavePrompt(streamingMessage.id)}
+                onFeedback={onFeedback}
+                isSaved={false}
+              />
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      {/* Docked input */}
+      <div className="flex-shrink-0 px-6 pb-5 pt-4 bg-background">
+        {inputBox}
       </div>
     </div>
   );

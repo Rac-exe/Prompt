@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { ThumbsUp, ThumbsDown, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface FeedbackWidgetProps {
@@ -9,11 +8,7 @@ interface FeedbackWidgetProps {
   onDismiss?: (messageId: string) => void;
 }
 
-export const FeedbackWidget = ({
-  messageId,
-  onFeedback,
-  onDismiss,
-}: FeedbackWidgetProps) => {
+export const FeedbackWidget = ({ messageId, onFeedback, onDismiss }: FeedbackWidgetProps) => {
   const [rating, setRating] = useState<"positive" | "negative" | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
@@ -22,55 +17,38 @@ export const FeedbackWidget = ({
   const handleRate = (type: "positive" | "negative") => {
     setRating(type);
     onFeedback?.(messageId, type);
-
-    // Auto-dismiss after a short delay to show the selected state
-    setTimeout(() => {
-      setDismissed(true);
-    }, 800);
-  };
-
-  const handleDismiss = () => {
-    setDismissed(true);
-    onDismiss?.(messageId);
+    setTimeout(() => setDismissed(true), 900);
   };
 
   return (
-    <div className="flex items-center gap-2 mt-3 p-2 bg-surface/50 border border-border rounded-lg animate-slide-up">
-      <span className="text-xs text-muted-foreground">Was this helpful?</span>
+    <div className="flex items-center gap-2 animate-fade-in">
+      <span className="text-[11px] text-muted-foreground/50">Was this helpful?</span>
       <div className="flex gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-7 px-2 hover:bg-emerald/10 hover:text-emerald transition-button",
-            rating === "positive" && "bg-emerald/20 text-emerald"
-          )}
+        <button
           onClick={() => handleRate("positive")}
           disabled={rating !== null}
-        >
-          <ThumbsUp className="w-3.5 h-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
           className={cn(
-            "h-7 px-2 hover:bg-destructive/10 hover:text-destructive transition-button",
-            rating === "negative" && "bg-destructive/20 text-destructive"
+            "inline-flex items-center justify-center w-6 h-6 rounded-md transition-smooth text-muted-foreground disabled:cursor-default",
+            rating === "positive"
+              ? "bg-emerald/15 text-emerald"
+              : "hover:bg-secondary hover:text-foreground"
           )}
+        >
+          <ThumbsUp className="w-3 h-3" />
+        </button>
+        <button
           onClick={() => handleRate("negative")}
           disabled={rating !== null}
+          className={cn(
+            "inline-flex items-center justify-center w-6 h-6 rounded-md transition-smooth text-muted-foreground disabled:cursor-default",
+            rating === "negative"
+              ? "bg-destructive/12 text-destructive"
+              : "hover:bg-secondary hover:text-foreground"
+          )}
         >
-          <ThumbsDown className="w-3.5 h-3.5" />
-        </Button>
+          <ThumbsDown className="w-3 h-3" />
+        </button>
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 w-7 p-0 ml-auto text-muted-foreground hover:text-foreground"
-        onClick={handleDismiss}
-      >
-        <X className="w-3.5 h-3.5" />
-      </Button>
     </div>
   );
 };

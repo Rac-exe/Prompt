@@ -3,7 +3,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Zap, ArrowRight, Loader2 } from 'lucide-react';
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
@@ -15,14 +15,11 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [internalError, setInternalError] = useState('');
   const { toast } = useToast();
 
-  // Handle external errors (from AuthWrapper)
   useEffect(() => {
     if (externalError) {
       setIsLoading(false);
-      // Clear password field for security, and email if desired (user requested both)
       setPassword('');
       setEmail('');
       toast({
@@ -36,55 +33,112 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
 
-    if (isLoading) return; // Prevent duplicate submissions
-
-    setInternalError('');
     setIsLoading(true);
-
     try {
       if (window.electronAPI) {
-        // Send login request to Electron
         window.electronAPI.signIn({ email, password });
-        // The response will come through onAuthStateChange listener in AuthWrapper
       } else {
-        const msg = 'This app requires Electron to run';
-        setInternalError(msg);
-        setIsLoading(false);
         toast({
           variant: "destructive",
           title: "System Error",
-          description: msg,
+          description: 'This app requires Electron to run',
         });
+        setIsLoading(false);
       }
     } catch (err) {
-      console.error('[LoginPage] Error during login:', err);
-      const msg = 'An unexpected error occurred';
-      setInternalError(msg);
-      setIsLoading(false);
       toast({
         variant: "destructive",
         title: "Error",
-        description: msg,
+        description: 'An unexpected error occurred',
       });
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Welcome Back</CardTitle>
-          <CardDescription className="text-center">
-            Sign in to your Prompt Optimizer account
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Inline error removed in favor of Toast */}
+    <div className="min-h-screen flex bg-background">
+      {/* Left decorative panel */}
+      <div className="hidden lg:flex lg:w-[42%] bg-sidebar flex-col justify-between p-12 border-r border-sidebar-border relative overflow-hidden">
+        {/* Subtle grid pattern */}
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: `linear-gradient(hsl(var(--foreground)) 1px, transparent 1px),
+                              linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)`,
+            backgroundSize: '48px 48px',
+          }}
+        />
+        {/* Emerald glow blob */}
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full bg-emerald/6 blur-3xl pointer-events-none" />
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+        {/* Brand */}
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald flex items-center justify-center shadow-lg shadow-emerald/30">
+            <Zap className="w-5 h-5 text-white" />
+          </div>
+          <span className="font-bold text-foreground text-lg tracking-tight">Prompt Weaver</span>
+        </div>
+
+        {/* Hero content */}
+        <div className="relative z-10 space-y-6">
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-muted text-emerald text-xs font-semibold tracking-wide">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald animate-pulse-subtle" />
+              Optimization Studio
+            </div>
+            <h1 className="text-3xl font-bold text-foreground leading-tight">
+              Transform your prompts.<br />
+              <span className="text-gradient-primary">Amplify your results.</span>
+            </h1>
+            <p className="text-muted-foreground text-sm leading-relaxed max-w-xs">
+              Precision-engineered AI prompts that deliver clearer, faster, and more consistent outputs every time.
+            </p>
+          </div>
+
+          {/* Feature pills */}
+          <div className="flex flex-wrap gap-2">
+            {['AI-Powered Optimization', 'Prompt Library', 'Voice Input', 'Team Sharing'].map((f) => (
+              <span
+                key={f}
+                className="px-3 py-1 rounded-full bg-sidebar-accent text-sidebar-foreground text-xs font-medium border border-sidebar-border"
+              >
+                {f}
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer quote */}
+        <p className="relative z-10 text-xs text-muted-foreground/50 italic">
+          "The quality of your output begins with the quality of your input."
+        </p>
+      </div>
+
+      {/* Right form panel */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-[380px] space-y-8 animate-fade-in">
+          {/* Mobile brand */}
+          <div className="flex items-center gap-3 lg:hidden">
+            <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center">
+              <Zap className="w-4 h-4 text-white" />
+            </div>
+            <span className="font-bold text-foreground">Prompt Weaver</span>
+          </div>
+
+          {/* Heading */}
+          <div className="space-y-1.5">
+            <h2 className="text-2xl font-bold text-foreground tracking-tight">Welcome back</h2>
+            <p className="text-sm text-muted-foreground">Sign in to continue to your workspace</p>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-1.5">
+              <Label htmlFor="email" className="text-sm font-medium text-foreground">
+                Email address
+              </Label>
               <Input
                 id="email"
                 type="email"
@@ -94,11 +148,16 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
                 required
                 autoComplete="email"
                 disabled={isLoading}
+                className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-sm font-medium text-foreground">
+                  Password
+                </Label>
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -109,27 +168,47 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
                 autoComplete="current-password"
                 disabled={isLoading}
                 minLength={6}
+                className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
               />
             </div>
 
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Signing in...' : 'Sign In'}
+            <Button
+              type="submit"
+              disabled={isLoading}
+              className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button"
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <span className="flex items-center gap-2">
+                  Sign In
+                  <ArrowRight className="w-4 h-4" />
+                </span>
+              )}
             </Button>
-
-            <div className="text-center text-sm text-gray-600 dark:text-gray-400">
-              Don't have an account?{' '}
-              <button
-                type="button"
-                onClick={onSwitchToSignup}
-                className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-medium"
-                disabled={isLoading}
-              >
-                Sign up
-              </button>
-            </div>
           </form>
-        </CardContent>
-      </Card>
+
+          {/* Divider */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-border" />
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="bg-background px-3 text-muted-foreground">Don't have an account?</span>
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onSwitchToSignup}
+            disabled={isLoading}
+            className="w-full h-10 border-border text-foreground hover:bg-secondary hover:border-border font-medium transition-button"
+          >
+            Create an account
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -31,6 +31,7 @@ declare global {
         start: (sessionId: string) => void;
         stop: () => void;
         onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+        onStatus: (callback: (status: string) => void) => void;
         onError: (callback: (error: string) => void) => void;
       };
 
@@ -91,6 +92,13 @@ declare global {
         toggleFavorite: (promptId: string) => Promise<any>;
       };
       onPromptLibraryLoaded: (callback: (data: any) => void) => void;
+
+      // Window controls (frameless window)
+      windowControls: {
+        minimize: () => void;
+        maximize: () => void;
+        close: () => void;
+      };
 
       // Common API
       send: (channel: string, data: any) => void;
@@ -160,6 +168,9 @@ const electronAPI = {
     },
     onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => {
       ipcRenderer.on('transcription:update', (_event, data) => callback(data));
+    },
+    onStatus: (callback: (status: string) => void) => {
+      ipcRenderer.on('transcription:status', (_event, status) => callback(status));
     },
     onError: (callback: (error: string) => void) => {
       ipcRenderer.on('transcription:error', (_event, error) => callback(error));
@@ -345,6 +356,15 @@ const electronAPI = {
   },
   onPromptLibraryLoaded: (callback: (data: any) => void) => {
     ipcRenderer.on('prompt-library:loaded', (_event, data) => callback(data));
+  },
+
+  // ============================================
+  // WINDOW CONTROLS (frameless window)
+  // ============================================
+  windowControls: {
+    minimize: () => ipcRenderer.send('window:minimize'),
+    maximize: () => ipcRenderer.send('window:maximize'),
+    close:    () => ipcRenderer.send('window:close'),
   },
 
   // ============================================
