@@ -11,54 +11,67 @@
 
 @layer base {
   :root {
-    /* ─── Light Mode ──────────────────────────────────────── */
-    --background:         0 0% 99%;
-    --foreground:         222 20% 11%;
+    /* ─── Light Mode ──────────────────────────────────────────────
+       "Aged paper" — warm off-white base with a cool-green undertone.
+       Surfaces step down in warmth as they get closer to the user,
+       creating natural depth without harsh white flashes.
+       Emerald is deepened slightly so it reads with authority on light.
+    ──────────────────────────────────────────────────────────────── */
 
-    --card:               0 0% 100%;
-    --card-foreground:    222 20% 11%;
+    /* Base canvas — warm stone, not blinding white */
+    --background:         150  8% 95%;
+    --foreground:         210 24% 14%;
 
-    --popover:            0 0% 100%;
-    --popover-foreground: 222 20% 11%;
+    /* Cards sit 1 step lighter — subtle lift */
+    --card:               150  6% 98%;
+    --card-foreground:    210 24% 14%;
 
-    --primary:            158 64% 40%;
-    --primary-foreground: 0 0% 100%;
+    --popover:            150  6% 98%;
+    --popover-foreground: 210 24% 14%;
 
-    --secondary:          220 14% 96%;
-    --secondary-foreground: 222 20% 11%;
+    --primary:            158 60% 36%;
+    --primary-foreground: 0   0% 100%;
 
-    --muted:              220 14% 96%;
-    --muted-foreground:   220 10% 50%;
+    /* Secondary — muted warm grey, used for chips/toggles */
+    --secondary:          160 10% 90%;
+    --secondary-foreground: 210 20% 20%;
 
-    --accent:             158 64% 96%;
-    --accent-foreground:  158 64% 22%;
+    /* Muted — slightly darker than secondary */
+    --muted:              160 10% 90%;
+    --muted-foreground:   210 12% 44%;
 
-    --destructive:        0 72% 51%;
+    --accent:             158 40% 90%;
+    --accent-foreground:  158 60% 22%;
+
+    --destructive:        0 68% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border:             220 13% 91%;
-    --input:              220 13% 91%;
-    --ring:               158 64% 40%;
+    /* Borders — tinted, not grey */
+    --border:             160 12% 84%;
+    --input:              160 12% 84%;
+    --ring:               158 60% 36%;
 
     --radius: 0.625rem;
 
-    /* Custom tokens — Light */
-    --surface:            0 0% 99%;
-    --surface-hover:      220 14% 97%;
-    --surface-elevated:   0 0% 100%;
-    --emerald:            158 64% 40%;
-    --emerald-soft:       158 52% 58%;
-    --emerald-muted:      158 40% 92%;
+    /* ── Custom tokens — Light ── */
+    /* Surface steps: background → surface → surface-elevated (each lighter) */
+    --surface:            150  8% 92%;
+    --surface-hover:      160  8% 89%;
+    --surface-elevated:   150  6% 97%;
 
-    /* Sidebar — Light */
-    --sidebar-background:         220 20% 97%;
-    --sidebar-foreground:         220 10% 44%;
-    --sidebar-primary:            158 64% 40%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent:             220 14% 93%;
-    --sidebar-accent-foreground:  222 20% 11%;
-    --sidebar-border:             220 13% 91%;
-    --sidebar-ring:               158 64% 40%;
+    --emerald:            158 60% 36%;
+    --emerald-soft:       158 48% 54%;
+    --emerald-muted:      158 36% 86%;
+
+    /* ── Sidebar — slightly darker warm tone, clearly distinct ── */
+    --sidebar-background:         155 10% 89%;
+    --sidebar-foreground:         210 14% 42%;
+    --sidebar-primary:            158 60% 36%;
+    --sidebar-primary-foreground: 0   0% 100%;
+    --sidebar-accent:             155 10% 84%;
+    --sidebar-accent-foreground:  210 20% 16%;
+    --sidebar-border:             160 12% 82%;
+    --sidebar-ring:               158 60% 36%;
   }
 
   .dark {
@@ -210,21 +223,21 @@
     -webkit-backdrop-filter: blur(16px) saturate(180%);
   }
 
-  /* ── Shadows ── */
+  /* ── Shadows — tinted for light & dark mode ── */
   .shadow-card {
     box-shadow:
-      0 1px 3px hsl(0 0% 0% / 0.08),
-      0 1px 2px hsl(0 0% 0% / 0.04);
+      0 1px 3px hsl(160 20% 20% / 0.07),
+      0 1px 2px hsl(160 20% 20% / 0.04);
   }
   .shadow-card-hover {
     box-shadow:
-      0 4px 12px hsl(0 0% 0% / 0.12),
-      0 2px 4px  hsl(0 0% 0% / 0.06);
+      0 4px 12px hsl(160 20% 20% / 0.10),
+      0 2px 4px  hsl(160 20% 20% / 0.05);
   }
   .shadow-elevated {
     box-shadow:
-      0 8px 24px hsl(0 0% 0% / 0.14),
-      0 2px 8px  hsl(0 0% 0% / 0.08);
+      0 8px 24px hsl(160 20% 20% / 0.12),
+      0 2px 8px  hsl(160 20% 20% / 0.07);
   }
 
   /* ── Animations ── */

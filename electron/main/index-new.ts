@@ -112,16 +112,23 @@ async function initialize() {
 
       await transcriptionClient.startTranscription(
         sessionId,
+        // onTranscription — live chunks + final result
         (data) => {
-          // Forward transcription updates to all windows
           overlayManager.send('transcription:update', data);
           appWindowManager.send('transcription:update', data);
         },
+        // onError
         (error) => {
-          // Forward errors
+          console.error('[Main] Transcription error:', error);
           overlayManager.send('transcription:error', error);
           appWindowManager.send('transcription:error', error);
-        }
+        },
+        // onStatus — 'listening' | 'processing' | 'stopped'
+        (status) => {
+          console.log('[Main] Transcription status:', status);
+          overlayManager.send('transcription:status', status);
+          appWindowManager.send('transcription:status', status);
+        },
       );
     } catch (error) {
       console.error('[Main] Failed to start transcription:', error);

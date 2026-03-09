@@ -9,8 +9,11 @@ import whisper
 import numpy as np
 import pyaudio
 import io
-import base64
-import json
+import wave
+import math
+from scipy.signal import resample_poly
+from math import gcd
+from faster_whisper import WhisperModel
 import threading
 import queue
 import asyncio
@@ -551,467 +554,651 @@ async def health():
             "error": str(e)
         }
 
-# Whisper model (loaded lazily)
-whisper_model = None
+# ============================================================
+# WHISPER TRANSCRIPTION PIPELINE  v3
+# ============================================================
+# Capture  → resample to 16 kHz  → VAD endpoint detection
+#         → quality checks  → faster-whisper inference
+#         → sliding window overlap  → context carryover
+# ============================================================
 
-def get_whisper_model():
-    """Lazy load Whisper model (small)."""
-    global whisper_model
-    if whisper_model is None:
-        print("[Whisper] Loading Whisper small model...")
-        # Load the small model for balance between speed and accuracy
-        whisper_model = whisper.load_model("small")
-        print("[Whisper] Model loaded successfully")
-    return whisper_model
+WHISPER_RATE   = 16_000   # faster-whisper always expects 16 kHz mono float32
+CAPTURE_CHUNK  = 1024     # frames per PyAudio read
+CAPTURE_CHANS  = 1        # mono
 
-# Audio configuration
-CHUNK = 4096
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 16000
-RECORD_SECONDS = 1  # Process audio in 1-second chunks
+# Speech window accumulation
+MIN_SPEECH_S   = 10.0     # seconds before a live partial trigger — most spoken
+                          # prompts are under 10 s, so they get processed as a
+                          # single chunk at the endpoint for maximum accuracy
+MAX_SPEECH_S   = 30.0     # hard cap to prevent memory growth
+
+# Sliding window overlap — ensures phonetic continuity across chunk boundaries
+OVERLAP_SECONDS = 1.0
+
+# Quality gates (applied AFTER resampling to 16 kHz)
+MIN_INFER_DURATION_S = 0.5   # allow short voice commands (was 1.5)
+MIN_INFER_RMS        = 0.0008 # float32 RMS floor — catches dead signal only
+
+# Silero VAD — used for ENDPOINT DETECTION, not as an inference gate
+VAD_WINDOW_MS      = 64     # ms — 64 ms is the most stable config for Silero at 16 kHz
+VAD_SPEECH_THRESH  = 0.5    # confidence threshold (0–1)
+VAD_MIN_SPEECH_MS  = 250    # ignore speech bursts shorter than this
+
+# Debug WAV output
+DEBUG_WAV_COUNT  = 3
+_debug_wav_saved = 0
+
+# Sentinel object placed on audio_queue by the capture thread after
+# its last chunk.  The transcription loop uses this to know all audio
+# has been enqueued.
+STOP_SIGNAL = object()
+
+_fw_model  = None   # faster-whisper WhisperModel
+_vad_model = None   # Silero VAD model
+_vad_utils = None   # Silero VAD utility functions
+
+
+def get_faster_whisper_model() -> WhisperModel:
+    """
+    Lazy-load faster-whisper 'small' model with int8 quantisation.
+    small (244 M) gives much better accuracy than base (74 M) and
+    the pipeline architecture keeps latency acceptable on CPU.
+    """
+    global _fw_model
+    if _fw_model is None:
+        print("[FW] Loading faster-whisper 'small' (int8) …")
+        _fw_model = WhisperModel("small", device="cpu", compute_type="int8")
+        print("[FW] faster-whisper model ready")
+    return _fw_model
+
+
+def get_vad_model():
+    """
+    Lazy-load Silero VAD model from torch.hub.
+    Returns (model, get_speech_timestamps_fn).
+    """
+    global _vad_model, _vad_utils
+    if _vad_model is None:
+        print("[VAD] Loading Silero VAD model …")
+        import torch
+        _vad_model, _vad_utils = torch.hub.load(
+            repo_or_dir = "snakers4/silero-vad",
+            model       = "silero_vad",
+            force_reload = False,
+            onnx        = False,
+        )
+        _vad_model.eval()
+        print("[VAD] Silero VAD ready")
+    return _vad_model, _vad_utils
+
+
+def _vad_has_speech(audio_f32: np.ndarray) -> bool:
+    """
+    Run Silero VAD on 16 kHz float32 audio.
+    Returns True if at least one speech segment >= VAD_MIN_SPEECH_MS is found.
+
+    Silero VAD operates on fixed windows of 32/64/96 ms at 16 kHz.
+    Window size in samples = VAD_WINDOW_MS * WHISPER_RATE / 1000.
+    """
+    import torch
+    try:
+        vad_model, utils = get_vad_model()
+        get_speech_timestamps = utils[0]  # first util function
+
+        print(f"[VAD] audio length: {len(audio_f32) / WHISPER_RATE:.2f} seconds")
+
+        # Silero requires a 1-D, float32, contiguous tensor at 16 kHz
+        audio_tensor = torch.from_numpy(audio_f32).float().squeeze().contiguous()
+
+        speech_ts = get_speech_timestamps(
+            audio_tensor,
+            vad_model,
+            sampling_rate      = WHISPER_RATE,
+            threshold          = VAD_SPEECH_THRESH,
+            min_speech_duration_ms = VAD_MIN_SPEECH_MS,
+            min_silence_duration_ms = 100,
+            window_size_samples = VAD_WINDOW_MS * WHISPER_RATE // 1000,
+        )
+
+        has_speech = len(speech_ts) > 0
+        total_speech_s = sum(
+            (ts["end"] - ts["start"]) / WHISPER_RATE for ts in speech_ts
+        )
+        print(f"[VAD] segments={len(speech_ts)}  "
+              f"total_speech={total_speech_s:.2f}s  "
+              f"has_speech={has_speech}")
+        return has_speech
+
+    except Exception as e:
+        print(f"[VAD] Error — falling back to pass-through: {e}")
+        # If VAD fails for any reason, let the segment through so
+        # we don't silently drop valid audio.
+        return True
+
+
+def _resample(audio_int16: np.ndarray, src_rate: int) -> np.ndarray:
+    """
+    Resample int16 audio from src_rate → WHISPER_RATE using
+    scipy.signal.resample_poly (polyphase, no aliasing).
+    Returns float32 in [-1, 1].
+    """
+    if src_rate == WHISPER_RATE:
+        return audio_int16.astype(np.float32) / 32768.0
+
+    g   = gcd(src_rate, WHISPER_RATE)
+    up  = WHISPER_RATE // g
+    dn  = src_rate      // g
+
+    print(f"[Resample] {src_rate} Hz → {WHISPER_RATE} Hz  (up={up}, dn={dn})")
+    audio_f32 = audio_int16.astype(np.float32) / 32768.0
+    resampled  = resample_poly(audio_f32, up, dn).astype(np.float32)
+    return resampled
+
+
+def _save_debug_wav(audio_int16: np.ndarray, capture_rate: int, tag: str = ""):
+    """Save a WAV file for manual inspection. Writes at most DEBUG_WAV_COUNT files."""
+    global _debug_wav_saved
+    if _debug_wav_saved >= DEBUG_WAV_COUNT:
+        return
+    _debug_wav_saved += 1
+    fname = f"debug_chunk_{_debug_wav_saved}{tag}.wav"
+    try:
+        with wave.open(fname, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)          # int16 = 2 bytes
+            wf.setframerate(capture_rate)
+            wf.writeframes(audio_int16.tobytes())
+        print(f"[Debug] Saved {fname} ({len(audio_int16)/capture_rate:.2f}s @ {capture_rate} Hz)")
+    except Exception as e:
+        print(f"[Debug] Failed to save WAV: {e}")
+
 
 class TranscriptionSession:
     """Manages a single transcription session."""
+
     def __init__(self, websocket: WebSocket, event_loop):
-        self.websocket = websocket
-        self.event_loop = event_loop
-        self.audio_queue = queue.Queue()
-        self.is_recording = False
-        self.audio_buffer = []
+        self.websocket       = websocket
+        self.event_loop      = event_loop
+        self.audio_queue     = queue.Queue()   # items: np.ndarray int16 chunks
+        self.is_recording    = False
+        self.capture_rate    = 0               # set after device is opened
+        self.audio_thread    = None
         self.transcription_thread = None
-        self.accumulated_text = ""  # Store accumulated transcription for live updates
-        
+        self.accumulated_text = ""
+
+    # ── lifecycle ────────────────────────────────────────────────
+
     def start_recording(self):
-        """Start audio recording."""
         if self.is_recording:
             print("[Transcription] Already recording")
             return
 
         print("[Transcription] ===== STARTING RECORDING SESSION =====")
-        self.is_recording = True
-        self.audio_buffer = []
-        self.accumulated_text = ""  # Reset accumulated text for new session
+        self.is_recording     = True
+        self.accumulated_text = ""
+        self.capture_rate     = 0
 
-        # Clear any old audio data from previous session
+        # Drain stale queue data
         while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except:
-                break
-        print("[Transcription] Audio queue cleared for new session")
+            try: self.audio_queue.get_nowait()
+            except: break
+        print("[Transcription] Audio queue cleared")
 
-        # Start audio capture thread
-        try:
-            print("[Transcription] Spawning audio capture thread...")
-            self.audio_thread = threading.Thread(target=self._capture_audio, daemon=True)
-            self.audio_thread.start()
-            print("[Transcription] ✓ Audio capture thread started successfully")
-        except Exception as e:
-            print(f"[Transcription] ✗ Failed to start audio thread: {e}")
-            import traceback
-            traceback.print_exc()
-            self.is_recording = False
-            return
+        self.audio_thread = threading.Thread(
+            target=self._capture_audio, daemon=True, name="audio-capture"
+        )
+        self.audio_thread.start()
+        print("[Transcription] ✓ Audio capture thread started")
 
-        # Start transcription thread
-        try:
-            print("[Transcription] Spawning transcription thread...")
-            self.transcription_thread = threading.Thread(target=self._transcribe_loop, daemon=True)
-            self.transcription_thread.start()
-            print("[Transcription] ✓ Transcription thread started successfully")
-            print("[Transcription] ===== RECORDING SESSION ACTIVE =====")
-        except Exception as e:
-            print(f"[Transcription] ✗ Failed to start transcription thread: {e}")
-            import traceback
-            traceback.print_exc()
-            self.is_recording = False
-            return
-        
+        self.transcription_thread = threading.Thread(
+            target=self._transcribe_loop, daemon=True, name="transcribe-loop"
+        )
+        self.transcription_thread.start()
+        print("[Transcription] ✓ Transcription thread started")
+        print("[Transcription] ===== SESSION ACTIVE =====")
+
     def stop_recording(self):
-        """Stop audio recording."""
         print("[Transcription] ===== STOPPING RECORDING SESSION =====")
-        print(f"[Transcription] is_recording was: {self.is_recording}")
+        print("[Transcription] stop requested")
+        # Set flag — the capture thread will see this, exit its loop,
+        # and THEN place STOP_SIGNAL on the queue.  This guarantees every
+        # captured chunk is enqueued before the sentinel.
         self.is_recording = False
-        print("[Transcription] Recording flag set to False, waiting for threads to finish...")
-        
+        # Notify UI immediately so it can show "Processing…"
+        if self.event_loop:
+            asyncio.run_coroutine_threadsafe(
+                self.websocket.send_json({"type": "status", "status": "processing"}),
+                self.event_loop
+            )
+
+    # ── audio capture ────────────────────────────────────────────
+
     def _capture_audio(self):
-        """Capture audio from microphone."""
-        print("[Transcription] _capture_audio method started")
-        audio = None
+        """
+        Record from the default microphone at its NATIVE sample rate.
+
+        Why native rate?  On Windows, WASAPI/MME drivers often ignore
+        rate=16000 and open at 44100 or 48000 Hz anyway, but report
+        success.  The bytes then arrive 2–3× faster than expected, so
+        Whisper hears sped-up speech and hallucinates.  By capturing at
+        the native rate and resampling in software we guarantee correct
+        timing.
+        """
+        audio  = None
         stream = None
-
         try:
-            print("[Transcription] Initializing PyAudio...")
+            print("[Capture] Initialising PyAudio …")
             audio = pyaudio.PyAudio()
-            print(f"[Transcription] PyAudio initialized successfully")
 
-            # List all available audio devices
-            print("[Transcription] Enumerating audio devices...")
-            device_count = audio.get_device_count()
-            print(f"[Transcription] Found {device_count} audio devices")
-
-            default_input_device = None
+            # ── Discover native device rate ─────────────────────
             try:
-                default_input_device = audio.get_default_input_device_info()
-                print(f"[Transcription] Default input device: {default_input_device['name']} (index={default_input_device['index']})")
+                dev_info = audio.get_default_input_device_info()
+                native_rate = int(dev_info["defaultSampleRate"])
+                dev_name    = dev_info["name"]
             except Exception as e:
-                print(f"[Transcription] No default input device: {e}")
+                print(f"[Capture] Could not query default device: {e}. Falling back to 44100 Hz")
+                native_rate = 44_100
+                dev_name    = "unknown"
 
-            for i in range(device_count):
+            print(f"[Capture] Device  : {dev_name}")
+            print(f"[Capture] Native rate: {native_rate} Hz")
+            print(f"[Capture] Channels: {CAPTURE_CHANS}  |  Chunk: {CAPTURE_CHUNK} frames")
+
+            self.capture_rate = native_rate
+
+            stream = audio.open(
+                format=pyaudio.paInt16,
+                channels=CAPTURE_CHANS,
+                rate=native_rate,
+                input=True,
+                frames_per_buffer=CAPTURE_CHUNK,
+            )
+            print("[Capture] Stream opened — recording …")
+
+            chunk_count       = 0
+            debug_chunks_left = 5    # log first N chunks in detail
+
+            stop_signal_sent = False
+
+            while True:
                 try:
-                    device_info = audio.get_device_info_by_index(i)
-                    if device_info['maxInputChannels'] > 0:
-                        print(f"[Transcription]   Device {i}: {device_info['name']} (input channels={device_info['maxInputChannels']})")
-                except Exception as e:
-                    print(f"[Transcription]   Device {i}: Error getting info - {e}")
-
-            print(f"[Transcription] Opening audio stream with: FORMAT={FORMAT}, CHANNELS={CHANNELS}, RATE={RATE}, CHUNK={CHUNK}")
-
-            # Check if default input device supports our requirements
-            if default_input_device:
-                device_index = default_input_device['index']
-                max_input_channels = default_input_device['maxInputChannels']
-                default_sample_rate = default_input_device['defaultSampleRate']
-
-                print(f"[Transcription] Using device {device_index}: {default_input_device['name']}")
-                print(f"  - Max input channels: {max_input_channels}")
-                print(f"  - Default sample rate: {default_sample_rate} Hz")
-
-                if default_sample_rate != RATE:
-                    print(f"  - WARNING: Device default rate {default_sample_rate} != requested rate {RATE}")
-
-            try:
-                stream = audio.open(
-                    format=FORMAT,
-                    channels=CHANNELS,
-                    rate=RATE,
-                    input=True,
-                    frames_per_buffer=CHUNK
-                )
-                print("[Transcription] Audio stream opened successfully")
-            except Exception as e:
-                print(f"[Transcription] Failed to open audio stream: {e}")
-                import traceback
-                traceback.print_exc()
-                raise
-
-            print("[Transcription] Started audio capture - now reading from microphone")
-            print("[Transcription] ========================================")
-            print("[Transcription] MICROPHONE DIAGNOSTIC MODE ENABLED")
-            print("[Transcription] Will log detailed audio metrics every 10 chunks")
-            print("[Transcription] ========================================")
-
-            chunk_count = 0
-            first_chunk_validated = False
-
-            while self.is_recording:
-                try:
-                    data = stream.read(CHUNK, exception_on_overflow=False)
-                    chunk_count += 1
-
-                    # Validate first audio chunk
-                    if not first_chunk_validated:
-                        print(f"[Transcription] ========================================")
-                        print(f"[Transcription] FIRST AUDIO CHUNK VALIDATION:")
-                        print(f"[Transcription] ========================================")
-                        print(f"  - Chunk byte size: {len(data)} bytes")
-                        print(f"  - Expected byte size: {CHUNK * 2} bytes (CHUNK={CHUNK}, int16=2 bytes)")
-                        print(f"  - Audio format: {FORMAT} (8=paInt16)")
-                        print(f"  - Channels: {CHANNELS}")
-                        print(f"  - Sample rate: {RATE} Hz")
-
-                        # Check audio data validity
-                        audio_array = np.frombuffer(data, dtype=np.int16)
-                        print(f"  - NumPy dtype: {audio_array.dtype}")
-                        print(f"  - Audio samples: {len(audio_array)}")
-                        print(f"  - Audio min/max: {audio_array.min()} / {audio_array.max()}")
-                        print(f"  - Audio mean: {audio_array.mean():.2f}")
-                        print(f"  - Audio std dev: {audio_array.std():.2f}")
-
-                        # Calculate RMS and dB for first chunk
-                        rms = np.sqrt(np.mean(audio_array.astype(np.float32)**2))
-                        if rms > 0:
-                            db = 20 * np.log10(rms / 32768.0)
-                        else:
-                            db = -100
-                        peak = np.abs(audio_array).max()
-
-                        print(f"  - RMS amplitude: {rms:.2f}")
-                        print(f"  - Decibels (dB): {db:.2f} dB")
-                        print(f"  - Peak amplitude: {peak} / 32768 ({(peak/32768.0*100):.4f}%)")
-
-                        # Check if audio is silent (all zeros or very low values)
-                        print(f"\n[Transcription] DIAGNOSIS:")
-                        if db < -60:
-                            print(f"  - STATUS: CRITICAL - Audio is essentially SILENT!")
-                            print(f"  - LIKELY CAUSES:")
-                            print(f"    1. Microphone is MUTED in Windows settings")
-                            print(f"    2. Wrong microphone selected (check Sound Control Panel)")
-                            print(f"    3. Microphone volume set to 0%")
-                            print(f"    4. Application doesn't have microphone permissions")
-                            print(f"  - ACTION REQUIRED: Check Windows microphone settings!")
-                        elif db < -40:
-                            print(f"  - STATUS: WARNING - Audio is very quiet")
-                            print(f"  - SUGGESTION: Increase microphone volume in Windows settings")
-                        elif db < -20:
-                            print(f"  - STATUS: OK - Normal speech levels detected")
-                        else:
-                            print(f"  - STATUS: EXCELLENT - Strong audio signal detected")
-
-                        print(f"[Transcription] ========================================")
-                        first_chunk_validated = True
-
-                    if chunk_count % 10 == 0:  # Log every 10 chunks
-                        print(f"[Transcription] Captured {chunk_count} audio chunks")
-
-                    # For Whisper, we apply moderate gain only if audio is too quiet
-                    audio_array = np.frombuffer(data, dtype=np.int16).copy()
-
-                    # Check audio level and apply adaptive gain
-                    audio_std = audio_array.std()
-                    if audio_std < 100:
-                        # Audio is very quiet, apply moderate gain
-                        GAIN = 5.0  # Moderate boost for Whisper (reduced from 50x)
-                        audio_array = audio_array.astype(np.float32) * GAIN
-                        audio_array = np.clip(audio_array, -32768, 32767)
-                        audio_array = audio_array.astype(np.int16)
-
-                    # Convert to bytes for processing
-                    processed_data = audio_array.tobytes()
-
-                    # Log audio stats every 10 chunks for better debugging
-                    if chunk_count % 10 == 0:
-                        original_audio = np.frombuffer(data, dtype=np.int16)
-
-                        # Calculate RMS (Root Mean Square) amplitude
-                        rms = np.sqrt(np.mean(original_audio.astype(np.float32)**2))
-
-                        # Calculate decibels (dB) - reference is max int16 value
-                        if rms > 0:
-                            db = 20 * np.log10(rms / 32768.0)
-                        else:
-                            db = -100  # Very quiet/silent
-
-                        # Calculate peak amplitude
-                        peak = np.abs(original_audio).max()
-
-                        print(f"[Transcription] Audio metrics (chunk {chunk_count}):")
-                        print(f"  - RMS amplitude: {rms:.2f}")
-                        print(f"  - Decibels (dB): {db:.2f} dB")
-                        print(f"  - Peak amplitude: {peak} / 32768 ({(peak/32768.0*100):.2f}%)")
-                        print(f"  - Std deviation: {original_audio.std():.2f}")
-                        print(f"  - Min/Max: {original_audio.min()} / {original_audio.max()}")
-                        print(f"  - Gain applied: {'YES (5x)' if audio_std < 100 else 'NO'}")
-
-                        # Audio quality assessment
-                        if db < -60:
-                            print(f"  - Quality: VERY QUIET/SILENT - Likely no microphone input!")
-                        elif db < -40:
-                            print(f"  - Quality: Quiet - Microphone may be muted or volume too low")
-                        elif db < -20:
-                            print(f"  - Quality: Normal speech levels")
-                        else:
-                            print(f"  - Quality: Loud - Good signal")
-
-                    # Queue audio data for transcription
-                    self.audio_queue.put(processed_data)
-                except Exception as e:
-                    print(f"[Transcription] Audio capture error while reading: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    raw = stream.read(CAPTURE_CHUNK, exception_on_overflow=False)
+                except IOError as e:
+                    print(f"[Capture] Stream read error: {e}")
                     break
 
-            print(f"[Transcription] Stopped capturing audio (total chunks: {chunk_count})")
+                chunk_count += 1
+                chunk_arr = np.frombuffer(raw, dtype=np.int16).copy()
+                rms       = float(np.sqrt(np.mean(chunk_arr.astype(np.float32) ** 2)))
+
+                if debug_chunks_left > 0:
+                    dur_ms = len(chunk_arr) / native_rate * 1000
+                    print(f"[Capture] chunk #{chunk_count}: "
+                          f"{len(chunk_arr)} samples  {dur_ms:.1f} ms  "
+                          f"RMS={rms:.1f}  min={chunk_arr.min()}  max={chunk_arr.max()}")
+                    debug_chunks_left -= 1
+                elif chunk_count % 50 == 0:
+                    dur_s = chunk_count * CAPTURE_CHUNK / native_rate
+                    print(f"[Capture] {chunk_count} chunks ({dur_s:.1f}s recorded)  RMS={rms:.1f}")
+
+                # Always enqueue the chunk BEFORE checking the stop flag so
+                # the very last chunk captured is never lost.
+                self.audio_queue.put(chunk_arr)
+
+                if not self.is_recording:
+                    print("[Capture] stop flag received — exiting capture loop")
+                    break
+
+            print(f"[Capture] Stopped — {chunk_count} chunks captured "
+                  f"({chunk_count * CAPTURE_CHUNK / native_rate:.1f}s)")
+
+            # Place STOP_SIGNAL *after* the last chunk so the transcription
+            # thread is guaranteed to see every audio frame before the sentinel.
+            self.audio_queue.put(STOP_SIGNAL)
+            stop_signal_sent = True
+            print("[Capture] STOP_SIGNAL placed after last chunk")
 
         except Exception as e:
-            print(f"[Transcription] EXCEPTION in _capture_audio: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[Capture] FATAL: {e}")
+            import traceback; traceback.print_exc()
             if self.event_loop:
                 asyncio.run_coroutine_threadsafe(
-                    self.websocket.send_json({"type": "error", "message": f"Audio capture failed: {str(e)}"}),
+                    self.websocket.send_json({"type": "error",
+                                             "message": f"Microphone error: {e}"}),
                     self.event_loop
                 )
         finally:
-            print("[Transcription] Cleaning up audio resources...")
+            # Guarantee the sentinel is sent even on unexpected errors so the
+            # transcription thread never blocks forever.
+            if not stop_signal_sent:
+                self.audio_queue.put(STOP_SIGNAL)
+                print("[Capture] STOP_SIGNAL placed in finally (error path)")
             if stream:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                    print("[Transcription] Stream closed")
-                except Exception as e:
-                    print(f"[Transcription] Error closing stream: {e}")
+                try: stream.stop_stream(); stream.close()
+                except: pass
             if audio:
-                try:
-                    audio.terminate()
-                    print("[Transcription] PyAudio terminated")
-                except Exception as e:
-                    print(f"[Transcription] Error terminating PyAudio: {e}")
-    
+                try: audio.terminate()
+                except: pass
+            print("[Capture] PyAudio cleaned up")
+
+    # ── transcription loop ───────────────────────────────────────
+
     def _transcribe_loop(self):
-        """Continuously transcribe audio chunks using Whisper."""
-        print("[Transcription] _transcribe_loop starting...")
+        """
+        Drain audio_queue, accumulate audio, run VAD for endpoint
+        detection, then call Whisper with sliding window overlap.
+        Live partial results are sent while recording; a final
+        result is sent when the session ends.
+        """
+        print("[TranscLoop] Starting …")
+        model = get_faster_whisper_model()
 
-        # Load Whisper model
-        model = get_whisper_model()
-        print("[Transcription] Whisper model ready")
+        # ── Wait for capture thread to open the mic and set capture_rate ──
+        wait_limit = 5.0
+        waited     = 0.0
+        while self.capture_rate == 0 and waited < wait_limit:
+            time.sleep(0.05)
+            waited += 0.05
 
-        accumulated_audio = []
-        audio_chunks_processed = 0
+        if self.capture_rate == 0:
+            print("[TranscLoop] capture_rate never set after "
+                  f"{wait_limit}s — microphone may not be available")
+            self._flush_final_if_needed(is_final=True)
+            return
 
-        print("[Transcription] Started transcription loop")
-        print(f"[Transcription] is_recording = {self.is_recording}")
-        print(f"[Transcription] audio_queue size = {self.audio_queue.qsize()}")
+        cap_rate       = self.capture_rate
+        buffer         = []
+        buffer_frames  = 0
+        max_frames     = int(MAX_SPEECH_S * cap_rate)
+        last_infer_t   = time.time()
+        overlap_frames = int(OVERLAP_SECONDS * cap_rate)
 
-        # Give audio capture thread time to start filling the queue
-        import time
-        time.sleep(0.5)
-        print(f"[Transcription] After 0.5s delay, queue size = {self.audio_queue.qsize()}")
+        # ── VAD endpoint detection state ──────────────────────────
+        speech_active  = False
+        silence_frames = 0
+        SILENCE_ENDPOINT_FRAMES = int(0.6 * cap_rate)
+        has_speech_since_last_emit = False   # prevents hallucinations on tail silence
 
-        # Collect audio in chunks and transcribe periodically for live feedback
-        last_transcription_time = time.time()
-        transcription_interval = 1.5  # Transcribe every 1.5 seconds for faster live updates
+        # VAD check buffer — accumulate ~300 ms of audio before running
+        # Silero so each VAD call has enough samples for a reliable result.
+        vad_check_buffer = []
+        vad_check_frames = 0
+        VAD_CHECK_INTERVAL = int(0.3 * cap_rate)
 
-        while self.is_recording or not self.audio_queue.empty():
-            try:
-                # Get audio chunk (raw bytes)
-                try:
-                    timeout = 0.1 if self.is_recording else 0.05
-                    audio_data = self.audio_queue.get(timeout=timeout)
-                    audio_chunks_processed += 1
+        print(f"[TranscLoop] capture_rate={cap_rate} Hz  "
+              f"max_buffer={MAX_SPEECH_S}s ({max_frames} frames)  "
+              f"silence_endpoint=0.6s ({SILENCE_ENDPOINT_FRAMES} frames)  "
+              f"overlap={OVERLAP_SECONDS}s ({overlap_frames} frames)")
 
-                    # Convert bytes to numpy array and accumulate
-                    audio_array = np.frombuffer(audio_data, dtype=np.int16)
-                    accumulated_audio.append(audio_array)
+        # ── sentinel-based drain loop ─────────────────────────────
+        while True:
+            chunk = self.audio_queue.get()   # blocks until something arrives
 
-                    if audio_chunks_processed % 10 == 0:
-                        print(f"[Transcription] Accumulated {audio_chunks_processed} audio chunks")
+            if chunk is STOP_SIGNAL:
+                print("[TranscLoop] STOP signal received — draining complete")
+                break
 
-                except queue.Empty:
-                    # Check if we should transcribe what we have
-                    if accumulated_audio and time.time() - last_transcription_time > transcription_interval:
-                        self._process_accumulated_audio(model, accumulated_audio)
-                        accumulated_audio = []
-                        last_transcription_time = time.time()
-                    continue
+            buffer.append(chunk)
+            buffer_frames += len(chunk)
 
-                # Transcribe periodically while recording
-                current_time = time.time()
-                if accumulated_audio and (current_time - last_transcription_time) >= transcription_interval:
-                    self._process_accumulated_audio(model, accumulated_audio)
-                    accumulated_audio = []
-                    last_transcription_time = current_time
+            # Accumulate chunks for batched VAD check
+            vad_check_buffer.append(chunk)
+            vad_check_frames += len(chunk)
 
-            except Exception as e:
-                print(f"[Transcription] Transcription error: {e}")
-                import traceback
-                traceback.print_exc()
-                if self.is_recording and self.event_loop:
-                    asyncio.run_coroutine_threadsafe(
-                        self.websocket.send_json({"type": "error", "message": str(e)}),
-                        self.event_loop
-                    )
+            if buffer_frames % (cap_rate * 2) < len(chunk):   # log every ~2 s
+                print(f"[TranscLoop] buffer={buffer_frames/cap_rate:.1f}s  "
+                      f"queue_size={self.audio_queue.qsize()}  "
+                      f"speech_active={speech_active}")
 
-        print(f"[Transcription] Exited while loop. is_recording = {self.is_recording}")
-        print(f"[Transcription] Stopped transcription loop (processed {audio_chunks_processed} chunks)")
+            # ── VAD check (every ~300 ms of accumulated audio) ────
+            if vad_check_frames >= VAD_CHECK_INTERVAL:
+                vad_audio_int16 = np.concatenate(vad_check_buffer)
+                vad_audio_f32   = _resample(vad_audio_int16, cap_rate)
+                is_speech       = _vad_has_speech(vad_audio_f32)
 
-        # Process any remaining audio
-        if accumulated_audio:
-            print("[Transcription] Processing final audio buffer...")
-            self._process_accumulated_audio(model, accumulated_audio, is_final=True)
-
-    def _process_accumulated_audio(self, model, audio_chunks, is_final=False):
-        """Process accumulated audio chunks with Whisper."""
-        try:
-            # Concatenate all audio chunks
-            audio_array = np.concatenate(audio_chunks)
-
-            print(f"[Transcription] Processing {len(audio_array)} samples ({len(audio_array)/RATE:.2f}s of audio)...")
-            print(f"[Transcription] Audio stats - min: {audio_array.min()}, max: {audio_array.max()}, mean: {audio_array.mean():.2f}, std: {audio_array.std():.2f}")
-
-            # Check if audio contains actual signal
-            audio_std = audio_array.std()
-            if audio_std < 10:
-                print(f"[Transcription] WARNING: Audio signal is too quiet (std={audio_std:.2f}), likely silence or no microphone input")
-                # Don't skip processing, let Whisper decide, but warn the user
-
-            # Normalize audio properly for Whisper
-            # 1. Convert int16 to float32
-            audio_float = audio_array.astype(np.float32)
-
-            # 2. Normalize to [-1, 1] range
-            audio_float = audio_float / 32768.0
-
-            # 3. Apply additional normalization to ensure proper range
-            # BUT only if we have actual signal (avoid amplifying silence)
-            max_val = np.abs(audio_float).max()
-            if max_val > 0.001:  # Only normalize if we have actual signal
-                audio_float = audio_float / max_val
-            else:
-                print(f"[Transcription] WARNING: Maximum amplitude is very low ({max_val:.6f}), audio may be silence")
-
-            # 4. Pad or trim audio to meet Whisper's expectations (Whisper expects at least 0.1s of audio)
-            min_samples = int(0.1 * RATE)  # 0.1 seconds minimum
-            if len(audio_float) < min_samples:
-                print(f"[Transcription] Audio too short ({len(audio_float)} samples), padding to {min_samples}")
-                audio_float = np.pad(audio_float, (0, min_samples - len(audio_float)), mode='constant')
-
-            print(f"[Transcription] Normalized audio - min: {audio_float.min():.4f}, max: {audio_float.max():.4f}, mean: {audio_float.mean():.4f}")
-            print(f"[Transcription] Calling Whisper transcribe with language='en'...")
-
-            # Transcribe with Whisper - force language to English
-            result = model.transcribe(
-                audio_float,
-                language="en",  # Force English language
-                fp16=torch.cuda.is_available(),  # Use FP16 if GPU available
-                verbose=True,  # Enable verbose to see what Whisper is doing
-                task="transcribe"  # Explicitly set task to transcribe (not translate)
-            )
-
-            transcribed_text = result["text"].strip()
-            print(f"[Transcription] Whisper result: '{transcribed_text}'")
-
-            # Also log the segments for debugging
-            if "segments" in result:
-                print(f"[Transcription] Number of segments: {len(result['segments'])}")
-                for i, segment in enumerate(result["segments"]):
-                    print(f"[Transcription] Segment {i}: '{segment.get('text', '')}' (no_speech_prob: {segment.get('no_speech_prob', 'N/A')})")
-
-            # Check if this is actual speech or just noise
-            # Whisper returns empty or whitespace for non-speech audio
-            if transcribed_text and len(transcribed_text) > 0:
-                # Accumulate text for live updates
-                if not is_final:
-                    # For live updates, append new text
-                    if transcribed_text not in self.accumulated_text:
-                        self.accumulated_text += " " + transcribed_text if self.accumulated_text else transcribed_text
-                        self.accumulated_text = self.accumulated_text.strip()
+                if is_speech:
+                    silence_frames = 0
+                    speech_active  = True
+                    has_speech_since_last_emit = True
                 else:
-                    # For final, use accumulated text plus any new text
-                    if transcribed_text not in self.accumulated_text:
-                        self.accumulated_text += " " + transcribed_text if self.accumulated_text else transcribed_text
-                        self.accumulated_text = self.accumulated_text.strip()
+                    silence_frames += vad_check_frames
 
-                print(f"[Transcription] Accumulated text: '{self.accumulated_text}'")
+                vad_check_buffer = []
+                vad_check_frames = 0
 
-                if self.event_loop:
-                    message_type = "final" if is_final else "transcription"
-                    asyncio.run_coroutine_threadsafe(
-                        self.websocket.send_json({
-                            "type": message_type,
-                            "text": transcribed_text,
-                            "accumulated": self.accumulated_text  # Send accumulated text for live display
-                        }),
-                        self.event_loop
-                    )
+            # ── inference triggers ────────────────────────────────
+
+            # 1. Endpoint trigger: speech followed by sufficient silence
+            #    Buffer is cleared completely — no overlap needed because
+            #    the utterance is finished.
+            if (speech_active
+                    and silence_frames >= SILENCE_ENDPOINT_FRAMES
+                    and buffer_frames > 0):
+                print(f"[TranscLoop] endpoint trigger "
+                      f"({buffer_frames/cap_rate:.1f}s buffered, "
+                      f"{silence_frames/cap_rate:.2f}s silence)")
+                audio_int16   = np.concatenate(buffer)
+                buffer        = []
+                buffer_frames = 0
+                last_infer_t  = time.time()
+                speech_active = False
+                silence_frames = 0
+                has_speech_since_last_emit = False
+                self._infer(model, audio_int16, cap_rate, is_final=False)
+
+            # 2. Overflow trigger (hard cap to prevent memory growth)
+            elif buffer_frames >= max_frames:
+                print(f"[TranscLoop] overflow trigger "
+                      f"({buffer_frames/cap_rate:.1f}s buffered)")
+                audio_int16 = np.concatenate(buffer)
+                if len(audio_int16) > overlap_frames:
+                    buffer        = [audio_int16[-overlap_frames:].copy()]
+                    buffer_frames = overlap_frames
+                else:
+                    buffer        = []
+                    buffer_frames = 0
+                last_infer_t = time.time()
+                has_speech_since_last_emit = False
+                self._infer(model, audio_int16, cap_rate, is_final=False)
+
+            # 3. Live trigger during active speech (periodic partial results)
+            #    Keeps overlap so long continuous speech has phonetic continuity.
+            elif (speech_active
+                      and buffer_frames >= int(MIN_SPEECH_S * cap_rate)):
+                elapsed = time.time() - last_infer_t
+                if elapsed >= MIN_SPEECH_S:
+                    print(f"[TranscLoop] live trigger "
+                          f"({buffer_frames/cap_rate:.1f}s buffered)")
+                    audio_int16 = np.concatenate(buffer)
+                    if len(audio_int16) > overlap_frames:
+                        buffer        = [audio_int16[-overlap_frames:].copy()]
+                        buffer_frames = overlap_frames
+                    else:
+                        buffer        = []
+                        buffer_frames = 0
+                    last_infer_t = time.time()
+                    self._infer(model, audio_int16, cap_rate, is_final=False)
+
+        # ── final inference on remaining buffer ──────────────────
+        # Only run if there is un-emitted speech.  If the endpoint
+        # already fired and nothing new was spoken, skip — otherwise
+        # Whisper hallucinates on the leftover silence.
+        if buffer_frames > 0 and has_speech_since_last_emit:
+            total_s = buffer_frames / cap_rate
+            print(f"[TranscLoop] final inference on {total_s:.2f}s of audio")
+            audio_int16 = np.concatenate(buffer)
+            self._infer(model, audio_int16, cap_rate, is_final=True)
+        else:
+            if buffer_frames > 0:
+                print(f"[TranscLoop] Skipping final — no new speech since last emit "
+                      f"({buffer_frames/cap_rate:.2f}s of silence/overlap)")
             else:
-                print("[Transcription] No speech detected in audio (empty result or silence)")
+                print("[TranscLoop] No audio captured")
+            self._flush_final_if_needed(is_final=True)
 
+        print("[TranscLoop] Done")
+
+    # ── inference ────────────────────────────────────────────────
+
+    def _infer(self, model: WhisperModel, audio_int16: np.ndarray,
+               cap_rate: int, is_final: bool = False):
+        """
+        Full pipeline for one audio batch:
+          1. Compute quality metrics on the raw (native-rate) buffer
+          2. Save debug WAV if quota allows
+          3. Resample to 16 kHz float32
+          4. Duration gate — skip if too short (bypassed for final)
+          5. RMS gate — skip if too quiet
+          6. Zero-Crossing-Rate (ZCR) log — diagnostic only
+          7. faster-whisper inference with context carryover
+          8. Accumulate + deduplicate + send
+
+        VAD is NOT applied here — it is used for endpoint detection
+        in _transcribe_loop() instead.
+        """
+        tag = "FINAL" if is_final else "live"
+        print(f"[Infer] CALLED with audio length: {len(audio_int16)}"
+              f" ({len(audio_int16)/cap_rate:.2f}s @ {cap_rate} Hz)")
+
+        # ── 1. Raw buffer quality metrics ────────────────────────────────
+        raw_duration_s = len(audio_int16) / cap_rate
+        raw_rms        = float(np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2)))
+        raw_peak       = int(np.abs(audio_int16).max())
+        raw_db         = 20 * math.log10(raw_rms / 32768.0 + 1e-9)
+
+        print(f"[Infer:{tag}] raw buffer  dur={raw_duration_s:.2f}s  "
+              f"RMS={raw_rms:.1f}  peak={raw_peak}  dB={raw_db:.1f}")
+
+        # ── 2. Debug WAV ──────────────────────────────────────────────────
+        _save_debug_wav(audio_int16, cap_rate, tag=f"_{tag.lower()}")
+
+        # ── 3. Resample to WHISPER_RATE ───────────────────────────────────
+        print(f"[Infer:{tag}] resampling {cap_rate} Hz → {WHISPER_RATE} Hz …")
+        audio_f32 = _resample(audio_int16, cap_rate)
+
+        resampled_dur = len(audio_f32) / WHISPER_RATE
+        resampled_rms = float(np.sqrt(np.mean(audio_f32 ** 2)))
+        print(f"[Infer:{tag}] resampled  dur={resampled_dur:.2f}s  "
+              f"RMS_f32={resampled_rms:.4f}  "
+              f"min={audio_f32.min():.4f}  max={audio_f32.max():.4f}")
+
+        # ── 4. Duration gate (bypassed for final inference) ──────────────
+        print(f"[Infer:{tag}] duration: {resampled_dur:.3f}s  "
+              f"(minimum: {MIN_INFER_DURATION_S}s)")
+        if resampled_dur < MIN_INFER_DURATION_S and not is_final:
+            print(f"[Infer:{tag}] SKIP: duration too short (non-final)")
+            self._flush_final_if_needed(is_final)
+            return
+        if is_final and resampled_dur < 0.3:
+            print(f"[Infer:{tag}] SKIP: final segment too short (<0.3s)")
+            self._flush_final_if_needed(is_final)
+            return
+
+        # ── 5. RMS gate ───────────────────────────────────────────────────
+        print(f"[Infer:{tag}] RMS: {resampled_rms:.5f}  "
+              f"(threshold: {MIN_INFER_RMS})")
+        if resampled_rms < MIN_INFER_RMS:
+            print(f"[Infer:{tag}] SKIP: RMS below threshold (dead signal)")
+            self._flush_final_if_needed(is_final)
+            return
+
+        # ── 6. Zero-Crossing Rate (diagnostic) ───────────────────────────
+        zcr_total  = np.sum(np.abs(np.diff(audio_f32 > 0)))
+        zcr_rate   = zcr_total / max(len(audio_f32) - 1, 1)
+        print(f"[Infer:{tag}] ZCR={zcr_rate:.4f} crossings/sample  "
+              f"({zcr_total} total)")
+
+        # ── 7. faster-whisper inference ────────────────────────────────────
+        print(f"[Infer:{tag}] starting faster-whisper inference …")
+        t0 = time.time()
+        try:
+            segments_gen, info = model.transcribe(
+                audio_f32,
+                language                   = "en",
+                task                       = "transcribe",
+                beam_size                  = 5,
+                temperature                = 0.0,
+                condition_on_previous_text = False,
+                no_speech_threshold        = 0.6,
+                log_prob_threshold         = -1.0,
+                vad_filter                 = False,
+                without_timestamps         = True,
+            )
+            # Materialise the lazy generator
+            segments = list(segments_gen)
         except Exception as e:
-            print(f"[Transcription] Error processing audio: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[Infer:{tag}] faster-whisper error: {e}")
+            import traceback; traceback.print_exc()
+            self._flush_final_if_needed(is_final)
+            return
+
+        elapsed_ms = int((time.time() - t0) * 1000)
+        detected_lang = getattr(info, "language", "?")
+        lang_prob     = getattr(info, "language_probability", 0.0)
+        print(f"[Infer:{tag}] inference done in {elapsed_ms}ms  "
+              f"lang={detected_lang} ({lang_prob:.2f})")
+
+        # Log individual segments
+        raw_parts = []
+        for i, seg in enumerate(segments):
+            nsp = getattr(seg, "no_speech_prob", None)
+            nsp_str = f"{nsp:.3f}" if nsp is not None else "?"
+            text = seg.text.strip()
+            print(f"  segment[{i}]  [{seg.start:.2f}s-{seg.end:.2f}s]  "
+                  f"no_speech={nsp_str}  '{text}'")
+            if text:
+                raw_parts.append(text)
+
+        raw_text = " ".join(raw_parts).strip()
+        print(f"[Infer:{tag}] combined result: '{raw_text}'")
+
+        if not raw_text:
+            print(f"[Infer:{tag}] empty output — skipping")
+            self._flush_final_if_needed(is_final)
+            return
+
+        # ── 8. Accumulate + word-boundary dedup + send ───────────────────
+        if self.accumulated_text:
+            acc_words = self.accumulated_text.split()
+            new_words = raw_text.split()
+            overlap   = 0
+            for length in range(min(len(acc_words), len(new_words), 8), 0, -1):
+                if acc_words[-length:] == new_words[:length]:
+                    overlap = length
+                    break
+            unique = new_words[overlap:]
+            if unique:
+                self.accumulated_text = (
+                    self.accumulated_text + " " + " ".join(unique)
+                ).strip()
+        else:
+            self.accumulated_text = raw_text
+
+        print(f"[Infer:{tag}] accumulated: '{self.accumulated_text}'")
+
+        self._send({
+            "type":        "final" if is_final else "transcription",
+            "text":        raw_text,
+            "accumulated": self.accumulated_text,
+        })
+
+    def _flush_final_if_needed(self, is_final: bool):
+        """If this was the last inference call, still deliver whatever we have."""
+        if is_final:
+            self._send({
+                "type":        "final",
+                "text":        self.accumulated_text,
+                "accumulated": self.accumulated_text,
+            })
+
+    # ── helpers ──────────────────────────────────────────────────
+
+    def _send(self, payload: dict):
+        if self.event_loop:
+            asyncio.run_coroutine_threadsafe(
+                self.websocket.send_json(payload),
+                self.event_loop
+            )
 
 # Active transcription sessions
 active_sessions: dict[str, TranscriptionSession] = {}
@@ -1044,8 +1231,24 @@ async def websocket_transcribe(websocket: WebSocket):
                     session = active_sessions[session_id]
                     session.stop_recording()
                     print(f"[WebSocket] Stopping recording for session: {session_id}")
-                    # Wait a moment for final transcription to complete
-                    await asyncio.sleep(1.0)
+
+                    # Wait for the transcription thread to drain the queue and
+                    # deliver the final result — poll in short increments so we
+                    # don't block the event loop, timeout after 30 s.
+                    max_wait_s = 30.0
+                    poll_interval_s = 0.2
+                    waited = 0.0
+                    while waited < max_wait_s:
+                        t = session.transcription_thread
+                        if t is None or not t.is_alive():
+                            break
+                        await asyncio.sleep(poll_interval_s)
+                        waited += poll_interval_s
+
+                    if waited >= max_wait_s:
+                        print(f"[WebSocket] WARNING: transcription thread did not finish within {max_wait_s}s")
+
+                    print(f"[WebSocket] Transcription thread finished after {waited:.1f}s")
                     del active_sessions[session_id]
                     await websocket.send_json({"type": "status", "status": "stopped"})
                 else:
@@ -1080,13 +1283,20 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    """Preload Whisper model on application startup."""
-    print("[Startup] Preloading Whisper model...")
+    """Preload faster-whisper and Silero VAD models at startup."""
+    print("[Startup] Preloading faster-whisper model …")
     try:
-        get_whisper_model()
-        print("[Startup] Whisper model preloaded successfully")
+        get_faster_whisper_model()
+        print("[Startup] faster-whisper ready")
     except Exception as e:
-        print(f"[Startup] Warning: Failed to preload Whisper model: {e}")
+        print(f"[Startup] Warning: faster-whisper preload failed: {e}")
+
+    print("[Startup] Preloading Silero VAD model …")
+    try:
+        get_vad_model()
+        print("[Startup] Silero VAD ready")
+    except Exception as e:
+        print(f"[Startup] Warning: Silero VAD preload failed: {e}")
 
 if __name__ == "__main__":
     import uvicorn

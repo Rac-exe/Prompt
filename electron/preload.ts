@@ -31,6 +31,7 @@ declare global {
         start: (sessionId: string) => void;
         stop: () => void;
         onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+        onStatus: (callback: (status: string) => void) => void;
         onError: (callback: (error: string) => void) => void;
       };
 
@@ -167,6 +168,9 @@ const electronAPI = {
     },
     onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => {
       ipcRenderer.on('transcription:update', (_event, data) => callback(data));
+    },
+    onStatus: (callback: (status: string) => void) => {
+      ipcRenderer.on('transcription:status', (_event, status) => callback(status));
     },
     onError: (callback: (error: string) => void) => {
       ipcRenderer.on('transcription:error', (_event, error) => callback(error));
