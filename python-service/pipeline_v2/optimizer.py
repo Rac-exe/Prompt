@@ -22,6 +22,7 @@ import litellm
 from .context import ChatContext
 from .skills import load_selected_skills
 from .usage_logger import log_usage
+from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 
 litellm.set_verbose = False
 
@@ -128,34 +129,49 @@ def optimize(
     model: str = "gpt-4o-mini",
     provider: str = "auto",
     stream: bool = False,
+    mode: str = "thinking",
 ) -> str:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
     Automatically summarizes context if token budget exceeded.
+    Supports Mode: "fast" or "thinking".
     """
-    system_prompt = _load_system_prompt("system_prompt_optimizer.md")
     resolved_model, extra = _get_litellm_kwargs(provider, model)
-
-    # Select skills
-    skill_names, skills_content = load_selected_skills(user_input)
-
-    # Context management: compact if CC exceeds token budget
-    if cc.token_estimate() > SUMMARIZE_THRESHOLD:
-        print("🔄  Compacting context (haiku summarizer)...")
-        try:
-            summary_text = summarize_context(cc, provider)
-            cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
-            # Persist compacted version — future runs read summary, not raw messages
-            from .context import save_chat_context as _save
-            _save(cc)
-        except Exception as exc:
-            # Summarizer failed — fall back to tail-trim, do not crash
-            print(f"⚠️  Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
-            # cc unchanged; to_text below will trim to CC_FALLBACK_MSGS
-
-    cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
-
-    user_prompt = f"""CHAT CONTEXT:
+    
+    if mode == "fast":
+        prompt_type = detect_prompt_type(user_input)
+        optimization_strategy = get_optimization_strategy(prompt_type)
+        
+        system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
+        messages = [{"role": "system", "content": system_content}]
+        
+        # Include recent history
+        for msg in cc.messages[-CC_FALLBACK_MSGS:]:
+            messages.append({"role": msg.role, "content": msg.content})
+            
+        messages.append({"role": "user", "content": user_input})
+        skill_names = []
+        
+    else:
+        system_prompt = _load_system_prompt("system_prompt_optimizer.md")
+        
+        # Select skills
+        skill_names, skills_content = load_selected_skills(user_input)
+    
+        # Context management: compact if CC exceeds token budget
+        if cc.token_estimate() > SUMMARIZE_THRESHOLD:
+            print("🔄  Compacting context (haiku summarizer)...")
+            try:
+                summary_text = summarize_context(cc, provider)
+                cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
+                from .context import save_chat_context as _save
+                _save(cc)
+            except Exception as exc:
+                print(f"⚠️  Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
+    
+        cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
+    
+        user_prompt = f"""CHAT CONTEXT:
 {cc_text}
 
 LOADED SKILLS: {', '.join(skill_names)}
@@ -165,27 +181,48 @@ USER REQUEST:
 {user_input}
 
 Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant skill techniques, and provide the fully optimized prompt."""
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
+    
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
     # Collect response (stream or not) and output directly
-    result = ""
-    usage = None
     t0 = time.perf_counter()
+    
     if stream:
         response = litellm.completion(
             model=resolved_model, messages=messages,
             max_tokens=1500, temperature=0.7, stream=True,
             stream_options={"include_usage": True}, **extra,
         )
-        for chunk in response:
-            delta = chunk.choices[0].delta.content or ""
-            result += delta
-            if hasattr(chunk, "usage") and chunk.usage:
-                usage = chunk.usage
+        def _stream_generator():
+            result_acc = ""
+            usage = None
+            for chunk in response:
+                delta = chunk.choices[0].delta.content or ""
+                if delta:
+                    result_acc += delta
+                    yield delta
+                if hasattr(chunk, "usage") and chunk.usage:
+                    usage = chunk.usage
+                    
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            if usage:
+                log_usage(
+                    call_type=f"optimizer_{mode}",
+                    model=resolved_model,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    total_tokens=usage.total_tokens,
+                    session_id=cc.session_id,
+                    skills=skill_names,
+                    latency_ms=latency_ms,
+                )
+            # print("Stream completed.")
+            
+        return _stream_generator()
+        
     else:
         response = litellm.completion(
             model=resolved_model, messages=messages,
@@ -194,19 +231,20 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
         result = response.choices[0].message.content
         usage = response.usage
 
-    latency_ms = int((time.perf_counter() - t0) * 1000)
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+    
+        if usage:
+            log_usage(
+                call_type=f"optimizer_{mode}",
+                model=resolved_model,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                session_id=cc.session_id,
+                skills=skill_names,
+                latency_ms=latency_ms,
+            )
+    
+        print(result.strip())
+        return result.strip()
 
-    if usage:
-        log_usage(
-            call_type="optimizer",
-            model=resolved_model,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
-            session_id=cc.session_id,
-            skills=skill_names,
-            latency_ms=latency_ms,
-        )
-
-    print(result.strip())
-    return result.strip()
