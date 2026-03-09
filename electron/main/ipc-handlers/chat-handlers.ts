@@ -40,7 +40,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string) => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
         try {
             // Retrieve chat history for context-aware optimization
             let chatHistory: Array<{ role: string; content: string }> | null = null;
@@ -65,7 +65,8 @@ export function registerChatHandlers(
                     if (appWindowManager) {
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });
                     }
-                }
+                },
+                mode
             );
 
             // Save optimization to database
@@ -228,7 +229,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Send message (creates chat if needed, saves, optimizes)
     // ============================================
-    ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string }) => {
+    ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string; mode?: string }) => {
         try {
             let chatId = data.chatId;
             let chat;
@@ -274,7 +275,8 @@ export function registerChatHandlers(
                     if (appWindowManager) {
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });
                     }
-                }
+                },
+                data.mode || 'fast'
             );
 
             // Save optimization record
