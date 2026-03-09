@@ -147,9 +147,6 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
-    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
-    font-size: 15px;
     line-height: 1.6;
     letter-spacing: -0.01em;
   }
