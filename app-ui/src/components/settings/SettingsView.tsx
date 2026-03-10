@@ -26,7 +26,7 @@ const Section = ({ title, description, children }: {
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
     </div>
-    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+    <div className="bg-black/5 dark:bg-white/5 border border-transparent rounded-xl overflow-hidden text-foreground/90">
       {children}
     </div>
   </div>
@@ -63,6 +63,18 @@ export const SettingsView = () => {
       .then((loaded) => { setSettings(loaded); })
       .catch((err) => console.error('[SettingsView] Failed to load settings:', err))
       .finally(() => setIsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    // If component unmounts and is dirty, revert to saved state
+    return () => {
+      // We can't use `isDirty` state inside a cleanup directly due to closure,
+      // but we can trust `loadSettings` and `applySettings` to restore defaults.
+      // A more robust way: always re-apply true settings on unmount
+      loadSettings().then((loaded) => {
+        applySettings(loaded);
+      });
+    };
   }, []);
 
   useEffect(() => {
@@ -361,6 +373,7 @@ export const SettingsView = () => {
               onClick={async () => {
                 const loaded = await loadSettings();
                 setSettings(loaded);
+                applySettings(loaded); // Explicitly revert UI
                 setIsDirty(false);
               }}
             >

@@ -15,8 +15,8 @@ interface ProfileMenuProps {
 
 export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }: ProfileMenuProps) => {
   const { user, signOut } = useAuth();
-  const userEmail  = user?.profile?.email || "user@example.com";
-  const userName   = user?.profile?.name || userEmail.split("@")[0];
+  const userEmail = user?.profile?.email || "user@example.com";
+  const userName = user?.profile?.name || userEmail.split("@")[0];
   const userInitial = (user?.profile?.name?.[0] || userEmail[0] || "U").toUpperCase();
 
   return (
@@ -24,7 +24,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }:
       <DropdownMenuTrigger asChild>
         <button
           className={cn(
-            "flex items-center rounded-lg hover:bg-sidebar-accent transition-smooth w-full",
+            "flex items-center rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 transition-smooth w-full text-foreground/90 border border-transparent hover:border-border/50",
             collapsed ? "justify-center p-1.5" : "gap-2.5 px-2 py-1.5"
           )}
         >
