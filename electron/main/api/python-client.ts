@@ -118,7 +118,8 @@ export class PythonClient extends EventEmitter {
     skipCache: boolean = false,
     messages: Array<{ role: string; content: string }> | null = null,
     onChunk: (chunk: string, accumulated: string) => void,
-    mode: string = "fast"
+    mode: string = "fast",
+    customInstructions: string = ""
   ): Promise<string> {
     await this.ensureConnection();
 
@@ -220,7 +221,8 @@ export class PythonClient extends EventEmitter {
           prompt,
           skip_cache: skipCache,
           messages,
-          mode
+          mode,
+          custom_instructions: customInstructions
         }));
       } catch (error) {
         clearTimeout(timeoutId);
@@ -235,14 +237,16 @@ export class PythonClient extends EventEmitter {
     prompt: string,
     skipCache: boolean = false,
     messages?: Array<{ role: string; content: string }>,
-    mode: string = "fast"
+    mode: string = "fast",
+    customInstructions: string = ""
   ): Promise<string> {
     try {
       const response = await this.client.post("/optimize", {
         prompt,
         skip_cache: skipCache,
         messages: messages || null,
-        mode
+        mode,
+        custom_instructions: customInstructions
       });
       return response.data.optimized;
     } catch (error) {

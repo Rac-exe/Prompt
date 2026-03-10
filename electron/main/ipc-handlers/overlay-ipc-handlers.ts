@@ -6,6 +6,8 @@ import { PromptLibraryService } from '../database/services/prompt-library-servic
 import { OptimizationService } from '../database/services/optimization-service';
 import { authState } from '../utils/auth-state';
 import { replaceAtLastAnchor, isNativeBridgeAvailable } from '../utils/native-bridge';
+import { SettingsService } from '../database/services/settings-service';
+import { UserService } from '../database/services/user-service';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -46,6 +48,18 @@ function getOptimizationService(): OptimizationService {
   return optimizationService;
 }
 
+let settingsService: SettingsService | null = null;
+function getSettingsService(): SettingsService {
+  if (!settingsService) settingsService = new SettingsService();
+  return settingsService;
+}
+
+let userService: UserService | null = null;
+function getUserService(): UserService {
+  if (!userService) userService = new UserService();
+  return userService;
+}
+
 export function registerOverlayHandlers(
   overlayManager: OverlayWindowManager,
   pythonClient: PythonClient,
@@ -66,6 +80,21 @@ export function registerOverlayHandlers(
     }
 
     try {
+      let customInstructions = "";
+      if (authState.isAuthenticated) {
+        try {
+          const profile = await getUserService().getUserProfile();
+          if (profile) {
+            const settings = await getSettingsService().getUserSettings(profile.id);
+            if (settings) {
+              customInstructions = settings.prompt_instructions || "";
+            }
+          }
+        } catch (settingsErr) {
+          console.warn('[Overlay] Failed to fetch custom instructions:', settingsErr);
+        }
+      }
+
       const optimizedText = await pythonClient.optimizeStream(
         data.text,
         !!data.isRegenerate,
@@ -73,7 +102,8 @@ export function registerOverlayHandlers(
         (chunk: string, accumulated: string) => {
           overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
         },
-        data.mode || 'fast'
+        data.mode || 'fast',
+        customInstructions
       );
 
       overlayManager.send('overlay:optimization-complete', {

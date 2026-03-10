@@ -1,21 +1,24 @@
 import { ipcMain } from 'electron';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
-import { UserService } from '../database/services/user-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PythonClient } from '../api/python-client';
 import { authState } from '../utils/auth-state';
+import { SettingsService } from '../database/services/settings-service';
+import { UserService } from '../database/services/user-service';
 
 // Lazy load services
 let chatService: ChatService | null = null;
 let optimizationService: OptimizationService | null = null;
 let userService: UserService | null = null;
+let settingsService: SettingsService | null = null;
 
 function getServices() {
     if (!chatService) chatService = new ChatService();
     if (!optimizationService) optimizationService = new OptimizationService();
     if (!userService) userService = new UserService();
-    return { chatService, optimizationService, userService };
+    if (!settingsService) settingsService = new SettingsService();
+    return { chatService, optimizationService, userService, settingsService };
 }
 
 // Module-level state for optimization context
@@ -56,6 +59,19 @@ export function registerChatHandlers(
                 }
             }
 
+            let customInstructions = "";
+            if (authState.isAuthenticated && userService && settingsService) {
+                try {
+                    const profile = await userService.getUserProfile();
+                    if (profile) {
+                        const settings = await settingsService.getUserSettings(profile.id);
+                        customInstructions = settings?.prompt_instructions || "";
+                    }
+                } catch (settingsErr) {
+                    console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
+                }
+            }
+
             // Use streaming optimization
             const optimizedText = await pythonClient.optimizeStream(
                 promptText,
@@ -66,7 +82,8 @@ export function registerChatHandlers(
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });
                     }
                 },
-                mode
+                mode,
+                customInstructions
             );
 
             // Save optimization to database
@@ -266,6 +283,19 @@ export function registerChatHandlers(
                 });
             }
 
+            let customInstructions = "";
+            if (authState.isAuthenticated && userService && settingsService) {
+                try {
+                    const profile = await userService.getUserProfile();
+                    if (profile) {
+                        const settings = await settingsService.getUserSettings(profile.id);
+                        customInstructions = settings?.prompt_instructions || "";
+                    }
+                } catch (settingsErr) {
+                    console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
+                }
+            }
+
             // Trigger streaming optimization
             const optimizedText = await pythonClient.optimizeStream(
                 data.content,
@@ -276,7 +306,8 @@ export function registerChatHandlers(
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });
                     }
                 },
-                data.mode || 'fast'
+                data.mode || 'fast',
+                customInstructions
             );
 
             // Save optimization record
