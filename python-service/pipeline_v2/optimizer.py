@@ -130,6 +130,7 @@ def optimize(
     provider: str = "auto",
     stream: bool = False,
     mode: str = "thinking",
+    custom_instructions: str = "",
 ) -> str:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -143,6 +144,10 @@ def optimize(
         optimization_strategy = get_optimization_strategy(prompt_type)
         
         system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
+        
+        if custom_instructions and custom_instructions.strip():
+            system_content += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
+
         messages = [{"role": "system", "content": system_content}]
         
         # Include recent history
@@ -181,6 +186,9 @@ USER REQUEST:
 {user_input}
 
 Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant skill techniques, and provide the fully optimized prompt."""
+
+        if custom_instructions and custom_instructions.strip():
+            system_prompt += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
     
         messages = [
             {"role": "system", "content": system_prompt},

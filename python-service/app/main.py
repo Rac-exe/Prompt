@@ -277,6 +277,7 @@ class OptimizeRequest(BaseModel):
     skip_cache: Optional[bool] = False  # Set to True to bypass cache (for refresh)
     messages: Optional[list[Message]] = None  # Chat history for context-aware optimization
     mode: Optional[str] = "fast"  # new dual-mode toggle ("fast" or "thinking")
+    custom_instructions: Optional[str] = ""  # User's custom prompt instructions
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -365,6 +366,7 @@ async def optimize_prompt(request: OptimizeRequest):
                 cc.add_message(msg.role, msg.content)
 
         mode = getattr(request, 'mode', 'fast')
+        custom_instructions = getattr(request, 'custom_instructions', '')
         
         # Call pipeline
         optimized_raw = pipeline_optimize(
@@ -373,7 +375,8 @@ async def optimize_prompt(request: OptimizeRequest):
             model="ollama/llama3.2",  # Default model, ideally configured
             provider="auto",
             stream=False,
-            mode=mode
+            mode=mode,
+            custom_instructions=custom_instructions
         )
         
         optimized = clean_optimized_text(optimized_raw)
@@ -423,6 +426,7 @@ async def optimize_stream(websocket: WebSocket):
             skip_cache = data.get("skip_cache", False)
             messages = data.get("messages", None)
             mode = data.get("mode", "fast")
+            custom_instructions = data.get("custom_instructions", "")
             
             print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode})")
             
@@ -452,7 +456,8 @@ async def optimize_stream(websocket: WebSocket):
                     model="ollama/llama3.2",
                     provider="auto",
                     stream=True,
-                    mode=mode
+                    mode=mode,
+                    custom_instructions=custom_instructions
                 )
                 
                 accumulated_text = ""
