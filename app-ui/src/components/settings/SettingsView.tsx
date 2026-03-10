@@ -55,7 +55,6 @@ export const SettingsView = () => {
     fontFamily: "inter",
     promptInstructions: "",
   });
-  const [isDirty, setIsDirty] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -65,43 +64,24 @@ export const SettingsView = () => {
       .finally(() => setIsLoading(false));
   }, []);
 
-  useEffect(() => {
-    // If component unmounts and is dirty, revert to saved state
-    return () => {
-      // We can't use `isDirty` state inside a cleanup directly due to closure,
-      // but we can trust `loadSettings` and `applySettings` to restore defaults.
-      // A more robust way: always re-apply true settings on unmount
-      loadSettings().then((loaded) => {
-        applySettings(loaded);
-        if (window.electronAPI && window.electronAPI.send) {
-          window.electronAPI.send('overlay:settings-update', loaded);
-        }
-      });
-    };
-  }, []);
-
-  useEffect(() => {
-    if (isDirty) applySettings(settings);
-  }, [settings, isDirty]);
-
   const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
     const newSettings = { ...settings, [key]: value };
+
+    // 1. Update component rendering state
     setSettings(newSettings);
-    setIsDirty(true);
-    // Broadcast preview to overlay instantly
+
+    // 2. Instantly apply the settings visually
+    applySettings(newSettings);
+
+    // 3. Persist setting to the backend
+    saveSettings(newSettings).catch((err) => {
+      console.error('[SettingsView] Failed to auto-save:', err);
+      toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
+    });
+
+    // 4. Instantly broadcast setting payload to overlay
     if (window.electronAPI && window.electronAPI.send) {
       window.electronAPI.send('overlay:settings-update', newSettings);
-    }
-  };
-
-  const handleSave = async () => {
-    try {
-      await saveSettings(settings);
-      setIsDirty(false);
-      applySettings(settings);
-      toast({ title: "Settings saved", description: "Your preferences have been updated." });
-    } catch (error) {
-      toast({ title: "Save failed", description: "Could not save settings.", variant: "destructive" });
     }
   };
 
@@ -360,33 +340,7 @@ export const SettingsView = () => {
         </TabsContent>
       </Tabs>
 
-      {/* ── Sticky save bar ── */}
-      {isDirty && (
-        <div className="flex-shrink-0 px-6 py-3.5 border-t border-border bg-surface/60 animate-slide-up flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">You have unsaved changes</p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost" size="sm"
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
-              onClick={async () => {
-                const loaded = await loadSettings();
-                setSettings(loaded);
-                applySettings(loaded); // Explicitly revert UI
-                setIsDirty(false);
-              }}
-            >
-              Discard
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleSave}
-              className="h-8 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm"
-            >
-              Save Changes
-            </Button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 };
