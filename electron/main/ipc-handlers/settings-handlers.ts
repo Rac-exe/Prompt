@@ -10,7 +10,9 @@ function getService() {
     return settingsService;
 }
 
-export function registerSettingsHandlers() {
+import { OverlayWindowManager } from '../overlay/overlay-window-manager';
+
+export function registerSettingsHandlers(overlayManager: OverlayWindowManager) {
     const service = getService();
 
     // ============================================
@@ -54,6 +56,10 @@ export function registerSettingsHandlers() {
 
             const saved = await service.upsertUserSettings(authState.currentUserId, settings);
             console.log('[Settings] ✅ Settings saved for user:', authState.currentUserId);
+
+            // Broadcast new settings to the overlay so it can update its UI instantly
+            overlayManager.send('overlay:settings-update', settings);
+
             return saved;
         } catch (error) {
             console.error('[Settings] Error saving settings:', error);

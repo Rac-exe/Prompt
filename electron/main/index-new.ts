@@ -151,7 +151,7 @@ async function initialize() {
   // ============================================
   registerAuthHandlers(appWindowManager);
   registerUserHandlers(appWindowManager);
-  registerSettingsHandlers();
+  registerSettingsHandlers(overlayManager);
   registerChatHandlers(appWindowManager, pythonClient);
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
 

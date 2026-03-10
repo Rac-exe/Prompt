@@ -162,6 +162,23 @@ export function registerOverlayHandlers(
   });
 
   // ============================================
+  // overlay:get-settings — Get current user settings for overlay styling
+  // ============================================
+  ipcMain.handle('overlay:get-settings', async () => {
+    if (!authState.isAuthenticated || !authState.currentUserId) {
+      return {
+        theme: 'dark',
+        font_size: 'medium',
+        font_family: 'inter',
+        prompt_instructions: '',
+      };
+    }
+    const { SettingsService } = require('../database/services/settings-service');
+    const settingsService = new SettingsService();
+    return await settingsService.getOrCreateSettings(authState.currentUserId);
+  });
+
+  // ============================================
   // overlay:get-collections — Get collections for save picker
   // ============================================
   ipcMain.handle('overlay:get-collections', async () => {

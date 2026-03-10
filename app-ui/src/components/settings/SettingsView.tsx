@@ -73,6 +73,9 @@ export const SettingsView = () => {
       // A more robust way: always re-apply true settings on unmount
       loadSettings().then((loaded) => {
         applySettings(loaded);
+        if (window.electronAPI && window.electronAPI.send) {
+          window.electronAPI.send('overlay:settings-update', loaded);
+        }
       });
     };
   }, []);
@@ -82,8 +85,13 @@ export const SettingsView = () => {
   }, [settings, isDirty]);
 
   const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    const newSettings = { ...settings, [key]: value };
+    setSettings(newSettings);
     setIsDirty(true);
+    // Broadcast preview to overlay instantly
+    if (window.electronAPI && window.electronAPI.send) {
+      window.electronAPI.send('overlay:settings-update', newSettings);
+    }
   };
 
   const handleSave = async () => {

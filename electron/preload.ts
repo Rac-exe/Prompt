@@ -22,6 +22,8 @@ declare global {
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
         onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
         onOptimizationError: (callback: (data: { error: string }) => void) => void;
+        getSettings: () => Promise<any>;
+        onSettingsUpdate: (callback: (settings: any) => void) => void;
       };
 
       // ============================================
@@ -153,6 +155,12 @@ const electronAPI = {
     },
     onOptimizationError: (callback: (data: { error: string }) => void) => {
       ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
+    },
+    getSettings: () => {
+      return ipcRenderer.invoke('overlay:get-settings');
+    },
+    onSettingsUpdate: (callback: (settings: any) => void) => {
+      ipcRenderer.on('overlay:settings-update', (_event, settings) => callback(settings));
     },
   },
 

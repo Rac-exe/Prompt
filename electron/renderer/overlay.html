@@ -1398,6 +1398,52 @@
         setGenerateIdle();
       });
     }
+
+    // ==========================================
+    // DYNAMIC SETTINGS SYNC (Theme, Font, Size)
+    // ==========================================
+
+    function applySettings(settings) {
+      if (!settings) return;
+
+      const root = document.documentElement;
+
+      // 1. Apply Theme
+      if (settings.theme === 'dark') {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+
+      // 2. Apply Font Size (matches Tailwind classes text-sm, text-base, text-lg)
+      // Base styles use ~13px for inputs, so we scale the whole HTML root slightly
+      if (settings.font_size === 'small') {
+        root.style.fontSize = '14px';
+      } else if (settings.font_size === 'large') {
+        root.style.fontSize = '18px';
+      } else {
+        root.style.fontSize = '16px'; // medium default
+      }
+
+      // 3. Apply Font Family
+      if (settings.font_family === 'mono') {
+        root.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+      } else if (settings.font_family === 'serif') {
+        root.style.fontFamily = 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif';
+      } else { // 'inter' or default
+        root.style.fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
+      }
+    }
+
+    // Fetch initial settings on load
+    if (window.electronAPI?.overlay?.getSettings) {
+      window.electronAPI.overlay.getSettings().then(applySettings).catch(err => console.error('[Overlay] Failed to load settings:', err));
+    }
+
+    // Listen for live setting updates broadcast by the main app
+    if (window.electronAPI?.overlay?.onSettingsUpdate) {
+      window.electronAPI.overlay.onSettingsUpdate(applySettings);
+    }
   </script>
 </body>
 
