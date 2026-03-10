@@ -56,13 +56,28 @@ export const SettingsView = () => {
     promptInstructions: "",
   });
   const [isLoading, setIsLoading] = useState(true);
+  // Local state for custom instructions — only saved on explicit Save press
+  const [localInstructions, setLocalInstructions] = useState("");
 
   useEffect(() => {
     loadSettings()
-      .then((loaded) => { setSettings(loaded); })
+      .then((loaded) => {
+        setSettings(loaded);
+        setLocalInstructions(loaded.promptInstructions ?? "");
+      })
       .catch((err) => console.error('[SettingsView] Failed to load settings:', err))
       .finally(() => setIsLoading(false));
   }, []);
+
+  const instructionsDirty = localInstructions !== settings.promptInstructions;
+
+  const saveInstructions = () => {
+    updateSetting("promptInstructions", localInstructions);
+  };
+
+  const discardInstructions = () => {
+    setLocalInstructions(settings.promptInstructions ?? "");
+  };
 
   const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
     const newSettings = { ...settings, [key]: value };
@@ -262,19 +277,41 @@ export const SettingsView = () => {
             <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
               {/* Custom instructions */}
               <Section
-                title="Custom Prompt Instructions"
-                description="Appended to every optimization request as context for the AI"
+                title="Custom Instructions"
+                description="Added to every optimization as secondary context — think of it as a persistent system-level preference"
               >
-                <div className="p-4">
+                <div className="p-4 space-y-2.5">
                   <Textarea
-                    value={settings.promptInstructions}
-                    onChange={(e) => updateSetting("promptInstructions", e.target.value)}
-                    placeholder="e.g. 'Always use formal tone', 'Include examples', 'Focus on technical accuracy'…"
-                    className="min-h-[100px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/40 leading-relaxed"
+                    value={localInstructions}
+                    onChange={(e) => setLocalInstructions(e.target.value)}
+                    placeholder="e.g. 'Always use formal tone', 'Include code examples', 'Prefer concise responses'…"
+                    className="min-h-[110px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/40 leading-relaxed"
+                    maxLength={1000}
                   />
-                  <p className="text-[10px] text-muted-foreground/50 mt-1.5">
-                    {settings.promptInstructions.length} / 1000 characters
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-muted-foreground/50">
+                      {localInstructions.length} / 1000
+                    </p>
+                    {instructionsDirty && (
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={discardInstructions}
+                          className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Discard
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={saveInstructions}
+                          className="h-7 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Section>
 
