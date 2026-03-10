@@ -292,10 +292,6 @@ export const ChatView = ({
         </div>
       )}
 
-      {/* Keyboard hint */}
-      <p className="text-[11px] text-muted-foreground/30 text-center mt-2.5 select-none">
-        Shift + Enter for new line · Enter to generate
-      </p>
     </div>
   );
 
@@ -326,23 +322,7 @@ export const ChatView = ({
                 </p>
               </div>
 
-              {/* Suggestion chips */}
-              <div className="flex flex-wrap gap-2 justify-center">
-                {[
-                  'Technical documentation',
-                  'Creative writing assistant',
-                  'Code review prompt',
-                  'Data analysis template',
-                ].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    onClick={() => setInput(`Create a ${suggestion.toLowerCase()}`)}
-                    className="px-3 py-1.5 rounded-full text-[12px] font-medium bg-surface border border-border text-muted-foreground hover:text-foreground hover:border-emerald/35 hover:bg-sidebar-accent transition-smooth"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+              <div className="flex flex-wrap gap-2 justify-center" />
             </div>
 
             {inputBox}

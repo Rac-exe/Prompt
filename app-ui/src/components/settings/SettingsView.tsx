@@ -346,17 +346,7 @@ export const SettingsView = () => {
                 </Row>
               </Section>
 
-              {/* Interface */}
-              <Section title="Interface">
-                <Row>
-                  <RowLabel label="Beta Features" hint="Early access to experimental features" />
-                  <Switch defaultChecked={false} className="data-[state=checked]:bg-emerald" />
-                </Row>
-                <Row>
-                  <RowLabel label="Animations" hint="Smooth transitions and micro-interactions" />
-                  <Switch defaultChecked={true} className="data-[state=checked]:bg-emerald" />
-                </Row>
-              </Section>
+
             </div>
           </ScrollArea>
         </TabsContent>
