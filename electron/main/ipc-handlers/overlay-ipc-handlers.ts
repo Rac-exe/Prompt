@@ -60,6 +60,9 @@ function getUserService(): UserService {
   return userService;
 }
 
+// Simple in-memory history for the overlay session so the user can refine prompts
+const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
+
 export function registerOverlayHandlers(
   overlayManager: OverlayWindowManager,
   pythonClient: PythonClient,
@@ -79,6 +82,12 @@ export function registerOverlayHandlers(
       return;
     }
 
+    // Handle session reset if the overlay is closed and opened again
+    // For now, we'll just keep a rolling history of the last 10 messages
+    if (inMemoryOverlayHistory.length > 20) {
+        inMemoryOverlayHistory.splice(0, inMemoryOverlayHistory.length - 20);
+    }
+
     try {
       let customInstructions = "";
       if (authState.isAuthenticated) {
@@ -95,16 +104,25 @@ export function registerOverlayHandlers(
         }
       }
 
+      // We pass the current history before adding the new message
+      const historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
+      
+      // Add the user's new message to history
+      inMemoryOverlayHistory.push({ role: 'user', content: data.text });
+
       const optimizedText = await pythonClient.optimizeStream(
         data.text,
         !!data.isRegenerate,
-        null,
+        historyContext,
         (chunk: string, accumulated: string) => {
           overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
         },
         data.mode || 'fast',
         customInstructions
       );
+
+      // Add the assistant's response to history
+      inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
 
       overlayManager.send('overlay:optimization-complete', {
         original: data.text,

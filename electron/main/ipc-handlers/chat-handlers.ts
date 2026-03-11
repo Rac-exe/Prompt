@@ -296,11 +296,26 @@ export function registerChatHandlers(
                 }
             }
 
+            // Fetch chat history for context
+            let messagesContext: Array<{role: string, content: string}> = [];
+            try {
+                const history = await chatService.getMessages(chatId);
+                // Get the last 10 messages, but EXCLUDE the one we just added (the new prompt)
+                // because the python backend expects the new prompt separately
+                const relevantHistory = history.filter(m => m.id !== userMessage.id).slice(-10);
+                messagesContext = relevantHistory.map(m => ({
+                    role: m.role,
+                    content: m.content
+                }));
+            } catch (historyErr) {
+                console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
+            }
+
             // Trigger streaming optimization
             const optimizedText = await pythonClient.optimizeStream(
                 data.content,
                 false,
-                null,
+                messagesContext.length > 0 ? messagesContext : null,
                 (chunk, accumulated) => {
                     if (appWindowManager) {
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });

@@ -363,7 +363,7 @@ async def optimize_prompt(request: OptimizeRequest):
         if request.messages:
             for msg in request.messages:
                 # msg is a Pydantic Message object with role/content
-                cc.add_message(msg.role, msg.content)
+                cc.add(msg.role, msg.content)
 
         mode = getattr(request, 'mode', 'fast')
         custom_instructions = getattr(request, 'custom_instructions', '')
@@ -372,7 +372,7 @@ async def optimize_prompt(request: OptimizeRequest):
         optimized_raw = pipeline_optimize(
             user_input=clean_prompt,
             cc=cc,
-            model="ollama/llama3.2",  # Default model, ideally configured
+            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
             provider="auto",
             stream=False,
             mode=mode,
@@ -446,14 +446,14 @@ async def optimize_stream(websocket: WebSocket):
                 for msg in messages:
                     role_str = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
                     content_str = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
-                    cc.add_message(role_str, content_str)
+                    cc.add(role_str, content_str)
             
             try:
                 # Call pipeline configured for streaming, returning a generator
                 stream_gen = pipeline_optimize(
                     user_input=prompt_text,
                     cc=cc,
-                    model="ollama/llama3.2",
+                    model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
                     provider="auto",
                     stream=True,
                     mode=mode,
