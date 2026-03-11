@@ -43,20 +43,19 @@ CC_KEEP_RECENT    = 4        # recent messages to keep after compaction
 CC_FALLBACK_MSGS  = 6        # messages to use if summarizer fails
 
 # Dedicated cheap/fast model for summarization (separate from the main optimizer)
-SUMMARIZER_MODEL = "claude-haiku-4-5-20251001"
+SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "claude-haiku-4-5-20251001")
 
 
 # ── Provider config ───────────────────────────────────────────────────────────
 def _get_litellm_kwargs(provider: str, model: str) -> Tuple[str, dict]:
     """Return (resolved_model, extra_kwargs) for litellm."""
-    if provider == "megallm":
-        api_key = os.getenv("MEGALLM_API_KEY")
-        api_base = os.getenv("MEGALLM_API_BASE", "https://ai.megallm.io/v1")
+    if provider == "openrouter" or model.startswith("openrouter/"):
+        api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
-            print("❌  MEGALLM_API_KEY not set in .env")
+            print("❌  OPENROUTER_API_KEY not set in .env")
             sys.exit(1)
-        resolved = f"openai/{model}" if not model.startswith("openai/") else model
-        return resolved, {"api_key": api_key, "api_base": api_base}
+        # We leave the openrouter prefix if it's there, LiteLLM handles it gracefully
+        return model, {"api_key": api_key}
     return model, {}
 
 
