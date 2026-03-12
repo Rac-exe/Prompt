@@ -16,6 +16,10 @@
       box-sizing: border-box;
     }
 
+    html {
+      height: 100%;
+    }
+
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       background: transparent;
@@ -23,17 +27,28 @@
       color: hsl(var(--foreground));
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+      height: 100%;
+      margin: 0;
     }
 
     /* ======== PANEL SHELL ======== */
+    #panel {
+      height: 100%;
+      display: flex;
+      justify-content: center;
+    }
+
     .overlay-panel {
       width: 480px;
+      height: 100%;
       border-radius: 20px;
       background: hsl(var(--background));
       border: 1px solid hsl(var(--border));
       box-shadow: none;
       overflow: hidden;
       position: relative;
+      display: flex;
+      flex-direction: column;
     }
 
     /* Subtle top-edge accent line */
@@ -73,6 +88,8 @@
 
     .view.active {
       display: flex;
+      flex: 1;
+      min-height: 0;
     }
 
     /* ======== ANIMATIONS ======== */
@@ -87,41 +104,12 @@
     }
 
     @keyframes pulse {
-
-      0%,
-      100% {
-        opacity: 1;
-      }
-
-      50% {
-        opacity: 0.4;
-      }
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
 
     .animate-pulse {
       animation: pulse 1.5s ease-in-out infinite;
-    }
-
-    @keyframes thinking {
-
-      0%,
-      20% {
-        content: '.';
-      }
-
-      40% {
-        content: '..';
-      }
-
-      60%,
-      100% {
-        content: '...';
-      }
-    }
-
-    .thinking-dots::after {
-      content: '.';
-      animation: thinking 1.4s infinite;
     }
 
     @keyframes fade-slide-in {
@@ -129,7 +117,6 @@
         opacity: 0;
         transform: translateY(8px);
       }
-
       to {
         opacity: 1;
         transform: translateY(0);
@@ -140,61 +127,30 @@
       animation: fade-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    @keyframes shimmer {
-      0% {
-        background-position: -200% 0;
-      }
-
-      100% {
-        background-position: 200% 0;
-      }
+    @keyframes bounce-dot {
+      0%, 80%, 100% { transform: translateY(0); }
+      40% { transform: translateY(-6px); }
     }
 
     @keyframes mic-pulse {
-
-      0%,
-      100% {
-        box-shadow: 0 0 0 0 hsl(0 72% 51% / 0.4);
-      }
-
-      50% {
-        box-shadow: 0 0 0 6px hsl(0 72% 51% / 0);
-      }
+      0%, 100% { box-shadow: 0 0 0 0 hsl(0 72% 51% / 0.4); }
+      50% { box-shadow: 0 0 0 6px hsl(0 72% 51% / 0); }
     }
 
-    /* ======== RESULT EXPAND ======== */
-    .result-section {
-      max-height: 0;
-      opacity: 0;
-      overflow: hidden;
-      transition: max-height 0.4s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease;
+    @keyframes flash-success {
+      0% { background-color: hsl(var(--emerald) / 0.15); }
+      100% { background-color: transparent; }
     }
 
-    .result-section.visible {
-      max-height: 600px;
-      opacity: 1;
+    .flash-success {
+      animation: flash-success 1.5s ease-out;
     }
 
     /* ======== TEXTAREA ======== */
     textarea {
       field-sizing: content;
-      min-height: 72px;
-      max-height: 150px;
-    }
-
-    /* ======== FLASH ANIMATION ======== */
-    @keyframes flash-success {
-      0% {
-        background-color: hsl(var(--emerald) / 0.15);
-      }
-
-      100% {
-        background-color: transparent;
-      }
-    }
-
-    .flash-success {
-      animation: flash-success 1.5s ease-out;
+      min-height: 40px;
+      max-height: 120px;
     }
 
     /* ======== BUTTON STYLES ======== */
@@ -256,31 +212,6 @@
       color: hsl(var(--foreground));
     }
 
-    /* ======== REGENERATE ======== */
-    .btn-regenerate {
-      background: hsl(var(--card));
-      border: 1.5px solid hsl(var(--emerald) / 0.4);
-      color: hsl(var(--emerald));
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-
-    .btn-regenerate:hover {
-      background: hsl(var(--emerald) / 0.1);
-      border-color: hsl(var(--emerald) / 0.7);
-      box-shadow: 0 0 16px hsl(var(--emerald) / 0.15);
-    }
-
-    .btn-regenerate:active {
-      transform: scale(0.97);
-    }
-
-    .btn-regenerate:disabled {
-      opacity: 0.35;
-      cursor: not-allowed;
-    }
-
     /* ======== VOICE BUTTON ======== */
     .btn-voice {
       background: hsl(var(--card));
@@ -312,61 +243,215 @@
       box-shadow: 0 0 0 3px hsl(var(--emerald) / 0.08);
     }
 
-    /* ======== RESULT BOX ======== */
-    .result-box {
-      background: hsl(var(--card));
-      border: 1px solid hsl(var(--border));
-      border-radius: 14px;
-      position: relative;
-    }
-
-    .result-box::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: 16px;
-      right: 16px;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.2), transparent);
-    }
-
-    /* ======== STATUS PILL ======== */
-    .status-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 2px 8px;
-      border-radius: 100px;
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-    }
-
-    .status-pill.optimizing {
-      background: hsl(var(--emerald) / 0.1);
-      color: hsl(var(--emerald));
-    }
-
-    .status-pill.ready {
-      background: hsl(var(--emerald) / 0.1);
-      color: hsl(var(--emerald));
-    }
-
-    .status-pill.error {
-      background: hsl(0 72% 51% / 0.1);
-      color: hsl(0 72% 51%);
-    }
-
-    .status-pill.waiting {
-      background: hsl(var(--muted));
-      color: hsl(var(--muted-foreground));
-    }
-
     /* ======== DIVIDER ======== */
     .divider {
       height: 1px;
       background: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+    }
+
+    /* ======== CHAT AREA ======== */
+    .chat-area {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      padding: 14px 18px;
+      min-height: 0;
+    }
+
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 40px 20px;
+    }
+
+    /* ======== CHAT MESSAGES ======== */
+    .chat-message {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      animation: fade-slide-in 0.2s ease;
+      margin-bottom: 12px;
+    }
+
+    .message-label {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 600;
+      color: hsl(var(--muted-foreground));
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      padding: 0 2px;
+    }
+
+    .message-bubble {
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: hsl(var(--foreground));
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .user-bubble {
+      background: hsl(var(--emerald) / 0.06);
+      border: 1px solid hsl(var(--emerald) / 0.15);
+    }
+
+    .assistant-bubble {
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      max-height: 220px;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .assistant-bubble::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 14px;
+      right: 14px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.15), transparent);
+    }
+
+    .message-actions {
+      display: flex;
+      gap: 6px;
+      padding: 4px 0 0;
+    }
+
+    .btn-msg-action {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 8px;
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--secondary));
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s ease;
+    }
+
+    .btn-msg-action:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    .btn-msg-action:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-msg-action.action-success {
+      background: hsl(var(--emerald) / 0.12);
+      border-color: hsl(var(--emerald) / 0.3);
+      color: hsl(var(--emerald));
+      pointer-events: none;
+    }
+
+    /* ======== LOADING INDICATOR ======== */
+    .loading-indicator {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      margin-bottom: 8px;
+    }
+
+    .loading-indicator .dot-container {
+      display: flex;
+      gap: 4px;
+    }
+
+    .loading-indicator .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: hsl(var(--emerald) / 0.6);
+      animation: bounce-dot 1.4s ease-in-out infinite;
+    }
+
+    .loading-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
+    .loading-indicator .dot:nth-child(3) { animation-delay: 0.3s; }
+
+    /* ======== ERROR BANNER ======== */
+    .error-banner {
+      padding: 8px 12px;
+      margin: 4px 0 8px;
+      border-radius: 10px;
+      background: hsl(0 72% 51% / 0.08);
+      border: 1px solid hsl(0 72% 51% / 0.2);
+      font-size: 12px;
+      color: hsl(0 72% 51%);
+      display: none;
+    }
+
+    /* ======== INPUT SECTION (bottom-pinned) ======== */
+    .input-section {
+      border-top: 1px solid hsl(var(--border));
+      padding: 10px 18px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: hsl(var(--background));
+      flex-shrink: 0;
+    }
+
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .input-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
+    .input-row .input-area {
+      flex: 1;
+      padding: 10px 12px;
+    }
+
+    .btn-send {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      border: none;
+      background: linear-gradient(135deg, hsl(var(--emerald)), hsl(217 91% 50%));
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-send:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 0 16px hsl(var(--emerald) / 0.35);
+    }
+
+    .btn-send:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+      filter: none;
+      box-shadow: none;
     }
 
     /* ======== COLLECTION PICKER MODAL ======== */
@@ -507,43 +592,6 @@
       gap: 8px;
     }
 
-    /* ======== SAVED STATE ======== */
-    .btn-saved {
-      background: hsl(var(--emerald) / 0.15) !important;
-      border: 1px solid hsl(var(--emerald) / 0.3) !important;
-      color: hsl(var(--emerald)) !important;
-      cursor: default !important;
-      pointer-events: none;
-    }
-
-    /* ======== INSERT / REPLACE BUTTON ======== */
-    .btn-insert {
-      background: linear-gradient(135deg, hsl(221 83% 53%), hsl(250 80% 58%));
-      color: white;
-      font-weight: 600;
-      border: none;
-      cursor: pointer;
-      position: relative;
-      overflow: hidden;
-      transition: all 0.2s ease;
-    }
-
-    .btn-insert:hover {
-      filter: brightness(1.12);
-      box-shadow: 0 0 20px hsl(221 83% 53% / 0.4);
-    }
-
-    .btn-insert:active {
-      transform: scale(0.97);
-    }
-
-    .btn-insert:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-      filter: none;
-      box-shadow: none;
-    }
-
     /* ======== AUTH VIEW ======== */
     .auth-icon-ring {
       width: 64px;
@@ -573,7 +621,7 @@
 
       <!-- ===== HEADER ===== -->
       <div
-        style="-webkit-app-region: drag; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;">
+        style="-webkit-app-region: drag; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <!-- Logo -->
           <div
@@ -589,12 +637,23 @@
               style="font-size: 10px; font-weight: 500; color: hsl(var(--muted-foreground)); margin-left: 6px; letter-spacing: 0.02em;">OVERLAY</span>
           </div>
         </div>
-        <button id="btn-close" class="btn-ghost"
-          style="-webkit-app-region: no-drag; width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
-          <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div style="display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag;">
+          <!-- New Session button -->
+          <button id="btn-new-session" class="btn-ghost" title="New Session"
+            style="width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+            <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </button>
+          <!-- Close button -->
+          <button id="btn-close" class="btn-ghost"
+            style="width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+            <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="divider"></div>
@@ -627,142 +686,103 @@
         </button>
       </div>
 
-      <!-- ===== MAIN VIEW ===== -->
+      <!-- ===== MAIN VIEW (Chat Layout) ===== -->
       <div id="view-main" class="view" style="flex-direction: column;">
-        <div
-          style="display: flex; flex-direction: column; padding: 16px 18px; gap: 14px; overflow-y: auto; max-height: 540px;">
 
-          <!-- INPUT SECTION -->
-          <div>
-            <!-- Label row with voice button -->
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-              <span
-                style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
-                Your Prompt
-              </span>
+        <!-- CHAT AREA (scrollable) -->
+        <div id="chat-area" class="chat-area">
 
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <!-- Mode Toggle -->
-                <div
-                  style="-webkit-app-region: no-drag; display: flex; background: hsl(var(--secondary) / 0.3); border-radius: 8px; padding: 2px; border: 1px solid hsl(var(--border) / 0.4);">
-                  <button id="btn-mode-fast"
-                    style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; border: none; background: hsl(var(--emerald)); color: white; box-shadow: 0 1px 2px rgba(0,0,0,0.1); transition: all 0.2s;">Fast</button>
-                  <button id="btn-mode-thinking"
-                    style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; border: none; background: transparent; color: hsl(var(--muted-foreground)); transition: all 0.2s;">Thinking</button>
-                </div>
-
-                <!-- Voice Button -->
-                <button id="btn-voice" class="btn-voice" title="Voice Input"
-                  style="-webkit-app-region: no-drag; display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground));">
-                  <svg id="icon-mic" style="width: 13px; height: 13px;" fill="none" stroke="currentColor"
-                    viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                  <svg id="icon-mic-listening" style="width: 13px; height: 13px; color: hsl(0 72% 51%); display: none;"
-                    fill="currentColor" viewBox="0 0 24 24">
-                    <circle cx="12" cy="12" r="5" />
-                  </svg>
-                  <span id="voice-status-text">Voice</span>
-                </button>
+          <!-- Empty state (shown when no messages) -->
+          <div id="empty-state" class="empty-state">
+            <div
+              style="width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, hsl(var(--emerald) / 0.12), hsl(217 91% 50% / 0.12)); display: flex; align-items: center; justify-content: center;">
+              <svg style="width: 20px; height: 20px; color: hsl(var(--emerald));" fill="currentColor"
+                viewBox="0 0 24 24">
+                <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
+              </svg>
+            </div>
+            <div style="text-align: center;">
+              <div
+                style="font-size: 14px; font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 4px; letter-spacing: -0.01em;">
+                Prompt Optimizer</div>
+              <div style="font-size: 12px; color: hsl(var(--muted-foreground)); line-height: 1.5;">
+                Type your prompt below to get an<br>optimized version. Refine with follow-ups.
               </div>
             </div>
+          </div>
 
-            <!-- Textarea -->
-            <div class="input-area" style="padding: 12px 14px;">
+          <!-- Messages get appended here -->
+          <div id="messages-container"></div>
+
+          <!-- Error banner -->
+          <div id="error-banner" class="error-banner">
+            <span id="error-text"></span>
+          </div>
+
+          <!-- Loading indicator -->
+          <div id="loading-indicator" class="loading-indicator" style="display: none;">
+            <div
+              style="width: 24px; height: 24px; border-radius: 8px; background: hsl(var(--emerald) / 0.1); border: 1px solid hsl(var(--emerald) / 0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+              <svg style="width: 12px; height: 12px; color: hsl(var(--emerald));" fill="currentColor"
+                viewBox="0 0 24 24">
+                <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
+              </svg>
+            </div>
+            <div class="dot-container">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+            <span
+              style="font-size: 11px; color: hsl(var(--muted-foreground)); font-weight: 500;">Optimizing...</span>
+          </div>
+
+          <!-- Scroll anchor -->
+          <div id="scroll-anchor"></div>
+        </div>
+
+        <!-- INPUT SECTION (pinned to bottom) -->
+        <div class="input-section">
+          <!-- Controls row: mode toggle + voice -->
+          <div class="controls-row">
+            <!-- Mode Toggle -->
+            <div
+              style="display: flex; background: hsl(var(--secondary) / 0.3); border-radius: 8px; padding: 2px; border: 1px solid hsl(var(--border) / 0.4);">
+              <button id="btn-mode-fast"
+                style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; border: none; background: hsl(var(--emerald)); color: white; box-shadow: 0 1px 2px rgba(0,0,0,0.1); transition: all 0.2s; font-family: inherit;">Fast</button>
+              <button id="btn-mode-thinking"
+                style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; border: none; background: transparent; color: hsl(var(--muted-foreground)); transition: all 0.2s; font-family: inherit;">Thinking</button>
+            </div>
+
+            <!-- Voice Button -->
+            <button id="btn-voice" class="btn-voice" title="Voice Input"
+              style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground)); font-family: inherit;">
+              <svg id="icon-mic" style="width: 13px; height: 13px;" fill="none" stroke="currentColor"
+                viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+              <svg id="icon-mic-listening" style="width: 13px; height: 13px; color: hsl(0 72% 51%); display: none;"
+                fill="currentColor" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="5" />
+              </svg>
+              <span id="voice-status-text">Voice</span>
+            </button>
+          </div>
+
+          <!-- Input row: textarea + send button -->
+          <div class="input-row">
+            <div class="input-area">
               <textarea id="prompt-input" placeholder="Describe what you need optimized..."
-                style="-webkit-app-region: no-drag; width: 100%; background: transparent; color: hsl(var(--foreground)); font-size: 13px; line-height: 1.6; outline: none; resize: none; border: none; font-family: inherit;">
-              </textarea>
+                style="width: 100%; background: transparent; color: hsl(var(--foreground)); font-size: 13px; line-height: 1.5; outline: none; resize: none; border: none; font-family: inherit;"></textarea>
             </div>
-
-            <!-- Action Buttons -->
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
-              <!-- Generate -->
-              <button id="btn-generate" class="btn-primary"
-                style="-webkit-app-region: no-drag; flex: 1; height: 42px; border-radius: 12px; font-size: 13px; letter-spacing: 0.03em; display: flex; align-items: center; justify-content: center; gap: 8px;">
-                <svg id="icon-generate" style="width: 15px; height: 15px;" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-                </svg>
-                <svg id="icon-spinner" style="width: 15px; height: 15px; display: none;" fill="none" viewBox="0 0 24 24"
-                  class="animate-spin">
-                  <circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" />
-                  <path style="opacity: 0.8;" fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <span id="btn-generate-text">Optimize</span>
-              </button>
-
-              <!-- Regenerate -->
-              <button id="btn-regenerate" class="btn-regenerate" title="Regenerate with different results"
-                style="-webkit-app-region: no-drag; display: none; height: 42px; padding: 0 16px; border-radius: 12px; font-size: 12px; align-items: center; gap: 6px;">
-                <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>Redo</span>
-              </button>
-            </div>
+            <button id="btn-send" class="btn-send" disabled title="Send (Enter)">
+              <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+              </svg>
+            </button>
           </div>
-
-          <!-- RESULT SECTION (expands after optimization) -->
-          <div id="result-section" class="result-section">
-            <div class="divider" style="margin-bottom: 14px;"></div>
-
-            <!-- Result header -->
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-              <span
-                style="font-size: 11px; font-weight: 600; color: hsl(var(--muted-foreground)); letter-spacing: 0.05em; text-transform: uppercase;">
-                Optimized Result
-              </span>
-              <div id="status-badge" class="status-pill waiting">
-                <div id="status-dot" style="width: 5px; height: 5px; border-radius: 50%; background: currentColor;">
-                </div>
-                <span id="status-text">Waiting</span>
-              </div>
-            </div>
-
-            <!-- Result text -->
-            <div id="result-container" class="result-box"
-              style="padding: 14px 16px; overflow-y: auto; max-height: 200px; min-height: 48px;">
-              <p id="result-text"
-                style="font-size: 13px; color: hsl(var(--foreground)); line-height: 1.65; white-space: pre-wrap; word-break: break-word; min-height: 1em; margin: 0;">
-              </p>
-            </div>
-
-            <!-- Action bar -->
-            <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px;">
-              <button id="btn-copy" class="btn-secondary"
-                style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
-                <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                </svg>
-                <span id="btn-copy-text">Copy</span>
-              </button>
-
-              <!-- Replace in original app -->
-              <button id="btn-insert" class="btn-insert" title="Replace @prompt with optimized text in the original app"
-                style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <svg id="icon-insert" style="width: 14px; height: 14px;" fill="none" stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-                </svg>
-                <span id="btn-insert-text">Replace</span>
-              </button>
-
-              <button id="btn-save" class="btn-primary"
-                style="-webkit-app-region: no-drag; flex: 1; height: 38px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
-                <svg id="icon-save" style="width: 14px; height: 14px;" fill="none" stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                    d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                </svg>
-                <span id="btn-save-text">Save to Library</span>
-              </button>
-            </div>
-          </div>
-
         </div>
       </div>
 
@@ -810,8 +830,8 @@
         <!-- New Collection Inline -->
         <div class="divider" style="margin: 2px 14px 0;"></div>
         <div class="new-collection-row">
-          <input id="new-collection-input" class="new-collection-input" type="text" placeholder="New collection name..."
-            maxlength="50">
+          <input id="new-collection-input" class="new-collection-input" type="text"
+            placeholder="New collection name..." maxlength="50">
           <button id="btn-add-collection" class="btn-add-collection" disabled>Create</button>
         </div>
 
@@ -840,15 +860,19 @@
     // ==========================================
     let isAuthenticated = false;
     let isOptimizing = false;
-    let currentOriginal = '';
-    let currentOptimized = '';
-    let hasGeneratedOnce = false;
+    let messages = [];                   // { id, role, content, timestamp }
+    let currentOptimizedPrompt = '';     // Latest assistant response
     let isListening = false;
     let transcriptionSessionId = null;
-    let isSaved = false;                 // Persistent saved state for current prompt
-    let selectedCollectionId = null;     // Selected collection in modal
-    let collectionsCache = [];           // Cached collections list
-    let currentMode = 'fast';            // Current optimization mode
+    let currentMode = 'fast';
+    let streamingMsgEl = null;           // Reference to the DOM element being streamed
+    let streamingContent = '';           // Accumulated content during streaming
+
+    // Save flow
+    let saveTargetContent = '';          // Content of the message being saved
+    let selectedCollectionId = null;
+    let collectionsCache = [];
+    const savedMessageIds = new Set();   // Track which messages have been saved
 
     // ==========================================
     // DOM REFS
@@ -856,30 +880,21 @@
     const viewAuth = document.getElementById('view-auth');
     const viewMain = document.getElementById('view-main');
     const btnClose = document.getElementById('btn-close');
+    const btnNewSession = document.getElementById('btn-new-session');
     const btnOpenApp = document.getElementById('btn-open-app');
+    const chatArea = document.getElementById('chat-area');
+    const emptyState = document.getElementById('empty-state');
+    const messagesContainer = document.getElementById('messages-container');
+    const errorBanner = document.getElementById('error-banner');
+    const errorText = document.getElementById('error-text');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const scrollAnchor = document.getElementById('scroll-anchor');
     const promptInput = document.getElementById('prompt-input');
-    const btnGenerate = document.getElementById('btn-generate');
-    const btnGenerateText = document.getElementById('btn-generate-text');
-    const iconGenerate = document.getElementById('icon-generate');
-    const iconSpinner = document.getElementById('icon-spinner');
-    const btnRegenerate = document.getElementById('btn-regenerate');
+    const btnSend = document.getElementById('btn-send');
     const btnVoice = document.getElementById('btn-voice');
     const iconMic = document.getElementById('icon-mic');
     const iconMicListening = document.getElementById('icon-mic-listening');
     const voiceStatusText = document.getElementById('voice-status-text');
-    const resultSection = document.getElementById('result-section');
-    const resultText = document.getElementById('result-text');
-    const resultContainer = document.getElementById('result-container');
-    const statusBadge = document.getElementById('status-badge');
-    const statusDot = document.getElementById('status-dot');
-    const statusText = document.getElementById('status-text');
-    const btnCopy = document.getElementById('btn-copy');
-    const btnCopyText = document.getElementById('btn-copy-text');
-    const btnInsert = document.getElementById('btn-insert');
-    const btnInsertText = document.getElementById('btn-insert-text');
-    const btnSave = document.getElementById('btn-save');
-    const btnSaveText = document.getElementById('btn-save-text');
-    const iconSave = document.getElementById('icon-save');
     const btnModeFast = document.getElementById('btn-mode-fast');
     const btnModeThinking = document.getElementById('btn-mode-thinking');
 
@@ -903,23 +918,231 @@
       view.classList.add('active');
     }
 
-    function resetToInput() {
-      promptInput.value = '';
-      currentOriginal = '';
-      currentOptimized = '';
-      isOptimizing = false;
-      isSaved = false;
-      resultText.textContent = '';
-      resultSection.classList.remove('visible');
-      setGenerateIdle();
-      resetSaveButton();
-      promptInput.disabled = false;
-      btnGenerate.disabled = false;
+    // ==========================================
+    // UTILITY
+    // ==========================================
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
 
-      // Reset Replace button — may have been left disabled/modified from previous session
-      btnInsert.disabled = false;
-      btnInsertText.textContent = 'Replace';
-      btnInsert.style.background = '';
+    function generateId() {
+      return 'msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+    }
+
+    function scrollToBottom() {
+      requestAnimationFrame(() => {
+        chatArea.scrollTop = chatArea.scrollHeight;
+      });
+    }
+
+    // ==========================================
+    // EMPTY STATE
+    // ==========================================
+    function updateEmptyState() {
+      if (messages.length === 0) {
+        emptyState.style.display = '';
+      } else {
+        emptyState.style.display = 'none';
+      }
+    }
+
+    // ==========================================
+    // LOADING INDICATOR
+    // ==========================================
+    function showLoading() {
+      loadingIndicator.style.display = 'flex';
+      scrollToBottom();
+    }
+
+    function hideLoading() {
+      loadingIndicator.style.display = 'none';
+    }
+
+    // ==========================================
+    // ERROR BANNER
+    // ==========================================
+    function showError(msg) {
+      errorText.textContent = msg;
+      errorBanner.style.display = 'block';
+      scrollToBottom();
+      setTimeout(() => {
+        errorBanner.style.display = 'none';
+      }, 5000);
+    }
+
+    function hideError() {
+      errorBanner.style.display = 'none';
+    }
+
+    // ==========================================
+    // INPUT CONTROL
+    // ==========================================
+    function disableInput() {
+      promptInput.disabled = true;
+      btnSend.disabled = true;
+    }
+
+    function enableInput() {
+      promptInput.disabled = false;
+      updateSendButton();
+      requestAnimationFrame(() => {
+        setTimeout(() => promptInput.focus(), 50);
+      });
+    }
+
+    function updateSendButton() {
+      btnSend.disabled = !promptInput.value.trim() || isOptimizing;
+    }
+
+    // ==========================================
+    // MESSAGE RENDERING
+    // ==========================================
+    function renderUserMessage(msg) {
+      const el = document.createElement('div');
+      el.className = 'chat-message';
+      el.id = 'msg-el-' + msg.id;
+      el.innerHTML =
+        '<div class="message-label">You</div>' +
+        '<div class="message-bubble user-bubble">' +
+          '<div class="message-text">' + escapeHtml(msg.content) + '</div>' +
+        '</div>';
+      messagesContainer.appendChild(el);
+    }
+
+    function renderAssistantMessage(msg) {
+      const el = document.createElement('div');
+      el.className = 'chat-message';
+      el.id = 'msg-el-' + msg.id;
+
+      const isSaved = savedMessageIds.has(msg.id);
+
+      el.innerHTML =
+        '<div class="message-label">' +
+          '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
+            '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
+          '</svg>' +
+          ' Optimized Prompt' +
+        '</div>' +
+        '<div class="message-bubble assistant-bubble">' +
+          '<div class="message-text" id="msg-text-' + msg.id + '">' + escapeHtml(msg.content) + '</div>' +
+        '</div>' +
+        '<div class="message-actions" id="msg-actions-' + msg.id + '">' +
+          buildActionButtons(msg.id, isSaved) +
+        '</div>';
+
+      messagesContainer.appendChild(el);
+    }
+
+    function buildActionButtons(msgId, isSaved) {
+      const copyIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>';
+      const replaceIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>';
+      const saveIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>';
+      const checkIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+
+      let saveBtn;
+      if (isSaved) {
+        saveBtn = '<button class="btn-msg-action action-success" disabled>' + checkIcon + ' Saved</button>';
+      } else {
+        saveBtn = '<button class="btn-msg-action btn-msg-save" data-msg-id="' + msgId + '">' + saveIcon + ' Save</button>';
+      }
+
+      return (
+        '<button class="btn-msg-action btn-msg-copy" data-msg-id="' + msgId + '">' + copyIcon + ' Copy</button>' +
+        '<button class="btn-msg-action btn-msg-replace" data-msg-id="' + msgId + '">' + replaceIcon + ' Replace</button>' +
+        saveBtn
+      );
+    }
+
+    function createStreamingElement() {
+      const el = document.createElement('div');
+      el.className = 'chat-message';
+      el.id = 'streaming-message';
+      el.innerHTML =
+        '<div class="message-label">' +
+          '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
+            '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
+          '</svg>' +
+          ' Optimized Prompt' +
+        '</div>' +
+        '<div class="message-bubble assistant-bubble">' +
+          '<div class="message-text" id="streaming-text"></div>' +
+        '</div>';
+      messagesContainer.appendChild(el);
+      return el;
+    }
+
+    function finalizeStreamingMessage(msgId, content) {
+      if (!streamingMsgEl) return;
+
+      // Update the element ID and text ID
+      streamingMsgEl.id = 'msg-el-' + msgId;
+      const textEl = document.getElementById('streaming-text');
+      if (textEl) {
+        textEl.textContent = content;
+        textEl.id = 'msg-text-' + msgId;
+      }
+
+      // Add action buttons
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'message-actions';
+      actionsDiv.id = 'msg-actions-' + msgId;
+      actionsDiv.innerHTML = buildActionButtons(msgId, false);
+      streamingMsgEl.appendChild(actionsDiv);
+    }
+
+    // ==========================================
+    // MESSAGE MANAGEMENT
+    // ==========================================
+    function addUserMessage(content) {
+      const msg = { id: generateId(), role: 'user', content, timestamp: Date.now() };
+      messages.push(msg);
+      updateEmptyState();
+      renderUserMessage(msg);
+      scrollToBottom();
+      return msg;
+    }
+
+    function addAssistantMessage(content) {
+      const msg = { id: generateId(), role: 'assistant', content, timestamp: Date.now() };
+      messages.push(msg);
+      currentOptimizedPrompt = content;
+      updateEmptyState();
+      renderAssistantMessage(msg);
+      scrollToBottom();
+      return msg;
+    }
+
+    function getMessageContent(msgId) {
+      const msg = messages.find(m => m.id === msgId);
+      return msg ? msg.content : '';
+    }
+
+    // ==========================================
+    // CHAT SESSION
+    // ==========================================
+    function clearSession() {
+      messages = [];
+      savedMessageIds.clear();
+      currentOptimizedPrompt = '';
+      isOptimizing = false;
+      streamingMsgEl = null;
+      streamingContent = '';
+
+      messagesContainer.innerHTML = '';
+      updateEmptyState();
+      hideLoading();
+      hideError();
+
+      promptInput.value = '';
+      promptInput.disabled = false;
+      btnSend.disabled = true;
+
+      // Clear backend history
+      if (window.electronAPI?.overlay?.newSession) {
+        window.electronAPI.overlay.newSession();
+      }
 
       requestAnimationFrame(() => {
         setTimeout(() => promptInput.focus(), 80);
@@ -927,109 +1150,142 @@
     }
 
     // ==========================================
-    // STATUS PILL
+    // OPTIMIZATION FLOW
     // ==========================================
-    function setStatus(type, label) {
-      statusText.textContent = label;
-      statusBadge.className = 'status-pill ' + type;
-    }
-
-    // ==========================================
-    // GENERATE BUTTON STATE
-    // ==========================================
-    function setGenerateLoading() {
-      iconGenerate.style.display = 'none';
-      iconSpinner.style.display = 'block';
-      btnGenerateText.textContent = 'Optimizing...';
-      btnGenerate.disabled = true;
-      promptInput.disabled = true;
-      btnRegenerate.disabled = true;
-    }
-
-    function setGenerateIdle() {
-      iconGenerate.style.display = 'block';
-      iconSpinner.style.display = 'none';
-      btnGenerateText.textContent = 'Optimize';
-      btnGenerate.disabled = false;
-      promptInput.disabled = false;
-
-      if (hasGeneratedOnce) {
-        btnRegenerate.style.display = 'flex';
-        btnRegenerate.disabled = false;
-      }
-    }
-
-    // ==========================================
-    // OPTIMIZATION
-    // ==========================================
-    function startOptimization(text, isRegenerate) {
-      if (!text.trim() || isOptimizing) return;
+    function sendMessage() {
+      const text = promptInput.value.trim();
+      if (!text || isOptimizing) return;
 
       isOptimizing = true;
-      currentOriginal = text;
-      currentOptimized = '';
-      resetSaveButton();
+      hideError();
+      disableInput();
 
-      resultSection.classList.add('visible');
-      resultText.innerHTML = '<span class="thinking-dots" style="color: hsl(var(--muted-foreground));">Thinking</span>';
-      setStatus(isRegenerate ? 'optimizing' : 'optimizing', isRegenerate ? 'Regenerating' : 'Optimizing');
-      setGenerateLoading();
+      // Add user message to chat
+      addUserMessage(text);
 
+      // Clear input
+      promptInput.value = '';
+
+      // Show loading
+      showLoading();
+
+      // Send to backend
       if (window.electronAPI?.overlay?.optimize) {
-        window.electronAPI.overlay.optimize({ text, isRegenerate: !!isRegenerate, mode: currentMode });
+        window.electronAPI.overlay.optimize({ text, isRegenerate: false, mode: currentMode });
       }
     }
 
     // ==========================================
-    // COPY / SAVE FEEDBACK
+    // MESSAGE ACTION HANDLERS
     // ==========================================
-    function showCopyFeedback() {
-      const prev = btnCopyText.textContent;
-      btnCopyText.textContent = '✓ Copied!';
-      btnCopy.classList.add('flash-success');
-      setTimeout(() => {
-        btnCopyText.textContent = prev;
-        btnCopy.classList.remove('flash-success');
-      }, 1800);
+    function handleCopyMessage(msgId) {
+      const content = getMessageContent(msgId);
+      if (!content) return;
+
+      if (window.electronAPI?.overlay?.copy) {
+        window.electronAPI.overlay.copy(content);
+      }
+
+      // Show feedback on the button
+      const btn = messagesContainer.querySelector('.btn-msg-copy[data-msg-id="' + msgId + '"]');
+      if (btn) {
+        const original = btn.innerHTML;
+        btn.innerHTML = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Copied!';
+        btn.classList.add('action-success');
+        setTimeout(() => {
+          btn.innerHTML = original;
+          btn.classList.remove('action-success');
+        }, 1800);
+      }
     }
 
-    // ==========================================
-    // SAVE BUTTON STATE MANAGEMENT
-    // ==========================================
+    async function handleReplaceMessage(msgId) {
+      // Read the optimized prompt directly from message.content — never from clipboard.
+      const content = getMessageContent(msgId);
+      if (!content) return;
 
-    function resetSaveButton() {
-      isSaved = false;
-      btnSave.disabled = false;
-      btnSave.classList.remove('btn-saved', 'flash-success');
-      btnSaveText.textContent = 'Save to Library';
-      iconSave.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>';
-    }
+      const replaceIconSvg = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>';
+      const checkIconSvg = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+      const spinnerSvg = '<svg style="width: 12px; height: 12px;" fill="none" viewBox="0 0 24 24" class="animate-spin"><circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path style="opacity: 0.8;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>';
 
-    function setSavedPermanently() {
-      isSaved = true;
-      btnSave.disabled = true;
-      btnSave.classList.add('btn-saved');
-      btnSave.classList.remove('flash-success');
-      iconSave.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>';
-      btnSaveText.textContent = '✓ Saved';
-    }
+      const btn = messagesContainer.querySelector('.btn-msg-replace[data-msg-id="' + msgId + '"]');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = spinnerSvg + ' Replacing...';
+      }
 
-    function showSaveError() {
-      btnSaveText.textContent = '✗ Failed';
-      btnSave.disabled = false;
-      setTimeout(() => {
-        if (!isSaved) {
-          btnSaveText.textContent = 'Save to Library';
+      try {
+        // Inject message.content into the original window where @prompt was typed.
+        // overlay:insert closes the overlay, then the Rust native bridge writes
+        // the text into the anchored external window.
+        const result = await window.electronAPI.overlay.insert(content);
+
+        if (result && result.success) {
+          // Overlay is now hidden; update button state for when user reopens.
+          if (btn) {
+            btn.innerHTML = checkIconSvg + ' Replaced!';
+            btn.classList.add('action-success');
+          }
+        } else if (result && result.fallback === 'clipboard') {
+          if (btn) {
+            btn.innerHTML = '📋 Copied to clipboard';
+            setTimeout(() => {
+              btn.disabled = false;
+              btn.innerHTML = replaceIconSvg + ' Replace';
+              btn.classList.remove('action-success');
+            }, 2500);
+          }
+        } else {
+          if (btn) {
+            btn.innerHTML = '✗ Window lost focus';
+            setTimeout(() => {
+              btn.disabled = false;
+              btn.innerHTML = replaceIconSvg + ' Replace';
+            }, 2000);
+          }
         }
-      }, 2000);
+      } catch (err) {
+        if (btn) {
+          btn.innerHTML = '✗ Failed';
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = replaceIconSvg + ' Replace';
+          }, 2000);
+        }
+      }
     }
+
+    function handleSaveMessage(msgId) {
+      const content = getMessageContent(msgId);
+      if (!content || savedMessageIds.has(msgId)) return;
+
+      saveTargetContent = content;
+      saveTargetMsgId = msgId;
+      openCollectionPicker();
+    }
+
+    let saveTargetMsgId = null;
+
+    // Event delegation for message actions
+    messagesContainer.addEventListener('click', (e) => {
+      const copyBtn = e.target.closest('.btn-msg-copy');
+      const replaceBtn = e.target.closest('.btn-msg-replace');
+      const saveBtn = e.target.closest('.btn-msg-save');
+
+      if (copyBtn) {
+        handleCopyMessage(copyBtn.dataset.msgId);
+      } else if (replaceBtn) {
+        handleReplaceMessage(replaceBtn.dataset.msgId);
+      } else if (saveBtn) {
+        handleSaveMessage(saveBtn.dataset.msgId);
+      }
+    });
 
     // ==========================================
     // COLLECTION PICKER MODAL
     // ==========================================
 
     function updateConfirmState() {
-      // Enable confirm only when both a title and a collection are set
       modalConfirm.disabled = !(selectedCollectionId && saveTitleInput.value.trim());
     }
 
@@ -1040,8 +1296,9 @@
       modalConfirm.disabled = true;
       modalBackdrop.classList.add('open');
 
-      // Pre-fill title from the original prompt
-      const autoTitle = currentOriginal.substring(0, 80).trim();
+      // Pre-fill title from the first user message
+      const firstUserMsg = messages.find(m => m.role === 'user');
+      const autoTitle = firstUserMsg ? firstUserMsg.content.substring(0, 80).trim() : 'Optimized Prompt';
       saveTitleInput.value = autoTitle;
 
       // Render loading
@@ -1085,12 +1342,6 @@
         });
         collectionListEl.appendChild(btn);
       });
-    }
-
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
     }
 
     // Create new collection inline
@@ -1139,7 +1390,7 @@
 
     modalConfirm.addEventListener('click', async () => {
       const title = saveTitleInput.value.trim();
-      if (!selectedCollectionId || !currentOptimized || !title) return;
+      if (!selectedCollectionId || !saveTargetContent || !title) return;
 
       modalConfirm.disabled = true;
       modalConfirmText.textContent = 'Saving...';
@@ -1147,12 +1398,28 @@
       try {
         await window.electronAPI.overlay.save({
           title: title,
-          content: currentOptimized,
+          content: saveTargetContent,
           collectionId: selectedCollectionId,
         });
 
         closeCollectionPicker();
-        setSavedPermanently();
+
+        // Mark the message as saved
+        if (saveTargetMsgId) {
+          savedMessageIds.add(saveTargetMsgId);
+
+          // Update the Save button on the message
+          const actionsEl = document.getElementById('msg-actions-' + saveTargetMsgId);
+          const saveBtn = actionsEl?.querySelector('.btn-msg-save[data-msg-id="' + saveTargetMsgId + '"]');
+          if (saveBtn) {
+            saveBtn.innerHTML = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Saved';
+            saveBtn.classList.add('action-success');
+            saveBtn.disabled = true;
+          }
+        }
+
+        saveTargetMsgId = null;
+        saveTargetContent = '';
       } catch (err) {
         modalConfirmText.textContent = 'Failed — Retry';
         modalConfirm.disabled = false;
@@ -1161,9 +1428,8 @@
     });
 
     // ==========================================
-    // EVENT LISTENERS
+    // MODE TOGGLE
     // ==========================================
-
     btnModeFast.addEventListener('click', () => {
       currentMode = 'fast';
       btnModeFast.style.background = 'hsl(var(--emerald))';
@@ -1184,13 +1450,20 @@
       btnModeFast.style.boxShadow = 'none';
     });
 
+    // ==========================================
+    // EVENT LISTENERS
+    // ==========================================
     btnClose.addEventListener('click', () => {
       if (window.electronAPI?.overlay?.close) window.electronAPI.overlay.close();
     });
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (window.electronAPI?.overlay?.close) window.electronAPI.overlay.close();
+        if (modalBackdrop.classList.contains('open')) {
+          closeCollectionPicker();
+        } else if (window.electronAPI?.overlay?.close) {
+          window.electronAPI.overlay.close();
+        }
       }
     });
 
@@ -1198,92 +1471,34 @@
       if (window.electronAPI?.overlay?.openApp) window.electronAPI.overlay.openApp();
     });
 
-    btnGenerate.addEventListener('click', () => {
-      const text = promptInput.value.trim();
-      if (text) startOptimization(text, false);
+    btnNewSession.addEventListener('click', () => {
+      clearSession();
+    });
+
+    btnSend.addEventListener('click', () => {
+      sendMessage();
     });
 
     promptInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        const text = promptInput.value.trim();
-        if (text && !isOptimizing) startOptimization(text, false);
+        sendMessage();
       }
     });
 
-    btnRegenerate.addEventListener('click', () => {
-      if (currentOriginal && !isOptimizing) {
-        startOptimization(currentOriginal, true);
-      }
-    });
-
-    btnCopy.addEventListener('click', () => {
-      if (currentOptimized) {
-        if (window.electronAPI?.overlay?.copy) {
-          window.electronAPI.overlay.copy(currentOptimized);
-        }
-        showCopyFeedback();
-      }
-    });
-
-    // ==========================================
-    // REPLACE — send optimized text back into the original window
-    // ==========================================
-    btnInsert.addEventListener('click', async () => {
-      if (!currentOptimized || btnInsert.disabled) return;
-
-      // Show in-progress state
-      btnInsert.disabled = true;
-      btnInsertText.textContent = 'Replacing...';
-
-      try {
-        const result = await window.electronAPI.overlay.insert(currentOptimized);
-
-        if (result && result.success) {
-          // Success feedback — overlay will close (handled by Rust), just show tick
-          btnInsertText.textContent = '✓ Replaced!';
-          btnInsert.style.background = 'linear-gradient(135deg, hsl(142 76% 36%), hsl(158 64% 30%))';
-        } else if (result && result.fallback === 'clipboard') {
-          // Native bridge unavailable — text was copied instead
-          btnInsertText.textContent = '📋 Copied (no native bridge)';
-          setTimeout(() => {
-            btnInsertText.textContent = 'Replace';
-            btnInsert.disabled = false;
-            btnInsert.style.background = '';
-          }, 2500);
-        } else {
-          // Returned false — window may have been closed
-          btnInsertText.textContent = '✗ Window lost focus';
-          setTimeout(() => {
-            btnInsertText.textContent = 'Replace';
-            btnInsert.disabled = false;
-          }, 2000);
-        }
-      } catch (err) {
-        btnInsertText.textContent = '✗ Failed';
-        setTimeout(() => {
-          btnInsertText.textContent = 'Replace';
-          btnInsert.disabled = false;
-        }, 2000);
-      }
-    });
-
-    btnSave.addEventListener('click', () => {
-      if (!currentOptimized || isSaved) return;
-      openCollectionPicker();
+    promptInput.addEventListener('input', () => {
+      updateSendButton();
     });
 
     // ==========================================
     // VOICE INPUT
     // ==========================================
-
     function startVoiceInput() {
       if (isListening) return;
 
       isListening = true;
       transcriptionSessionId = Date.now().toString();
 
-      // UI update
       iconMic.style.display = 'none';
       iconMicListening.style.display = 'block';
       voiceStatusText.textContent = 'Listening...';
@@ -1325,19 +1540,36 @@
     // IPC LISTENERS
     // ==========================================
 
+    // Overlay opened — show view, focus input, sync settings
     if (window.electronAPI?.overlay?.onOpened) {
       window.electronAPI.overlay.onOpened((data) => {
         isAuthenticated = data.isAuthenticated;
 
         if (isAuthenticated) {
           showView(viewMain);
-          resetToInput();
+          updateEmptyState();
+
+          // Re-fetch settings every time the overlay opens so theme/font
+          // stay in sync with whatever the user set in the app.
+          if (window.electronAPI?.overlay?.getSettings) {
+            window.electronAPI.overlay.getSettings()
+              .then(applySettings)
+              .catch(() => {});
+          }
+
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              promptInput.focus();
+              scrollToBottom();
+            }, 80);
+          });
         } else {
           showView(viewAuth);
         }
       });
     }
 
+    // Auth state changes
     if (window.electronAPI?.overlay?.onAuthState) {
       window.electronAPI.overlay.onAuthState((data) => {
         isAuthenticated = data.isAuthenticated;
@@ -1348,95 +1580,137 @@
       });
     }
 
+    // Transcription updates
     if (window.electronAPI?.transcription?.onTranscription) {
       window.electronAPI.transcription.onTranscription((data) => {
         if (data.text) {
           promptInput.value = data.accumulated || data.text;
           promptInput.scrollTop = promptInput.scrollHeight;
+          updateSendButton();
         }
       });
     }
 
+    // Streaming optimization chunks
     if (window.electronAPI?.overlay?.onOptimizationChunk) {
       window.electronAPI.overlay.onOptimizationChunk((data) => {
         if (!isOptimizing) return;
 
-        if (resultText.innerHTML.includes('thinking-dots')) {
-          resultText.textContent = '';
+        // First chunk: create the streaming message element
+        if (!streamingMsgEl) {
+          hideLoading();
+          streamingMsgEl = createStreamingElement();
+          streamingContent = '';
         }
 
-        resultText.textContent += data.chunk;
-        resultContainer.scrollTop = resultContainer.scrollHeight;
+        // Append chunk
+        streamingContent += data.chunk;
+        const textEl = document.getElementById('streaming-text');
+        if (textEl) {
+          textEl.textContent = streamingContent;
+        }
+
+        scrollToBottom();
       });
     }
 
+    // Optimization complete
     if (window.electronAPI?.overlay?.onOptimizationComplete) {
       window.electronAPI.overlay.onOptimizationComplete((data) => {
         isOptimizing = false;
-        hasGeneratedOnce = true;
-        currentOptimized = data.optimized || '';
+        const optimized = data.optimized || '';
+        currentOptimizedPrompt = optimized;
 
-        resultText.textContent = currentOptimized;
-        resultContainer.scrollTop = resultContainer.scrollHeight;
+        const msgId = generateId();
 
-        setStatus('ready', 'Done');
-        setGenerateIdle();
+        if (streamingMsgEl) {
+          // Finalize the streaming element
+          finalizeStreamingMessage(msgId, optimized);
+          streamingMsgEl = null;
+          streamingContent = '';
+        } else {
+          // No chunks arrived — hide loading and render full message
+          hideLoading();
+          const el = document.createElement('div');
+          el.className = 'chat-message';
+          el.id = 'msg-el-' + msgId;
+          el.innerHTML =
+            '<div class="message-label">' +
+              '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
+                '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
+              '</svg>' +
+              ' Optimized Prompt' +
+            '</div>' +
+            '<div class="message-bubble assistant-bubble">' +
+              '<div class="message-text" id="msg-text-' + msgId + '">' + escapeHtml(optimized) + '</div>' +
+            '</div>' +
+            '<div class="message-actions" id="msg-actions-' + msgId + '">' +
+              buildActionButtons(msgId, false) +
+            '</div>';
+          messagesContainer.appendChild(el);
+        }
+
+        // Add to messages array
+        messages.push({ id: msgId, role: 'assistant', content: optimized, timestamp: Date.now() });
+
+        enableInput();
+        scrollToBottom();
       });
     }
 
+    // Optimization error
     if (window.electronAPI?.overlay?.onOptimizationError) {
       window.electronAPI.overlay.onOptimizationError((data) => {
         isOptimizing = false;
+        hideLoading();
 
-        resultSection.classList.add('visible');
-        resultText.textContent = 'Error: ' + (data.error || 'Unknown error');
-        setStatus('error', 'Failed');
-        setGenerateIdle();
+        // If streaming was in progress, remove the incomplete element
+        if (streamingMsgEl) {
+          streamingMsgEl.remove();
+          streamingMsgEl = null;
+          streamingContent = '';
+        }
+
+        showError(data.error || 'Optimization failed. Please try again.');
+        enableInput();
       });
     }
 
     // ==========================================
     // DYNAMIC SETTINGS SYNC (Theme, Font, Size)
     // ==========================================
-
     function applySettings(settings) {
       if (!settings) return;
 
       const root = document.documentElement;
 
-      // 1. Apply Theme
       if (settings.theme === 'dark') {
         root.classList.add('dark');
       } else {
         root.classList.remove('dark');
       }
 
-      // 2. Apply Font Size (matches Tailwind classes text-sm, text-base, text-lg)
-      // Base styles use ~13px for inputs, so we scale the whole HTML root slightly
       if (settings.font_size === 'small') {
         root.style.fontSize = '14px';
       } else if (settings.font_size === 'large') {
         root.style.fontSize = '18px';
       } else {
-        root.style.fontSize = '16px'; // medium default
+        root.style.fontSize = '16px';
       }
 
-      // 3. Apply Font Family
       if (settings.font_family === 'mono') {
         root.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
       } else if (settings.font_family === 'serif') {
         root.style.fontFamily = 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif';
-      } else { // 'inter' or default
+      } else {
         root.style.fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
       }
     }
 
-    // Fetch initial settings on load
     if (window.electronAPI?.overlay?.getSettings) {
       window.electronAPI.overlay.getSettings().then(applySettings).catch(err => console.error('[Overlay] Failed to load settings:', err));
     }
 
-    // Listen for live setting updates broadcast by the main app
     if (window.electronAPI?.overlay?.onSettingsUpdate) {
       window.electronAPI.overlay.onSettingsUpdate(applySettings);
     }

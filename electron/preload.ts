@@ -24,6 +24,7 @@ declare global {
         onOptimizationError: (callback: (data: { error: string }) => void) => void;
         getSettings: () => Promise<any>;
         onSettingsUpdate: (callback: (settings: any) => void) => void;
+        newSession: () => void;
       };
 
       // ============================================
@@ -161,6 +162,9 @@ const electronAPI = {
     },
     onSettingsUpdate: (callback: (settings: any) => void) => {
       ipcRenderer.on('overlay:settings-update', (_event, settings) => callback(settings));
+    },
+    newSession: () => {
+      ipcRenderer.send('overlay:new-session');
     },
   },
 
