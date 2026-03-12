@@ -1540,7 +1540,7 @@
     // IPC LISTENERS
     // ==========================================
 
-    // Overlay opened — show view, focus input (don't clear session)
+    // Overlay opened — show view, focus input, sync settings
     if (window.electronAPI?.overlay?.onOpened) {
       window.electronAPI.overlay.onOpened((data) => {
         isAuthenticated = data.isAuthenticated;
@@ -1548,6 +1548,15 @@
         if (isAuthenticated) {
           showView(viewMain);
           updateEmptyState();
+
+          // Re-fetch settings every time the overlay opens so theme/font
+          // stay in sync with whatever the user set in the app.
+          if (window.electronAPI?.overlay?.getSettings) {
+            window.electronAPI.overlay.getSettings()
+              .then(applySettings)
+              .catch(() => {});
+          }
+
           requestAnimationFrame(() => {
             setTimeout(() => {
               promptInput.focus();

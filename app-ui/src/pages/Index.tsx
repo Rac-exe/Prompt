@@ -72,6 +72,22 @@ const Index = () => {
   const [collections, setCollections] = useState<Collection[]>(initialCollections);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(initialPrompts);
 
+  // Helper: transform raw Supabase data into local state shape
+  const mapCollections = (raw: any[]) => raw.map((c: any) => ({
+    id: c.id,
+    name: c.name,
+    icon: c.icon || 'folder',
+  }));
+
+  const mapPrompts = (raw: any[]) => raw.map((p: any) => ({
+    id: p.id,
+    title: p.title,
+    content: p.content,
+    collectionId: p.collection_id,
+    sourceChat: p.metadata?.source_chat,
+    createdAt: new Date(p.created_at),
+  }));
+
   // Load prompt library from Supabase on mount
   useEffect(() => {
     if (isElectron && window.electronAPI?.promptLibrary) {
@@ -79,11 +95,7 @@ const Index = () => {
       window.electronAPI.promptLibrary.getCollections()
         .then((collections) => {
           console.log('[Index] Loaded collections from Supabase:', collections.length);
-          setCollections(collections.map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            icon: c.icon || 'folder',
-          })));
+          setCollections(mapCollections(collections));
         })
         .catch((error) => console.error('[Index] Error loading collections:', error));
 
@@ -91,18 +103,27 @@ const Index = () => {
       window.electronAPI.promptLibrary.getAll()
         .then((prompts) => {
           console.log('[Index] Loaded prompts from Supabase:', prompts.length);
-          setSavedPrompts(prompts.map((p: any) => ({
-            id: p.id,
-            title: p.title,
-            content: p.content,
-            collectionId: p.collection_id,
-            sourceChat: p.metadata?.source_chat,
-            createdAt: new Date(p.created_at),
-          })));
+          setSavedPrompts(mapPrompts(prompts));
         })
         .catch((error) => console.error('[Index] Error loading prompts:', error));
     }
   }, [isElectron]);
+
+  // Listen for real-time prompt library updates from main process
+  // (fired when overlay saves a prompt or collection)
+  useEffect(() => {
+    if (isElectron && window.electronAPI?.onPromptLibraryLoaded) {
+      window.electronAPI.onPromptLibraryLoaded((data: any) => {
+        console.log('[Index] prompt-library:loaded event — refreshing library');
+        if (data?.collections) {
+          setCollections(mapCollections(data.collections));
+        }
+        if (data?.prompts) {
+          setSavedPrompts(mapPrompts(data.prompts));
+        }
+      });
+    }
+  }, []);
 
   // Load chats from Supabase on mount
   useEffect(() => {
@@ -587,39 +608,75 @@ Your prompt was: "${content}"`;
   };
 
   // Library handlers
-  const handleCreateCollection = (name: string) => {
-    const newCollection: Collection = {
-      id: `col-${Date.now()}`,
-      name,
-      icon: "folder",
-    };
-    setCollections((prev) => [...prev, newCollection]);
-    toast({
-      title: "Collection created",
-      description: `"${name}" has been created.`,
-    });
+  const handleCreateCollection = async (name: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        const created = await window.electronAPI.promptLibrary.createCollection(name, "folder");
+        setCollections((prev) => [...prev, {
+          id: created.id,
+          name: created.name,
+          icon: created.icon || "folder",
+        }]);
+      } else {
+        setCollections((prev) => [...prev, { id: `col-${Date.now()}`, name, icon: "folder" }]);
+      }
+      toast({
+        title: "Collection created",
+        description: `"${name}" has been created.`,
+      });
+    } catch (error: any) {
+      console.error('[Index] Error creating collection:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create collection",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleRenameCollection = (id: string, name: string) => {
-    setCollections((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, name } : c))
-    );
-    toast({
-      title: "Collection renamed",
-      description: `Collection renamed to "${name}".`,
-    });
+  const handleRenameCollection = async (id: string, name: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        await window.electronAPI.promptLibrary.renameCollection(id, name);
+      }
+      setCollections((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, name } : c))
+      );
+      toast({
+        title: "Collection renamed",
+        description: `Collection renamed to "${name}".`,
+      });
+    } catch (error: any) {
+      console.error('[Index] Error renaming collection:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to rename collection",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleDeleteCollection = (id: string) => {
-    setCollections((prev) => prev.filter((c) => c.id !== id));
-    // Move prompts to "all"
-    setSavedPrompts((prev) =>
-      prev.map((p) => (p.collectionId === id ? { ...p, collectionId: "all" } : p))
-    );
-    toast({
-      title: "Collection deleted",
-      description: "Prompts moved to All Prompts.",
-    });
+  const handleDeleteCollection = async (id: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary) {
+        await window.electronAPI.promptLibrary.deleteCollection(id);
+      }
+      setCollections((prev) => prev.filter((c) => c.id !== id));
+      setSavedPrompts((prev) =>
+        prev.filter((p) => p.collectionId !== id)
+      );
+      toast({
+        title: "Collection deleted",
+        description: "Collection and its prompts have been removed.",
+      });
+    } catch (error: any) {
+      console.error('[Index] Error deleting collection:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete collection",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleCopyLibraryPrompt = (id: string) => {

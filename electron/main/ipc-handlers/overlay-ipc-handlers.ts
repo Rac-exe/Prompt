@@ -232,6 +232,11 @@ export function registerOverlayHandlers(
       savedAt: new Date().toISOString(),
     });
 
+    // Notify the app window so its prompt library refreshes in real-time
+    service.getFullLibrary()
+      .then(library => appWindowManager.send('prompt-library:loaded', library))
+      .catch(err => console.error('[Overlay] Failed to refresh prompt library in app:', err));
+
     return { promptId: saved.id, collectionId };
   });
 
