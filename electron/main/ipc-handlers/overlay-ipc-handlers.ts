@@ -4,6 +4,7 @@ import { PythonClient } from '../api/python-client';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
 import { OptimizationService } from '../database/services/optimization-service';
+import { ChatService } from '../database/services/chat-service';
 import { authState } from '../utils/auth-state';
 import { replaceAtLastAnchor, isNativeBridgeAvailable } from '../utils/native-bridge';
 import { SettingsService } from '../database/services/settings-service';
@@ -63,9 +64,19 @@ function getUserService(): UserService {
 // Simple in-memory history for the overlay session so the user can refine prompts
 const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
 
-/** Clear overlay conversation history (called on "New Session"). */
+// Track the current overlay session's chat ID so all messages go to the same chat
+let currentOverlayChatId: string | null = null;
+
+let chatService: ChatService | null = null;
+function getChatService(): ChatService {
+  if (!chatService) chatService = new ChatService();
+  return chatService;
+}
+
+/** Clear overlay conversation history and reset chat session (called on "New Session"). */
 function clearOverlayHistory() {
   inMemoryOverlayHistory.length = 0;
+  currentOverlayChatId = null;
   console.log('[OverlayHandlers] Overlay session history cleared');
 }
 
@@ -135,16 +146,55 @@ export function registerOverlayHandlers(
         optimized: optimizedText,
       });
 
-      // Save optimization record to DB (fire-and-forget, non-blocking)
+      // Save to DB (fire-and-forget, non-blocking)
       if (authState.isAuthenticated) {
+        // 1. Save optimization record
+        let optimizationId: string | undefined;
         getOptimizationService().saveOptimization(
           data.text,
           optimizedText,
           'overlay',
           { model: 'llama3.2', source_context: { app: 'overlay' } }
-        ).catch((err: Error) => {
+        ).then(opt => { optimizationId = opt.id; })
+        .catch((err: Error) => {
           console.error('[Overlay] Failed to save optimization record:', err.message);
         });
+
+        // 2. Persist as a chat so it appears in the app sidebar
+        (async () => {
+          try {
+            const svc = getChatService();
+
+            // Create a new chat on the first message of this session
+            if (!currentOverlayChatId) {
+              const words = data.text.trim().split(/\s+/).slice(0, 4);
+              const title = words.join(' ') || 'Overlay Optimization';
+              const chat = await svc.createChat(title);
+              currentOverlayChatId = chat.id;
+              console.log('[Overlay] Created chat for overlay session:', currentOverlayChatId);
+            }
+
+            // Save user message
+            await svc.addMessage(currentOverlayChatId, data.text, 'user');
+
+            // Save assistant message
+            await svc.addMessage(
+              currentOverlayChatId,
+              optimizedText,
+              'assistant',
+              optimizationId,
+              { model: 'llama3.2', optimized: true, source_app: 'overlay' }
+            );
+
+            // Notify the app window so its sidebar refreshes
+            const chats = await svc.getChats();
+            appWindowManager.send('chats-loaded', { chats });
+
+            console.log('[Overlay] Saved messages to chat:', currentOverlayChatId);
+          } catch (chatErr) {
+            console.error('[Overlay] Failed to save overlay chat:', chatErr);
+          }
+        })();
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Optimization failed';
