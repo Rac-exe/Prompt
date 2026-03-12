@@ -63,6 +63,12 @@ function getUserService(): UserService {
 // Simple in-memory history for the overlay session so the user can refine prompts
 const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
 
+/** Clear overlay conversation history (called on "New Session"). */
+function clearOverlayHistory() {
+  inMemoryOverlayHistory.length = 0;
+  console.log('[OverlayHandlers] Overlay session history cleared');
+}
+
 export function registerOverlayHandlers(
   overlayManager: OverlayWindowManager,
   pythonClient: PythonClient,
@@ -281,6 +287,13 @@ export function registerOverlayHandlers(
     clipboard.writeText(data.text);
     console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
     return { success: false, fallback: 'clipboard' };
+  });
+
+  // ============================================
+  // overlay:new-session — Clear conversation history for a fresh session
+  // ============================================
+  ipcMain.on('overlay:new-session', () => {
+    clearOverlayHistory();
   });
 
   console.log('[OverlayHandlers] IPC handlers registered');
