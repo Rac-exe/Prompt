@@ -55,3 +55,6 @@ python-service/*.pb
 
 # TypeScript Build Info
 *.tsbuildinfo
+
+# Usage Logs
+python-service/pipeline_v2/storage/usage/*.jsonl
