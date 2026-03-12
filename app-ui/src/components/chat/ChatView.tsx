@@ -10,7 +10,7 @@ interface ChatViewProps {
   messages: Message[];
   streamingMessage?: Message | null;
   generationStats?: { ttft: number | null; total: number | null };
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, mode: "fast" | "thinking") => void;
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
@@ -30,6 +30,7 @@ export const ChatView = ({
   savedPromptIds, isGenerating,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
+  const [mode, setMode] = useState<"fast" | "thinking">("fast");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -91,7 +92,7 @@ export const ChatView = ({
   // ── Submit ─────────────────────────────────────────────────────
   const handleSubmit = () => {
     if (!input.trim() || isGenerating) return;
-    onSendMessage(input.trim());
+    onSendMessage(input.trim(), mode);
     setInput("");
   };
 
@@ -156,8 +157,8 @@ export const ChatView = ({
     voiceState === "listening"
       ? "bg-red-500/10 text-red-400 border border-red-500/20"
       : voiceState === "processing"
-      ? "bg-emerald/8 text-emerald border border-emerald/20 cursor-not-allowed"
-      : "text-muted-foreground hover:text-foreground hover:bg-secondary border border-transparent"
+        ? "bg-emerald/8 text-emerald border border-emerald/20 cursor-not-allowed"
+        : "text-muted-foreground hover:text-foreground hover:bg-secondary border border-transparent"
   );
 
   // ── Shared input box ───────────────────────────────────────────
@@ -200,9 +201,9 @@ export const ChatView = ({
             disabled={isGenerating || voiceState === "processing"}
             className={voiceButtonClass}
             title={
-              voiceState === "listening"  ? "Stop recording"
-              : voiceState === "processing" ? "Processing transcription…"
-              : "Voice input"
+              voiceState === "listening" ? "Stop recording"
+                : voiceState === "processing" ? "Processing transcription…"
+                  : "Voice input"
             }
           >
             {voiceButtonContent()}
@@ -210,6 +211,37 @@ export const ChatView = ({
 
           {/* Right side */}
           <div className="flex items-center gap-2">
+            {/* Mode Toggle */}
+            <div className="flex bg-secondary/30 rounded-lg p-0.5 border border-border/40 mr-1">
+              <button
+                type="button"
+                onClick={() => setMode("fast")}
+                className={cn(
+                  "px-2.5 py-[3px] text-[11px] font-medium rounded-md transition-all",
+                  mode === "fast"
+                    ? "bg-emerald text-white shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                )}
+                title="Fast Mode: Optimize immediately with adaptive templates"
+              >
+                Fast
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("thinking")}
+                className={cn(
+                  "px-2.5 py-[3px] text-[11px] font-medium rounded-md transition-all flex items-center gap-1",
+                  mode === "thinking"
+                    ? "bg-blue-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                )}
+                title="Thinking Mode: Deeper reasoning, summarization, and task orchestration"
+              >
+                <Sparkles className="w-2.5 h-2.5" />
+                Thinking
+              </button>
+            </div>
+
             {/* Listening pulse indicator */}
             {voiceState === "listening" && (
               <div className="flex items-center gap-1.5 animate-fade-in">
@@ -260,10 +292,6 @@ export const ChatView = ({
         </div>
       )}
 
-      {/* Keyboard hint */}
-      <p className="text-[11px] text-muted-foreground/30 text-center mt-2.5 select-none">
-        Shift + Enter for new line · Enter to generate
-      </p>
     </div>
   );
 
@@ -294,23 +322,7 @@ export const ChatView = ({
                 </p>
               </div>
 
-              {/* Suggestion chips */}
-              <div className="flex flex-wrap gap-2 justify-center">
-                {[
-                  'Technical documentation',
-                  'Creative writing assistant',
-                  'Code review prompt',
-                  'Data analysis template',
-                ].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    onClick={() => setInput(`Create a ${suggestion.toLowerCase()}`)}
-                    className="px-3 py-1.5 rounded-full text-[12px] font-medium bg-surface border border-border text-muted-foreground hover:text-foreground hover:border-emerald/35 hover:bg-sidebar-accent transition-smooth"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+              <div className="flex flex-wrap gap-2 justify-center" />
             </div>
 
             {inputBox}

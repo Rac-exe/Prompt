@@ -26,7 +26,7 @@ const Section = ({ title, description, children }: {
       <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
     </div>
-    <div className="bg-surface border border-border rounded-xl overflow-hidden">
+    <div className="bg-black/5 dark:bg-white/5 border border-transparent rounded-xl overflow-hidden text-foreground/90">
       {children}
     </div>
   </div>
@@ -55,33 +55,48 @@ export const SettingsView = () => {
     fontFamily: "inter",
     promptInstructions: "",
   });
-  const [isDirty, setIsDirty] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  // Local state for custom instructions — only saved on explicit Save press
+  const [localInstructions, setLocalInstructions] = useState("");
 
   useEffect(() => {
     loadSettings()
-      .then((loaded) => { setSettings(loaded); })
+      .then((loaded) => {
+        setSettings(loaded);
+        setLocalInstructions(loaded.promptInstructions ?? "");
+      })
       .catch((err) => console.error('[SettingsView] Failed to load settings:', err))
       .finally(() => setIsLoading(false));
   }, []);
 
-  useEffect(() => {
-    if (isDirty) applySettings(settings);
-  }, [settings, isDirty]);
+  const instructionsDirty = localInstructions !== settings.promptInstructions;
 
-  const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
-    setIsDirty(true);
+  const saveInstructions = () => {
+    updateSetting("promptInstructions", localInstructions);
   };
 
-  const handleSave = async () => {
-    try {
-      await saveSettings(settings);
-      setIsDirty(false);
-      applySettings(settings);
-      toast({ title: "Settings saved", description: "Your preferences have been updated." });
-    } catch (error) {
-      toast({ title: "Save failed", description: "Could not save settings.", variant: "destructive" });
+  const discardInstructions = () => {
+    setLocalInstructions(settings.promptInstructions ?? "");
+  };
+
+  const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
+    const newSettings = { ...settings, [key]: value };
+
+    // 1. Update component rendering state
+    setSettings(newSettings);
+
+    // 2. Instantly apply the settings visually
+    applySettings(newSettings);
+
+    // 3. Persist setting to the backend
+    saveSettings(newSettings).catch((err) => {
+      console.error('[SettingsView] Failed to auto-save:', err);
+      toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
+    });
+
+    // 4. Instantly broadcast setting payload to overlay
+    if (window.electronAPI && window.electronAPI.send) {
+      window.electronAPI.send('overlay:settings-update', newSettings);
     }
   };
 
@@ -262,19 +277,41 @@ export const SettingsView = () => {
             <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
               {/* Custom instructions */}
               <Section
-                title="Custom Prompt Instructions"
-                description="Appended to every optimization request as context for the AI"
+                title="Custom Instructions"
+                description="Added to every optimization as secondary context — think of it as a persistent system-level preference"
               >
-                <div className="p-4">
+                <div className="p-4 space-y-2.5">
                   <Textarea
-                    value={settings.promptInstructions}
-                    onChange={(e) => updateSetting("promptInstructions", e.target.value)}
-                    placeholder="e.g. 'Always use formal tone', 'Include examples', 'Focus on technical accuracy'…"
-                    className="min-h-[100px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/40 leading-relaxed"
+                    value={localInstructions}
+                    onChange={(e) => setLocalInstructions(e.target.value)}
+                    placeholder="e.g. 'Always use formal tone', 'Include code examples', 'Prefer concise responses'…"
+                    className="min-h-[110px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/40 leading-relaxed"
+                    maxLength={1000}
                   />
-                  <p className="text-[10px] text-muted-foreground/50 mt-1.5">
-                    {settings.promptInstructions.length} / 1000 characters
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-muted-foreground/50">
+                      {localInstructions.length} / 1000
+                    </p>
+                    {instructionsDirty && (
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={discardInstructions}
+                          className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Discard
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={saveInstructions}
+                          className="h-7 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </Section>
 
@@ -334,48 +371,13 @@ export const SettingsView = () => {
                 </Row>
               </Section>
 
-              {/* Interface */}
-              <Section title="Interface">
-                <Row>
-                  <RowLabel label="Beta Features" hint="Early access to experimental features" />
-                  <Switch defaultChecked={false} className="data-[state=checked]:bg-emerald" />
-                </Row>
-                <Row>
-                  <RowLabel label="Animations" hint="Smooth transitions and micro-interactions" />
-                  <Switch defaultChecked={true} className="data-[state=checked]:bg-emerald" />
-                </Row>
-              </Section>
+
             </div>
           </ScrollArea>
         </TabsContent>
       </Tabs>
 
-      {/* ── Sticky save bar ── */}
-      {isDirty && (
-        <div className="flex-shrink-0 px-6 py-3.5 border-t border-border bg-surface/60 animate-slide-up flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">You have unsaved changes</p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost" size="sm"
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
-              onClick={async () => {
-                const loaded = await loadSettings();
-                setSettings(loaded);
-                setIsDirty(false);
-              }}
-            >
-              Discard
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleSave}
-              className="h-8 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm"
-            >
-              Save Changes
-            </Button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 };

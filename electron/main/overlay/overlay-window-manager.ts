@@ -64,7 +64,7 @@ export class OverlayWindowManager {
       movable: true,
       show: false,
       focusable: true,
-      hasShadow: true,
+      hasShadow: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,

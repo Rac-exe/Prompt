@@ -276,6 +276,8 @@ class OptimizeRequest(BaseModel):
     prompt: str
     skip_cache: Optional[bool] = False  # Set to True to bypass cache (for refresh)
     messages: Optional[list[Message]] = None  # Chat history for context-aware optimization
+    mode: Optional[str] = "fast"  # new dual-mode toggle ("fast" or "thinking")
+    custom_instructions: Optional[str] = ""  # User's custom prompt instructions
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -346,46 +348,47 @@ async def optimize_prompt(request: OptimizeRequest):
         print(f"[Optimize] Cache bypassed - generating fresh optimization (refresh requested)")
 
     try:
-        # Detect prompt type for adaptive optimization
-        prompt_type = detect_prompt_type(prompt_text)
-        optimization_strategy = get_optimization_strategy(prompt_type)
-
-        print(f"[Optimize] Detected prompt type: {prompt_type}")
-        print(f"[Optimize] Applying {prompt_type} optimization strategy")
-
-        # Use higher temperature for regenerate requests to ensure different results
-        temperature = 1.2 if request.skip_cache else 0.7
-
-        # Call Ollama with adaptive system prompt
-        response = ollama.chat(
-            model="llama3.2",  # Default model - user should configure
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"},
-                {"role": "user", "content": prompt_text}
-            ],
-            options={
-                "temperature": temperature,
-                "num_predict": 800  # Increased from 500 to allow for richer optimizations
-            }
-        )
-
-        optimized = response["message"]["content"]
-        optimized = clean_optimized_text(optimized)
-
-        # Remove the unique ID from optimized text if it was added for regenerate
-        if request.skip_cache and "[REGENERATE_" in optimized:
+        from pipeline_v2.context import ChatContext
+        from pipeline_v2.optimizer import optimize as pipeline_optimize
+        import uuid
+        
+        # Clean regenerate tag before processing
+        clean_prompt = prompt_text
+        if request.skip_cache and "[REGENERATE_" in clean_prompt:
             import re
-            optimized = re.sub(r'\n*\[REGENERATE_\d+\]', '', optimized).strip()
+            clean_prompt = re.sub(r'\n*\[REGENERATE_\d+\]', '', clean_prompt).strip()
 
-        print(f"[Optimize] Original length: {len(request.prompt.strip())} chars")
+        # Build context
+        cc = ChatContext(session_id=str(uuid.uuid4()))
+        if request.messages:
+            for msg in request.messages:
+                # msg is a Pydantic Message object with role/content
+                cc.add(msg.role, msg.content)
+
+        mode = getattr(request, 'mode', 'fast')
+        custom_instructions = getattr(request, 'custom_instructions', '')
+        
+        # Call pipeline
+        optimized_raw = pipeline_optimize(
+            user_input=clean_prompt,
+            cc=cc,
+            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
+            provider="auto",
+            stream=False,
+            mode=mode,
+            custom_instructions=custom_instructions
+        )
+        
+        optimized = clean_optimized_text(optimized_raw)
+
+        print(f"[Optimize] Original length: {len(clean_prompt)} chars")
         print(f"[Optimize] Optimized length: {len(optimized)} chars")
-        print(f"[Optimize] Improvement ratio: {len(optimized)/len(request.prompt.strip()):.2f}x")
+        if len(clean_prompt) > 0:
+            print(f"[Optimize] Improvement ratio: {len(optimized)/len(clean_prompt):.2f}x")
 
-        # Cache the result (use original prompt as key)
+        # Cache the result
         cache_key = request.prompt.strip()
         if len(prompt_cache) >= MAX_CACHE_SIZE:
-            # Remove oldest entry (simple FIFO)
             prompt_cache.pop(next(iter(prompt_cache)))
         prompt_cache[cache_key] = optimized
 
@@ -409,29 +412,23 @@ async def optimize_prompt(request: OptimizeRequest):
 @app.websocket("/ws/optimize-stream")
 async def optimize_stream(websocket: WebSocket):
     """
-    WebSocket endpoint for streaming prompt optimization.
-    Maintains a persistent connection for multiple requests.
+    WebSocket endpoint for streaming prompt optimization using pipeline_v2.
     """
     await websocket.accept()
     print("[OptimizeStream] WebSocket connection accepted")
     
     try:
         while True:
-            # Receive prompt data from client
             data = await websocket.receive_json()
             
-            # Extract request context
-            request_id = data.get("request_id")
-            if not request_id:
-                # Generate one if missing (legacy client support)
-                request_id = str(int(time.time() * 1000))
-                
+            request_id = data.get("request_id", str(int(time.time() * 1000)))
             prompt_text = data.get("prompt", "").strip()
             skip_cache = data.get("skip_cache", False)
             messages = data.get("messages", None)
+            mode = data.get("mode", "fast")
+            custom_instructions = data.get("custom_instructions", "")
             
-            print(f"[OptimizeStream] Processing request {request_id}")
-            print(f"[OptimizeStream] Prompt: {prompt_text[:50]}... (length: {len(prompt_text)})")
+            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode})")
             
             if not prompt_text or len(prompt_text) < 3:
                 await websocket.send_json({
@@ -440,74 +437,44 @@ async def optimize_stream(websocket: WebSocket):
                     "message": "Prompt too short (minimum 3 characters)"
                 })
                 continue
+
+            from pipeline_v2.context import ChatContext
+            from pipeline_v2.optimizer import optimize as pipeline_optimize
             
-            # Detect prompt type for adaptive optimization
-            prompt_type = detect_prompt_type(prompt_text)
-            optimization_strategy = get_optimization_strategy(prompt_type)
-            
-            print(f"[OptimizeStream] Detected prompt type: {prompt_type}")
-            
-            # Build messages for Ollama with adaptive strategy
-            ollama_messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "system", "content": f"Specific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"}
-            ]
-            
-            # Add chat history if provided
+            cc = ChatContext(session_id=request_id)
             if messages and isinstance(messages, list):
                 for msg in messages:
-                    if isinstance(msg, dict) and 'role' in msg and 'content' in msg:
-                         ollama_messages.append({
-                            "role": msg['role'],
-                            "content": msg['content']
-                        })
-                    elif hasattr(msg, 'role') and hasattr(msg, 'content'):
-                        ollama_messages.append({
-                            "role": msg.role,
-                            "content": msg.content
-                        })
+                    role_str = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
+                    content_str = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
+                    cc.add(role_str, content_str)
             
-            # Add current user prompt
-            ollama_messages.append({"role": "user", "content": prompt_text})
-            
-            # Use higher temperature for regenerate requests
-            temperature = 1.2 if skip_cache else 0.7
-            
-            print(f"[OptimizeStream] Starting Ollama streaming with temperature={temperature}")
-            
-            # Stream response from Ollama
             try:
-                stream = ollama.chat(
-                    model="llama3.2",
-                    messages=ollama_messages,
-                    options={
-                        "temperature": temperature,
-                        "num_predict": 800
-                    },
-                    stream=True
+                # Call pipeline configured for streaming, returning a generator
+                stream_gen = pipeline_optimize(
+                    user_input=prompt_text,
+                    cc=cc,
+                    model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
+                    provider="auto",
+                    stream=True,
+                    mode=mode,
+                    custom_instructions=custom_instructions
                 )
                 
                 accumulated_text = ""
                 chunk_count = 0
                 
-                for chunk in stream:
-                    if chunk.get("message"):
-                        content = chunk["message"]["content"]
-                        accumulated_text += content
-                        chunk_count += 1
-                        
-                        # Send chunk to client with request_id
-                        await websocket.send_json({
-                            "type": "chunk",
-                            "request_id": request_id,
-                            "content": content,
-                            "accumulated": accumulated_text
-                        })
+                for chunk in stream_gen:
+                    accumulated_text += chunk
+                    chunk_count += 1
+                    await websocket.send_json({
+                        "type": "chunk",
+                        "request_id": request_id,
+                        "content": chunk,
+                        "accumulated": accumulated_text
+                    })
                 
-                # Clean the accumulated text
                 cleaned_text = clean_optimized_text(accumulated_text)
                 
-                # Send completion signal
                 await websocket.send_json({
                     "type": "complete",
                     "request_id": request_id,

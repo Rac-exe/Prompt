@@ -6,6 +6,8 @@ import { PromptLibraryService } from '../database/services/prompt-library-servic
 import { OptimizationService } from '../database/services/optimization-service';
 import { authState } from '../utils/auth-state';
 import { replaceAtLastAnchor, isNativeBridgeAvailable } from '../utils/native-bridge';
+import { SettingsService } from '../database/services/settings-service';
+import { UserService } from '../database/services/user-service';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -46,6 +48,21 @@ function getOptimizationService(): OptimizationService {
   return optimizationService;
 }
 
+let settingsService: SettingsService | null = null;
+function getSettingsService(): SettingsService {
+  if (!settingsService) settingsService = new SettingsService();
+  return settingsService;
+}
+
+let userService: UserService | null = null;
+function getUserService(): UserService {
+  if (!userService) userService = new UserService();
+  return userService;
+}
+
+// Simple in-memory history for the overlay session so the user can refine prompts
+const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
+
 export function registerOverlayHandlers(
   overlayManager: OverlayWindowManager,
   pythonClient: PythonClient,
@@ -54,7 +71,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string }) => {
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -65,15 +82,47 @@ export function registerOverlayHandlers(
       return;
     }
 
+    // Handle session reset if the overlay is closed and opened again
+    // For now, we'll just keep a rolling history of the last 10 messages
+    if (inMemoryOverlayHistory.length > 20) {
+        inMemoryOverlayHistory.splice(0, inMemoryOverlayHistory.length - 20);
+    }
+
     try {
+      let customInstructions = "";
+      if (authState.isAuthenticated) {
+        try {
+          const profile = await getUserService().getUserProfile();
+          if (profile) {
+            const settings = await getSettingsService().getUserSettings(profile.id);
+            if (settings) {
+              customInstructions = settings.prompt_instructions || "";
+            }
+          }
+        } catch (settingsErr) {
+          console.warn('[Overlay] Failed to fetch custom instructions:', settingsErr);
+        }
+      }
+
+      // We pass the current history before adding the new message
+      const historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
+      
+      // Add the user's new message to history
+      inMemoryOverlayHistory.push({ role: 'user', content: data.text });
+
       const optimizedText = await pythonClient.optimizeStream(
         data.text,
         !!data.isRegenerate,
-        null,
+        historyContext,
         (chunk: string, accumulated: string) => {
           overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
-        }
+        },
+        data.mode || 'fast',
+        customInstructions
       );
+
+      // Add the assistant's response to history
+      inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
 
       overlayManager.send('overlay:optimization-complete', {
         original: data.text,
@@ -158,6 +207,23 @@ export function registerOverlayHandlers(
   // ============================================
   ipcMain.handle('overlay:check-auth', async () => {
     return { isAuthenticated: authState.isAuthenticated };
+  });
+
+  // ============================================
+  // overlay:get-settings — Get current user settings for overlay styling
+  // ============================================
+  ipcMain.handle('overlay:get-settings', async () => {
+    if (!authState.isAuthenticated || !authState.currentUserId) {
+      return {
+        theme: 'dark',
+        font_size: 'medium',
+        font_family: 'inter',
+        prompt_instructions: '',
+      };
+    }
+    const { SettingsService } = require('../database/services/settings-service');
+    const settingsService = new SettingsService();
+    return await settingsService.getOrCreateSettings(authState.currentUserId);
   });
 
   // ============================================

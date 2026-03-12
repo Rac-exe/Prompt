@@ -103,28 +103,32 @@ export const applySettings = (settings: SettingsData) => {
         root.classList.remove("dark");
     }
 
+    // Remove existing font/size classes
+    root.classList.remove('text-sm', 'text-base', 'text-lg');
+    root.classList.remove('font-sans', 'font-mono', 'font-serif');
+
     // Apply font size
     switch (settings.fontSize) {
         case "small":
-            root.style.fontSize = "14px";
+            root.classList.add('text-sm');
             break;
         case "large":
-            root.style.fontSize = "18px";
+            root.classList.add('text-lg');
             break;
         default:
-            root.style.fontSize = "16px";
+            root.classList.add('text-base');
     }
 
     // Apply font family
     switch (settings.fontFamily) {
         case "mono":
-            root.style.fontFamily = "'Courier New', monospace";
+            root.classList.add('font-mono');
             break;
         case "serif":
-            root.style.fontFamily = "'Georgia', serif";
+            root.classList.add('font-serif');
             break;
         default:
-            root.style.fontFamily = "'Inter', system-ui, sans-serif";
+            root.classList.add('font-sans');
     }
 
     console.log('[applySettings] ✅ Settings applied. Current classList:', root.classList.toString());

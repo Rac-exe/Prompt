@@ -8,7 +8,7 @@ declare global {
       // OVERLAY API (for overlay.html)
       // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean }) => void;
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string }) => void;
         save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
         copy: (text: string) => void;
         close: () => void;
@@ -22,6 +22,8 @@ declare global {
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
         onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
         onOptimizationError: (callback: (data: { error: string }) => void) => void;
+        getSettings: () => Promise<any>;
+        onSettingsUpdate: (callback: (settings: any) => void) => void;
       };
 
       // ============================================
@@ -38,7 +40,7 @@ declare global {
       // ============================================
       // APP WINDOW API
       // ============================================
-      optimizePrompt: (text: string, isRegenerate?: boolean) => void;
+      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string) => void;
       saveToChat: (originalText: string, optimizedText: string) => void;
       requestUserData: () => void;
       onUserDataLoaded: (callback: (user: any) => void) => void;
@@ -112,7 +114,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
   overlay: {
-    optimize: (data: { text: string; isRegenerate?: boolean }) => {
+    optimize: (data: { text: string; isRegenerate?: boolean; mode?: string }) => {
       ipcRenderer.send('overlay:optimize', data);
     },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -154,6 +156,12 @@ const electronAPI = {
     onOptimizationError: (callback: (data: { error: string }) => void) => {
       ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
     },
+    getSettings: () => {
+      return ipcRenderer.invoke('overlay:get-settings');
+    },
+    onSettingsUpdate: (callback: (settings: any) => void) => {
+      ipcRenderer.on('overlay:settings-update', (_event, settings) => callback(settings));
+    },
   },
 
   // ============================================
@@ -180,8 +188,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false) => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);
@@ -241,7 +249,7 @@ const electronAPI = {
     ipcRenderer.on('messages-loaded', handler);
     return () => ipcRenderer.removeListener('messages-loaded', handler);
   },
-  sendMessage: (data: { chatId: string | null; content: string }) => {
+  sendMessage: (data: { chatId: string | null; content: string; mode?: string }) => {
     ipcRenderer.send('app:send-message', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
@@ -364,7 +372,7 @@ const electronAPI = {
   windowControls: {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
-    close:    () => ipcRenderer.send('window:close'),
+    close: () => ipcRenderer.send('window:close'),
   },
 
   // ============================================

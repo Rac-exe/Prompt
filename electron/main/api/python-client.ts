@@ -117,7 +117,9 @@ export class PythonClient extends EventEmitter {
     prompt: string,
     skipCache: boolean = false,
     messages: Array<{ role: string; content: string }> | null = null,
-    onChunk: (chunk: string, accumulated: string) => void
+    onChunk: (chunk: string, accumulated: string) => void,
+    mode: string = "fast",
+    customInstructions: string = ""
   ): Promise<string> {
     await this.ensureConnection();
 
@@ -193,7 +195,7 @@ export class PythonClient extends EventEmitter {
         requestObj.onChunk = (chunk, acc) => {
           requestObj.accumulated = acc;
           onChunk(chunk, acc);
-          
+
           // Start silence timer only after first chunk arrives
           if (!hasReceivedFirstChunk) {
             hasReceivedFirstChunk = true;
@@ -218,7 +220,9 @@ export class PythonClient extends EventEmitter {
           request_id: requestId,
           prompt,
           skip_cache: skipCache,
-          messages
+          messages,
+          mode,
+          custom_instructions: customInstructions
         }));
       } catch (error) {
         clearTimeout(timeoutId);
@@ -232,13 +236,17 @@ export class PythonClient extends EventEmitter {
   async optimize(
     prompt: string,
     skipCache: boolean = false,
-    messages?: Array<{ role: string; content: string }>
+    messages?: Array<{ role: string; content: string }>,
+    mode: string = "fast",
+    customInstructions: string = ""
   ): Promise<string> {
     try {
       const response = await this.client.post("/optimize", {
         prompt,
         skip_cache: skipCache,
-        messages: messages || null
+        messages: messages || null,
+        mode,
+        custom_instructions: customInstructions
       });
       return response.data.optimized;
     } catch (error) {

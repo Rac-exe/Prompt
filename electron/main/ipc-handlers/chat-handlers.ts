@@ -1,21 +1,24 @@
 import { ipcMain } from 'electron';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
-import { UserService } from '../database/services/user-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PythonClient } from '../api/python-client';
 import { authState } from '../utils/auth-state';
+import { SettingsService } from '../database/services/settings-service';
+import { UserService } from '../database/services/user-service';
 
 // Lazy load services
 let chatService: ChatService | null = null;
 let optimizationService: OptimizationService | null = null;
 let userService: UserService | null = null;
+let settingsService: SettingsService | null = null;
 
 function getServices() {
     if (!chatService) chatService = new ChatService();
     if (!optimizationService) optimizationService = new OptimizationService();
     if (!userService) userService = new UserService();
-    return { chatService, optimizationService, userService };
+    if (!settingsService) settingsService = new SettingsService();
+    return { chatService, optimizationService, userService, settingsService };
 }
 
 // Module-level state for optimization context
@@ -40,7 +43,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string) => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
         try {
             // Retrieve chat history for context-aware optimization
             let chatHistory: Array<{ role: string; content: string }> | null = null;
@@ -56,6 +59,19 @@ export function registerChatHandlers(
                 }
             }
 
+            let customInstructions = "";
+            if (authState.isAuthenticated && userService && settingsService) {
+                try {
+                    const profile = await userService.getUserProfile();
+                    if (profile) {
+                        const settings = await settingsService.getUserSettings(profile.id);
+                        customInstructions = settings?.prompt_instructions || "";
+                    }
+                } catch (settingsErr) {
+                    console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
+                }
+            }
+
             // Use streaming optimization
             const optimizedText = await pythonClient.optimizeStream(
                 promptText,
@@ -65,7 +81,9 @@ export function registerChatHandlers(
                     if (appWindowManager) {
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });
                     }
-                }
+                },
+                mode,
+                customInstructions
             );
 
             // Save optimization to database
@@ -228,7 +246,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Send message (creates chat if needed, saves, optimizes)
     // ============================================
-    ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string }) => {
+    ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string; mode?: string }) => {
         try {
             let chatId = data.chatId;
             let chat;
@@ -265,16 +283,46 @@ export function registerChatHandlers(
                 });
             }
 
+            let customInstructions = "";
+            if (authState.isAuthenticated && userService && settingsService) {
+                try {
+                    const profile = await userService.getUserProfile();
+                    if (profile) {
+                        const settings = await settingsService.getUserSettings(profile.id);
+                        customInstructions = settings?.prompt_instructions || "";
+                    }
+                } catch (settingsErr) {
+                    console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
+                }
+            }
+
+            // Fetch chat history for context
+            let messagesContext: Array<{role: string, content: string}> = [];
+            try {
+                const history = await chatService.getMessages(chatId);
+                // Get the last 10 messages, but EXCLUDE the one we just added (the new prompt)
+                // because the python backend expects the new prompt separately
+                const relevantHistory = history.filter(m => m.id !== userMessage.id).slice(-10);
+                messagesContext = relevantHistory.map(m => ({
+                    role: m.role,
+                    content: m.content
+                }));
+            } catch (historyErr) {
+                console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
+            }
+
             // Trigger streaming optimization
             const optimizedText = await pythonClient.optimizeStream(
                 data.content,
                 false,
-                null,
+                messagesContext.length > 0 ? messagesContext : null,
                 (chunk, accumulated) => {
                     if (appWindowManager) {
                         appWindowManager.send('optimization-chunk', { chunk, accumulated });
                     }
-                }
+                },
+                data.mode || 'fast',
+                customInstructions
             );
 
             // Save optimization record
