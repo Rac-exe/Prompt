@@ -2,7 +2,6 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-import ollama
 import time
 import re
 import whisper
@@ -21,6 +20,40 @@ import os
 import torch
 
 app = FastAPI()
+
+# Preload heavy modules to eliminate cold start latency
+print("[Startup] Loading pipeline_v2 modules...")
+from pipeline_v2.context import ChatContext
+from pipeline_v2.optimizer import optimize as pipeline_optimize
+import uuid
+print("[Startup] pipeline_v2 loaded")
+
+@app.on_event("startup")
+async def startup_event():
+    # Warm up litellm / OpenRouter TLS connections in the background
+    try:
+        print("[Startup] Warming up OpenRouter connection...")
+        import litellm
+        import os
+        model = os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini")
+        
+        # We do a direct ping to litellm instead of pipeline_optimize
+        # so this doesn't pollute the local usage logs or chat history
+        # We set max_tokens=1 so it uses effectively 0 compute/cost
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        
+        # Prepare kwargs
+        kwargs = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+        if api_key and ("openrouter" in model.lower() or provider_check(model)):
+            kwargs["api_key"] = api_key
+            
+        litellm.completion(**kwargs)
+        print("[Startup] ✓ OpenRouter connection warmed up")
+    except Exception as e:
+        print(f"[Startup] ⚠️ Warmup failed (this is harmless if no internet): {e}")
+
+def provider_check(model: str) -> bool:
+    return "openrouter" in model.lower()
 
 # ============================================
 # SKILL MANAGER - DISABLED (using simple system prompt instead)
@@ -344,14 +377,7 @@ async def optimize_prompt(request: OptimizeRequest):
             latency_ms=latency
         )
 
-    if request.skip_cache:
-        print(f"[Optimize] Cache bypassed - generating fresh optimization (refresh requested)")
-
     try:
-        from pipeline_v2.context import ChatContext
-        from pipeline_v2.optimizer import optimize as pipeline_optimize
-        import uuid
-        
         # Clean regenerate tag before processing
         clean_prompt = prompt_text
         if request.skip_cache and "[REGENERATE_" in clean_prompt:
@@ -438,9 +464,6 @@ async def optimize_stream(websocket: WebSocket):
                 })
                 continue
 
-            from pipeline_v2.context import ChatContext
-            from pipeline_v2.optimizer import optimize as pipeline_optimize
-            
             cc = ChatContext(session_id=request_id)
             if messages and isinstance(messages, list):
                 for msg in messages:
@@ -504,22 +527,11 @@ async def optimize_stream(websocket: WebSocket):
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    try:
-        # Try to list models to verify Ollama is accessible
-        models = ollama.list()
-        return {
-            "status": "ok",
-            "service": "prompt-optimizer",
-            "ollama_connected": True,
-            "models_available": len(models.get("models", []))
-        }
-    except Exception as e:
-        return {
-            "status": "degraded",
-            "service": "prompt-optimizer",
-            "ollama_connected": False,
-            "error": str(e)
-        }
+    return {
+        "status": "ok",
+        "service": "prompt-optimizer",
+        "api_ready": True
+    }
 
 # ============================================================
 # WHISPER TRANSCRIPTION PIPELINE  v3

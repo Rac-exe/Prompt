@@ -27,6 +27,14 @@ export class PythonClient extends EventEmitter {
     });
   }
 
+  public async connect(): Promise<void> {
+    try {
+      await this.ensureConnection();
+    } catch (error) {
+      console.error('[PythonClient] Background connection failed:', error);
+    }
+  }
+
   private async ensureConnection(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       return;

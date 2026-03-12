@@ -92,6 +92,7 @@ async function initialize() {
     const isHealthy = await pythonClient.healthCheck();
     if (isHealthy) {
       console.log('[Main] Python service connected');
+      pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
     } else {
       console.warn('[Main] Python service not available');
     }
