@@ -16,6 +16,7 @@ interface ChatViewProps {
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   savedPromptIds: string[];
   isGenerating: boolean;
+  isOnline?: boolean;
 }
 
 // Voice states:
@@ -27,7 +28,7 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  savedPromptIds, isGenerating,
+  savedPromptIds, isGenerating, isOnline = true,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
@@ -260,7 +261,7 @@ export const ChatView = ({
 
             <Button
               onClick={handleSubmit}
-              disabled={!input.trim() || isGenerating || voiceState === "processing"}
+              disabled={!input.trim() || isGenerating || voiceState === "processing" || !isOnline}
               size="sm"
               className={cn(
                 "h-7 px-3.5 bg-emerald hover:bg-emerald/90 text-white text-[12px] font-semibold",
@@ -269,6 +270,7 @@ export const ChatView = ({
                 "shadow-[0_0_0_1px_hsl(var(--emerald)/0.2),0_0_10px_hsl(var(--emerald)/0.15)]",
                 "hover:shadow-[0_0_0_1px_hsl(var(--emerald)/0.3),0_0_16px_hsl(var(--emerald)/0.25)]"
               )}
+              title={!isOnline ? "You're offline — optimization unavailable" : undefined}
               data-testid="generate-prompt-button"
             >
               {isGenerating ? (

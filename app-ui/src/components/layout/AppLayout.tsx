@@ -1,5 +1,5 @@
-import { ReactNode } from "react";
-import { Minus, Square, X } from "lucide-react";
+import { ReactNode, useState, useEffect } from "react";
+import { Minus, Square, X, WifiOff } from "lucide-react";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -9,7 +9,20 @@ interface AppLayoutProps {
 export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
   const minimize = () => window.electronAPI?.windowControls?.minimize();
   const maximize = () => window.electronAPI?.windowControls?.maximize();
-  const close    = () => window.electronAPI?.windowControls?.close();
+  const close = () => window.electronAPI?.windowControls?.close();
+
+  const [isOnline, setIsOnline] = useState(true);
+
+  useEffect(() => {
+    // Listen for network changes from Electron main process
+    window.electronAPI?.onNetworkStatus?.((data) => {
+      setIsOnline(data.isOnline);
+    });
+    // Also listen for reconnect event to clear any stale banners
+    window.electronAPI?.onNetworkReconnected?.(() => {
+      setIsOnline(true);
+    });
+  }, []);
 
   return (
     <div className="h-screen flex flex-col w-full bg-background overflow-hidden">
@@ -62,6 +75,16 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
           </button>
         </div>
       </div>
+
+      {/* ── Offline banner ── */}
+      {!isOnline && (
+        <div className="flex items-center justify-center gap-2 px-4 py-1.5
+                       bg-amber-500/10 border-b border-amber-500/20 text-amber-400
+                       text-[11px] font-medium flex-shrink-0 animate-fade-in">
+          <WifiOff className="w-3 h-3 flex-shrink-0" />
+          <span>You're offline- Prompt optimization unavailable.</span>
+        </div>
+      )}
 
       {/* ── Main layout ── */}
       <div className="flex-1 flex min-h-0 overflow-hidden">

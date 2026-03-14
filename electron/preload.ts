@@ -106,6 +106,10 @@ declare global {
 
       // Common API
       send: (channel: string, data: any) => void;
+
+      // Network status
+      onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
+      onNetworkReconnected: (callback: () => void) => void;
     };
   }
 }
@@ -388,6 +392,16 @@ const electronAPI = {
   // ============================================
   send: (channel: string, data: any) => {
     ipcRenderer.send(channel, data);
+  },
+
+  // ============================================
+  // NETWORK STATUS
+  // ============================================
+  onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => {
+    ipcRenderer.on('network:status', (_event, data) => callback(data));
+  },
+  onNetworkReconnected: (callback: () => void) => {
+    ipcRenderer.on('network:reconnected', () => callback());
   },
 };
 

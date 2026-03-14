@@ -6,6 +6,8 @@ import { PythonClient } from '../api/python-client';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
+import { localCache } from '../database/local-cache';
+import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 
 // Lazy load services
 let chatService: ChatService | null = null;
@@ -155,16 +157,39 @@ export function registerChatHandlers(
     // ============================================
     ipcMain.on('app:load-chats', async (event) => {
         try {
+            const userId = authState.currentUserId;
+            if (!networkMonitor.isOnline) {
+                // Serve from cache when offline
+                const cached = userId ? localCache.getChats(userId) : [];
+                console.warn('[Chat] Offline — returning', cached.length, 'cached chats');
+                if (appWindowManager) appWindowManager.send('chats-loaded', { chats: cached });
+                return;
+            }
+
             const chats = await chatService.getChats();
-            if (appWindowManager) {
-                appWindowManager.send('chats-loaded', { chats });
+
+            // Update cache
+            if (userId) localCache.setChats(userId, chats as any);
+
+            if (appWindowManager) appWindowManager.send('chats-loaded', { chats });
+
+            // ╠═══ Pre-fetch messages for top 5 recent chats (background) ════
+            if (userId && chats.length > 0) {
+                const top5 = chats.slice(0, 5);
+                Promise.all(
+                    top5.map(async (chat: any) => {
+                        try {
+                            const msgs = await chatService.getMessages(chat.id);
+                            localCache.setMessages(userId, chat.id, msgs as any);
+                        } catch (_) { /* best-effort */ }
+                    })
+                ).then(() => console.log('[Chat] Pre-cached messages for top 5 recent chats'));
             }
         } catch (error) {
             console.error('[Chat] Failed to load chats:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            if (appWindowManager) {
-                appWindowManager.send('chats-loaded', { chats: [], error: errorMessage });
-            }
+            const userId = authState.currentUserId;
+            const cached = userId ? localCache.getChats(userId) : [];
+            if (appWindowManager) appWindowManager.send('chats-loaded', { chats: cached, error: String(error) });
         }
     });
 
@@ -188,16 +213,32 @@ export function registerChatHandlers(
     // APP WINDOW: Load messages for a chat
     // ============================================
     ipcMain.on('app:load-messages', async (event, chatId: string) => {
+        const userId = authState.currentUserId;
         try {
-            const messages = await chatService.getMessages(chatId);
-            if (appWindowManager) {
-                appWindowManager.send('messages-loaded', { chatId, messages });
+            if (!networkMonitor.isOnline) {
+                // Serve from cache when offline
+                const cached = userId ? localCache.getMessages(userId, chatId) : [];
+                console.warn('[Chat] Offline — returning', cached.length, 'cached messages for chat', chatId);
+                if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages: cached });
+                return;
             }
+
+            const messages = await chatService.getMessages(chatId);
+
+            // Cache every chat the user opens while online
+            if (userId) localCache.setMessages(userId, chatId, messages as any);
+
+            if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages });
         } catch (error) {
             console.error('[Chat] Failed to load messages:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            // Fallback to cache on any error (e.g. "Not authenticated" when offline)
+            const cached = userId ? localCache.getMessages(userId, chatId) : [];
             if (appWindowManager) {
-                appWindowManager.send('messages-loaded', { chatId, messages: [], error: errorMessage });
+                appWindowManager.send('messages-loaded', {
+                    chatId,
+                    messages: cached,
+                    ...(cached.length === 0 && { error: String(error) })
+                });
             }
         }
     });
