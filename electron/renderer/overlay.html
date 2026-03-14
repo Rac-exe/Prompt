@@ -426,59 +426,198 @@
       animation: pulse 2s ease-in-out infinite;
     }
 
-    /* ======== INPUT SECTION (bottom-pinned) ======== */
+    /* ======== INPUT SECTION (Claude-style) ======== */
     .input-section {
-      border-top: 1px solid hsl(var(--border));
       padding: 10px 18px 14px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      background: hsl(var(--background));
       flex-shrink: 0;
     }
 
-    .controls-row {
+    .chat-input-box {
+      display: flex;
+      flex-direction: column;
+      background: hsl(var(--card));
+      border: 1px solid hsl(var(--border));
+      border-radius: 16px;
+      overflow: hidden;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .chat-input-box:focus-within {
+      border-color: hsl(var(--emerald) / 0.4);
+      box-shadow: 0 0 0 2px hsl(var(--emerald) / 0.08);
+    }
+
+    .chat-input-box textarea {
+      width: 100%;
+      background: transparent;
+      color: hsl(var(--foreground));
+      font-size: 13px;
+      line-height: 1.55;
+      outline: none;
+      resize: none;
+      border: none;
+      font-family: inherit;
+      padding: 14px 16px 6px;
+      min-height: 56px;
+      max-height: 160px;
+    }
+
+    .chat-input-box textarea::placeholder {
+      color: hsl(var(--muted-foreground) / 0.45);
+    }
+
+    .input-toolbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      padding: 4px 8px 8px;
     }
 
-    .input-row {
+    .input-toolbar-left {
       display: flex;
-      align-items: flex-end;
-      gap: 8px;
+      align-items: center;
+      gap: 2px;
     }
 
-    .input-row .input-area {
-      flex: 1;
-      padding: 10px 12px;
+    .input-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 4px;
     }
 
-    .btn-send {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
+    .btn-toolbar {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
       border: none;
-      background: linear-gradient(135deg, hsl(var(--emerald)), hsl(217 91% 50%));
-      color: white;
+      background: transparent;
+      color: hsl(var(--muted-foreground) / 0.5);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all 0.2s ease;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-toolbar:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--muted-foreground));
+    }
+
+    .btn-toolbar.listening {
+      background: hsl(0 72% 51% / 0.08);
+      color: hsl(0 72% 51%);
+      animation: mic-pulse 2s ease-in-out infinite;
+    }
+
+    /* Mode selector inside input bar */
+    .mode-select-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      height: 32px;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s ease;
+    }
+
+    .mode-select-btn:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    /* Mode dropdown */
+    .mode-dropdown {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 0;
+      background: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
+      border-radius: 12px;
+      padding: 4px;
+      min-width: 200px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+      z-index: 30;
+    }
+
+    .mode-dropdown.open {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .mode-dropdown-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--foreground));
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      text-align: left;
+      width: 100%;
+      transition: background 0.1s ease;
+    }
+
+    .mode-dropdown-item:hover {
+      background: hsl(var(--muted));
+    }
+
+    .mode-dropdown-item.selected {
+      background: hsl(var(--secondary));
+    }
+
+    .mode-dropdown-item .mode-icon {
+      width: 16px;
+      height: 16px;
+      margin-top: 1px;
+      flex-shrink: 0;
+    }
+
+    .mode-dropdown-item .mode-check {
+      margin-left: auto;
+      color: hsl(var(--emerald));
+      font-size: 14px;
+      margin-top: 1px;
+    }
+
+    /* Send button (circular) */
+    .btn-send {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
       flex-shrink: 0;
     }
 
     .btn-send:hover {
-      filter: brightness(1.1);
-      box-shadow: 0 0 16px hsl(var(--emerald) / 0.35);
+      opacity: 0.85;
     }
 
     .btn-send:disabled {
-      opacity: 0.3;
+      background: hsl(var(--muted));
+      color: hsl(var(--muted-foreground) / 0.4);
       cursor: not-allowed;
-      filter: none;
-      box-shadow: none;
     }
 
     /* ======== COLLECTION PICKER MODAL ======== */
@@ -774,47 +913,79 @@
           <div id="scroll-anchor"></div>
         </div>
 
-        <!-- INPUT SECTION (pinned to bottom) -->
+        <!-- INPUT SECTION (Claude-style: textarea + bottom toolbar inside one box) -->
         <div class="input-section">
-          <!-- Controls row: mode toggle + voice -->
-          <div class="controls-row">
-            <!-- Mode Toggle -->
-            <div
-              style="display: flex; background: hsl(var(--secondary) / 0.3); border-radius: 8px; padding: 2px; border: 1px solid hsl(var(--border) / 0.4);">
-              <button id="btn-mode-fast"
-                style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; border: none; background: hsl(var(--emerald)); color: white; box-shadow: 0 1px 2px rgba(0,0,0,0.1); transition: all 0.2s; font-family: inherit;">Fast</button>
-              <button id="btn-mode-thinking"
-                style="padding: 4px 10px; font-size: 11px; font-weight: 500; border-radius: 6px; cursor: pointer; border: none; background: transparent; color: hsl(var(--muted-foreground)); transition: all 0.2s; font-family: inherit;">Thinking</button>
-            </div>
+          <div class="chat-input-box">
+            <!-- Textarea -->
+            <textarea id="prompt-input" rows="2"
+              placeholder="How can I help you today?"></textarea>
 
-            <!-- Voice Button -->
-            <button id="btn-voice" class="btn-voice" title="Voice Input"
-              style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; font-size: 11px; font-weight: 500; color: hsl(var(--muted-foreground)); font-family: inherit;">
-              <svg id="icon-mic" style="width: 13px; height: 13px;" fill="none" stroke="currentColor"
-                viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                  d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
-              <svg id="icon-mic-listening" style="width: 13px; height: 13px; color: hsl(0 72% 51%); display: none;"
-                fill="currentColor" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="5" />
-              </svg>
-              <span id="voice-status-text">Voice</span>
-            </button>
-          </div>
+            <!-- Bottom toolbar inside the box -->
+            <div class="input-toolbar">
+              <!-- Left: mode selector + voice indicators -->
+              <div class="input-toolbar-left" style="position: relative;">
+                <!-- Mode dropdown trigger -->
+                <button id="btn-mode-trigger" class="mode-select-btn" type="button">
+                  <svg id="mode-icon-fast" style="width: 13px; height: 13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                  </svg>
+                  <svg id="mode-icon-thinking" style="width: 13px; height: 13px; display: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                  </svg>
+                  <span id="mode-label">Fast</span>
+                  <svg style="width: 10px; height: 10px; opacity: 0.5;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
 
-          <!-- Input row: textarea + send button -->
-          <div class="input-row">
-            <div class="input-area">
-              <textarea id="prompt-input" placeholder="Describe what you need optimized..."
-                style="width: 100%; background: transparent; color: hsl(var(--foreground)); font-size: 13px; line-height: 1.5; outline: none; resize: none; border: none; font-family: inherit;"></textarea>
+                <!-- Mode dropdown menu -->
+                <div id="mode-dropdown" class="mode-dropdown">
+                  <button class="mode-dropdown-item" data-mode="fast" type="button">
+                    <svg class="mode-icon" fill="none" stroke="hsl(var(--emerald))" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    <div style="flex: 1;">
+                      <div style="font-weight: 600;">Fast</div>
+                      <div style="font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 1px;">Most efficient for everyday tasks</div>
+                    </div>
+                    <span class="mode-check" style="display: none;">✓</span>
+                  </button>
+                  <button class="mode-dropdown-item" data-mode="thinking" type="button">
+                    <svg class="mode-icon" fill="none" stroke="#3b82f6" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                    <div style="flex: 1;">
+                      <div style="font-weight: 600;">Thinking</div>
+                      <div style="font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 1px;">Think longer for complex tasks</div>
+                    </div>
+                    <span class="mode-check" style="display: none;">✓</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Right: voice + send -->
+              <div class="input-toolbar-right">
+                <!-- Voice button (icon only) -->
+                <button id="btn-voice" class="btn-toolbar" title="Voice Input" type="button">
+                  <svg id="icon-mic" style="width: 15px; height: 15px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                  <svg id="icon-mic-listening" style="width: 15px; height: 15px; color: hsl(0 72% 51%); display: none;"
+                    fill="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="5" />
+                  </svg>
+                </button>
+                <span id="voice-status-text" style="display: none;">Voice</span>
+
+                <!-- Send button (circular) -->
+                <button id="btn-send" class="btn-send" disabled title="Send (Enter)" type="button">
+                  <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                  </svg>
+                </button>
+              </div>
             </div>
-            <button id="btn-send" class="btn-send" disabled title="Send (Enter)">
-              <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
-              </svg>
-            </button>
           </div>
         </div>
       </div>
@@ -929,8 +1100,11 @@
     const iconMic = document.getElementById('icon-mic');
     const iconMicListening = document.getElementById('icon-mic-listening');
     const voiceStatusText = document.getElementById('voice-status-text');
-    const btnModeFast = document.getElementById('btn-mode-fast');
-    const btnModeThinking = document.getElementById('btn-mode-thinking');
+    const btnModeTrigger = document.getElementById('btn-mode-trigger');
+    const modeDropdown = document.getElementById('mode-dropdown');
+    const modeLabel = document.getElementById('mode-label');
+    const modeIconFast = document.getElementById('mode-icon-fast');
+    const modeIconThinking = document.getElementById('mode-icon-thinking');
 
     // Modal refs
     const modalBackdrop = document.getElementById('modal-backdrop');
@@ -1492,26 +1666,58 @@
     });
 
     // ==========================================
-    // MODE TOGGLE
+    // MODE DROPDOWN (Claude-style)
     // ==========================================
-    btnModeFast.addEventListener('click', () => {
-      currentMode = 'fast';
-      btnModeFast.style.background = 'hsl(var(--emerald))';
-      btnModeFast.style.color = 'white';
-      btnModeFast.style.boxShadow = '0 1px 2px rgba(0,0,0,0.1)';
-      btnModeThinking.style.background = 'transparent';
-      btnModeThinking.style.color = 'hsl(var(--muted-foreground))';
-      btnModeThinking.style.boxShadow = 'none';
+    function updateModeUI() {
+      modeLabel.textContent = currentMode === 'fast' ? 'Fast' : 'Thinking';
+      modeIconFast.style.display = currentMode === 'fast' ? '' : 'none';
+      modeIconThinking.style.display = currentMode === 'thinking' ? '' : 'none';
+
+      // Update checkmarks in dropdown
+      modeDropdown.querySelectorAll('.mode-dropdown-item').forEach(item => {
+        const check = item.querySelector('.mode-check');
+        const isSelected = item.dataset.mode === currentMode;
+        if (check) check.style.display = isSelected ? '' : 'none';
+        item.classList.toggle('selected', isSelected);
+      });
+    }
+
+    // Toggle dropdown
+    btnModeTrigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      modeDropdown.classList.toggle('open');
     });
 
-    btnModeThinking.addEventListener('click', () => {
-      currentMode = 'thinking';
-      btnModeThinking.style.background = '#3b82f6';
-      btnModeThinking.style.color = 'white';
-      btnModeThinking.style.boxShadow = '0 1px 2px rgba(0,0,0,0.1)';
-      btnModeFast.style.background = 'transparent';
-      btnModeFast.style.color = 'hsl(var(--muted-foreground))';
-      btnModeFast.style.boxShadow = 'none';
+    // Select mode from dropdown
+    modeDropdown.addEventListener('click', (e) => {
+      const item = e.target.closest('.mode-dropdown-item');
+      if (!item) return;
+      currentMode = item.dataset.mode || 'fast';
+      updateModeUI();
+      modeDropdown.classList.remove('open');
+    });
+
+    // Close dropdown on outside click
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.input-toolbar-left')) {
+        modeDropdown.classList.remove('open');
+      }
+    });
+
+    // Init
+    updateModeUI();
+
+    // ==========================================
+    // AUTO-RESIZE TEXTAREA
+    // ==========================================
+    function autoResizeTextarea() {
+      promptInput.style.height = 'auto';
+      promptInput.style.height = Math.min(promptInput.scrollHeight, 160) + 'px';
+      promptInput.style.overflow = promptInput.scrollHeight > 160 ? 'auto' : 'hidden';
+    }
+
+    promptInput.addEventListener('input', () => {
+      autoResizeTextarea();
     });
 
     // ==========================================

@@ -107,6 +107,9 @@ export class OverlayWindowManager {
       this.send('overlay:opened', { isAuthenticated });
     }
 
+    // Position near cursor (like Raycast / Cursor inline assistant)
+    this.positionNearCursor();
+
     // Step 1: Make the window visible first so it has a valid HWND in the Z-order.
     this.window!.show();
 
@@ -121,6 +124,44 @@ export class OverlayWindowManager {
       // AttachThreadInput fallback failed — try Electron's own focus as last resort.
       this.window!.focus();
     }
+  }
+
+  /**
+   * Position the overlay near the current cursor position.
+   * Clamps to screen bounds so it never goes off-screen.
+   * Appears slightly below and to the right of the cursor
+   * to avoid covering the text being typed.
+   */
+  private positionNearCursor() {
+    if (!this.window || this.window.isDestroyed()) return;
+
+    const cursor = screen.getCursorScreenPoint();
+    const currentDisplay = screen.getDisplayNearestPoint(cursor);
+    const workArea = currentDisplay.workArea;
+    const [overlayWidth, overlayHeight] = this.window.getSize();
+
+    // Offset: slightly below and right of cursor
+    const offsetX = 10;
+    const offsetY = 24;
+
+    let x = cursor.x + offsetX;
+    let y = cursor.y + offsetY;
+
+    // Clamp right edge: if overlay goes past the right side, flip to left of cursor
+    if (x + overlayWidth > workArea.x + workArea.width) {
+      x = cursor.x - overlayWidth - offsetX;
+    }
+
+    // Clamp bottom edge: if overlay goes below, position above cursor
+    if (y + overlayHeight > workArea.y + workArea.height) {
+      y = cursor.y - overlayHeight - offsetY;
+    }
+
+    // Clamp left/top edges (safety)
+    x = Math.max(workArea.x, x);
+    y = Math.max(workArea.y, y);
+
+    this.window.setPosition(Math.round(x), Math.round(y));
   }
 
   /**
