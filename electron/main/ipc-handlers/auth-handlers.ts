@@ -89,6 +89,22 @@ async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUs
         if (networkMonitor.isOnline) {
             try {
                 userData = await userService.getCompleteUserData();
+                // Cache avatar for offline use if present
+                if (userData?.profile?.avatar_url) {
+                    try {
+                        const avatarRes = await fetch(userData.profile.avatar_url);
+                        if (avatarRes.ok) {
+                            const arrayBuffer = await avatarRes.arrayBuffer();
+                            const buffer = Buffer.from(arrayBuffer);
+                            const mimeType = avatarRes.headers.get('content-type') || 'image/jpeg';
+                            const base64 = `data:${mimeType};base64,${buffer.toString('base64')}`;
+                            localCache.setAvatar(user.id, base64);
+                            console.log('[Auth] ✅ Avatar cached for offline use');
+                        }
+                    } catch (avatarErr) {
+                        console.warn('[Auth] Could not cache avatar:', avatarErr);
+                    }
+                }
             } catch (e) {
                 console.warn('[Auth] Could not load user data from network:', e);
             }
@@ -103,6 +119,7 @@ async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUs
                     id: user.id,
                     email: user.email,
                     name: user.user_metadata?.full_name || user.email,
+                    avatar_url: localCache.getAvatar(user.id) || user.user_metadata?.avatar_url || null,
                 },
                 preferences: {},
             };
