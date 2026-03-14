@@ -9,6 +9,9 @@ import { authState } from '../utils/auth-state';
 import { replaceAtLastAnchor, isNativeBridgeAvailable } from '../utils/native-bridge';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
+import { localCache } from '../database/local-cache';
+import { networkMonitor } from './network-monitor-singleton';
+import { offlineQueue } from '../database/offline-queue';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -186,9 +189,23 @@ export function registerOverlayHandlers(
               { model: 'llama3.2', optimized: true, source_app: 'overlay' }
             );
 
-            // Notify the app window so its sidebar refreshes
-            const chats = await svc.getChats();
-            appWindowManager.send('chats-loaded', { chats });
+            // Cache the chat + messages so it's available offline
+            if (authState.currentUserId) {
+              const userId = authState.currentUserId;
+              // Refresh chat list in local cache (includes new chat)
+              const chats = await svc.getChats();
+              localCache.setChats(userId, chats as any);
+              appWindowManager.send('chats-loaded', { chats });
+
+              // Cache the messages for this chat
+              if (currentOverlayChatId) {
+                const msgs = await svc.getMessages(currentOverlayChatId);
+                localCache.setMessages(userId, currentOverlayChatId, msgs as any);
+              }
+            } else {
+              const chats = await svc.getChats();
+              appWindowManager.send('chats-loaded', { chats });
+            }
 
             console.log('[Overlay] Saved messages to chat:', currentOverlayChatId);
           } catch (chatErr) {
@@ -215,8 +232,46 @@ export function registerOverlayHandlers(
     }
 
     const service = getPromptLibraryService();
+    const userId = authState.currentUserId;
     let collectionId = data.collectionId;
 
+    if (!networkMonitor.isOnline) {
+      // Offline: store optimistically and queue for sync
+      if (!collectionId) {
+        // No collection specified — use/create local 'Quick Saves'
+        const cached = userId ? localCache.getCollections(userId) : [];
+        let qs = cached.find((c: any) => c.name === 'Quick Saves');
+        if (!qs) {
+          qs = { id: `offline-col-${Date.now()}`, user_id: userId || '', name: 'Quick Saves', icon: '⚡', created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+          if (userId) localCache.addOrUpdateCollection(userId, qs as any);
+          offlineQueue.enqueue('create-collection', { name: 'Quick Saves', icon: '⚡', tempId: qs.id });
+        }
+        collectionId = (qs as any).id as string;
+      }
+      const tempPrompt = {
+        id: `offline-pmt-${Date.now()}`,
+        collection_id: collectionId,
+        user_id: userId,
+        title: data.title,
+        content: data.content,
+        metadata: { source: 'overlay', savedAt: new Date().toISOString() },
+        is_favorite: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (userId) {
+        localCache.addOrUpdatePrompt(userId, tempPrompt as any);
+        // Immediately notify the app window so the library reflects the new prompt
+        const allCollections = localCache.getCollections(userId);
+        const allPrompts = localCache.getPrompts(userId);
+        appWindowManager.send('prompt-library:loaded', { collections: allCollections, prompts: allPrompts });
+      }
+      offlineQueue.enqueue('save-prompt', { collectionId, title: data.title, content: data.content, metadata: { source: 'overlay' }, tempId: tempPrompt.id });
+      console.warn('[Overlay] Offline — queued save-prompt:', tempPrompt.id);
+      return { promptId: tempPrompt.id, collectionId };
+    }
+
+    // Online path (original logic)
     // Auto-create "Quick Saves" collection if none specified
     if (!collectionId) {
       const collections = await service.getCollections();
@@ -231,6 +286,7 @@ export function registerOverlayHandlers(
       source: 'overlay',
       savedAt: new Date().toISOString(),
     });
+    if (userId) localCache.addOrUpdatePrompt(userId, saved as any);
 
     // Notify the app window so its prompt library refreshes in real-time
     service.getFullLibrary()
@@ -275,36 +331,73 @@ export function registerOverlayHandlers(
   // ============================================
   ipcMain.handle('overlay:get-settings', async () => {
     if (!authState.isAuthenticated || !authState.currentUserId) {
-      return {
-        theme: 'dark',
-        font_size: 'medium',
-        font_family: 'inter',
-        prompt_instructions: '',
-      };
+      return { theme: 'dark', font_size: 'medium', font_family: 'inter', prompt_instructions: '' };
     }
-    const { SettingsService } = require('../database/services/settings-service');
-    const settingsService = new SettingsService();
-    return await settingsService.getOrCreateSettings(authState.currentUserId);
+    try {
+      const { SettingsService } = require('../database/services/settings-service');
+      const svc = new SettingsService();
+      const settings = await svc.getOrCreateSettings(authState.currentUserId);
+      // Cache settings in localCache for offline use
+      localCache.setSettings(authState.currentUserId, settings);
+      return settings;
+    } catch (err) {
+      // Offline fallback — return cached settings or defaults
+      const cached = localCache.getSettings(authState.currentUserId);
+      if (cached) {
+        console.warn('[Overlay] Offline — returning cached settings');
+        return cached;
+      }
+      return { theme: 'dark', font_size: 'medium', font_family: 'inter', prompt_instructions: '' };
+    }
   });
 
   // ============================================
   // overlay:get-collections — Get collections for save picker
   // ============================================
   ipcMain.handle('overlay:get-collections', async () => {
-    if (!authState.isAuthenticated) {
-      throw new Error('Not authenticated');
+    const userId = authState.currentUserId;
+    try {
+      if (!authState.isAuthenticated) throw new Error('Not authenticated');
+      const collections = await getPromptLibraryService().getCollections();
+      // Keep cache fresh while online
+      if (userId) localCache.setCollections(userId, collections as any);
+      return collections;
+    } catch (err: any) {
+      // Offline fallback — return cached collections so the save modal works
+      if (userId && !networkMonitor.isOnline) {
+        const cached = localCache.getCollections(userId);
+        console.warn('[Overlay] Offline — returning', cached.length, 'cached collections');
+        return cached;
+      }
+      throw err;
     }
-    return await getPromptLibraryService().getCollections();
   });
 
   // ============================================
   // overlay:create-collection — Create a new collection from the overlay
   // ============================================
   ipcMain.handle('overlay:create-collection', async (_event, data: { name: string; icon?: string }) => {
-    if (!authState.isAuthenticated) {
-      throw new Error('Not authenticated');
+    const userId = authState.currentUserId;
+    if (!authState.isAuthenticated) throw new Error('Not authenticated');
+
+    if (!networkMonitor.isOnline) {
+      const tempCol = {
+        id: `offline-col-${Date.now()}`,
+        user_id: userId,
+        name: data.name,
+        icon: data.icon || '📁',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (userId) localCache.addOrUpdateCollection(userId, tempCol as any);
+      offlineQueue.enqueue('create-collection', { name: data.name, icon: data.icon || '📁', tempId: tempCol.id });
+      console.warn('[Overlay] Offline — queued create-collection:', tempCol.id);
+      return tempCol;
     }
-    return await getPromptLibraryService().createCollection(data.name, data.icon || '📁');
+
+    const col = await getPromptLibraryService().createCollection(data.name, data.icon || '📁');
+    if (userId) localCache.addOrUpdateCollection(userId, col as any);
+    return col;
   });
 
   // ============================================

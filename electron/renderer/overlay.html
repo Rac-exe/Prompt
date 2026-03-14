@@ -399,6 +399,33 @@
       display: none;
     }
 
+    /* ======== OFFLINE BANNER ======== */
+    .offline-banner {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 18px;
+      background: hsl(38 92% 50% / 0.10);
+      border-bottom: 1px solid hsl(38 92% 50% / 0.25);
+      font-size: 11px;
+      font-weight: 500;
+      color: hsl(38 85% 45%);
+      flex-shrink: 0;
+    }
+
+    .offline-banner.visible {
+      display: flex;
+    }
+
+    .offline-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: hsl(38 92% 50%);
+      flex-shrink: 0;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
     /* ======== INPUT SECTION (bottom-pinned) ======== */
     .input-section {
       border-top: 1px solid hsl(var(--border));
@@ -658,6 +685,12 @@
 
       <div class="divider"></div>
 
+      <!-- ===== OFFLINE BANNER ===== -->
+      <div id="offline-banner" class="offline-banner">
+        <span class="offline-dot"></span>
+        <span>You’re offline — optimization unavailable. Cached prompts are still viewable &amp; saveable.</span>
+      </div>
+
       <!-- ===== AUTH GATE VIEW ===== -->
       <div id="view-auth" class="view"
         style="flex-direction: column; align-items: center; justify-content: center; padding: 48px 32px; text-align: center; gap: 20px;">
@@ -860,6 +893,7 @@
     // ==========================================
     let isAuthenticated = false;
     let isOptimizing = false;
+    let isOnline = true;           // Track network status
     let messages = [];                   // { id, role, content, timestamp }
     let currentOptimizedPrompt = '';     // Latest assistant response
     let isListening = false;
@@ -908,6 +942,7 @@
     const newCollectionInput = document.getElementById('new-collection-input');
     const btnAddCollection = document.getElementById('btn-add-collection');
     const saveTitleInput = document.getElementById('save-title-input');
+    const offlineBanner = document.getElementById('offline-banner');
 
     // ==========================================
     // VIEW MANAGEMENT
@@ -993,7 +1028,36 @@
     }
 
     function updateSendButton() {
-      btnSend.disabled = !promptInput.value.trim() || isOptimizing;
+      btnSend.disabled = !promptInput.value.trim() || isOptimizing || !isOnline;
+    }
+
+    // ==========================================
+    // NETWORK STATUS
+    // ==========================================
+    function setOnlineState(online) {
+      isOnline = online;
+      if (online) {
+        offlineBanner.classList.remove('visible');
+        promptInput.disabled = isOptimizing;
+        updateSendButton();
+      } else {
+        offlineBanner.classList.add('visible');
+        promptInput.disabled = true;
+        btnSend.disabled = true;
+        btnVoice.disabled = true;
+      }
+    }
+
+    // Listen for network status from main process
+    if (window.electronAPI?.onNetworkStatus) {
+      window.electronAPI.onNetworkStatus((data) => {
+        setOnlineState(data.isOnline);
+      });
+    }
+    if (window.electronAPI?.onNetworkReconnected) {
+      window.electronAPI.onNetworkReconnected(() => {
+        setOnlineState(true);
+      });
     }
 
     // ==========================================

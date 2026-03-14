@@ -38,8 +38,15 @@ export interface ElectronAPI {
     getAll: () => Promise<any>;
     getCollections: () => Promise<any>;
     createCollection: (name: string, icon?: string) => Promise<any>;
+    renameCollection: (collectionId: string, name: string) => Promise<any>;
+    deleteCollection: (collectionId: string) => Promise<any>;
     savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => Promise<any>;
+    createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) => Promise<any>;
+    updatePrompt: (promptId: string, updates: any) => Promise<any>;
+    deletePrompt: (promptId: string) => Promise<any>;
+    toggleFavorite: (promptId: string) => Promise<any>;
   };
+  onPromptLibraryLoaded: (callback: (data: any) => void) => void;
 
   // Settings
   loadSettings: () => Promise<any>;
@@ -66,6 +73,17 @@ export interface ElectronAPI {
   // Utility
   copyToClipboard: (text: string) => void;
   send: (channel: string, data: any) => void;
+
+  // Window controls
+  windowControls: {
+    minimize: () => void;
+    maximize: () => void;
+    close: () => void;
+  };
+
+  // Network status
+  onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
+  onNetworkReconnected: (callback: () => void) => void;
 }
 
 declare global {

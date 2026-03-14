@@ -22,6 +22,8 @@ import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './u
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
+import { syncOfflineQueue } from './ipc-handlers/prompt-library-handlers';
+import { networkMonitor } from './ipc-handlers/network-monitor-singleton';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -99,6 +101,19 @@ async function initialize() {
   } catch (error) {
     console.warn('[Main] Could not connect to Python service');
   }
+
+  // Start network monitor — broadcasts online/offline status to all windows
+  networkMonitor.start(
+    (channel, data) => appWindowManager.send(channel, data),
+    (channel, data) => overlayManager.send(channel, data),
+    () => {
+      // Reconnected: notify renderer, then drain the offline queue
+      appWindowManager.send('network:reconnected', {});
+      syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
+        .catch(e => console.error('[Main] Offline sync failed:', e));
+    }
+  );
+  console.log('[Main] NetworkMonitor started');
 
   // Initialize Transcription client
   transcriptionClient = new TranscriptionClient('ws://127.0.0.1:8001');
@@ -195,9 +210,16 @@ async function initialize() {
       if (event === 'SIGNED_IN' && session) {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
-        // Notify overlay of auth change
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
+        // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT
+        // refresh poller failing due to no network — NOT a real sign-out.
+        // Ignore it so the offline session remains valid.
+        if (!networkMonitor.isOnline) {
+          console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
+          return;
+        }
+
         authState.isAuthenticated = false;
         authState.currentUserId = null;
 
@@ -207,7 +229,6 @@ async function initialize() {
             user: null,
           });
         }
-        // Notify overlay of auth change
         overlayManager.sendAuthState(false);
       } else if (event === 'TOKEN_REFRESHED' && session) {
         console.log('[Main] Session token refreshed');

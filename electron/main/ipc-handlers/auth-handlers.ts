@@ -6,6 +6,8 @@ import { PromptLibraryService } from '../database/services/prompt-library-servic
 import { SupabaseClientManager } from '../database/supabase-client';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
+import { networkMonitor } from './network-monitor-singleton';
+import { localCache } from '../database/local-cache';
 
 // Services (lazy loaded)
 let authService: AuthService | null = null;
@@ -25,7 +27,7 @@ function getServices() {
  * Check for existing session and restore state
  */
 export async function checkAndRestoreSession(appWindowManager: AppWindowManager): Promise<boolean> {
-    const { authService, userService } = getServices();
+    const { authService } = getServices();
 
     try {
         console.log('[Auth] Checking for existing session...');
@@ -38,15 +40,13 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
             return false;
         }
 
-        console.log('[Auth] ✅ Valid session found, user authenticated');
+        // Set auth state from the locally-stored session token — no network required
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
+        console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
-        // Load user data and notify renderer
-        const userData = await userService.getCompleteUserData();
-        if (userData && appWindowManager) {
-            appWindowManager.send('user-data-loaded', userData);
-        }
+        // handleSuccessfulAuth already handles online/offline branching for data loading
+        await handleSuccessfulAuth(appWindowManager, session.user);
 
         return true;
     } catch (error) {
@@ -60,12 +60,22 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
 /**
  * Handle successful authentication (updates state, loads data)
  */
-async function handleSuccessfulAuth(appWindowManager: AppWindowManager) {
+async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
     const { authService, userService, chatService, promptLibraryService } = getServices();
 
     try {
-        // Get user data
-        const { user } = await authService.getCurrentUser();
+        let user = cachedUser;
+
+        // Only make network call if we don't already have user data and we're online
+        if (!user) {
+            if (!networkMonitor.isOnline) {
+                console.warn('[Auth] Offline — cannot validate user via network. Aborting auth load.');
+                return;
+            }
+            const result = await authService.getCurrentUser();
+            user = result.user;
+        }
+
         if (!user) {
             console.error('[Auth] No user after authentication');
             return;
@@ -74,8 +84,29 @@ async function handleSuccessfulAuth(appWindowManager: AppWindowManager) {
         authState.isAuthenticated = true;
         authState.currentUserId = user.id;
 
-        // Load complete user data
-        const userData = await userService.getCompleteUserData();
+        // Build user data object
+        let userData: any = null;
+        if (networkMonitor.isOnline) {
+            try {
+                userData = await userService.getCompleteUserData();
+            } catch (e) {
+                console.warn('[Auth] Could not load user data from network:', e);
+            }
+        }
+
+        // Fallback: construct minimal user data from the session user object
+        if (!userData) {
+            userData = {
+                id: user.id,
+                email: user.email,
+                profile: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.user_metadata?.full_name || user.email,
+                },
+                preferences: {},
+            };
+        }
 
         // 1. Send Auth State
         console.log('[Auth] 📤 Sending authenticated state to renderer');
@@ -84,13 +115,40 @@ async function handleSuccessfulAuth(appWindowManager: AppWindowManager) {
             user: userData,
         });
 
-        // 2. Load Chats
-        const chats = await chatService.getChats();
-        appWindowManager.send('chats-loaded', { chats });
+        // 2. Load Chats (from Supabase if online, from cache if offline)
+        try {
+            if (networkMonitor.isOnline) {
+                const chats = await chatService.getChats();
+                appWindowManager.send('chats-loaded', { chats });
+                localCache.setChats(user.id, chats as any);
+            } else {
+                const cachedChats = localCache.getChats(user.id);
+                appWindowManager.send('chats-loaded', { chats: cachedChats });
+                console.warn('[Auth] Offline — returning', cachedChats.length, 'cached chats');
+            }
+        } catch (e) {
+            const cachedChats = localCache.getChats(user.id);
+            appWindowManager.send('chats-loaded', { chats: cachedChats });
+        }
 
-        // 3. Load Prompt Library
-        const library = await promptLibraryService.getFullLibrary();
-        appWindowManager.send('prompt-library:loaded', library);
+        // 3. Load Prompt Library (from Supabase if online, from cache if offline)
+        try {
+            if (networkMonitor.isOnline) {
+                const library = await promptLibraryService.getFullLibrary();
+                appWindowManager.send('prompt-library:loaded', library);
+                if (library.collections) localCache.setCollections(user.id, library.collections as any);
+                if (library.prompts) localCache.setPrompts(user.id, library.prompts as any);
+            } else {
+                const collections = localCache.getCollections(user.id);
+                const prompts = localCache.getPrompts(user.id);
+                appWindowManager.send('prompt-library:loaded', { collections, prompts });
+                console.warn('[Auth] Offline — returning cached prompt library');
+            }
+        } catch (e) {
+            const collections = localCache.getCollections(user.id);
+            const prompts = localCache.getPrompts(user.id);
+            appWindowManager.send('prompt-library:loaded', { collections, prompts });
+        }
 
         console.log('[Auth] ✅ User authenticated and data loaded');
     } catch (error) {
@@ -222,22 +280,28 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     ipcMain.on('auth:check', async () => {
         try {
             console.log('[Auth] 📥 Renderer requested auth check');
-            const isAuth = await checkAndRestoreSession(appWindowManager);
 
-            if (isAuth) {
-                // Data loading is handled in checkAndRestoreSession -> or we should call handleSuccessfulAuth?
-                // Wait, checkAndRestoreSession only loads user data. It doesn't load chats/library.
-                // The original code DID load chats/library in auth:check handler.
+            // getSession() reads from the local filesystem session.json — works offline
+            const { authService } = getServices();
+            const { session, error } = await authService.getSession();
 
-                // Let's replicate original behavior:
-                await handleSuccessfulAuth(appWindowManager);
-            } else {
-                console.log('[Auth] 📤 Sending unauthenticated state to renderer');
-                appWindowManager.send('auth:state-changed', {
-                    isAuthenticated: false,
-                    user: null,
-                });
+            if (error || !session) {
+                console.log('[Auth] No valid session found');
+                authState.isAuthenticated = false;
+                authState.currentUserId = null;
+                appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
+                return;
             }
+
+            // Set auth state from local session (no network needed for this)
+            authState.isAuthenticated = true;
+            authState.currentUserId = session.user.id;
+            console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
+
+            // If checkAndRestoreSession already ran handleSuccessfulAuth on startup,
+            // skip the full data-load to avoid redundant Supabase calls.
+            // We still call handleSuccessfulAuth if it hasn't been run yet (edge case).
+            await handleSuccessfulAuth(appWindowManager, session.user);
         } catch (error) {
             console.error('[Auth] Error checking auth:', error);
             appWindowManager.send('auth:state-changed', {

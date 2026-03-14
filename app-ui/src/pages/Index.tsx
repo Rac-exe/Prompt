@@ -64,6 +64,13 @@ const Index = () => {
   const [generationStats, setGenerationStats] = useState<{ ttft: number | null; total: number | null }>({ ttft: null, total: null });
   const generationStartTime = useRef<number>(0);
 
+  // Network connectivity state
+  const [isOnline, setIsOnline] = useState(true);
+  useEffect(() => {
+    window.electronAPI?.onNetworkStatus?.((data) => setIsOnline(data.isOnline));
+    window.electronAPI?.onNetworkReconnected?.(() => setIsOnline(true));
+  }, []);
+
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [promptToPreview, setPromptToPreview] = useState<SavedPrompt | null>(null);
@@ -380,7 +387,7 @@ const Index = () => {
   // Listen for messages loaded from Supabase
   useEffect(() => {
     if (isElectron && window.electronAPI?.onMessagesLoaded) {
-      const handleMessagesLoaded = (data: { chatId: string; messages: any[] }) => {
+      const handleMessagesLoaded = (data: { chatId: string; messages: any[]; error?: string }) => {
         console.log('[Index] Messages loaded from Supabase:', data.messages.length);
 
         if (data.chatId === selectedChatId) {
@@ -391,13 +398,22 @@ const Index = () => {
             timestamp: new Date(msg.created_at),
           }));
           setMessages(formattedMessages);
+
+          // If offline and we got zero messages, let the user know
+          if (!isOnline && formattedMessages.length === 0) {
+            toast({
+              title: "Chat not available offline",
+              description: "This chat wasn't opened during your last online session and hasn't been cached. Connect to the internet to view it.",
+              variant: "destructive",
+            });
+          }
         }
       };
 
       const cleanup = window.electronAPI.onMessagesLoaded(handleMessagesLoaded);
       return cleanup; // Cleanup listener on unmount or dependency change
     }
-  }, [selectedChatId]);
+  }, [selectedChatId, isOnline]);
 
   // Generate history from chat sessions (sorted by most recent)
   const history = useMemo((): HistoryItem[] => {
@@ -770,6 +786,7 @@ Your prompt was: "${content}"`;
             onFeedback={handleFeedback}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
+            isOnline={isOnline}
           />
         );
     }
