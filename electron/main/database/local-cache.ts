@@ -49,6 +49,7 @@ export interface CacheStore {
   chats: CachedChat[];
   messages: Record<string, CachedMessage[]>; // keyed by chatId
   settings: Record<string, any>; // keyed by userId
+  avatar: Record<string, string>; // keyed by userId, stores base64 data URL
   lastSyncedAt: Record<string, string>; // table name -> ISO timestamp
 }
 
@@ -58,6 +59,7 @@ const DEFAULT_STORE: CacheStore = {
   chats: [],
   messages: {},
   settings: {},
+  avatar: {},
   lastSyncedAt: {},
 };
 
@@ -206,6 +208,17 @@ export class LocalCache {
     const store = this.load(userId);
     if (!store.settings) store.settings = {};
     store.settings[userId] = settings;
+    this.save(userId, store);
+  }
+
+  getAvatar(userId: string): string | null {
+    return this.load(userId).avatar?.[userId] ?? null;
+  }
+
+  setAvatar(userId: string, base64Url: string): void {
+    const store = this.load(userId);
+    if (!store.avatar) store.avatar = {};
+    store.avatar[userId] = base64Url;
     this.save(userId, store);
   }
 }

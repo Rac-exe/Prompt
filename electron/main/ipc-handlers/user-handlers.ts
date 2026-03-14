@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { UserService } from '../database/services/user-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
+import { localCache } from '../database/local-cache';
 
 // Lazy load service
 let userService: UserService | null = null;
@@ -39,6 +40,23 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             }
 
             await service.updateProfile(updates);
+
+            // Cache new avatar immediately if provided
+            if (updates.avatar_url && authState.currentUserId) {
+                try {
+                    const avatarRes = await fetch(updates.avatar_url);
+                    if (avatarRes.ok) {
+                        const arrayBuffer = await avatarRes.arrayBuffer();
+                        const buffer = Buffer.from(arrayBuffer);
+                        const mimeType = avatarRes.headers.get('content-type') || 'image/jpeg';
+                        const base64 = `data:${mimeType};base64,${buffer.toString('base64')}`;
+                        localCache.setAvatar(authState.currentUserId, base64);
+                        console.log('[User] ✅ New avatar cached for offline use');
+                    }
+                } catch (err) {
+                    console.warn('[User] Could not cache new avatar:', err);
+                }
+            }
 
             if (appWindowManager) {
                 appWindowManager.send('user:profile-updated');
