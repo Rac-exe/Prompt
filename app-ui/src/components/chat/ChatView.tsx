@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble, Message } from "./MessageBubble";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -38,6 +37,8 @@ export const ChatView = ({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // true = keep scrolling to bottom; flips to false when user scrolls up
+  const shouldAutoScroll = useRef(true);
 
   // ── Auto-resize textarea ────────────────────────────────────
   const autoResize = useCallback(() => {
@@ -49,12 +50,45 @@ export const ChatView = ({
 
   useEffect(() => { autoResize(); }, [input, autoResize]);
 
-  // ── Scroll to bottom on new messages ────────────────────────
+  // ── Scroll helper ────────────────────────────────────────────
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  // Detect manual scroll-up → pause auto-scroll
+  // Resume when user scrolls back near the bottom
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      shouldAutoScroll.current = distanceFromBottom < 80;
+    };
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // ── Auto-scroll on new committed messages ───────────────────
+  useEffect(() => {
+    if (shouldAutoScroll.current) scrollToBottom("smooth");
+  }, [messages, scrollToBottom]);
+
+  // ── Auto-scroll during streaming chunks ─────────────────────
+  useEffect(() => {
+    if (shouldAutoScroll.current && (isGenerating || streamingMessage)) {
+      scrollToBottom("instant");
     }
-  }, [messages]);
+  }, [streamingMessage, isGenerating, scrollToBottom]);
+
+  // ── Force scroll to bottom when user sends a message ────────
+  useEffect(() => {
+    if (isGenerating) {
+      shouldAutoScroll.current = true;
+      scrollToBottom("smooth");
+    }
+  }, [isGenerating, scrollToBottom]);
 
   // ── Transcription IPC listeners ─────────────────────────────
   useEffect(() => {
@@ -116,7 +150,7 @@ export const ChatView = ({
 
   // ── Unified input bar (Claude style — textarea + bottom toolbar inside) ──
   const inputBar = (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-4xl mx-auto">
       <div
         className={cn(
           "relative flex flex-col bg-surface border rounded-2xl transition-all overflow-hidden",
@@ -341,7 +375,7 @@ export const ChatView = ({
     return (
       <div className="flex-1 flex flex-col h-full bg-background">
         <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in-slow">
-          <div className="w-full max-w-2xl mx-auto flex flex-col items-center gap-10">
+          <div className="w-full max-w-4xl mx-auto flex flex-col items-center gap-10">
             {/* Hero */}
             <div className="flex flex-col items-center gap-5 text-center">
               <div className="relative inline-flex items-center justify-center">
@@ -372,8 +406,11 @@ export const ChatView = ({
   return (
     <div className="flex-1 flex flex-col h-full bg-background">
       <div className="flex-1 overflow-hidden">
-        <ScrollArea className="h-full" ref={scrollRef}>
-          <div className="max-w-3xl mx-auto py-8 px-6 space-y-6">
+        <div
+          ref={scrollRef}
+          className="h-full overflow-y-auto scrollbar-none"
+        >
+          <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -409,7 +446,7 @@ export const ChatView = ({
               />
             )}
           </div>
-        </ScrollArea>
+        </div>
       </div>
 
       {/* Docked input */}

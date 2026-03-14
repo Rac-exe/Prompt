@@ -33,7 +33,7 @@ export const MessageBubble = ({ message, onCopy, onSave, isSaved, onFeedback }: 
   if (isUser) {
     return (
       <div className="flex justify-end gap-3 animate-slide-up">
-        <div className="max-w-[72%] group">
+        <div className="max-w-[80%] group">
           <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
           </div>
@@ -54,7 +54,7 @@ export const MessageBubble = ({ message, onCopy, onSave, isSaved, onFeedback }: 
       </div>
 
       {/* Bubble */}
-      <div className="flex-1 min-w-0 max-w-[88%]">
+      <div className="flex-1 min-w-0 max-w-[96%]">
         <div className="bg-surface border border-border rounded-2xl rounded-tl-sm overflow-hidden">
           {/* Content */}
           <div className={cn(
