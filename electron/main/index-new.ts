@@ -19,6 +19,7 @@ import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
 import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
+import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -155,6 +156,7 @@ async function initialize() {
   registerSettingsHandlers(overlayManager);
   registerChatHandlers(appWindowManager, pythonClient);
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
+  registerAvatarHandlers();
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)

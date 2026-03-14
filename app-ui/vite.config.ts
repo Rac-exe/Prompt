@@ -6,6 +6,7 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   base: "./", // Required for Electron file:// protocol
+  envDir: "..", // Read .env from Prompt/ root (parent of app-ui/)
   server: {
     host: "::",
     port: 8080,
