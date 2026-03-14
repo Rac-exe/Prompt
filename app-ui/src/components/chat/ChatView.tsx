@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus } from "lucide-react";
+import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble, Message } from "./MessageBubble";
@@ -19,6 +19,9 @@ interface ChatViewProps {
   savedPromptIds: string[];
   isGenerating: boolean;
   isOnline?: boolean;
+  offlineChatUnavailable?: boolean;
+  onRetryLoad?: () => void;
+  sendError?: string | null;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -26,7 +29,8 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  savedPromptIds, isGenerating, isOnline = true,
+  savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
+  onRetryLoad, sendError,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
@@ -80,7 +84,7 @@ export const ChatView = ({
 
   // ── Submit ──────────────────────────────────────────────────
   const handleSubmit = () => {
-    if (!input.trim() || isGenerating) return;
+    if (!input.trim() || isGenerating || !isOnline) return;
     onSendMessage(input.trim(), mode);
     setInput("");
   };
@@ -115,28 +119,42 @@ export const ChatView = ({
     <div className="w-full max-w-2xl mx-auto">
       <div
         className={cn(
-          "relative flex flex-col bg-surface border border-border rounded-2xl transition-all overflow-hidden",
-          "focus-within:border-emerald/40 focus-within:shadow-[0_0_0_1px_hsl(var(--emerald)/0.1)]"
+          "relative flex flex-col bg-surface border rounded-2xl transition-all overflow-hidden",
+          isOnline
+            ? "border-border focus-within:border-emerald/40 focus-within:shadow-[0_0_0_1px_hsl(var(--emerald)/0.1)]"
+            : "border-amber-500/20"
         )}
       >
+        {/* Offline pill — sits flush at the very top of the box */}
+        {!isOnline && (
+          <div className="flex items-center gap-1.5 px-4 py-2 border-b border-amber-500/15 bg-amber-500/5">
+            <WifiOff className="w-3 h-3 text-amber-400/80 flex-shrink-0" />
+            <span className="text-[11px] text-amber-400/80 font-medium">
+              You're offline — messaging is unavailable
+            </span>
+          </div>
+        )}
+
         {/* Textarea area */}
         <textarea
           ref={textareaRef}
           placeholder={
-            voiceState === "processing"
+            !isOnline
+              ? "Messaging unavailable while offline…"
+              : voiceState === "processing"
               ? "Transcribing your voice…"
               : isEmpty ? "How can I help you today?" : "Ask anything"
           }
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={isGenerating || voiceState === "processing"}
+          disabled={isGenerating || voiceState === "processing" || !isOnline}
           rows={2}
           className={cn(
             "w-full bg-transparent border-0 outline-none resize-none",
             "px-5 pt-4 pb-2 text-[14px] leading-relaxed text-foreground",
             "placeholder:text-muted-foreground/40",
-            "disabled:opacity-50",
+            "disabled:opacity-40",
             "scrollbar-none"
           )}
           style={{ minHeight: "72px", maxHeight: "200px", overflow: input.split("\n").length > 6 ? "auto" : "hidden" }}
@@ -149,7 +167,8 @@ export const ChatView = ({
             {/* Plus / attach */}
             <button
               type="button"
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary transition-colors"
+              disabled={!isOnline}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
               title="Attach"
             >
               <Plus className="w-5 h-5" />
@@ -158,7 +177,10 @@ export const ChatView = ({
             {/* Model selector dropdown (inside the bar, like Claude) */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+                <button
+                  disabled={!isOnline}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                >
                   {mode === "fast" ? (
                     <Zap className="w-3.5 h-3.5" />
                   ) : (
@@ -221,12 +243,13 @@ export const ChatView = ({
             <button
               type="button"
               onClick={toggleVoice}
-              disabled={isGenerating || voiceState === "processing"}
+              disabled={isGenerating || voiceState === "processing" || !isOnline}
               className={cn(
                 "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
                 voiceState === "listening"
                   ? "bg-red-500/10 text-red-400"
-                  : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary"
+                  : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary",
+                (!isOnline) && "opacity-30 pointer-events-none"
               )}
               title={voiceState === "listening" ? "Stop recording" : "Voice input"}
             >
@@ -260,15 +283,58 @@ export const ChatView = ({
         </div>
       </div>
 
-      {/* Error banner */}
-      {voiceError && (
+      {/* Status strip — voice errors or send errors, never a toast */}
+      {(voiceError || sendError) && (
         <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
           <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
-          <span className="text-[12px] text-destructive leading-snug">{voiceError}</span>
+          <span className="text-[12px] text-destructive leading-snug">
+            {sendError || voiceError}
+          </span>
         </div>
       )}
     </div>
   );
+
+  // ── Offline uncached-chat empty state ───────────────────────
+  if (offlineChatUnavailable) {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-background">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in-slow">
+          <div className="flex flex-col items-center gap-5 text-center max-w-xs">
+            {/* Icon */}
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <WifiOff className="w-6 h-6 text-amber-400" />
+            </div>
+
+            {/* Text */}
+            <div className="space-y-1.5">
+              <h2 className="text-[17px] font-semibold text-foreground tracking-tight">
+                You're offline
+              </h2>
+              <p className="text-[13px] text-muted-foreground/70 leading-relaxed">
+                This chat isn't available offline.<br />Reconnect to load it.
+              </p>
+            </div>
+
+            {/* Retry / refresh button */}
+            <button
+              type="button"
+              onClick={onRetryLoad}
+              disabled={!onRetryLoad}
+              className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg
+                         text-[13px] font-medium text-amber-400
+                         bg-amber-500/10 border border-amber-500/20
+                         hover:bg-amber-500/15 hover:border-amber-500/30
+                         disabled:opacity-40 disabled:cursor-not-allowed
+                         transition-colors duration-150"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ── Empty state ─────────────────────────────────────────────
   if (isEmpty) {

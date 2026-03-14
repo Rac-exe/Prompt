@@ -71,6 +71,12 @@ const Index = () => {
     window.electronAPI?.onNetworkReconnected?.(() => setIsOnline(true));
   }, []);
 
+  // Offline uncached-chat state — true when a selected chat has no cached messages while offline
+  const [offlineChatUnavailable, setOfflineChatUnavailable] = useState(false);
+
+  // Send error state — shown inline in the input bar instead of a toast
+  const [sendError, setSendError] = useState<string | null>(null);
+
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [promptToPreview, setPromptToPreview] = useState<SavedPrompt | null>(null);
@@ -357,11 +363,9 @@ const Index = () => {
       const handleMessageSendError = (data: { error: string; details?: string }) => {
         console.error('[Index] Message send error:', data);
         setIsGenerating(false);
-        toast({
-          title: "Failed to send message",
-          description: data.error,
-          variant: "destructive",
-        });
+        setSendError(data.error);
+        // Auto-clear after 6 s so it doesn't linger forever
+        setTimeout(() => setSendError(null), 6000);
       };
 
       const cleanup = window.electronAPI.onMessageSendError(handleMessageSendError);
@@ -375,6 +379,7 @@ const Index = () => {
       console.log('[Index] Loading messages for chat:', selectedChatId);
       window.electronAPI.loadMessages(selectedChatId);
       setCurrentView("chat");
+      setOfflineChatUnavailable(false); // reset while loading
 
       // Find chat title
       const chat = recentChats.find((c) => c.id === selectedChatId);
@@ -399,13 +404,11 @@ const Index = () => {
           }));
           setMessages(formattedMessages);
 
-          // If offline and we got zero messages, let the user know
+          // If offline and no cached messages, show the offline empty-state instead of a toast
           if (!isOnline && formattedMessages.length === 0) {
-            toast({
-              title: "Chat not available offline",
-              description: "This chat wasn't opened during your last online session and hasn't been cached. Connect to the internet to view it.",
-              variant: "destructive",
-            });
+            setOfflineChatUnavailable(true);
+          } else {
+            setOfflineChatUnavailable(false);
           }
         }
       };
@@ -475,6 +478,7 @@ const Index = () => {
     setSelectedChatId(null);
     setCurrentChatTitle('');
     setCurrentView("chat");
+    setOfflineChatUnavailable(false);
   };
 
   const handleSendMessage = useCallback((content: string, mode: "fast" | "thinking" = "fast") => {
@@ -483,6 +487,9 @@ const Index = () => {
       contentLength: content.length,
       mode
     });
+
+    // Clear any previous send error
+    setSendError(null);
 
     // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
@@ -787,6 +794,14 @@ Your prompt was: "${content}"`;
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
             isOnline={isOnline}
+            offlineChatUnavailable={offlineChatUnavailable}
+            sendError={sendError}
+            onRetryLoad={() => {
+              if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
+                setOfflineChatUnavailable(false);
+                window.electronAPI.loadMessages(selectedChatId);
+              }
+            }}
           />
         );
     }
