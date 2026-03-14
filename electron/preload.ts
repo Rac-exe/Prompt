@@ -72,6 +72,7 @@ declare global {
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
       updateProfile: (updates: any) => void;
+      uploadAvatar: (imageData: string, filename: string) => Promise<{ success: boolean; url?: string; error?: string }>;
       updatePreferences: (updates: any) => void;
       setPersonalizationPrompt: (prompt: string) => void;
       onProfileUpdated: (callback: () => void) => void;
@@ -313,6 +314,9 @@ const electronAPI = {
   },
   updateProfile: (updates: any) => {
     ipcRenderer.send('user:update-profile', updates);
+  },
+  uploadAvatar: (imageData: string, filename: string) => {
+    return ipcRenderer.invoke('avatar:upload', { imageData, filename });
   },
   updatePreferences: (updates: any) => {
     ipcRenderer.send('user:update-preferences', updates);

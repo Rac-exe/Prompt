@@ -62,6 +62,16 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       }
     });
 
+    // Listen for profile updates (e.g. avatar change) — updates user state in real-time
+    if (window.electronAPI.onUserDataLoaded) {
+      window.electronAPI.onUserDataLoaded((userData: any) => {
+        console.log('[AuthWrapper] user-data-loaded — refreshing user state');
+        if (userData) {
+          setUser(userData);
+        }
+      });
+    }
+
     // Check current auth status
     window.electronAPI.checkAuth();
   }, []);
