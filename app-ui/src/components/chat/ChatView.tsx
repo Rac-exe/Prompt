@@ -15,6 +15,8 @@ interface ChatViewProps {
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
+  onEditMessage?: (messageId: string, newContent: string) => void;
+  onRetryMessage?: (messageId: string) => void;
   savedPromptIds: string[];
   isGenerating: boolean;
   isOnline?: boolean;
@@ -29,6 +31,7 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
+  onEditMessage, onRetryMessage,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
   onRetryLoad, sendError, onStopGeneration,
 }: ChatViewProps) => {
@@ -40,6 +43,9 @@ export const ChatView = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // true = keep scrolling to bottom; flips to false when user scrolls up
   const shouldAutoScroll = useRef(true);
+  // true when the current generation came from an edit/retry (not a new message)
+  // — suppresses the force-scroll-to-bottom so previous messages stay visible
+  const isEditRetryRef = useRef(false);
 
   // ── Auto-resize textarea ────────────────────────────────────
   const autoResize = useCallback(() => {
@@ -83,11 +89,15 @@ export const ChatView = ({
     }
   }, [streamingMessage, isGenerating, scrollToBottom]);
 
-  // ── Force scroll to bottom when user sends a message ────────
+  // ── Force scroll to bottom when user sends a NEW message ────
+  // Skipped for edit/retry so the user can still see earlier context.
   useEffect(() => {
     if (isGenerating) {
-      shouldAutoScroll.current = true;
-      scrollToBottom("smooth");
+      if (!isEditRetryRef.current) {
+        shouldAutoScroll.current = true;
+        scrollToBottom("smooth");
+      }
+      isEditRetryRef.current = false; // reset after consuming
     }
   }, [isGenerating, scrollToBottom]);
 
@@ -428,6 +438,15 @@ export const ChatView = ({
                 onSave={() => onSavePrompt(message.id)}
                 onFeedback={onFeedback}
                 isSaved={savedPromptIds.includes(message.id)}
+                onEdit={message.role === "user" ? (id, content) => {
+                  isEditRetryRef.current = true;
+                  onEditMessage?.(id, content);
+                } : undefined}
+                onRetry={message.role === "user" ? (id) => {
+                  isEditRetryRef.current = true;
+                  onRetryMessage?.(id);
+                } : undefined}
+                isGenerating={isGenerating}
               />
             ))}
 
