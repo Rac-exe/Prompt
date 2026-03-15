@@ -16,15 +16,16 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
     const lastUpdateTime = useRef<number>(0);
     const isStreamingRef = useRef<boolean>(false);
     const startTimestamp = useRef<number>(0);
+    // Each streaming session gets a unique generation ID so stale animation
+    // loops from a stopped/cancelled stream don't interfere with the next one.
+    const generationId = useRef<number>(0);
 
     const startStreaming = useCallback(() => {
         streamBuffer.current = '';
         visualText.current = '';
         pendingFinalMessage.current = null;
         isStreamingRef.current = true;
-
-        // Start 1 second in the future
-        startTimestamp.current = performance.now() + 1000;
+        generationId.current += 1; // Invalidate any leftover animation loop
 
         // Start 1 second in the future
         startTimestamp.current = performance.now() + 1000;
@@ -46,8 +47,40 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         streamBuffer.current = message.content;
     }, []);
 
+    /**
+     * Called when the user clicks Stop.
+     * Skips the typewriter delay and immediately shows whatever has been
+     * buffered so far. Does NOT call onStreamingComplete — the normal
+     * message-received → handleFinalMessage → animate path still handles
+     * committing the message once the backend resolves the aborted stream.
+     */
+    const stopStreaming = useCallback(() => {
+        if (!isStreamingRef.current) return;
+        console.log('[useSmoothStreaming] Stop — fast-flushing visual buffer');
+
+        // Skip the startup delay so the partial text renders immediately
+        startTimestamp.current = 0;
+
+        // Show whatever is in the buffer right now
+        const partial = streamBuffer.current;
+        if (partial) {
+            visualText.current = partial;
+            setStreamingMessage(prev => ({
+                id: prev?.id || 'streaming-temp',
+                role: 'assistant',
+                content: partial,
+                timestamp: prev?.timestamp || new Date(),
+            }));
+        }
+        // Leave isStreamingRef true — the animate loop will finalize normally
+        // once handleFinalMessage() is called with the aborted partial result.
+    }, []);
+
     useEffect(() => {
         const animate = (time: number) => {
+            // Capture the generation at frame start; bail out if it changed
+            const myGeneration = generationId.current;
+
             // If not streaming, stop the loop
             if (!isStreamingRef.current) {
                 animationFrameId.current = requestAnimationFrame(animate);
@@ -80,12 +113,15 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
 
             if (lag > 200) charsToAdd = 10;      // Very fast catchup
             else if (lag > 100) charsToAdd = 5;   // Fast catchup
-            else if (lag > 40) charsToAdd = 3;  // Moderate catchup
-            else if (lag > 10) charsToAdd = 2;  // Slight catchup
+            else if (lag > 40) charsToAdd = 3;    // Moderate catchup
+            else if (lag > 10) charsToAdd = 2;    // Slight catchup
 
             if (currentLen < targetLen) {
                 const nextContent = streamBuffer.current.substring(0, currentLen + charsToAdd);
                 visualText.current = nextContent;
+
+                // Guard: if a stop happened while we were computing, bail out
+                if (generationId.current !== myGeneration) return;
 
                 // Initialize message if not yet visible
                 setStreamingMessage(prev => {
@@ -102,6 +138,8 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
             } else if (pendingFinalMessage.current && currentLen >= targetLen) {
                 // Animation complete AND final message arrived -> Finish!
                 console.log('[useSmoothStreaming] Animation caught up, finalizing.');
+
+                if (generationId.current !== myGeneration) return;
 
                 onStreamingComplete(pendingFinalMessage.current);
 
@@ -131,6 +169,7 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         startStreaming,
         handleChunk,
         handleFinalMessage,
+        stopStreaming,
         isStreaming: isStreamingRef.current
     };
 };

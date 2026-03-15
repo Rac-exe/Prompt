@@ -22,8 +22,8 @@ import { ProfileMenu } from "./ProfileMenu";
 
 function shortTitle(title: string): string {
   const words = title.trim().split(/\s+/);
-  if (words.length <= 4) return title.trim();
-  return words.slice(0, 4).join(" ") + "…";
+  if (words.length <= 6) return title.trim();
+  return words.slice(0, 6).join(" ") + "…";
 }
 
 interface SidebarProps {
@@ -225,11 +225,14 @@ export const Sidebar = ({
           collapsed ? "w-[60px]" : "w-[240px]"
         )}
       >
-        {/* ── Brand header ── */}
-        <div className={cn(
-          "flex items-center h-14 px-3 border-b border-sidebar-border flex-shrink-0",
-          collapsed ? "justify-center" : "justify-between"
-        )}>
+        {/* ── Brand header (draggable for window movement) ── */}
+        <div
+          className={cn(
+            "flex items-center h-14 px-3 border-b border-sidebar-border flex-shrink-0",
+            collapsed ? "justify-center" : "justify-between"
+          )}
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        >
           <div className={cn("flex items-center gap-2.5 min-w-0", collapsed && "justify-center")}>
             <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center flex-shrink-0 shadow-sm shadow-emerald/30">
               <Zap className="w-4 h-4 text-white" />
@@ -247,6 +250,7 @@ export const Sidebar = ({
               variant="ghost" size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent flex-shrink-0 transition-smooth"
               onClick={() => setCollapsed(true)}
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             >
               <PanelLeftClose className="w-4 h-4" />
             </Button>

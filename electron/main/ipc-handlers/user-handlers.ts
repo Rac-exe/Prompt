@@ -1,19 +1,22 @@
 import { ipcMain } from 'electron';
 import { UserService } from '../database/services/user-service';
+import { MemoryService, MemoryType, MemorySource } from '../database/services/memory-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
 import { localCache } from '../database/local-cache';
 
-// Lazy load service
+// Lazy load services
 let userService: UserService | null = null;
+let memoryService: MemoryService | null = null;
 
 function getService() {
     if (!userService) userService = new UserService();
-    return userService;
+    if (!memoryService) memoryService = new MemoryService();
+    return { userService, memoryService };
 }
 
 export function registerUserHandlers(appWindowManager: AppWindowManager) {
-    const service = getService();
+    const { userService: service, memoryService: memory } = getService();
 
     // ============================================
     // USER PROFILE & PREFERENCES IPC HANDLERS
@@ -113,6 +116,60 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             console.log('[User] ✅ Personalization prompt updated');
         } catch (error) {
             console.error('[User] Error setting personalization prompt:', error);
+        }
+    });
+
+    // ============================================
+    // MEMORY IPC HANDLERS
+    // ============================================
+
+    // Get all memory for current user
+    ipcMain.handle('memory:get', async () => {
+        try {
+            if (!authState.isAuthenticated) return { user: {}, behavioral: {}, context: {} };
+            const result = await memory.getMemory();
+            return result;
+        } catch (error) {
+            console.error('[Memory] Failed to get memory:', error);
+            return { user: {}, behavioral: {}, context: {} };
+        }
+    });
+
+    // Upsert a single memory fact (called from UI — source is 'explicit')
+    ipcMain.handle('memory:upsert', async (
+        _event,
+        data: { memoryType: MemoryType; key: string; value: string; source?: MemorySource; confidence?: number },
+    ) => {
+        try {
+            if (!authState.isAuthenticated) throw new Error('Not authenticated');
+            await memory.upsertMemoryEntry(
+                data.memoryType,
+                data.key,
+                data.value,
+                data.source ?? 'explicit',
+                data.confidence ?? 1.0,
+            );
+            return { success: true };
+        } catch (error) {
+            console.error('[Memory] Failed to upsert memory entry:', error);
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return { success: false, error: msg };
+        }
+    });
+
+    // Delete a single memory fact
+    ipcMain.handle('memory:delete', async (
+        _event,
+        data: { memoryType: MemoryType; key: string },
+    ) => {
+        try {
+            if (!authState.isAuthenticated) throw new Error('Not authenticated');
+            await memory.deleteMemoryEntry(data.memoryType, data.key);
+            return { success: true };
+        } catch (error) {
+            console.error('[Memory] Failed to delete memory entry:', error);
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return { success: false, error: msg };
         }
     });
 }

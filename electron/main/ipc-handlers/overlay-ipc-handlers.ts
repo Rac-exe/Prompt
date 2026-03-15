@@ -444,5 +444,26 @@ export function registerOverlayHandlers(
     clearOverlayHistory();
   });
 
+  // ============================================
+  // overlay:truncate-history — Remove messages after a given index.
+  // Called by the overlay frontend on edit/retry so the backend history
+  // stays in sync with what the user sees on screen.
+  // ============================================
+  ipcMain.on('overlay:truncate-history', (_event, data: { keepCount: number }) => {
+    const keep = Math.max(0, data.keepCount);
+    if (keep < inMemoryOverlayHistory.length) {
+      inMemoryOverlayHistory.splice(keep);
+      console.log(`[OverlayHandlers] Truncated history to ${keep} messages (had ${keep + (inMemoryOverlayHistory.length - keep)})`);
+    }
+  });
+
+  // ============================================
+  // overlay:stop-generation — Abort the current streaming optimization
+  // ============================================
+  ipcMain.on('overlay:stop-generation', () => {
+    console.log('[Overlay] Stop generation requested');
+    pythonClient.abortLatestStream();
+  });
+
   console.log('[OverlayHandlers] IPC handlers registered');
 }

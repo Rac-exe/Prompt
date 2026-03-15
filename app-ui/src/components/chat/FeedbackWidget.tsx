@@ -6,12 +6,15 @@ interface FeedbackWidgetProps {
   messageId: string;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onDismiss?: (messageId: string) => void;
+  initialRating?: "positive" | "negative";
 }
 
-export const FeedbackWidget = ({ messageId, onFeedback, onDismiss }: FeedbackWidgetProps) => {
-  const [rating, setRating] = useState<"positive" | "negative" | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+export const FeedbackWidget = ({ messageId, onFeedback, onDismiss, initialRating }: FeedbackWidgetProps) => {
+  const [rating, setRating] = useState<"positive" | "negative" | null>(initialRating || null);
+  const [dismissed, setDismissed] = useState(!!initialRating);
 
+  // If there's an initial rating from DB, we don't automatically dismiss it so they can see their rating,
+  // but if we don't want to show it at all, we could set dismissed=true.
   if (dismissed) return null;
 
   const handleRate = (type: "positive" | "negative") => {

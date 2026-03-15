@@ -14,86 +14,84 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
   const [isOnline, setIsOnline] = useState(true);
 
   useEffect(() => {
-    // Listen for network changes from Electron main process
     window.electronAPI?.onNetworkStatus?.((data) => {
       setIsOnline(data.isOnline);
     });
-    // Also listen for reconnect event to clear any stale banners
     window.electronAPI?.onNetworkReconnected?.(() => {
       setIsOnline(true);
     });
   }, []);
 
   return (
-    <div className="h-screen flex flex-col w-full bg-background overflow-hidden">
+    <div className="h-screen flex w-full bg-background overflow-hidden">
 
-      {/* ── Custom title bar ──────────────────────────────────────
-          Full-width draggable strip. Controls are no-drag so clicks
-          register. Height h-9 (36px) — tight but comfortable.
-      ──────────────────────────────────────────────────────────── */}
-      <div
-        className="h-9 flex-shrink-0 flex items-center justify-end select-none
-                   border-b border-border/50 bg-background"
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      >
-        {/* Window control buttons */}
+      {/* ── Sidebar (full height, no title bar above it) ── */}
+      <div className="flex-shrink-0 h-full">{sidebar}</div>
+
+      {/* ── Right column: title bar + content ── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+        {/* ── Custom title bar (only spans the content area) ────────
+            Draggable strip for window movement. Controls are no-drag.
+            Height h-9 (36px).
+        ──────────────────────────────────────────────────────────── */}
         <div
-          className="flex items-center h-full"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+          className="h-9 flex-shrink-0 flex items-center justify-end select-none
+                     bg-background"
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
-          {/* Minimise */}
-          <button
-            onClick={minimize}
-            aria-label="Minimise"
-            className="h-full w-11 flex items-center justify-center
-                       text-muted-foreground/50 hover:text-foreground
-                       hover:bg-white/5 transition-colors duration-150"
+          <div
+            className="flex items-center h-full"
+            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
           >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
+            <button
+              onClick={minimize}
+              aria-label="Minimise"
+              className="h-full w-11 flex items-center justify-center
+                         text-muted-foreground/50 hover:text-foreground
+                         hover:bg-white/5 transition-colors duration-150"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
 
-          {/* Maximise / Restore */}
-          <button
-            onClick={maximize}
-            aria-label="Maximise"
-            className="h-full w-11 flex items-center justify-center
-                       text-muted-foreground/50 hover:text-foreground
-                       hover:bg-white/5 transition-colors duration-150"
-          >
-            <Square className="w-3 h-3" />
-          </button>
+            <button
+              onClick={maximize}
+              aria-label="Maximise"
+              className="h-full w-11 flex items-center justify-center
+                         text-muted-foreground/50 hover:text-foreground
+                         hover:bg-white/5 transition-colors duration-150"
+            >
+              <Square className="w-3 h-3" />
+            </button>
 
-          {/* Close */}
-          <button
-            onClick={close}
-            aria-label="Close"
-            className="h-full w-11 flex items-center justify-center
-                       text-muted-foreground/50 hover:text-white
-                       hover:bg-red-500/80 transition-colors duration-150"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+            <button
+              onClick={close}
+              aria-label="Close"
+              className="h-full w-11 flex items-center justify-center
+                         text-muted-foreground/50 hover:text-white
+                         hover:bg-red-500/80 transition-colors duration-150"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* ── Offline banner ── */}
-      {!isOnline && (
-        <div className="flex items-center justify-center gap-2 px-4 py-1.5
-                       bg-amber-500/10 border-b border-amber-500/20 text-amber-400
-                       text-[11px] font-medium flex-shrink-0 animate-fade-in">
-          <WifiOff className="w-3 h-3 flex-shrink-0" />
-          <span>You're offline- Prompt optimization unavailable.</span>
-        </div>
-      )}
+        {/* ── Offline banner ── */}
+        {!isOnline && (
+          <div className="flex items-center justify-center gap-2 px-4 py-1.5
+                         bg-amber-500/10 border-b border-amber-500/20 text-amber-400
+                         text-[11px] font-medium flex-shrink-0 animate-fade-in">
+            <WifiOff className="w-3 h-3 flex-shrink-0" />
+            <span>You're offline — Prompt optimization unavailable.</span>
+          </div>
+        )}
 
-      {/* ── Main layout ── */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        <div className="flex-shrink-0">{sidebar}</div>
+        {/* ── Content area ── */}
         <main className="flex-1 min-w-0 flex flex-col overflow-hidden">
           {children}
         </main>
-      </div>
 
+      </div>
     </div>
   );
 };

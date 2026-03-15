@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle } from "lucide-react";
+import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble, Message } from "./MessageBubble";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 interface ChatViewProps {
@@ -14,21 +15,25 @@ interface ChatViewProps {
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
+  onEditMessage?: (messageId: string, newContent: string) => void;
+  onRetryMessage?: (messageId: string) => void;
   savedPromptIds: string[];
   isGenerating: boolean;
   isOnline?: boolean;
+  offlineChatUnavailable?: boolean;
+  onRetryLoad?: () => void;
+  sendError?: string | null;
+  onStopGeneration?: () => void;
 }
 
-// Voice states:
-//   idle        — mic is off
-//   listening   — mic is active, audio is being captured
-//   processing  — mic stopped, Whisper is still running
 type VoiceState = "idle" | "listening" | "processing";
 
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  savedPromptIds, isGenerating, isOnline = true,
+  onEditMessage, onRetryMessage,
+  savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
+  onRetryLoad, sendError, onStopGeneration,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
@@ -36,63 +41,117 @@ export const ChatView = ({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // true = keep auto-scrolling to bottom; set to false the instant the user
+  // wheels/touches upward; reset to true when a new message is sent.
+  const shouldAutoScroll = useRef(true);
+  // true when the current generation came from an edit/retry (not a new message)
+  const isEditRetryRef = useRef(false);
 
-  // ── Scroll to bottom on new messages ──────────────────────────
+  // ── Auto-resize textarea ────────────────────────────────────
+  const autoResize = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+  }, []);
+
+  useEffect(() => { autoResize(); }, [input, autoResize]);
+
+  // ── Scroll helper ────────────────────────────────────────────
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior });
+  }, []);
+
+  // ── Detect user-initiated scroll intent ─────────────────────
+  // wheel / touch events are ONLY fired by the user, never by scrollTo().
+  // This is the only reliable way to distinguish user scroll from programmatic.
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
+    const el = scrollRef.current;
+    if (!el) return;
 
-  // ── Transcription IPC listeners ───────────────────────────────
-  // Re-register on every mount so listeners are always fresh.
-  // IPC channels use ipcRenderer.on which stacks listeners, so
-  // the preload always pushes to the latest closure.
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // Scrolling up → stop auto-scroll
+        shouldAutoScroll.current = false;
+      } else {
+        // Scrolling down — re-enable only when near the bottom
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceFromBottom < 80) shouldAutoScroll.current = true;
+      }
+    };
+
+    // Touch: track swipe direction
+    let touchStartY = 0;
+    const onTouchStart = (e: TouchEvent) => { touchStartY = e.touches[0].clientY; };
+    const onTouchMove = (e: TouchEvent) => {
+      const dy = e.touches[0].clientY - touchStartY;
+      if (dy > 0) {
+        // Swiping down = scrolling up
+        shouldAutoScroll.current = false;
+      } else {
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceFromBottom < 80) shouldAutoScroll.current = true;
+      }
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+    };
+  }, []);
+
+  // ── Auto-scroll on new committed messages ───────────────────
+  useEffect(() => {
+    if (shouldAutoScroll.current) scrollToBottom("smooth");
+  }, [messages, scrollToBottom]);
+
+  // ── Force scroll to bottom when user sends a NEW message ────
+  // Skipped for edit/retry so the user can still see earlier context.
+  useEffect(() => {
+    if (isGenerating) {
+      if (!isEditRetryRef.current) {
+        shouldAutoScroll.current = true;
+        scrollToBottom("smooth");
+      }
+      isEditRetryRef.current = false; // reset after consuming
+    }
+  }, [isGenerating, scrollToBottom]);
+
+  // ── Transcription IPC listeners ─────────────────────────────
   useEffect(() => {
     const isElectron = !!(window as any).electronAPI;
     if (!isElectron) return;
 
-    console.log('[ChatView] Registering transcription listeners');
-
     window.electronAPI?.transcription?.onTranscription?.((data) => {
-      console.log(`[ChatView] onTranscription — type=${data.type} text="${data.text}" accumulated="${data.accumulated}"`);
       const text = (data.accumulated || data.text || "").trim();
       if (text) {
         setInput(text);
-        // Final result received — return to idle
-        if (data.type === "final") {
-          console.log('[ChatView] Final transcription received — going idle');
-          setVoiceState("idle");
-        }
+        if (data.type === "final") setVoiceState("idle");
       }
     });
 
-    // Status messages from Python: 'listening' | 'processing' | 'stopped'
     window.electronAPI?.transcription?.onStatus?.((status) => {
-      console.log(`[ChatView] onStatus — ${status}`);
-      if (status === "listening") {
-        setVoiceState("listening");
-        setVoiceError(null);
-      } else if (status === "processing") {
-        setVoiceState("processing");
-      } else if (status === "stopped") {
-        // 'stopped' arrives after 'final' — make sure we're idle
-        setVoiceState("idle");
-      }
+      if (status === "listening") { setVoiceState("listening"); setVoiceError(null); }
+      else if (status === "processing") setVoiceState("processing");
+      else if (status === "stopped") setVoiceState("idle");
     });
 
     window.electronAPI?.transcription?.onError?.((error) => {
-      console.error('[ChatView] Transcription error:', error);
       setVoiceState("idle");
-      setVoiceError(error || "Transcription failed. Please try again.");
-      // Auto-clear the error after 5 s
+      setVoiceError(error || "Transcription failed.");
       setTimeout(() => setVoiceError(null), 5000);
     });
   }, []);
 
-  // ── Submit ─────────────────────────────────────────────────────
+  // ── Submit ──────────────────────────────────────────────────
   const handleSubmit = () => {
-    if (!input.trim() || isGenerating) return;
+    if (!input.trim() || isGenerating || !isOnline) return;
     onSendMessage(input.trim(), mode);
     setInput("");
   };
@@ -104,206 +163,260 @@ export const ChatView = ({
     }
   };
 
-  // ── Voice toggle ───────────────────────────────────────────────
+  // ── Voice toggle ────────────────────────────────────────────
   const toggleVoice = useCallback(() => {
     const isElectron = !!(window as any).electronAPI;
     if (!isElectron) return;
-
     if (voiceState === "listening") {
-      console.log('[ChatView] Stopping voice input');
       window.electronAPI?.transcription?.stop?.();
-      // UI immediately shows "processing" — the server confirms it
       setVoiceState("processing");
     } else if (voiceState === "idle") {
-      console.log('[ChatView] Starting voice input');
       setVoiceError(null);
-      const sessionId = Date.now().toString();
-      window.electronAPI?.transcription?.start?.(sessionId);
-      // Server will send status:listening to confirm
+      window.electronAPI?.transcription?.start?.(Date.now().toString());
     }
-    // If processing, ignore click — we're waiting for the result
   }, [voiceState]);
 
   const isEmpty = messages.length === 0;
+  const canSend = input.trim().length > 0 && !isGenerating && voiceState !== "processing" && isOnline;
 
-  // ── Voice button appearance ────────────────────────────────────
-  const voiceButtonContent = () => {
-    if (voiceState === "listening") {
-      return (
-        <>
-          <MicOff className="w-3.5 h-3.5" />
-          <span>Stop</span>
-        </>
-      );
-    }
-    if (voiceState === "processing") {
-      return (
-        <>
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          <span>Processing…</span>
-        </>
-      );
-    }
-    return (
-      <>
-        <Mic className="w-3.5 h-3.5" />
-        <span>Voice</span>
-      </>
-    );
-  };
+  const modeLabel = mode === "fast" ? "Fast" : "Thinking";
 
-  const voiceButtonClass = cn(
-    "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[12px] font-medium transition-smooth",
-    "disabled:opacity-40 disabled:cursor-not-allowed",
-    voiceState === "listening"
-      ? "bg-red-500/10 text-red-400 border border-red-500/20"
-      : voiceState === "processing"
-        ? "bg-emerald/8 text-emerald border border-emerald/20 cursor-not-allowed"
-        : "text-muted-foreground hover:text-foreground hover:bg-secondary border border-transparent"
-  );
-
-  // ── Shared input box ───────────────────────────────────────────
-  const inputBox = (
-    <div className="w-full max-w-2xl mx-auto">
+  // ── Unified input bar (Claude style — textarea + bottom toolbar inside) ──
+  const inputBar = (
+    <div className="w-full max-w-4xl mx-auto">
       <div
         className={cn(
-          "relative bg-surface border border-border rounded-2xl overflow-hidden shadow-card transition-smooth",
-          "focus-within:border-emerald/50 focus-within:shadow-[0_0_0_1px_hsl(var(--emerald)/0.15),0_0_16px_hsl(var(--emerald)/0.12)]"
+          "relative flex flex-col bg-surface border rounded-2xl transition-all overflow-hidden",
+          isOnline
+            ? "border-border focus-within:border-emerald/40 focus-within:shadow-[0_0_0_1px_hsl(var(--emerald)/0.1)]"
+            : "border-amber-500/20"
         )}
       >
-        {/* Textarea */}
-        <Textarea
+        {/* Offline pill — sits flush at the very top of the box */}
+        {!isOnline && (
+          <div className="flex items-center gap-1.5 px-4 py-2 border-b border-amber-500/15 bg-amber-500/5">
+            <WifiOff className="w-3 h-3 text-amber-400/80 flex-shrink-0" />
+            <span className="text-[11px] text-amber-400/80 font-medium">
+              You're offline — messaging is unavailable
+            </span>
+          </div>
+        )}
+
+        {/* Textarea area */}
+        <textarea
           ref={textareaRef}
           placeholder={
-            voiceState === "processing"
+            !isOnline
+              ? "Messaging unavailable while offline…"
+              : voiceState === "processing"
               ? "Transcribing your voice…"
-              : "What do you want to generate?"
+              : isEmpty ? "How can I help you today?" : "Ask anything"
           }
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={isGenerating || voiceState === "processing"}
+          disabled={isGenerating || voiceState === "processing" || !isOnline}
+          rows={2}
           className={cn(
-            "w-full bg-transparent border-0 rounded-none",
-            "px-4 pt-4 pb-14",
-            "h-[120px] resize-none overflow-y-auto",
-            "focus-visible:ring-0 focus-visible:outline-none",
-            "placeholder:text-muted-foreground/45 text-foreground text-[13.5px] leading-relaxed",
-            voiceState === "processing" && "opacity-60"
+            "w-full bg-transparent border-0 outline-none resize-none",
+            "px-5 pt-4 pb-2 text-[14px] leading-relaxed text-foreground",
+            "placeholder:text-muted-foreground/40",
+            "disabled:opacity-40",
+            "scrollbar-none"
           )}
+          style={{ minHeight: "72px", maxHeight: "200px", overflow: input.split("\n").length > 6 ? "auto" : "hidden" }}
         />
 
-        {/* Bottom toolbar */}
-        <div className="absolute bottom-0 inset-x-0 flex items-center justify-between px-3 py-2.5 border-t border-border/60 bg-surface">
-          {/* Voice button */}
-          <button
-            type="button"
-            onClick={toggleVoice}
-            disabled={isGenerating || voiceState === "processing"}
-            className={voiceButtonClass}
-            title={
-              voiceState === "listening" ? "Stop recording"
-                : voiceState === "processing" ? "Processing transcription…"
-                  : "Voice input"
-            }
-          >
-            {voiceButtonContent()}
-          </button>
+        {/* Bottom toolbar inside the box (like Claude) */}
+        <div className="flex items-center justify-between px-3 py-2.5">
+          {/* Left side: plus button + model dropdown */}
+          <div className="flex items-center gap-1">
+            {/* Plus / attach */}
+            <button
+              type="button"
+              disabled={!isOnline}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              title="Attach"
+            >
+              <Plus className="w-5 h-5" />
+            </button>
 
-          {/* Right side */}
-          <div className="flex items-center gap-2">
-            {/* Mode Toggle */}
-            <div className="flex bg-secondary/30 rounded-lg p-0.5 border border-border/40 mr-1">
-              <button
-                type="button"
-                onClick={() => setMode("fast")}
-                className={cn(
-                  "px-2.5 py-[3px] text-[11px] font-medium rounded-md transition-all",
-                  mode === "fast"
-                    ? "bg-emerald text-white shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
-                    : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                )}
-                title="Fast Mode: Optimize immediately with adaptive templates"
-              >
-                Fast
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode("thinking")}
-                className={cn(
-                  "px-2.5 py-[3px] text-[11px] font-medium rounded-md transition-all flex items-center gap-1",
-                  mode === "thinking"
-                    ? "bg-blue-500 text-white shadow-[0_1px_2px_rgba(0,0,0,0.1)]"
-                    : "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
-                )}
-                title="Thinking Mode: Deeper reasoning, summarization, and task orchestration"
-              >
-                <Sparkles className="w-2.5 h-2.5" />
-                Thinking
-              </button>
-            </div>
+            {/* Model selector dropdown (inside the bar, like Claude) */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  disabled={!isOnline}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
+                >
+                  {mode === "fast" ? (
+                    <Zap className="w-3.5 h-3.5" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  <span>{modeLabel}</span>
+                  <ChevronDown className="w-3 h-3 opacity-50" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" sideOffset={8} className="w-60 bg-popover border-border shadow-elevated rounded-xl p-1">
+                <DropdownMenuItem
+                  onClick={() => setMode("fast")}
+                  className={cn(
+                    "flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
+                    mode === "fast" && "bg-secondary"
+                  )}
+                >
+                  <Zap className="w-4 h-4 text-emerald mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Fast</p>
+                    <p className="text-xs text-muted-foreground">Most efficient for everyday tasks</p>
+                  </div>
+                  {mode === "fast" && <span className="ml-auto text-emerald mt-0.5">✓</span>}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setMode("thinking")}
+                  className={cn(
+                    "flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
+                    mode === "thinking" && "bg-secondary"
+                  )}
+                >
+                  <Sparkles className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Thinking</p>
+                    <p className="text-xs text-muted-foreground">Think longer for complex tasks</p>
+                  </div>
+                  {mode === "thinking" && <span className="ml-auto text-blue-500 mt-0.5">✓</span>}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
-            {/* Listening pulse indicator */}
+            {/* Voice state indicators */}
             {voiceState === "listening" && (
-              <div className="flex items-center gap-1.5 animate-fade-in">
+              <div className="flex items-center gap-1.5 ml-1 animate-fade-in">
                 <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-[11px] text-red-400 font-medium">Listening</span>
+                <span className="text-[11px] text-red-400 font-medium">Listening…</span>
               </div>
             )}
-
-            {/* Processing indicator */}
             {voiceState === "processing" && (
-              <div className="flex items-center gap-1.5 animate-fade-in">
+              <div className="flex items-center gap-1.5 ml-1 animate-fade-in">
                 <Loader2 className="w-3 h-3 animate-spin text-emerald" />
                 <span className="text-[11px] text-emerald font-medium">Transcribing…</span>
               </div>
             )}
+          </div>
 
-            <Button
-              onClick={handleSubmit}
-              disabled={!input.trim() || isGenerating || voiceState === "processing" || !isOnline}
-              size="sm"
+          {/* Right side: voice + send */}
+          <div className="flex items-center gap-1">
+            {/* Voice button */}
+            <button
+              type="button"
+              onClick={toggleVoice}
+              disabled={isGenerating || voiceState === "processing" || !isOnline}
               className={cn(
-                "h-7 px-3.5 bg-emerald hover:bg-emerald/90 text-white text-[12px] font-semibold",
-                "rounded-lg transition-smooth",
-                "disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none",
-                "shadow-[0_0_0_1px_hsl(var(--emerald)/0.2),0_0_10px_hsl(var(--emerald)/0.15)]",
-                "hover:shadow-[0_0_0_1px_hsl(var(--emerald)/0.3),0_0_16px_hsl(var(--emerald)/0.25)]"
+                "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
+                voiceState === "listening"
+                  ? "bg-red-500/10 text-red-400"
+                  : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary",
+                (!isOnline) && "opacity-30 pointer-events-none"
               )}
-              title={!isOnline ? "You're offline — optimization unavailable" : undefined}
-              data-testid="generate-prompt-button"
+              title={voiceState === "listening" ? "Stop recording" : "Voice input"}
             >
-              {isGenerating ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <span className="flex items-center gap-1.5">
-                  Generate
-                  <Send className="w-3 h-3" />
-                </span>
-              )}
-            </Button>
+              {voiceState === "listening" ? <MicOff className="w-4 h-4" /> :
+               voiceState === "processing" ? <Loader2 className="w-4 h-4 animate-spin" /> :
+               <Mic className="w-4 h-4" />}
+            </button>
+
+            {/* Send / Stop button (circular) */}
+            {isGenerating ? (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                className="w-8 h-8 rounded-full flex items-center justify-center transition-all
+                           bg-foreground text-background hover:bg-foreground/80"
+                title="Stop generation"
+              >
+                <Square className="w-3 h-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!canSend}
+                className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center transition-all",
+                  canSend
+                    ? "bg-foreground text-background hover:bg-foreground/90"
+                    : "bg-muted text-muted-foreground/40 cursor-not-allowed"
+                )}
+                title="Send (Enter)"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 10l7-7m0 0l7 7m-7-7v18" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Error banner */}
-      {voiceError && (
+      {/* Status strip — voice errors or send errors, never a toast */}
+      {(voiceError || sendError) && (
         <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
           <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
-          <span className="text-[12px] text-destructive leading-snug">{voiceError}</span>
+          <span className="text-[12px] text-destructive leading-snug">
+            {sendError || voiceError}
+          </span>
         </div>
       )}
-
     </div>
   );
 
-  // ── Empty state ────────────────────────────────────────────────
+  // ── Offline uncached-chat empty state ───────────────────────
+  if (offlineChatUnavailable) {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-background">
+        <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in-slow">
+          <div className="flex flex-col items-center gap-5 text-center max-w-xs">
+            {/* Icon */}
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
+              <WifiOff className="w-6 h-6 text-amber-400" />
+            </div>
+
+            {/* Text */}
+            <div className="space-y-1.5">
+              <h2 className="text-[17px] font-semibold text-foreground tracking-tight">
+                You're offline
+              </h2>
+              <p className="text-[13px] text-muted-foreground/70 leading-relaxed">
+                This chat isn't available offline.<br />Reconnect to load it.
+              </p>
+            </div>
+
+            {/* Retry / refresh button */}
+            <button
+              type="button"
+              onClick={onRetryLoad}
+              disabled={!onRetryLoad}
+              className="mt-1 inline-flex items-center gap-2 px-4 py-2 rounded-lg
+                         text-[13px] font-medium text-amber-400
+                         bg-amber-500/10 border border-amber-500/20
+                         hover:bg-amber-500/15 hover:border-amber-500/30
+                         disabled:opacity-40 disabled:cursor-not-allowed
+                         transition-colors duration-150"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Empty state ─────────────────────────────────────────────
   if (isEmpty) {
     return (
       <div className="flex-1 flex flex-col h-full bg-background">
         <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in-slow">
-          <div className="w-full max-w-2xl mx-auto flex flex-col items-center gap-10">
-
+          <div className="w-full max-w-4xl mx-auto flex flex-col items-center gap-10">
             {/* Hero */}
             <div className="flex flex-col items-center gap-5 text-center">
               <div className="relative inline-flex items-center justify-center">
@@ -314,7 +427,6 @@ export const ChatView = ({
                   <Zap className="w-2.5 h-2.5 text-emerald" />
                 </div>
               </div>
-
               <div className="space-y-2">
                 <h2 className="text-[28px] font-bold text-gradient-primary tracking-tight leading-none">
                   Prompt Optimization Studio
@@ -323,23 +435,23 @@ export const ChatView = ({
                   Transform rough ideas into precisely engineered prompts.
                 </p>
               </div>
-
-              <div className="flex flex-wrap gap-2 justify-center" />
             </div>
-
-            {inputBox}
+            {inputBar}
           </div>
         </div>
       </div>
     );
   }
 
-  // ── Conversation state ─────────────────────────────────────────
+  // ── Conversation state ──────────────────────────────────────
   return (
     <div className="flex-1 flex flex-col h-full bg-background">
       <div className="flex-1 overflow-hidden">
-        <ScrollArea className="h-full" ref={scrollRef}>
-          <div className="max-w-3xl mx-auto py-8 px-6 space-y-6">
+        <div
+          ref={scrollRef}
+          className="h-full overflow-y-auto scrollbar-none"
+        >
+          <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
             {messages.map((message) => (
               <MessageBubble
                 key={message.id}
@@ -348,6 +460,15 @@ export const ChatView = ({
                 onSave={() => onSavePrompt(message.id)}
                 onFeedback={onFeedback}
                 isSaved={savedPromptIds.includes(message.id)}
+                onEdit={message.role === "user" ? (id, content) => {
+                  isEditRetryRef.current = true;
+                  onEditMessage?.(id, content);
+                } : undefined}
+                onRetry={message.role === "user" ? (id) => {
+                  isEditRetryRef.current = true;
+                  onRetryMessage?.(id);
+                } : undefined}
+                isGenerating={isGenerating}
               />
             ))}
 
@@ -365,22 +486,29 @@ export const ChatView = ({
             )}
 
             {streamingMessage && (
-              <MessageBubble
-                key={streamingMessage.id}
-                message={streamingMessage}
-                onCopy={() => onCopyPrompt(streamingMessage.id)}
-                onSave={() => onSavePrompt(streamingMessage.id)}
-                onFeedback={onFeedback}
-                isSaved={false}
-              />
+              <div ref={(el) => {
+                // Scroll the streaming bubble into view, but ONLY if the user hasn't scrolled up
+                if (el && shouldAutoScroll.current) {
+                  el.scrollIntoView({ behavior: "instant", block: "end" });
+                }
+              }}>
+                <MessageBubble
+                  key={streamingMessage.id}
+                  message={streamingMessage}
+                  onCopy={() => onCopyPrompt(streamingMessage.id)}
+                  onSave={() => onSavePrompt(streamingMessage.id)}
+                  onFeedback={onFeedback}
+                  isSaved={false}
+                />
+              </div>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </div>
 
       {/* Docked input */}
-      <div className="flex-shrink-0 px-6 pb-5 pt-4 bg-background">
-        {inputBox}
+      <div className="flex-shrink-0 px-6 pb-5 pt-3 bg-background">
+        {inputBar}
       </div>
     </div>
   );

@@ -71,6 +71,12 @@ const Index = () => {
     window.electronAPI?.onNetworkReconnected?.(() => setIsOnline(true));
   }, []);
 
+  // Offline uncached-chat state — true when a selected chat has no cached messages while offline
+  const [offlineChatUnavailable, setOfflineChatUnavailable] = useState(false);
+
+  // Send error state — shown inline in the input bar instead of a toast
+  const [sendError, setSendError] = useState<string | null>(null);
+
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [promptToPreview, setPromptToPreview] = useState<SavedPrompt | null>(null);
@@ -171,10 +177,6 @@ const Index = () => {
         if (selectedChatId === data.chatId) {
           setCurrentChatTitle(data.title);
         }
-        toast({
-          title: "Chat renamed",
-          description: `Chat renamed to "${data.title}".`,
-        });
       };
       const cleanup = window.electronAPI.onChatRenamed(handleChatRenamed);
       return cleanup;
@@ -250,9 +252,18 @@ const Index = () => {
     setIsGenerating(false);
   }, []);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete
   });
+
+  // Stop generation: abort the backend stream and fast-flush the visual buffer.
+  // The backend resolves the aborted promise with partial text, which flows
+  // through the normal onMessageReceived → handleFinalMessage → animate path
+  // to commit the message — so we don't force-complete here.
+  const handleStopGeneration = useCallback(() => {
+    window.electronAPI?.stopGeneration?.();
+    stopStreaming(); // skip typewriter delay, show partial text immediately
+  }, [stopStreaming]);
 
   // Filter history to avoid duplicates
   // We filter out the message being currently streamed from history to avoid duplicates
@@ -275,14 +286,26 @@ const Index = () => {
           setCurrentChatTitle(data.chat.title);
         }
 
-        // Add user message to local state
+        // Add user message to local state, replacing any optimistic placeholder
+        // that was inserted by edit/retry to prevent the empty-screen flash.
         const userMessage: Message = {
           id: data.userMessage.id,
           role: "user",
           content: data.userMessage.content,
           timestamp: new Date(data.userMessage.createdAt),
         };
-        setMessages((prev) => [...prev, userMessage]);
+        setMessages((prev) => {
+          // Replace the last placeholder (id starts with 'edit-placeholder-' or 'retry-placeholder-')
+          const placeholderIdx = prev.findLastIndex(
+            (m) => m.id.startsWith("edit-placeholder-") || m.id.startsWith("retry-placeholder-")
+          );
+          if (placeholderIdx !== -1) {
+            const next = [...prev];
+            next[placeholderIdx] = userMessage;
+            return next;
+          }
+          return [...prev, userMessage];
+        });
 
         // Show generating indicator and start streaming
         setIsGenerating(true);
@@ -357,11 +380,9 @@ const Index = () => {
       const handleMessageSendError = (data: { error: string; details?: string }) => {
         console.error('[Index] Message send error:', data);
         setIsGenerating(false);
-        toast({
-          title: "Failed to send message",
-          description: data.error,
-          variant: "destructive",
-        });
+        setSendError(data.error);
+        // Auto-clear after 6 s so it doesn't linger forever
+        setTimeout(() => setSendError(null), 6000);
       };
 
       const cleanup = window.electronAPI.onMessageSendError(handleMessageSendError);
@@ -375,6 +396,7 @@ const Index = () => {
       console.log('[Index] Loading messages for chat:', selectedChatId);
       window.electronAPI.loadMessages(selectedChatId);
       setCurrentView("chat");
+      setOfflineChatUnavailable(false); // reset while loading
 
       // Find chat title
       const chat = recentChats.find((c) => c.id === selectedChatId);
@@ -396,16 +418,15 @@ const Index = () => {
             role: msg.role,
             content: msg.content,
             timestamp: new Date(msg.created_at),
+            feedback: msg.metadata?.feedback,
           }));
           setMessages(formattedMessages);
 
-          // If offline and we got zero messages, let the user know
+          // If offline and no cached messages, show the offline empty-state instead of a toast
           if (!isOnline && formattedMessages.length === 0) {
-            toast({
-              title: "Chat not available offline",
-              description: "This chat wasn't opened during your last online session and hasn't been cached. Connect to the internet to view it.",
-              variant: "destructive",
-            });
+            setOfflineChatUnavailable(true);
+          } else {
+            setOfflineChatUnavailable(false);
           }
         }
       };
@@ -475,6 +496,7 @@ const Index = () => {
     setSelectedChatId(null);
     setCurrentChatTitle('');
     setCurrentView("chat");
+    setOfflineChatUnavailable(false);
   };
 
   const handleSendMessage = useCallback((content: string, mode: "fast" | "thinking" = "fast") => {
@@ -483,6 +505,9 @@ const Index = () => {
       contentLength: content.length,
       mode
     });
+
+    // Clear any previous send error
+    setSendError(null);
 
     // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
@@ -537,6 +562,39 @@ Your prompt was: "${content}"`;
     });
   };
 
+  // Edit a user message: replace it in local state and re-send from that point.
+  // All messages after the edited one are removed (same as ChatGPT behaviour).
+  // We slice + immediately insert a placeholder user message in ONE setState call
+  // so the UI never sees an empty messages array (which would flash the welcome screen).
+  const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    const placeholderId = `edit-placeholder-${Date.now()}`;
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === messageId);
+      if (idx === -1) return prev;
+      return [
+        ...prev.slice(0, idx),
+        { id: placeholderId, role: "user" as const, content: newContent, timestamp: new Date() },
+      ];
+    });
+    handleSendMessage(newContent, "fast");
+  }, [handleSendMessage]);
+
+  // Retry a user message: remove everything after it and re-send the same content.
+  const handleRetryMessage = useCallback((messageId: string) => {
+    // We need the content synchronously before modifying messages
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === messageId);
+      if (idx === -1) return prev;
+      const content = prev[idx].content;
+      // Schedule the IPC call after this render — content is captured in closure
+      setTimeout(() => handleSendMessage(content, "fast"), 0);
+      return [
+        ...prev.slice(0, idx),
+        { id: `retry-placeholder-${Date.now()}`, role: "user" as const, content, timestamp: new Date() },
+      ];
+    });
+  }, [handleSendMessage]);
+
   const handleSavePromptClick = (id: string) => {
     let message = displayMessages.find((m) => m.id === id);
     if (!message && streamingMessage?.id === id) {
@@ -552,13 +610,15 @@ Your prompt was: "${content}"`;
   const handleFeedback = (messageId: string, rating: "positive" | "negative") => {
     console.log('[Index] Feedback received:', { messageId, rating });
 
-    // Store feedback in localStorage for now (can be sent to Supabase later)
-    const feedbackKey = `feedback-${messageId}`;
-    localStorage.setItem(feedbackKey, JSON.stringify({
-      messageId,
-      rating,
-      timestamp: new Date().toISOString()
-    }));
+    // Send it to Supabase via Electron IPC
+    if (isElectron && window.electronAPI?.saveFeedback) {
+      window.electronAPI.saveFeedback(messageId, rating);
+    }
+    
+    // Update local state so UI updates immediately
+    setMessages((prev) => 
+        prev.map((m) => m.id === messageId ? { ...m, feedback: { rating } } : m)
+    );
 
     toast({
       title: "Thank you!",
@@ -626,7 +686,7 @@ Your prompt was: "${content}"`;
   // Library handlers
   const handleCreateCollection = async (name: string) => {
     try {
-      if (isElectron && window.electronAPI?.promptLibrary) {
+      if (isElectron && window.electronAPI?.promptLibrary?.createCollection) {
         const created = await window.electronAPI.promptLibrary.createCollection(name, "folder");
         setCollections((prev) => [...prev, {
           id: created.id,
@@ -652,7 +712,7 @@ Your prompt was: "${content}"`;
 
   const handleRenameCollection = async (id: string, name: string) => {
     try {
-      if (isElectron && window.electronAPI?.promptLibrary) {
+      if (isElectron && window.electronAPI?.promptLibrary?.renameCollection) {
         await window.electronAPI.promptLibrary.renameCollection(id, name);
       }
       setCollections((prev) =>
@@ -674,7 +734,7 @@ Your prompt was: "${content}"`;
 
   const handleDeleteCollection = async (id: string) => {
     try {
-      if (isElectron && window.electronAPI?.promptLibrary) {
+      if (isElectron && window.electronAPI?.promptLibrary?.deleteCollection) {
         await window.electronAPI.promptLibrary.deleteCollection(id);
       }
       setCollections((prev) => prev.filter((c) => c.id !== id));
@@ -784,9 +844,20 @@ Your prompt was: "${content}"`;
             onCopyPrompt={handleCopyPrompt}
             onSavePrompt={handleSavePromptClick}
             onFeedback={handleFeedback}
+            onEditMessage={handleEditMessage}
+            onRetryMessage={handleRetryMessage}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
             isOnline={isOnline}
+            offlineChatUnavailable={offlineChatUnavailable}
+            sendError={sendError}
+            onStopGeneration={handleStopGeneration}
+            onRetryLoad={() => {
+              if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
+                setOfflineChatUnavailable(false);
+                window.electronAPI.loadMessages(selectedChatId);
+              }
+            }}
           />
         );
     }

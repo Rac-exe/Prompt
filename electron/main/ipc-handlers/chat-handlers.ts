@@ -6,6 +6,8 @@ import { PythonClient } from '../api/python-client';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
+import { MemoryService } from '../database/services/memory-service';
+import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { localCache } from '../database/local-cache';
 import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 
@@ -14,13 +16,17 @@ let chatService: ChatService | null = null;
 let optimizationService: OptimizationService | null = null;
 let userService: UserService | null = null;
 let settingsService: SettingsService | null = null;
+let memoryService: MemoryService | null = null;
+let memoryAnalyzer: MemoryAnalyzer | null = null;
 
 function getServices() {
     if (!chatService) chatService = new ChatService();
     if (!optimizationService) optimizationService = new OptimizationService();
     if (!userService) userService = new UserService();
     if (!settingsService) settingsService = new SettingsService();
-    return { chatService, optimizationService, userService, settingsService };
+    if (!memoryService) memoryService = new MemoryService();
+    if (!memoryAnalyzer) memoryAnalyzer = new MemoryAnalyzer();
+    return { chatService, optimizationService, userService, settingsService, memoryService, memoryAnalyzer };
 }
 
 // Module-level state for optimization context
@@ -40,7 +46,7 @@ export function registerChatHandlers(
     appWindowManager: AppWindowManager,
     pythonClient: PythonClient
 ) {
-    const { chatService, optimizationService, userService } = getServices();
+    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer } = getServices();
 
     // ============================================
     // APP WINDOW: Optimize prompt request
@@ -61,17 +67,24 @@ export function registerChatHandlers(
                 }
             }
 
-            let customInstructions = "";
+            let customInstructions = '';
             if (authState.isAuthenticated && userService && settingsService) {
                 try {
                     const profile = await userService.getUserProfile();
                     if (profile) {
                         const settings = await settingsService.getUserSettings(profile.id);
-                        customInstructions = settings?.prompt_instructions || "";
+                        customInstructions = settings?.prompt_instructions || '';
                     }
                 } catch (settingsErr) {
                     console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
                 }
+            }
+            // Append user memory context (non-blocking, silent failure)
+            if (authState.isAuthenticated && memory) {
+                try {
+                    const memCtx = await memory.buildMemoryContext();
+                    if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                } catch { /* non-critical */ }
             }
 
             // Use streaming optimization
@@ -297,11 +310,32 @@ export function registerChatHandlers(
                 if (!authState.isAuthenticated) {
                     throw new Error('User must be authenticated to create chat');
                 }
-                // Limit title to first 4 words (like ChatGPT style)
-                const words = data.content.trim().split(/\s+/).slice(0, 4);
-                const title = words.join(' ');
-                chat = await chatService.createChat(title);
+                // Create the chat immediately with a first-4-words placeholder title
+                // so the user sees something in the sidebar right away.
+                const placeholderTitle = data.content.trim().split(/\s+/).slice(0, 4).join(' ');
+                chat = await chatService.createChat(placeholderTitle);
                 chatId = chat.id;
+
+                // Fire-and-forget: generate a smart title in the background.
+                // Once the title is ready, update the DB and push to the renderer.
+                (async () => {
+                    try {
+                        const smartTitle = await pythonClient.generateTitle(data.content);
+                        if (smartTitle && smartTitle !== placeholderTitle) {
+                            await chatService.updateChatTitle(chatId!, smartTitle);
+                            // Push the rename to the sidebar immediately
+                            if (appWindowManager) {
+                                appWindowManager.send('chat-renamed', {
+                                    chatId: chatId!,
+                                    title: smartTitle,
+                                });
+                            }
+                            console.log(`[Chat] Smart title generated: "${smartTitle}"`);
+                        }
+                    } catch (err) {
+                        console.warn('[Chat] Smart title generation failed (non-critical):', err);
+                    }
+                })();
             } else {
                 chat = await chatService.getChat(chatId);
             }
@@ -324,17 +358,24 @@ export function registerChatHandlers(
                 });
             }
 
-            let customInstructions = "";
+            let customInstructions = '';
             if (authState.isAuthenticated && userService && settingsService) {
                 try {
                     const profile = await userService.getUserProfile();
                     if (profile) {
                         const settings = await settingsService.getUserSettings(profile.id);
-                        customInstructions = settings?.prompt_instructions || "";
+                        customInstructions = settings?.prompt_instructions || '';
                     }
                 } catch (settingsErr) {
                     console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
                 }
+            }
+            // Append user memory context (non-blocking, silent failure)
+            if (authState.isAuthenticated && memory) {
+                try {
+                    const memCtx = await memory.buildMemoryContext();
+                    if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                } catch { /* non-critical */ }
             }
 
             // Fetch chat history for context
@@ -366,7 +407,7 @@ export function registerChatHandlers(
                 customInstructions
             );
 
-            // Save optimization record
+            // Save optimization record and trigger background memory analysis
             let optimizationId: string | undefined;
             if (authState.isAuthenticated) {
                 try {
@@ -377,6 +418,12 @@ export function registerChatHandlers(
                         { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
                     );
                     optimizationId = optimization.id;
+                    // Trigger background memory analysis (fire-and-forget, non-critical)
+                    if (analyzer && authState.currentUserId) {
+                        analyzer.onNewOptimization(authState.currentUserId).catch((e: unknown) =>
+                            console.warn('[Memory] Analyzer error (non-critical):', e)
+                        );
+                    }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
                 }
@@ -428,5 +475,30 @@ export function registerChatHandlers(
     ipcMain.on('app:copy-to-clipboard', (event, text: string) => {
         const { clipboard } = require('electron');
         clipboard.writeText(text);
+    });
+
+    // ============================================
+    // APP WINDOW: Save Feedback
+    // ============================================
+    ipcMain.on('app:save-feedback', async (event, data: { messageId: string; rating: 'positive' | 'negative' }) => {
+        try {
+            await chatService.saveFeedback(data.messageId, data.rating);
+            if (appWindowManager) {
+                appWindowManager.send('feedback-saved', { messageId: data.messageId, rating: data.rating });
+            }
+        } catch (error) {
+            console.error('[Chat] Failed to save feedback:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            if (appWindowManager) {
+                appWindowManager.send('feedback-error', { messageId: data.messageId, error: errorMessage });
+            }
+        }
+    });
+
+    // APP WINDOW: Stop generation mid-stream
+    // ============================================
+    ipcMain.on('app:stop-generation', () => {
+        console.log('[Chat] Stop generation requested');
+        pythonClient.abortLatestStream();
     });
 }

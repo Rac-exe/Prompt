@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, CreditCard, Palette, Moon, Sun, Check, Sparkles } from "lucide-react";
+import { User, CreditCard, Palette, Moon, Sun, Check, Sparkles, Camera, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,9 +10,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "@/hooks/use-toast";
 import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/settings";
 import { useAuth } from "@/context/AuthContext";
+import { AvatarUploadModal } from "@/components/profile/AvatarUploadModal";
+import { MemoryView } from "@/components/settings/MemoryView";
 import { cn } from "@/lib/utils";
 
 /* ── Reusable section wrapper ─────────────────────────────── */
@@ -56,8 +59,13 @@ export const SettingsView = () => {
     promptInstructions: "",
   });
   const [isLoading, setIsLoading] = useState(true);
-  // Local state for custom instructions — only saved on explicit Save press
   const [localInstructions, setLocalInstructions] = useState("");
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+
+  const avatarUrl = user?.profile?.avatar_url || null;
+  const userName = user?.profile?.name || "User";
+  const userEmail = user?.profile?.email || "";
+  const userInitial = (userName[0] || "U").toUpperCase();
 
   useEffect(() => {
     loadSettings()
@@ -81,22 +89,24 @@ export const SettingsView = () => {
 
   const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
     const newSettings = { ...settings, [key]: value };
-
-    // 1. Update component rendering state
     setSettings(newSettings);
-
-    // 2. Instantly apply the settings visually
     applySettings(newSettings);
-
-    // 3. Persist setting to the backend
     saveSettings(newSettings).catch((err) => {
       console.error('[SettingsView] Failed to auto-save:', err);
       toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
     });
-
-    // 4. Instantly broadcast setting payload to overlay
     if (window.electronAPI && window.electronAPI.send) {
       window.electronAPI.send('overlay:settings-update', newSettings);
+    }
+  };
+
+  const handleAvatarUploaded = (url: string) => {
+    if (window.electronAPI?.updateProfile) {
+      window.electronAPI.updateProfile({ avatar_url: url });
+      toast({
+        title: "Avatar updated",
+        description: "Your profile picture has been changed successfully.",
+      });
     }
   };
 
@@ -109,7 +119,6 @@ export const SettingsView = () => {
 
       {/* ── Tabs ── */}
       <Tabs defaultValue="profile" className="flex-1 flex flex-col overflow-hidden">
-        {/* Tab bar */}
         <div className="px-6 pt-5 pb-0 flex-shrink-0">
           <TabsList className="bg-secondary h-9 p-1 rounded-lg gap-0.5">
             <TabsTrigger
@@ -133,6 +142,13 @@ export const SettingsView = () => {
               <Palette className="w-3.5 h-3.5 mr-1.5 opacity-70" />
               Customize
             </TabsTrigger>
+            <TabsTrigger
+              value="memory"
+              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+            >
+              <Brain className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+              Memory
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -140,12 +156,57 @@ export const SettingsView = () => {
         <TabsContent value="profile" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
+
+              {/* Avatar + Identity */}
+              <Section title="Profile">
+                <div className="px-4 py-5">
+                  <div className="flex items-center gap-5">
+                    {/* Avatar with edit overlay */}
+                    <div
+                      className="relative group cursor-pointer flex-shrink-0"
+                      onClick={() => setUploadModalOpen(true)}
+                    >
+                      <Avatar className="h-16 w-16">
+                        {avatarUrl && (
+                          <AvatarImage src={avatarUrl} alt={userName} className="object-cover" />
+                        )}
+                        <AvatarFallback className="bg-emerald/15 text-emerald text-lg font-semibold">
+                          {userInitial}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Camera className="w-5 h-5 text-white" />
+                      </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-foreground">{userName}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{userEmail}</p>
+                      <div className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full bg-emerald-muted">
+                        <div className="w-1 h-1 rounded-full bg-emerald" />
+                        <span className="text-[10px] font-semibold text-emerald tracking-wide uppercase">Free Plan</span>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs flex-shrink-0"
+                      onClick={() => setUploadModalOpen(true)}
+                    >
+                      <Camera className="w-3.5 h-3.5 mr-1.5" />
+                      Change Avatar
+                    </Button>
+                  </div>
+                </div>
+              </Section>
+
               {/* Account info */}
               <Section title="Account Information">
                 <Row>
                   <RowLabel label="Username" />
                   <Input
-                    defaultValue={user?.profile?.name || "User"}
+                    defaultValue={userName}
                     className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
                   />
                 </Row>
@@ -153,14 +214,14 @@ export const SettingsView = () => {
                   <RowLabel label="Email Address" hint="Cannot be changed" />
                   <Input
                     type="email"
-                    value={user?.profile?.email || ""}
+                    value={userEmail}
                     disabled
                     className="w-48 h-8 text-sm bg-secondary border-border opacity-60"
                   />
                 </Row>
               </Section>
 
-              {/* Password */}
+              {/* Authentication */}
               <Section title="Authentication">
                 <Row>
                   <div className="flex items-center gap-3">
@@ -202,7 +263,6 @@ export const SettingsView = () => {
         <TabsContent value="billing" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
-              {/* Current plan */}
               <Section title="Current Plan">
                 <Row>
                   <div>
@@ -224,10 +284,8 @@ export const SettingsView = () => {
                 </Row>
               </Section>
 
-              {/* Pro plan card */}
               <div className="bg-surface border border-emerald/25 rounded-xl p-5 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-32 h-32 bg-emerald/4 rounded-full translate-x-12 -translate-y-12 pointer-events-none" />
-
                 <div className="relative">
                   <div className="flex items-start justify-between mb-4">
                     <div>
@@ -242,7 +300,6 @@ export const SettingsView = () => {
                       <p className="text-xs text-muted-foreground mt-0.5">Cancel anytime</p>
                     </div>
                   </div>
-
                   <div className="space-y-2.5 mb-5">
                     {[
                       { label: "Unlimited Prompts", desc: "Generate as many as you need" },
@@ -261,7 +318,6 @@ export const SettingsView = () => {
                       </div>
                     ))}
                   </div>
-
                   <Button className="w-full h-9 bg-emerald hover:bg-emerald/90 text-white font-semibold text-sm glow-emerald-sm">
                     Upgrade Now
                   </Button>
@@ -275,10 +331,9 @@ export const SettingsView = () => {
         <TabsContent value="customize" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
-              {/* Custom instructions */}
               <Section
                 title="Custom Instructions"
-                description="Added to every optimization as secondary context — think of it as a persistent system-level preference"
+                description="Added to every optimization as secondary context"
               >
                 <div className="p-4 space-y-2.5">
                   <Textarea
@@ -294,19 +349,10 @@ export const SettingsView = () => {
                     </p>
                     {instructionsDirty && (
                       <div className="flex items-center gap-1.5">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={discardInstructions}
-                          className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground"
-                        >
+                        <Button variant="ghost" size="sm" onClick={discardInstructions} className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground">
                           Discard
                         </Button>
-                        <Button
-                          size="sm"
-                          onClick={saveInstructions}
-                          className="h-7 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold"
-                        >
+                        <Button size="sm" onClick={saveInstructions} className="h-7 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold">
                           Save
                         </Button>
                       </div>
@@ -315,7 +361,6 @@ export const SettingsView = () => {
                 </div>
               </Section>
 
-              {/* Appearance */}
               <Section title="Appearance">
                 <Row>
                   <RowLabel
@@ -335,7 +380,6 @@ export const SettingsView = () => {
                 </Row>
               </Section>
 
-              {/* Typography */}
               <Section title="Typography">
                 <Row>
                   <RowLabel label="Font Size" />
@@ -370,14 +414,28 @@ export const SettingsView = () => {
                   </Select>
                 </Row>
               </Section>
+            </div>
+          </ScrollArea>
+        </TabsContent>
 
-
+        {/* ── Memory tab ── */}
+        <TabsContent value="memory" className="flex-1 mt-0 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="max-w-xl mx-auto px-6 py-6">
+              <MemoryView />
             </div>
           </ScrollArea>
         </TabsContent>
       </Tabs>
 
-
+      {/* Avatar upload modal */}
+      <AvatarUploadModal
+        open={uploadModalOpen}
+        onOpenChange={setUploadModalOpen}
+        currentAvatarUrl={avatarUrl}
+        onAvatarUploaded={handleAvatarUploaded}
+      />
     </div>
   );
 };
+

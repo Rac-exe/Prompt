@@ -25,6 +25,8 @@ declare global {
         getSettings: () => Promise<any>;
         onSettingsUpdate: (callback: (settings: any) => void) => void;
         newSession: () => void;
+        stopGeneration: () => void;
+        truncateHistory: (keepCount: number) => void;
       };
 
       // ============================================
@@ -60,6 +62,8 @@ declare global {
       onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
       signOut: () => void;
       copyToClipboard: (text: string) => void;
+      saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
+      stopGeneration: () => void;
 
       // Streaming optimization (app window)
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
@@ -110,6 +114,17 @@ declare global {
       // Network status
       onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
       onNetworkReconnected: (callback: () => void) => void;
+
+      // Memory API
+      memory: {
+        get: () => Promise<{
+          user: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          behavioral: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          context: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+        }>;
+        upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
+        delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) => Promise<{ success: boolean; error?: string }>;
+      };
     };
   }
 }
@@ -170,6 +185,12 @@ const electronAPI = {
     },
     newSession: () => {
       ipcRenderer.send('overlay:new-session');
+    },
+    stopGeneration: () => {
+      ipcRenderer.send('overlay:stop-generation');
+    },
+    truncateHistory: (keepCount: number) => {
+      ipcRenderer.send('overlay:truncate-history', { keepCount });
     },
   },
 
@@ -278,6 +299,12 @@ const electronAPI = {
   },
   copyToClipboard: (text: string) => {
     ipcRenderer.send('app:copy-to-clipboard', text);
+  },
+  saveFeedback: (messageId: string, rating: 'positive' | 'negative') => {
+    ipcRenderer.send('app:save-feedback', { messageId, rating });
+  },
+  stopGeneration: () => {
+    ipcRenderer.send('app:stop-generation');
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
@@ -402,6 +429,17 @@ const electronAPI = {
   },
   onNetworkReconnected: (callback: () => void) => {
     ipcRenderer.on('network:reconnected', () => callback());
+  },
+
+  // ============================================
+  // MEMORY API
+  // ============================================
+  memory: {
+    get: () => ipcRenderer.invoke('memory:get'),
+    upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) =>
+      ipcRenderer.invoke('memory:upsert', data),
+    delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
+      ipcRenderer.invoke('memory:delete', data),
   },
 };
 
