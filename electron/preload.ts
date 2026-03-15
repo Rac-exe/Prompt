@@ -111,6 +111,17 @@ declare global {
       // Network status
       onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
       onNetworkReconnected: (callback: () => void) => void;
+
+      // Memory API
+      memory: {
+        get: () => Promise<{
+          user: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          behavioral: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          context: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+        }>;
+        upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
+        delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) => Promise<{ success: boolean; error?: string }>;
+      };
     };
   }
 }
@@ -406,6 +417,17 @@ const electronAPI = {
   },
   onNetworkReconnected: (callback: () => void) => {
     ipcRenderer.on('network:reconnected', () => callback());
+  },
+
+  // ============================================
+  // MEMORY API
+  // ============================================
+  memory: {
+    get: () => ipcRenderer.invoke('memory:get'),
+    upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) =>
+      ipcRenderer.invoke('memory:upsert', data),
+    delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
+      ipcRenderer.invoke('memory:delete', data),
   },
 };
 

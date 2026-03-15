@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, CreditCard, Palette, Moon, Sun, Check, Sparkles, Camera } from "lucide-react";
+import { User, CreditCard, Palette, Moon, Sun, Check, Sparkles, Camera, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import { toast } from "@/hooks/use-toast";
 import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/settings";
 import { useAuth } from "@/context/AuthContext";
 import { AvatarUploadModal } from "@/components/profile/AvatarUploadModal";
+import { MemoryView } from "@/components/settings/MemoryView";
 import { cn } from "@/lib/utils";
 
 /* ── Reusable section wrapper ─────────────────────────────── */
@@ -140,6 +141,13 @@ export const SettingsView = () => {
             >
               <Palette className="w-3.5 h-3.5 mr-1.5 opacity-70" />
               Customize
+            </TabsTrigger>
+            <TabsTrigger
+              value="memory"
+              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+            >
+              <Brain className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+              Memory
             </TabsTrigger>
           </TabsList>
         </div>
@@ -409,6 +417,15 @@ export const SettingsView = () => {
             </div>
           </ScrollArea>
         </TabsContent>
+
+        {/* ── Memory tab ── */}
+        <TabsContent value="memory" className="flex-1 mt-0 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="max-w-xl mx-auto px-6 py-6">
+              <MemoryView />
+            </div>
+          </ScrollArea>
+        </TabsContent>
       </Tabs>
 
       {/* Avatar upload modal */}
@@ -421,3 +438,4 @@ export const SettingsView = () => {
     </div>
   );
 };
+

@@ -1,5 +1,23 @@
 // TypeScript declarations for Electron API
 
+export type MemoryType = 'user' | 'behavioral' | 'context';
+export type MemorySource = 'inferred' | 'explicit';
+
+export interface MemoryEntry {
+  key: string;
+  value: string;
+  source: MemorySource;
+  confidence: number;
+  memory_type: MemoryType;
+  updated_at: string;
+}
+
+export type UserMemoryMap = {
+  user: Record<string, MemoryEntry>;
+  behavioral: Record<string, MemoryEntry>;
+  context: Record<string, MemoryEntry>;
+};
+
 export interface ElectronAPI {
   // Auth
   signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
@@ -85,6 +103,13 @@ export interface ElectronAPI {
   // Network status
   onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
   onNetworkReconnected: (callback: () => void) => void;
+
+  // Memory
+  memory: {
+    get: () => Promise<UserMemoryMap>;
+    upsert: (data: { memoryType: MemoryType; key: string; value: string; source?: MemorySource; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
+    delete: (data: { memoryType: MemoryType; key: string }) => Promise<{ success: boolean; error?: string }>;
+  };
 }
 
 declare global {
