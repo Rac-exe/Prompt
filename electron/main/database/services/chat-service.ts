@@ -229,4 +229,37 @@ export class ChatService {
     // Create new one
     return this.createChat('Quick Optimizations');
   }
+  /**
+   * Save user feedback to a message
+   */
+  async saveFeedback(messageId: string, rating: 'positive' | 'negative'): Promise<void> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    // First fetch current metadata
+    const { data: currentMessage, error: fetchError } = await this.client
+        .from('messages')
+        .select('metadata')
+        .eq('id', messageId)
+        .eq('user_id', userData.user.id)
+        .single();
+        
+    if (fetchError) throw fetchError;
+    
+    // Merge new feedback into existing metadata
+    const currentMetadata = currentMessage?.metadata || {};
+    const updatedMetadata = {
+        ...currentMetadata,
+        feedback: { rating }
+    };
+
+    // Update the message
+    const { error: updateError } = await this.client
+        .from('messages')
+        .update({ metadata: updatedMetadata })
+        .eq('id', messageId)
+        .eq('user_id', userData.user.id);
+        
+    if (updateError) throw updateError;
+  }
 }

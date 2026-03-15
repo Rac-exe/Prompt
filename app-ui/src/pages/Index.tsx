@@ -401,6 +401,7 @@ const Index = () => {
             role: msg.role,
             content: msg.content,
             timestamp: new Date(msg.created_at),
+            feedback: msg.metadata?.feedback,
           }));
           setMessages(formattedMessages);
 
@@ -559,13 +560,15 @@ Your prompt was: "${content}"`;
   const handleFeedback = (messageId: string, rating: "positive" | "negative") => {
     console.log('[Index] Feedback received:', { messageId, rating });
 
-    // Store feedback in localStorage for now (can be sent to Supabase later)
-    const feedbackKey = `feedback-${messageId}`;
-    localStorage.setItem(feedbackKey, JSON.stringify({
-      messageId,
-      rating,
-      timestamp: new Date().toISOString()
-    }));
+    // Send it to Supabase via Electron IPC
+    if (isElectron && window.electronAPI?.saveFeedback) {
+      window.electronAPI.saveFeedback(messageId, rating);
+    }
+    
+    // Update local state so UI updates immediately
+    setMessages((prev) => 
+        prev.map((m) => m.id === messageId ? { ...m, feedback: { rating } } : m)
+    );
 
     toast({
       title: "Thank you!",
@@ -633,7 +636,7 @@ Your prompt was: "${content}"`;
   // Library handlers
   const handleCreateCollection = async (name: string) => {
     try {
-      if (isElectron && window.electronAPI?.promptLibrary) {
+      if (isElectron && window.electronAPI?.promptLibrary?.createCollection) {
         const created = await window.electronAPI.promptLibrary.createCollection(name, "folder");
         setCollections((prev) => [...prev, {
           id: created.id,
@@ -659,7 +662,7 @@ Your prompt was: "${content}"`;
 
   const handleRenameCollection = async (id: string, name: string) => {
     try {
-      if (isElectron && window.electronAPI?.promptLibrary) {
+      if (isElectron && window.electronAPI?.promptLibrary?.renameCollection) {
         await window.electronAPI.promptLibrary.renameCollection(id, name);
       }
       setCollections((prev) =>
@@ -681,7 +684,7 @@ Your prompt was: "${content}"`;
 
   const handleDeleteCollection = async (id: string) => {
     try {
-      if (isElectron && window.electronAPI?.promptLibrary) {
+      if (isElectron && window.electronAPI?.promptLibrary?.deleteCollection) {
         await window.electronAPI.promptLibrary.deleteCollection(id);
       }
       setCollections((prev) => prev.filter((c) => c.id !== id));

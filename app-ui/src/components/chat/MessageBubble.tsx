@@ -9,6 +9,9 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  feedback?: {
+    rating: "positive" | "negative";
+  };
 }
 
 interface MessageBubbleProps {
@@ -110,7 +113,7 @@ export const MessageBubble = ({ message, onCopy, onSave, isSaved, onFeedback }: 
         {/* Feedback widget */}
         {onFeedback && (
           <div className="mt-2">
-            <FeedbackWidget messageId={message.id} onFeedback={onFeedback} />
+            <FeedbackWidget messageId={message.id} onFeedback={onFeedback} initialRating={message.feedback?.rating} />
           </div>
         )}
       </div>

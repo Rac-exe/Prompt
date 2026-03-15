@@ -72,6 +72,7 @@ export interface ElectronAPI {
 
   // Utility
   copyToClipboard: (text: string) => void;
+  saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
   send: (channel: string, data: any) => void;
 
   // Window controls

@@ -429,4 +429,22 @@ export function registerChatHandlers(
         const { clipboard } = require('electron');
         clipboard.writeText(text);
     });
+
+    // ============================================
+    // APP WINDOW: Save Feedback
+    // ============================================
+    ipcMain.on('app:save-feedback', async (event, data: { messageId: string; rating: 'positive' | 'negative' }) => {
+        try {
+            await chatService.saveFeedback(data.messageId, data.rating);
+            if (appWindowManager) {
+                appWindowManager.send('feedback-saved', { messageId: data.messageId, rating: data.rating });
+            }
+        } catch (error) {
+            console.error('[Chat] Failed to save feedback:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            if (appWindowManager) {
+                appWindowManager.send('feedback-error', { messageId: data.messageId, error: errorMessage });
+            }
+        }
+    });
 }

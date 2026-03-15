@@ -60,6 +60,7 @@ declare global {
       onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
       signOut: () => void;
       copyToClipboard: (text: string) => void;
+      saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
 
       // Streaming optimization (app window)
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
@@ -278,6 +279,9 @@ const electronAPI = {
   },
   copyToClipboard: (text: string) => {
     ipcRenderer.send('app:copy-to-clipboard', text);
+  },
+  saveFeedback: (messageId: string, rating: 'positive' | 'negative') => {
+    ipcRenderer.send('app:save-feedback', { messageId, rating });
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
