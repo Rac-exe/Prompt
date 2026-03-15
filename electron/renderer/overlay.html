@@ -656,16 +656,14 @@
     /* Mode dropdown */
     .mode-dropdown {
       display: none;
-      position: absolute;
-      bottom: calc(100% + 6px);
-      left: 0;
+      position: fixed;
       background: hsl(var(--background));
       border: 1px solid hsl(var(--border));
       border-radius: 12px;
       padding: 4px;
-      min-width: 200px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-      z-index: 30;
+      min-width: 210px;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
+      z-index: 9999;
     }
 
     .mode-dropdown.open {
@@ -2020,10 +2018,20 @@
       });
     }
 
-    // Toggle dropdown
+    // Toggle dropdown — position it above the trigger button using fixed coords
     btnModeTrigger.addEventListener('click', (e) => {
       e.stopPropagation();
-      modeDropdown.classList.toggle('open');
+      const isOpen = modeDropdown.classList.contains('open');
+      if (isOpen) {
+        modeDropdown.classList.remove('open');
+        return;
+      }
+      // Compute position: above the trigger, left-aligned
+      const rect = btnModeTrigger.getBoundingClientRect();
+      const dropH = 110; // approximate dropdown height (2 items)
+      modeDropdown.style.left = rect.left + 'px';
+      modeDropdown.style.top  = (rect.top - dropH - 6) + 'px';
+      modeDropdown.classList.add('open');
     });
 
     // Select mode from dropdown

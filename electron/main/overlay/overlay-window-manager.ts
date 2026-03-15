@@ -72,6 +72,10 @@ export class OverlayWindowManager {
       },
     });
 
+    // Keep overlay above screenshot tools and screen-capture UIs.
+    // 'screen-saver' is the highest z-order level available on Windows/macOS.
+    this.window.setAlwaysOnTop(true, 'screen-saver');
+
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'overlay.html');
     this.window.loadFile(htmlPath);
 

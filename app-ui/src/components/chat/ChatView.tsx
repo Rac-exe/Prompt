@@ -83,11 +83,12 @@ export const ChatView = ({
   }, [messages, scrollToBottom]);
 
   // ── Auto-scroll during streaming chunks ─────────────────────
+  // Only scrolls if the user hasn't manually scrolled up.
   useEffect(() => {
-    if (shouldAutoScroll.current && (isGenerating || streamingMessage)) {
+    if (shouldAutoScroll.current && streamingMessage) {
       scrollToBottom("instant");
     }
-  }, [streamingMessage, isGenerating, scrollToBottom]);
+  }, [streamingMessage, scrollToBottom]);
 
   // ── Force scroll to bottom when user sends a NEW message ────
   // Skipped for edit/retry so the user can still see earlier context.

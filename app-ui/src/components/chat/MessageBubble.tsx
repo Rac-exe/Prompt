@@ -149,10 +149,7 @@ export const MessageBubble = ({
       <div className="flex-1 min-w-0 max-w-[96%]">
         <div className="bg-surface border border-border rounded-2xl rounded-tl-sm overflow-hidden">
           {/* Content */}
-          <div className={cn(
-            "px-4 py-3.5 overflow-y-auto",
-            message.content.length > 1200 && "max-h-[480px]"
-          )}>
+          <div className="px-4 py-3.5">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
           </div>
 
