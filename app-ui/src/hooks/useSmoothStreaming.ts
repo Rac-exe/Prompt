@@ -48,46 +48,33 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
     }, []);
 
     /**
-     * Immediately flush whatever is visually shown and finalize the stream.
-     * Uses visualText (what the user can actually see) rather than the full
-     * buffer, so the stopped message matches exactly what was on screen.
+     * Called when the user clicks Stop.
+     * Skips the typewriter delay and immediately shows whatever has been
+     * buffered so far. Does NOT call onStreamingComplete — the normal
+     * message-received → handleFinalMessage → animate path still handles
+     * committing the message once the backend resolves the aborted stream.
      */
     const stopStreaming = useCallback(() => {
         if (!isStreamingRef.current) return;
-        console.log('[useSmoothStreaming] Stop requested — flushing visual text immediately');
+        console.log('[useSmoothStreaming] Stop — fast-flushing visual buffer');
 
-        // Invalidate the running animation loop first so it stops scheduling
-        generationId.current += 1;
-        isStreamingRef.current = false;
+        // Skip the startup delay so the partial text renders immediately
+        startTimestamp.current = 0;
 
-        // Use what's visually shown; fall back to the full buffer if nothing rendered yet
-        const partialContent = visualText.current || streamBuffer.current;
-
-        if (!partialContent) {
-            // Nothing was typed yet — just clean up silently
-            setStreamingMessage(null);
-            streamBuffer.current = '';
-            visualText.current = '';
-            pendingFinalMessage.current = null;
-            return;
+        // Show whatever is in the buffer right now
+        const partial = streamBuffer.current;
+        if (partial) {
+            visualText.current = partial;
+            setStreamingMessage(prev => ({
+                id: prev?.id || 'streaming-temp',
+                role: 'assistant',
+                content: partial,
+                timestamp: prev?.timestamp || new Date(),
+            }));
         }
-
-        // Build a stopped message with the partial content
-        const stoppedMessage: Message = {
-            id: `stopped-${Date.now()}`,
-            role: 'assistant',
-            content: partialContent,
-            timestamp: new Date(),
-        };
-
-        onStreamingComplete(stoppedMessage);
-
-        // Cleanup
-        setStreamingMessage(null);
-        streamBuffer.current = '';
-        visualText.current = '';
-        pendingFinalMessage.current = null;
-    }, [onStreamingComplete]);
+        // Leave isStreamingRef true — the animate loop will finalize normally
+        // once handleFinalMessage() is called with the aborted partial result.
+    }, []);
 
     useEffect(() => {
         const animate = (time: number) => {

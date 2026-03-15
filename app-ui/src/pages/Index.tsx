@@ -260,11 +260,13 @@ const Index = () => {
     onStreamingComplete: handleStreamingComplete
   });
 
-  // Stop generation: abort the backend stream and flush the visual buffer
+  // Stop generation: abort the backend stream and fast-flush the visual buffer.
+  // The backend resolves the aborted promise with partial text, which flows
+  // through the normal onMessageReceived → handleFinalMessage → animate path
+  // to commit the message — so we don't force-complete here.
   const handleStopGeneration = useCallback(() => {
     window.electronAPI?.stopGeneration?.();
-    stopStreaming();
-    setIsGenerating(false);
+    stopStreaming(); // skip typewriter delay, show partial text immediately
   }, [stopStreaming]);
 
   // Filter history to avoid duplicates
