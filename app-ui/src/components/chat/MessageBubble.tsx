@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -31,7 +31,16 @@ export const MessageBubble = ({
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === "user";
+
+  // Auto-expand edit textarea whenever editValue changes
+  useEffect(() => {
+    const ta = editTextareaRef.current;
+    if (!ta || !isEditing) return;
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+  }, [editValue, isEditing]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -64,17 +73,17 @@ export const MessageBubble = ({
             /* ── Edit mode ── */
             <div className="flex flex-col gap-2">
               <textarea
+                ref={editTextareaRef}
                 autoFocus
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleEditKeyDown}
-                rows={3}
+                rows={1}
                 className={cn(
                   "w-full rounded-2xl rounded-br-sm px-4 py-3",
                   "bg-emerald/10 border border-emerald/30",
-                  "text-sm text-foreground leading-relaxed resize-none outline-none",
+                  "text-sm text-foreground leading-relaxed resize-none outline-none overflow-hidden",
                   "focus:border-emerald/50 focus:shadow-[0_0_0_2px_hsl(var(--emerald)/0.1)]",
-                  "scrollbar-none"
                 )}
                 style={{ minWidth: "280px" }}
               />
@@ -150,7 +159,7 @@ export const MessageBubble = ({
 
       {/* Bubble */}
       <div className="flex-1 min-w-0 max-w-[96%]">
-        <div className="bg-surface border border-border rounded-2xl rounded-tl-sm overflow-hidden">
+        <div className="bg-surface border border-border rounded-2xl rounded-tl-sm">
           {/* Content */}
           <div className="px-4 py-3.5">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>

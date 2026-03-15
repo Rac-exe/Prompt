@@ -22,8 +22,8 @@ import { ProfileMenu } from "./ProfileMenu";
 
 function shortTitle(title: string): string {
   const words = title.trim().split(/\s+/);
-  if (words.length <= 4) return title.trim();
-  return words.slice(0, 4).join(" ") + "…";
+  if (words.length <= 6) return title.trim();
+  return words.slice(0, 6).join(" ") + "…";
 }
 
 interface SidebarProps {

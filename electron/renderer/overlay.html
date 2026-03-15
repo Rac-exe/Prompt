@@ -1416,7 +1416,7 @@
         '</div>' +
         // Edit mode (hidden by default)
         '<div class="user-edit-container" id="user-edit-' + msg.id + '">' +
-          '<textarea class="user-edit-textarea" id="user-edit-ta-' + msg.id + '" rows="3">' + escapeHtml(msg.content) + '</textarea>' +
+          '<textarea class="user-edit-textarea" id="user-edit-ta-' + msg.id + '" rows="1">' + escapeHtml(msg.content) + '</textarea>' +
           '<div class="user-edit-actions">' +
             '<button class="btn-edit-cancel" data-msg-id="' + msg.id + '">Cancel</button>' +
             '<button class="btn-edit-send" data-msg-id="' + msg.id + '">Send</button>' +
@@ -1801,12 +1801,19 @@
       messages[idx].content = newContent;
       const textEl = document.getElementById('user-text-' + msgId);
       if (textEl) textEl.textContent = newContent;
-      // Update the edit textarea value too
       ta.value = newContent;
 
       closeEditMode(msgId);
 
-      // Re-send with the new content
+      // Sync backend history: keep only messages up to (and including) the edited one.
+      // messages.length now reflects the trimmed state.
+      if (window.electronAPI?.overlay?.truncateHistory) {
+        // Backend history has 2 entries per round (user + assistant).
+        // We want to keep history up to the edited user msg index.
+        // Each frontend message maps to one backend history entry.
+        window.electronAPI.overlay.truncateHistory(messages.length);
+      }
+
       sendEditedMessage(newContent);
     }
 
@@ -1821,6 +1828,11 @@
         const el = document.getElementById('msg-el-' + m.id);
         if (el) el.remove();
       });
+
+      // Sync backend history to match the trimmed frontend state
+      if (window.electronAPI?.overlay?.truncateHistory) {
+        window.electronAPI.overlay.truncateHistory(messages.length);
+      }
 
       sendEditedMessage(content);
     }

@@ -26,6 +26,7 @@ declare global {
         onSettingsUpdate: (callback: (settings: any) => void) => void;
         newSession: () => void;
         stopGeneration: () => void;
+        truncateHistory: (keepCount: number) => void;
       };
 
       // ============================================
@@ -187,6 +188,9 @@ const electronAPI = {
     },
     stopGeneration: () => {
       ipcRenderer.send('overlay:stop-generation');
+    },
+    truncateHistory: (keepCount: number) => {
+      ipcRenderer.send('overlay:truncate-history', { keepCount });
     },
   },
 

@@ -41,10 +41,10 @@ export const ChatView = ({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // true = keep scrolling to bottom; flips to false when user scrolls up
+  // true = keep auto-scrolling to bottom; set to false the instant the user
+  // wheels/touches upward; reset to true when a new message is sent.
   const shouldAutoScroll = useRef(true);
   // true when the current generation came from an edit/retry (not a new message)
-  // — suppresses the force-scroll-to-bottom so previous messages stay visible
   const isEditRetryRef = useRef(false);
 
   // ── Auto-resize textarea ────────────────────────────────────
@@ -64,31 +64,52 @@ export const ChatView = ({
     el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
 
-  // Detect manual scroll-up → pause auto-scroll
-  // Resume when user scrolls back near the bottom
+  // ── Detect user-initiated scroll intent ─────────────────────
+  // wheel / touch events are ONLY fired by the user, never by scrollTo().
+  // This is the only reliable way to distinguish user scroll from programmatic.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const handleScroll = () => {
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      shouldAutoScroll.current = distanceFromBottom < 80;
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // Scrolling up → stop auto-scroll
+        shouldAutoScroll.current = false;
+      } else {
+        // Scrolling down — re-enable only when near the bottom
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceFromBottom < 80) shouldAutoScroll.current = true;
+      }
     };
-    el.addEventListener("scroll", handleScroll, { passive: true });
-    return () => el.removeEventListener("scroll", handleScroll);
+
+    // Touch: track swipe direction
+    let touchStartY = 0;
+    const onTouchStart = (e: TouchEvent) => { touchStartY = e.touches[0].clientY; };
+    const onTouchMove = (e: TouchEvent) => {
+      const dy = e.touches[0].clientY - touchStartY;
+      if (dy > 0) {
+        // Swiping down = scrolling up
+        shouldAutoScroll.current = false;
+      } else {
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceFromBottom < 80) shouldAutoScroll.current = true;
+      }
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+    };
   }, []);
 
   // ── Auto-scroll on new committed messages ───────────────────
   useEffect(() => {
     if (shouldAutoScroll.current) scrollToBottom("smooth");
   }, [messages, scrollToBottom]);
-
-  // ── Auto-scroll during streaming chunks ─────────────────────
-  // Only scrolls if the user hasn't manually scrolled up.
-  useEffect(() => {
-    if (shouldAutoScroll.current && streamingMessage) {
-      scrollToBottom("instant");
-    }
-  }, [streamingMessage, scrollToBottom]);
 
   // ── Force scroll to bottom when user sends a NEW message ────
   // Skipped for edit/retry so the user can still see earlier context.
@@ -465,14 +486,21 @@ export const ChatView = ({
             )}
 
             {streamingMessage && (
-              <MessageBubble
-                key={streamingMessage.id}
-                message={streamingMessage}
-                onCopy={() => onCopyPrompt(streamingMessage.id)}
-                onSave={() => onSavePrompt(streamingMessage.id)}
-                onFeedback={onFeedback}
-                isSaved={false}
-              />
+              <div ref={(el) => {
+                // Scroll the streaming bubble into view, but ONLY if the user hasn't scrolled up
+                if (el && shouldAutoScroll.current) {
+                  el.scrollIntoView({ behavior: "instant", block: "end" });
+                }
+              }}>
+                <MessageBubble
+                  key={streamingMessage.id}
+                  message={streamingMessage}
+                  onCopy={() => onCopyPrompt(streamingMessage.id)}
+                  onSave={() => onSavePrompt(streamingMessage.id)}
+                  onFeedback={onFeedback}
+                  isSaved={false}
+                />
+              </div>
             )}
           </div>
         </div>

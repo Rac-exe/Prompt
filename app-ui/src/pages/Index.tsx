@@ -177,10 +177,6 @@ const Index = () => {
         if (selectedChatId === data.chatId) {
           setCurrentChatTitle(data.title);
         }
-        toast({
-          title: "Chat renamed",
-          description: `Chat renamed to "${data.title}".`,
-        });
       };
       const cleanup = window.electronAPI.onChatRenamed(handleChatRenamed);
       return cleanup;

@@ -310,11 +310,32 @@ export function registerChatHandlers(
                 if (!authState.isAuthenticated) {
                     throw new Error('User must be authenticated to create chat');
                 }
-                // Limit title to first 4 words (like ChatGPT style)
-                const words = data.content.trim().split(/\s+/).slice(0, 4);
-                const title = words.join(' ');
-                chat = await chatService.createChat(title);
+                // Create the chat immediately with a first-4-words placeholder title
+                // so the user sees something in the sidebar right away.
+                const placeholderTitle = data.content.trim().split(/\s+/).slice(0, 4).join(' ');
+                chat = await chatService.createChat(placeholderTitle);
                 chatId = chat.id;
+
+                // Fire-and-forget: generate a smart title in the background.
+                // Once the title is ready, update the DB and push to the renderer.
+                (async () => {
+                    try {
+                        const smartTitle = await pythonClient.generateTitle(data.content);
+                        if (smartTitle && smartTitle !== placeholderTitle) {
+                            await chatService.updateChatTitle(chatId!, smartTitle);
+                            // Push the rename to the sidebar immediately
+                            if (appWindowManager) {
+                                appWindowManager.send('chat-renamed', {
+                                    chatId: chatId!,
+                                    title: smartTitle,
+                                });
+                            }
+                            console.log(`[Chat] Smart title generated: "${smartTitle}"`);
+                        }
+                    } catch (err) {
+                        console.warn('[Chat] Smart title generation failed (non-critical):', err);
+                    }
+                })();
             } else {
                 chat = await chatService.getChat(chatId);
             }
