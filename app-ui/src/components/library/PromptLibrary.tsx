@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import {
   FolderPlus, Star, Folder, MoreVertical,
-  Pencil, Trash2, Library, Search,
+  Pencil, Trash2, Library, Search, Share2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,12 +11,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { PromptCard, SavedPrompt } from "./PromptCard";
+import { ShareCollectionModal } from "./ShareCollectionModal";
 
 export interface Collection {
   id: string;
   name: string;
   isDefault?: boolean;
   icon?: "all" | "favorites" | "folder";
+  originalCreatorName?: string;
 }
 
 interface PromptLibraryProps {
@@ -26,7 +28,7 @@ interface PromptLibraryProps {
   onRenameCollection: (id: string, name: string) => void;
   onDeleteCollection: (id: string) => void;
   onCopyPrompt: (id: string) => void;
-  onEditPrompt: (id: string) => void;
+  onEditPrompt: (promptId: string, title: string, collectionId: string) => Promise<void>;
   onDeletePrompt: (id: string) => void;
   onOpenPrompt?: (id: string) => void;
 }
@@ -41,6 +43,7 @@ export const PromptLibrary = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [shareModalCollection, setShareModalCollection] = useState<Collection | null>(null);
 
   const handleCreateCollection = () => {
     if (newCollectionName.trim()) {
@@ -83,6 +86,7 @@ export const PromptLibrary = ({
     collections.find((c) => c.id === selectedCollection)?.name || "All Prompts";
 
   return (
+    <>
     <div className="flex-1 flex h-full bg-background">
       {/* ── Collections sidebar ────────────────────────────── */}
       <div className="w-[220px] flex-shrink-0 border-r border-border flex flex-col bg-sidebar">
@@ -159,9 +163,16 @@ export const PromptLibrary = ({
                       onClick={(e) => e.stopPropagation()}
                     />
                   ) : (
-                    <span className={cn("flex-1 text-[13px] truncate font-medium", isSelected && "text-foreground")}>
-                      {collection.name}
-                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className={cn("block text-[13px] truncate font-medium", isSelected && "text-foreground")}>
+                        {collection.name}
+                      </span>
+                      {collection.originalCreatorName && (
+                        <span className="block text-[10px] text-muted-foreground/60 truncate">
+                          by {collection.originalCreatorName}
+                        </span>
+                      )}
+                    </div>
                   )}
 
                   {!collection.isDefault && !isEditing && (
@@ -179,6 +190,16 @@ export const PromptLibrary = ({
                         align="end"
                         className="bg-popover border-border shadow-elevated rounded-xl w-40 p-1"
                       >
+                        <DropdownMenuItem
+                          className="text-xs text-foreground focus:bg-secondary gap-2 rounded-lg cursor-pointer font-medium"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShareModalCollection(collection);
+                          }}
+                        >
+                          <Share2 className="w-3 h-3 opacity-60" />
+                          Share Library
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-xs text-foreground focus:bg-secondary gap-2 rounded-lg cursor-pointer font-medium"
                           onClick={(e) => {
@@ -214,6 +235,16 @@ export const PromptLibrary = ({
           <div className="flex items-baseline justify-between mb-3">
             <div>
               <h3 className="text-base font-bold text-foreground tracking-tight">{currentCollectionName}</h3>
+              {/* Show original creator attribution if this is a saved/forked collection */}
+              {(() => {
+                const col = collections.find((c) => c.id === selectedCollection);
+                return col?.originalCreatorName ? (
+                  <p className="text-[11px] text-emerald/80 mt-0.5 flex items-center gap-1">
+                    Original library by{" "}
+                    <span className="font-semibold">{col.originalCreatorName}</span>
+                  </p>
+                ) : null;
+              })()}
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 {filteredPrompts.length} prompt{filteredPrompts.length !== 1 ? "s" : ""}
                 {searchQuery && " matching"}
@@ -257,9 +288,10 @@ export const PromptLibrary = ({
                   <PromptCard
                     key={prompt.id}
                     prompt={prompt}
+                    collections={collections.filter((c) => !c.isDefault)}
                     onCopy={() => onCopyPrompt(prompt.id)}
-                    onEdit={() => onEditPrompt(prompt.id)}
-                    onDelete={() => onDeletePrompt(prompt.id)}
+                    onEdit={onEditPrompt}
+                    onDelete={onDeletePrompt}
                     onOpen={() => onOpenPrompt?.(prompt.id)}
                   />
                 ))}
@@ -269,5 +301,15 @@ export const PromptLibrary = ({
         </ScrollArea>
       </div>
     </div>
+
+    {/* Share Collection Modal */}
+    {shareModalCollection && (
+      <ShareCollectionModal
+        open={!!shareModalCollection}
+        onOpenChange={(open) => { if (!open) setShareModalCollection(null); }}
+        collection={{ id: shareModalCollection.id, name: shareModalCollection.name }}
+      />
+    )}
+  </>
   );
 };

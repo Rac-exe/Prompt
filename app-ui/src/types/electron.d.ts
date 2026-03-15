@@ -18,6 +18,32 @@ export type UserMemoryMap = {
   context: Record<string, MemoryEntry>;
 };
 
+export interface SharedCollectionView {
+  id: string;
+  name: string;
+  icon?: string;
+  share_token: string;
+  owner_name: string;
+  owner_id: string;
+  prompts: Array<{
+    id: string;
+    title: string;
+    content: string;
+    collection_id: string;
+    created_at: string;
+  }>;
+}
+
+export interface SharedPromptView {
+  id: string;
+  title: string;
+  content: string;
+  share_token: string;
+  owner_name: string;
+  owner_id: string;
+  created_at: string;
+}
+
 export interface ElectronAPI {
   // Auth
   signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
@@ -63,6 +89,13 @@ export interface ElectronAPI {
     updatePrompt: (promptId: string, updates: any) => Promise<any>;
     deletePrompt: (promptId: string) => Promise<any>;
     toggleFavorite: (promptId: string) => Promise<any>;
+    // Sharing
+    getShareLink: (collectionId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+    getSharedCollection: (token: string) => Promise<SharedCollectionView>;
+    saveSharedCollection: (originalCollectionId: string) => Promise<{ collection: any; alreadyExisted: boolean }>;
+    // Prompt sharing
+    getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+    getSharedPrompt: (token: string) => Promise<SharedPromptView>;
   };
   onPromptLibraryLoaded: (callback: (data: any) => void) => void;
 

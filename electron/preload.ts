@@ -98,6 +98,13 @@ declare global {
         updatePrompt: (promptId: string, updates: any) => Promise<any>;
         deletePrompt: (promptId: string) => Promise<any>;
         toggleFavorite: (promptId: string) => Promise<any>;
+        // Sharing
+        getShareLink: (collectionId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+        getSharedCollection: (token: string) => Promise<any>;
+        saveSharedCollection: (originalCollectionId: string) => Promise<{ collection: any; alreadyExisted: boolean }>;
+        // Prompt sharing
+        getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+        getSharedPrompt: (token: string) => Promise<any>;
       };
       onPromptLibraryLoaded: (callback: (data: any) => void) => void;
 
@@ -400,6 +407,18 @@ const electronAPI = {
       ipcRenderer.invoke('prompt-library:delete-prompt', { promptId }),
     toggleFavorite: (promptId: string) =>
       ipcRenderer.invoke('prompt-library:toggle-favorite', { promptId }),
+    // Sharing
+    getShareLink: (collectionId: string) =>
+      ipcRenderer.invoke('prompt-library:get-share-link', { collectionId }),
+    getSharedCollection: (token: string) =>
+      ipcRenderer.invoke('prompt-library:get-shared-collection', { token }),
+    saveSharedCollection: (originalCollectionId: string) =>
+      ipcRenderer.invoke('prompt-library:save-shared-collection', { originalCollectionId }),
+    // Prompt sharing
+    getPromptShareLink: (promptId: string) =>
+      ipcRenderer.invoke('prompt-library:get-prompt-share-link', { promptId }),
+    getSharedPrompt: (token: string) =>
+      ipcRenderer.invoke('prompt-library:get-shared-prompt', { token }),
   },
   onPromptLibraryLoaded: (callback: (data: any) => void) => {
     ipcRenderer.on('prompt-library:loaded', (_event, data) => callback(data));

@@ -6,6 +6,7 @@ import { ChatView } from "@/components/chat/ChatView";
 import { SavePromptModal } from "@/components/chat/SavePromptModal";
 import { PromptLibrary, Collection } from "@/components/library/PromptLibrary";
 import { SavedPrompt } from "@/components/library/PromptCard";
+import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { Message } from "@/components/chat/MessageBubble";
@@ -43,9 +44,12 @@ const Index = () => {
   const { user, signOut } = useAuth();
 
   // Navigation state
-  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history">("chat");
+  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [recentChats, setRecentChats] = useState<any[]>([]);
+
+  // Shared library token (set when opening a share link)
+  const [sharedLibraryToken, setSharedLibraryToken] = useState<string | null>(null);
 
   // Chat sessions for history
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
@@ -90,35 +94,39 @@ const Index = () => {
     id: c.id,
     name: c.name,
     icon: c.icon || 'folder',
+    originalCreatorName: c.original_creator_name || undefined,
   }));
 
-  const mapPrompts = (raw: any[]) => raw.map((p: any) => ({
-    id: p.id,
-    title: p.title,
-    content: p.content,
-    collectionId: p.collection_id,
-    sourceChat: p.metadata?.source_chat,
-    createdAt: new Date(p.created_at),
-  }));
+  const mapPrompts = (raw: any[], collectionList?: Collection[]) => raw.map((p: any) => {
+    // Find the collection's originalCreatorName so each prompt inherits it
+    const col = collectionList?.find((c) => c.id === p.collection_id);
+    return {
+      id: p.id,
+      title: p.title,
+      content: p.content,
+      collectionId: p.collection_id,
+      sourceChat: p.metadata?.source_chat,
+      createdAt: new Date(p.created_at),
+      originalCreatorName: col?.originalCreatorName,
+    };
+  });
 
   // Load prompt library from Supabase on mount
   useEffect(() => {
     if (isElectron && window.electronAPI?.promptLibrary) {
-      // Load collections
+      // Load collections first, then prompts so we can link originalCreatorName
       window.electronAPI.promptLibrary.getCollections()
-        .then((collections) => {
-          console.log('[Index] Loaded collections from Supabase:', collections.length);
-          setCollections(mapCollections(collections));
+        .then((rawCollections) => {
+          console.log('[Index] Loaded collections from Supabase:', rawCollections.length);
+          const mappedCollections = mapCollections(rawCollections);
+          setCollections(mappedCollections);
+          // Load prompts, passing mapped collections for creator enrichment
+          return window.electronAPI.promptLibrary.getAll().then((rawPrompts) => {
+            console.log('[Index] Loaded prompts from Supabase:', rawPrompts.length);
+            setSavedPrompts(mapPrompts(rawPrompts, mappedCollections));
+          });
         })
-        .catch((error) => console.error('[Index] Error loading collections:', error));
-
-      // Load prompts
-      window.electronAPI.promptLibrary.getAll()
-        .then((prompts) => {
-          console.log('[Index] Loaded prompts from Supabase:', prompts.length);
-          setSavedPrompts(mapPrompts(prompts));
-        })
-        .catch((error) => console.error('[Index] Error loading prompts:', error));
+        .catch((error) => console.error('[Index] Error loading library:', error));
     }
   }, [isElectron]);
 
@@ -129,10 +137,13 @@ const Index = () => {
       window.electronAPI.onPromptLibraryLoaded((data: any) => {
         console.log('[Index] prompt-library:loaded event — refreshing library');
         if (data?.collections) {
-          setCollections(mapCollections(data.collections));
-        }
-        if (data?.prompts) {
-          setSavedPrompts(mapPrompts(data.prompts));
+          const mappedCollections = mapCollections(data.collections);
+          setCollections(mappedCollections);
+          if (data?.prompts) {
+            setSavedPrompts(mapPrompts(data.prompts, mappedCollections));
+          }
+        } else if (data?.prompts) {
+          setSavedPrompts((prev) => mapPrompts(data.prompts, collections));
         }
       });
     }
@@ -654,6 +665,9 @@ Your prompt was: "${content}"`;
           { source_chat: recentChats.find((c) => c.id === selectedChatId)?.title }
         );
 
+        // Find original creator name from collection
+        const col = collections.find((c) => c.id === targetCollectionId);
+
         // Update local state
         setSavedPrompts((prev) => [{
           id: savedPrompt.id,
@@ -662,6 +676,7 @@ Your prompt was: "${content}"`;
           collectionId: savedPrompt.collection_id,
           sourceChat: savedPrompt.metadata?.source_chat,
           createdAt: new Date(savedPrompt.created_at),
+          originalCreatorName: col?.originalCreatorName,
         }, ...prev]);
         setSavedPromptIds((prev) => [...prev, promptToSave.id]);
 
@@ -766,19 +781,51 @@ Your prompt was: "${content}"`;
     }
   };
 
-  const handleEditPrompt = (id: string) => {
-    toast({
-      title: "Edit mode",
-      description: "Prompt editing UI would open here.",
-    });
+  const handleEditPrompt = async (promptId: string, title: string, collectionId: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary?.updatePrompt) {
+        await window.electronAPI.promptLibrary.updatePrompt(promptId, { title, collection_id: collectionId });
+      }
+      setSavedPrompts((prev) =>
+        prev.map((p) =>
+          p.id === promptId
+            ? { ...p, title, collectionId }
+            : p
+        )
+      );
+      toast({
+        title: "Saved",
+        description: "Prompt updated successfully.",
+      });
+    } catch (error: any) {
+      console.error('[Index] Error updating prompt:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update prompt",
+        variant: "destructive",
+      });
+      throw error; // re-throw so the modal stays open on failure
+    }
   };
 
-  const handleDeletePrompt = (id: string) => {
-    setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
-    toast({
-      title: "Deleted",
-      description: "Prompt has been removed.",
-    });
+  const handleDeletePrompt = async (id: string) => {
+    try {
+      if (isElectron && window.electronAPI?.promptLibrary?.deletePrompt) {
+        await window.electronAPI.promptLibrary.deletePrompt(id);
+      }
+      setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
+      toast({
+        title: "Deleted",
+        description: "Prompt has been removed.",
+      });
+    } catch (error: any) {
+      console.error('[Index] Error deleting prompt:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete prompt",
+        variant: "destructive",
+      });
+    }
   };
 
   // History handlers
@@ -805,9 +852,53 @@ Your prompt was: "${content}"`;
     }
   };
 
+  // ── Shared Library handlers ────────────────────────────────────────────────
+
+  /**
+   * Open the shared-library view for a given share token.
+   * Called from the /share/:token route or a deep-link handler.
+   */
+  const handleOpenSharedLibrary = useCallback((token: string) => {
+    setSharedLibraryToken(token);
+    setCurrentView("shared-library");
+  }, []);
+
+  /**
+   * Called when the user successfully saves a shared library.
+   * Reloads the user's library and redirects to the library view.
+   */
+  const handleSharedLibrarySaved = useCallback(async (newCollectionId: string) => {
+    // Reload the full library so the new collection appears with attribution
+    if (isElectron && window.electronAPI?.promptLibrary) {
+      try {
+        const rawCollections = await window.electronAPI.promptLibrary.getCollections();
+        const mappedCollections = mapCollections(rawCollections);
+        setCollections(mappedCollections);
+        const rawPrompts = await window.electronAPI.promptLibrary.getAll();
+        setSavedPrompts(mapPrompts(rawPrompts, mappedCollections));
+      } catch (err) {
+        console.error('[Index] Error reloading library after save:', err);
+      }
+    }
+    // Navigate to the library view
+    setCurrentView("library");
+    setSharedLibraryToken(null);
+  }, [collections]);
+
   // Render current view (auth is handled by AuthWrapper, so we're always authenticated here)
   const renderView = () => {
     switch (currentView) {
+      case "shared-library":
+        return (
+          <SharedLibraryView
+            token={sharedLibraryToken || ""}
+            onBack={() => {
+              setCurrentView("library");
+              setSharedLibraryToken(null);
+            }}
+            onSaved={handleSharedLibrarySaved}
+          />
+        );
       case "library":
         return (
           <PromptLibrary
