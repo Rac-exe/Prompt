@@ -620,6 +620,30 @@
       cursor: not-allowed;
     }
 
+    /* Stop button — shown in place of send while generating */
+    .btn-stop {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      cursor: pointer;
+      display: none;             /* hidden by default */
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-stop:hover {
+      opacity: 0.8;
+    }
+
+    .btn-stop.visible {
+      display: flex;
+    }
+
     /* ======== COLLECTION PICKER MODAL ======== */
     .modal-backdrop {
       display: none;
@@ -984,6 +1008,13 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
                   </svg>
                 </button>
+
+                <!-- Stop button (circular, shown while generating) -->
+                <button id="btn-stop" class="btn-stop" title="Stop generation" type="button">
+                  <svg style="width: 12px; height: 12px;" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="4" y="4" width="16" height="16" rx="2"/>
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
@@ -1096,6 +1127,7 @@
     const scrollAnchor = document.getElementById('scroll-anchor');
     const promptInput = document.getElementById('prompt-input');
     const btnSend = document.getElementById('btn-send');
+    const btnStop = document.getElementById('btn-stop');
     const btnVoice = document.getElementById('btn-voice');
     const iconMic = document.getElementById('icon-mic');
     const iconMicListening = document.getElementById('icon-mic-listening');
@@ -1191,10 +1223,16 @@
     function disableInput() {
       promptInput.disabled = true;
       btnSend.disabled = true;
+      // Show stop button, hide send button
+      btnSend.style.display = 'none';
+      btnStop.classList.add('visible');
     }
 
     function enableInput() {
       promptInput.disabled = false;
+      // Restore send button, hide stop button
+      btnStop.classList.remove('visible');
+      btnSend.style.display = '';
       updateSendButton();
       requestAnimationFrame(() => {
         setTimeout(() => promptInput.focus(), 50);
@@ -1412,6 +1450,40 @@
         window.electronAPI.overlay.optimize({ text, isRegenerate: false, mode: currentMode });
       }
     }
+
+    // ==========================================
+    // STOP GENERATION
+    // ==========================================
+    function stopGeneration() {
+      if (!isOptimizing) return;
+
+      // Tell the backend to abort the stream
+      if (window.electronAPI?.overlay?.stopGeneration) {
+        window.electronAPI.overlay.stopGeneration();
+      }
+
+      // Finalise whatever has been streamed so far as a real message
+      if (streamingMsgEl && streamingContent) {
+        const msgId = generateId();
+        finalizeStreamingMessage(msgId, streamingContent);
+        messages.push({ id: msgId, role: 'assistant', content: streamingContent, timestamp: Date.now() });
+        currentOptimizedPrompt = streamingContent;
+        streamingMsgEl = null;
+        streamingContent = '';
+      } else if (streamingMsgEl) {
+        // Nothing was streamed yet — just remove the empty element
+        streamingMsgEl.remove();
+        streamingMsgEl = null;
+        streamingContent = '';
+      }
+
+      hideLoading();
+      isOptimizing = false;
+      enableInput();
+      scrollToBottom();
+    }
+
+    btnStop.addEventListener('click', stopGeneration);
 
     // ==========================================
     // MESSAGE ACTION HANDLERS
@@ -1887,6 +1959,10 @@
     // Optimization complete
     if (window.electronAPI?.overlay?.onOptimizationComplete) {
       window.electronAPI.overlay.onOptimizationComplete((data) => {
+        // Guard: if the user already stopped, the partial message was committed
+        // by stopGeneration() — nothing more to do here.
+        if (!isOptimizing) return;
+
         isOptimizing = false;
         const optimized = data.optimized || '';
         currentOptimizedPrompt = optimized;

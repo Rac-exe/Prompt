@@ -16,15 +16,16 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
     const lastUpdateTime = useRef<number>(0);
     const isStreamingRef = useRef<boolean>(false);
     const startTimestamp = useRef<number>(0);
+    // Each streaming session gets a unique generation ID so stale animation
+    // loops from a stopped/cancelled stream don't interfere with the next one.
+    const generationId = useRef<number>(0);
 
     const startStreaming = useCallback(() => {
         streamBuffer.current = '';
         visualText.current = '';
         pendingFinalMessage.current = null;
         isStreamingRef.current = true;
-
-        // Start 1 second in the future
-        startTimestamp.current = performance.now() + 1000;
+        generationId.current += 1; // Invalidate any leftover animation loop
 
         // Start 1 second in the future
         startTimestamp.current = performance.now() + 1000;
@@ -46,8 +47,53 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         streamBuffer.current = message.content;
     }, []);
 
+    /**
+     * Immediately flush whatever is visually shown and finalize the stream.
+     * Uses visualText (what the user can actually see) rather than the full
+     * buffer, so the stopped message matches exactly what was on screen.
+     */
+    const stopStreaming = useCallback(() => {
+        if (!isStreamingRef.current) return;
+        console.log('[useSmoothStreaming] Stop requested — flushing visual text immediately');
+
+        // Invalidate the running animation loop first so it stops scheduling
+        generationId.current += 1;
+        isStreamingRef.current = false;
+
+        // Use what's visually shown; fall back to the full buffer if nothing rendered yet
+        const partialContent = visualText.current || streamBuffer.current;
+
+        if (!partialContent) {
+            // Nothing was typed yet — just clean up silently
+            setStreamingMessage(null);
+            streamBuffer.current = '';
+            visualText.current = '';
+            pendingFinalMessage.current = null;
+            return;
+        }
+
+        // Build a stopped message with the partial content
+        const stoppedMessage: Message = {
+            id: `stopped-${Date.now()}`,
+            role: 'assistant',
+            content: partialContent,
+            timestamp: new Date(),
+        };
+
+        onStreamingComplete(stoppedMessage);
+
+        // Cleanup
+        setStreamingMessage(null);
+        streamBuffer.current = '';
+        visualText.current = '';
+        pendingFinalMessage.current = null;
+    }, [onStreamingComplete]);
+
     useEffect(() => {
         const animate = (time: number) => {
+            // Capture the generation at frame start; bail out if it changed
+            const myGeneration = generationId.current;
+
             // If not streaming, stop the loop
             if (!isStreamingRef.current) {
                 animationFrameId.current = requestAnimationFrame(animate);
@@ -80,12 +126,15 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
 
             if (lag > 200) charsToAdd = 10;      // Very fast catchup
             else if (lag > 100) charsToAdd = 5;   // Fast catchup
-            else if (lag > 40) charsToAdd = 3;  // Moderate catchup
-            else if (lag > 10) charsToAdd = 2;  // Slight catchup
+            else if (lag > 40) charsToAdd = 3;    // Moderate catchup
+            else if (lag > 10) charsToAdd = 2;    // Slight catchup
 
             if (currentLen < targetLen) {
                 const nextContent = streamBuffer.current.substring(0, currentLen + charsToAdd);
                 visualText.current = nextContent;
+
+                // Guard: if a stop happened while we were computing, bail out
+                if (generationId.current !== myGeneration) return;
 
                 // Initialize message if not yet visible
                 setStreamingMessage(prev => {
@@ -102,6 +151,8 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
             } else if (pendingFinalMessage.current && currentLen >= targetLen) {
                 // Animation complete AND final message arrived -> Finish!
                 console.log('[useSmoothStreaming] Animation caught up, finalizing.');
+
+                if (generationId.current !== myGeneration) return;
 
                 onStreamingComplete(pendingFinalMessage.current);
 
@@ -131,6 +182,7 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         startStreaming,
         handleChunk,
         handleFinalMessage,
+        stopStreaming,
         isStreaming: isStreamingRef.current
     };
 };

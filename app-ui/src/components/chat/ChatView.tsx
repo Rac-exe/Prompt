@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff } from "lucide-react";
+import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
 import {
@@ -21,6 +21,7 @@ interface ChatViewProps {
   offlineChatUnavailable?: boolean;
   onRetryLoad?: () => void;
   sendError?: string | null;
+  onStopGeneration?: () => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -29,7 +30,7 @@ export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
-  onRetryLoad, sendError,
+  onRetryLoad, sendError, onStopGeneration,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
@@ -292,27 +293,35 @@ export const ChatView = ({
                <Mic className="w-4 h-4" />}
             </button>
 
-            {/* Send button (circular) */}
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!canSend}
-              className={cn(
-                "w-8 h-8 rounded-full flex items-center justify-center transition-all",
-                canSend
-                  ? "bg-foreground text-background hover:bg-foreground/90"
-                  : "bg-muted text-muted-foreground/40 cursor-not-allowed"
-              )}
-              title="Send (Enter)"
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
+            {/* Send / Stop button (circular) */}
+            {isGenerating ? (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                className="w-8 h-8 rounded-full flex items-center justify-center transition-all
+                           bg-foreground text-background hover:bg-foreground/80"
+                title="Stop generation"
+              >
+                <Square className="w-3 h-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!canSend}
+                className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center transition-all",
+                  canSend
+                    ? "bg-foreground text-background hover:bg-foreground/90"
+                    : "bg-muted text-muted-foreground/40 cursor-not-allowed"
+                )}
+                title="Send (Enter)"
+              >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 10l7-7m0 0l7 7m-7-7v18" />
                 </svg>
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </div>
       </div>

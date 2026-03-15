@@ -7,6 +7,7 @@ interface StreamRequest {
   reject: (reason?: any) => void;
   onChunk: (chunk: string, accumulated: string) => void;
   accumulated?: string; // Track accumulated text for fallback scenarios
+  aborted?: boolean;    // Flag to suppress further chunk/complete processing
 }
 
 export class PythonClient extends EventEmitter {
@@ -16,6 +17,10 @@ export class PythonClient extends EventEmitter {
   private activeRequests: Map<string, StreamRequest> = new Map();
   private isConnecting: boolean = false;
   private connectionPromise: Promise<void> | null = null;
+  // The request ID of the most recently started stream (for single-stream abort)
+  private latestRequestId: string | null = null;
+  // Recently aborted IDs — suppresses spurious "unknown request ID" warnings
+  private abortedRequestIds: Set<string> = new Set();
 
   constructor(baseUrl: string = "http://127.0.0.1:8001") {
     super();
@@ -72,6 +77,12 @@ export class PythonClient extends EventEmitter {
           if (requestId && this.activeRequests.has(requestId)) {
             const request = this.activeRequests.get(requestId)!;
 
+            // If aborted, ignore further messages for this request
+            if (request.aborted) {
+              this.activeRequests.delete(requestId);
+              return;
+            }
+
             if (message.type === 'chunk') {
               request.onChunk(message.content, message.accumulated);
             } else if (message.type === 'complete') {
@@ -84,7 +95,10 @@ export class PythonClient extends EventEmitter {
               this.activeRequests.delete(requestId);
             }
           } else {
-            console.warn('[PythonClient] Received message for unknown or missing request ID:', requestId);
+            // Only warn if this wasn't a deliberate abort
+            if (!this.abortedRequestIds.has(requestId)) {
+              console.warn('[PythonClient] Received message for unknown or missing request ID:', requestId);
+            }
           }
         } catch (error) {
           console.error('[PythonClient] Failed to parse message:', error);
@@ -132,6 +146,7 @@ export class PythonClient extends EventEmitter {
     await this.ensureConnection();
 
     const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+    this.latestRequestId = requestId;
 
     // Track accumulated text for fallback
     let accumulatedText = "";
@@ -238,6 +253,41 @@ export class PythonClient extends EventEmitter {
         reject(error);
       }
     });
+  }
+
+  /**
+   * Abort the most recently started stream.
+   * Resolves the pending promise with whatever text has been accumulated so far
+   * so the caller gets a partial result rather than an error.
+   */
+  abortLatestStream(): void {
+    const requestId = this.latestRequestId;
+    if (!requestId || !this.activeRequests.has(requestId)) {
+      console.log('[PythonClient] abortLatestStream: no active stream to abort');
+      return;
+    }
+
+    const req = this.activeRequests.get(requestId)!;
+    req.aborted = true;
+    this.activeRequests.delete(requestId);
+    this.latestRequestId = null;
+
+    // Remember this ID so incoming late chunks don't log a noisy warning.
+    // Clean up after 30 s — well past any realistic stream tail.
+    this.abortedRequestIds.add(requestId);
+    setTimeout(() => this.abortedRequestIds.delete(requestId), 30_000);
+
+    const partial = req.accumulated || '';
+    console.log(`[PythonClient] Aborting stream ${requestId}, resolving with ${partial.length} chars`);
+
+    // Try to notify the Python server to stop (best-effort)
+    try {
+      if (this.ws && this.ws.readyState === 1 /* OPEN */) {
+        this.ws.send(JSON.stringify({ type: 'abort', request_id: requestId }));
+      }
+    } catch (_) { /* ignore */ }
+
+    req.resolve(partial);
   }
 
   // Legacy method for non-streaming requests (retaining for backward compatibility)

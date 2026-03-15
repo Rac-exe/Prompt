@@ -256,9 +256,16 @@ const Index = () => {
     setIsGenerating(false);
   }, []);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete
   });
+
+  // Stop generation: abort the backend stream and flush the visual buffer
+  const handleStopGeneration = useCallback(() => {
+    window.electronAPI?.stopGeneration?.();
+    stopStreaming();
+    setIsGenerating(false);
+  }, [stopStreaming]);
 
   // Filter history to avoid duplicates
   // We filter out the message being currently streamed from history to avoid duplicates
@@ -796,6 +803,7 @@ Your prompt was: "${content}"`;
             isOnline={isOnline}
             offlineChatUnavailable={offlineChatUnavailable}
             sendError={sendError}
+            onStopGeneration={handleStopGeneration}
             onRetryLoad={() => {
               if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
                 setOfflineChatUnavailable(false);
