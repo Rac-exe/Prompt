@@ -148,9 +148,7 @@
 
     /* ======== TEXTAREA ======== */
     textarea {
-      field-sizing: content;
       min-height: 40px;
-      max-height: 120px;
     }
 
     /* ======== BUTTON STYLES ======== */
@@ -305,21 +303,141 @@
       border: 1px solid hsl(var(--emerald) / 0.15);
     }
 
+    /* ── User message action row (edit / retry) ── */
+    .user-message-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 4px;
+      margin-top: 4px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+
+    .chat-message:hover .user-message-actions {
+      opacity: 1;
+    }
+
+    .btn-user-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 8px;
+      height: 22px;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--muted-foreground) / 0.6);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.12s ease;
+    }
+
+    .btn-user-action:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    /* ── Inline edit box ── */
+    .user-edit-container {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .user-edit-container.active {
+      display: flex;
+    }
+
+    .user-bubble-display {
+      display: block;
+    }
+
+    .user-bubble-display.hidden {
+      display: none;
+    }
+
+    .user-edit-textarea {
+      width: 100%;
+      background: hsl(var(--emerald) / 0.06);
+      border: 1px solid hsl(var(--emerald) / 0.35);
+      border-radius: 12px;
+      padding: 10px 14px;
+      color: hsl(var(--foreground));
+      font-size: 13px;
+      line-height: 1.55;
+      font-family: inherit;
+      outline: none;
+      resize: none;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+
+    .user-edit-textarea:focus {
+      border-color: hsl(var(--emerald) / 0.5);
+      box-shadow: 0 0 0 2px hsl(var(--emerald) / 0.08);
+    }
+
+    .user-edit-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .btn-edit-cancel {
+      padding: 4px 12px;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--secondary));
+      color: hsl(var(--muted-foreground));
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.12s ease;
+    }
+
+    .btn-edit-cancel:hover {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    .btn-edit-send {
+      padding: 4px 12px;
+      height: 28px;
+      border-radius: 8px;
+      border: none;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.12s ease;
+    }
+
+    .btn-edit-send:hover {
+      opacity: 0.85;
+    }
+
+    .btn-edit-send:disabled {
+      background: hsl(var(--muted));
+      color: hsl(var(--muted-foreground) / 0.4);
+      cursor: not-allowed;
+    }
+
     .assistant-bubble {
       background: hsl(var(--card));
       border: 1px solid hsl(var(--border));
-      max-height: 220px;
-      overflow-y: auto;
-      position: relative;
     }
 
     .assistant-bubble::before {
       content: '';
-      position: absolute;
-      top: 0;
-      left: 14px;
-      right: 14px;
+      display: block;
       height: 1px;
+      margin: 0 14px;
       background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.15), transparent);
     }
 
@@ -458,8 +576,9 @@
       border: none;
       font-family: inherit;
       padding: 14px 16px 6px;
-      min-height: 56px;
+      min-height: 48px;
       max-height: 160px;
+      overflow-y: auto;
     }
 
     .chat-input-box textarea::placeholder {
@@ -618,6 +737,30 @@
       background: hsl(var(--muted));
       color: hsl(var(--muted-foreground) / 0.4);
       cursor: not-allowed;
+    }
+
+    /* Stop button — shown in place of send while generating */
+    .btn-stop {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: none;
+      background: hsl(var(--foreground));
+      color: hsl(var(--background));
+      cursor: pointer;
+      display: none;             /* hidden by default */
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .btn-stop:hover {
+      opacity: 0.8;
+    }
+
+    .btn-stop.visible {
+      display: flex;
     }
 
     /* ======== COLLECTION PICKER MODAL ======== */
@@ -984,6 +1127,13 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5 10l7-7m0 0l7 7m-7-7v18" />
                   </svg>
                 </button>
+
+                <!-- Stop button (circular, shown while generating) -->
+                <button id="btn-stop" class="btn-stop" title="Stop generation" type="button">
+                  <svg style="width: 12px; height: 12px;" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="4" y="4" width="16" height="16" rx="2"/>
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
@@ -1096,6 +1246,7 @@
     const scrollAnchor = document.getElementById('scroll-anchor');
     const promptInput = document.getElementById('prompt-input');
     const btnSend = document.getElementById('btn-send');
+    const btnStop = document.getElementById('btn-stop');
     const btnVoice = document.getElementById('btn-voice');
     const iconMic = document.getElementById('icon-mic');
     const iconMicListening = document.getElementById('icon-mic-listening');
@@ -1191,10 +1342,16 @@
     function disableInput() {
       promptInput.disabled = true;
       btnSend.disabled = true;
+      // Show stop button, hide send button
+      btnSend.style.display = 'none';
+      btnStop.classList.add('visible');
     }
 
     function enableInput() {
       promptInput.disabled = false;
+      // Restore send button, hide stop button
+      btnStop.classList.remove('visible');
+      btnSend.style.display = '';
       updateSendButton();
       requestAnimationFrame(() => {
         setTimeout(() => promptInput.focus(), 50);
@@ -1243,8 +1400,29 @@
       el.id = 'msg-el-' + msg.id;
       el.innerHTML =
         '<div class="message-label">You</div>' +
-        '<div class="message-bubble user-bubble">' +
-          '<div class="message-text">' + escapeHtml(msg.content) + '</div>' +
+        // Display mode
+        '<div class="user-bubble-display" id="user-display-' + msg.id + '">' +
+          '<div class="message-bubble user-bubble">' +
+            '<div class="message-text" id="user-text-' + msg.id + '">' + escapeHtml(msg.content) + '</div>' +
+          '</div>' +
+          '<div class="user-message-actions" id="user-actions-' + msg.id + '">' +
+            '<button class="btn-user-action btn-user-edit" data-msg-id="' + msg.id + '">' +
+              '<svg style="width:10px;height:10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>' +
+              'Edit' +
+            '</button>' +
+            '<button class="btn-user-action btn-user-retry" data-msg-id="' + msg.id + '">' +
+              '<svg style="width:10px;height:10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>' +
+              'Retry' +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+        // Edit mode (hidden by default)
+        '<div class="user-edit-container" id="user-edit-' + msg.id + '">' +
+          '<textarea class="user-edit-textarea" id="user-edit-ta-' + msg.id + '" rows="3">' + escapeHtml(msg.content) + '</textarea>' +
+          '<div class="user-edit-actions">' +
+            '<button class="btn-edit-cancel" data-msg-id="' + msg.id + '">Cancel</button>' +
+            '<button class="btn-edit-send" data-msg-id="' + msg.id + '">Send</button>' +
+          '</div>' +
         '</div>';
       messagesContainer.appendChild(el);
     }
@@ -1401,8 +1579,10 @@
       // Add user message to chat
       addUserMessage(text);
 
-      // Clear input
+      // Clear input and reset height
       promptInput.value = '';
+      promptInput.style.height = '';
+      promptInput.style.overflowY = 'hidden';
 
       // Show loading
       showLoading();
@@ -1412,6 +1592,40 @@
         window.electronAPI.overlay.optimize({ text, isRegenerate: false, mode: currentMode });
       }
     }
+
+    // ==========================================
+    // STOP GENERATION
+    // ==========================================
+    function stopGeneration() {
+      if (!isOptimizing) return;
+
+      // Tell the backend to abort the stream
+      if (window.electronAPI?.overlay?.stopGeneration) {
+        window.electronAPI.overlay.stopGeneration();
+      }
+
+      // Finalise whatever has been streamed so far as a real message
+      if (streamingMsgEl && streamingContent) {
+        const msgId = generateId();
+        finalizeStreamingMessage(msgId, streamingContent);
+        messages.push({ id: msgId, role: 'assistant', content: streamingContent, timestamp: Date.now() });
+        currentOptimizedPrompt = streamingContent;
+        streamingMsgEl = null;
+        streamingContent = '';
+      } else if (streamingMsgEl) {
+        // Nothing was streamed yet — just remove the empty element
+        streamingMsgEl.remove();
+        streamingMsgEl = null;
+        streamingContent = '';
+      }
+
+      hideLoading();
+      isOptimizing = false;
+      enableInput();
+      scrollToBottom();
+    }
+
+    btnStop.addEventListener('click', stopGeneration);
 
     // ==========================================
     // MESSAGE ACTION HANDLERS
@@ -1509,6 +1723,10 @@
       const copyBtn = e.target.closest('.btn-msg-copy');
       const replaceBtn = e.target.closest('.btn-msg-replace');
       const saveBtn = e.target.closest('.btn-msg-save');
+      const editBtn = e.target.closest('.btn-user-edit');
+      const retryBtn = e.target.closest('.btn-user-retry');
+      const cancelEditBtn = e.target.closest('.btn-edit-cancel');
+      const sendEditBtn = e.target.closest('.btn-edit-send');
 
       if (copyBtn) {
         handleCopyMessage(copyBtn.dataset.msgId);
@@ -1516,6 +1734,126 @@
         handleReplaceMessage(replaceBtn.dataset.msgId);
       } else if (saveBtn) {
         handleSaveMessage(saveBtn.dataset.msgId);
+      } else if (editBtn && !isOptimizing) {
+        openEditMode(editBtn.dataset.msgId);
+      } else if (retryBtn && !isOptimizing) {
+        handleRetryMessage(retryBtn.dataset.msgId);
+      } else if (cancelEditBtn) {
+        closeEditMode(cancelEditBtn.dataset.msgId);
+      } else if (sendEditBtn) {
+        commitEdit(sendEditBtn.dataset.msgId);
+      }
+    });
+
+    // ==========================================
+    // EDIT & RETRY USER MESSAGES
+    // ==========================================
+    function autoResizeEditTa(ta) {
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    }
+
+    function openEditMode(msgId) {
+      const displayEl = document.getElementById('user-display-' + msgId);
+      const editEl = document.getElementById('user-edit-' + msgId);
+      const ta = document.getElementById('user-edit-ta-' + msgId);
+      if (!displayEl || !editEl || !ta) return;
+
+      displayEl.classList.add('hidden');
+      editEl.classList.add('active');
+      autoResizeEditTa(ta);
+      // Auto-resize as user types
+      ta.oninput = () => autoResizeEditTa(ta);
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
+
+    function closeEditMode(msgId) {
+      const displayEl = document.getElementById('user-display-' + msgId);
+      const editEl = document.getElementById('user-edit-' + msgId);
+      const msg = messages.find(m => m.id === msgId);
+      const ta = document.getElementById('user-edit-ta-' + msgId);
+      if (!displayEl || !editEl) return;
+
+      if (ta && msg) ta.value = msg.content; // reset
+      editEl.classList.remove('active');
+      displayEl.classList.remove('hidden');
+    }
+
+    function commitEdit(msgId) {
+      const ta = document.getElementById('user-edit-ta-' + msgId);
+      if (!ta) return;
+      const newContent = ta.value.trim();
+      if (!newContent) return;
+
+      const idx = messages.findIndex(m => m.id === msgId);
+      if (idx === -1) return;
+
+      const originalContent = messages[idx].content;
+      if (newContent === originalContent) { closeEditMode(msgId); return; }
+
+      // Remove all messages AFTER (not including) the edited message from DOM + state
+      const toRemove = messages.splice(idx + 1);
+      toRemove.forEach(m => {
+        const el = document.getElementById('msg-el-' + m.id);
+        if (el) el.remove();
+      });
+
+      // Update the edited message content in state and DOM
+      messages[idx].content = newContent;
+      const textEl = document.getElementById('user-text-' + msgId);
+      if (textEl) textEl.textContent = newContent;
+      // Update the edit textarea value too
+      ta.value = newContent;
+
+      closeEditMode(msgId);
+
+      // Re-send with the new content
+      sendEditedMessage(newContent);
+    }
+
+    function handleRetryMessage(msgId) {
+      const idx = messages.findIndex(m => m.id === msgId);
+      if (idx === -1) return;
+      const content = messages[idx].content;
+
+      // Remove all messages AFTER (not including) the retried message from DOM + state
+      const toRemove = messages.splice(idx + 1);
+      toRemove.forEach(m => {
+        const el = document.getElementById('msg-el-' + m.id);
+        if (el) el.remove();
+      });
+
+      sendEditedMessage(content);
+    }
+
+    // Re-send a message (used by both edit and retry).
+    // The user message bubble is already in the DOM — don't re-add it.
+    function sendEditedMessage(content) {
+      if (isOptimizing) return;
+
+      isOptimizing = true;
+      hideError();
+      disableInput();
+      showLoading();
+
+      if (window.electronAPI?.overlay?.optimize) {
+        window.electronAPI.overlay.optimize({ text: content, isRegenerate: false, mode: currentMode });
+      }
+    }
+
+    // Enter key in user-edit textareas
+    messagesContainer.addEventListener('keydown', (e) => {
+      if (e.target.classList.contains('user-edit-textarea')) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          const msgId = e.target.id.replace('user-edit-ta-', '');
+          commitEdit(msgId);
+        }
+        if (e.key === 'Escape') {
+          const msgId = e.target.id.replace('user-edit-ta-', '');
+          closeEditMode(msgId);
+        }
       }
     });
 
@@ -1712,8 +2050,9 @@
     // ==========================================
     function autoResizeTextarea() {
       promptInput.style.height = 'auto';
-      promptInput.style.height = Math.min(promptInput.scrollHeight, 160) + 'px';
-      promptInput.style.overflow = promptInput.scrollHeight > 160 ? 'auto' : 'hidden';
+      const newH = Math.min(promptInput.scrollHeight, 160);
+      promptInput.style.height = newH + 'px';
+      promptInput.style.overflowY = promptInput.scrollHeight > 160 ? 'auto' : 'hidden';
     }
 
     promptInput.addEventListener('input', () => {
@@ -1887,6 +2226,10 @@
     // Optimization complete
     if (window.electronAPI?.overlay?.onOptimizationComplete) {
       window.electronAPI.overlay.onOptimizationComplete((data) => {
+        // Guard: if the user already stopped, the partial message was committed
+        // by stopGeneration() — nothing more to do here.
+        if (!isOptimizing) return;
+
         isOptimizing = false;
         const optimized = data.optimized || '';
         currentOptimizedPrompt = optimized;

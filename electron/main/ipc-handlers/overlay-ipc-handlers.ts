@@ -444,5 +444,13 @@ export function registerOverlayHandlers(
     clearOverlayHistory();
   });
 
+  // ============================================
+  // overlay:stop-generation — Abort the current streaming optimization
+  // ============================================
+  ipcMain.on('overlay:stop-generation', () => {
+    console.log('[Overlay] Stop generation requested');
+    pythonClient.abortLatestStream();
+  });
+
   console.log('[OverlayHandlers] IPC handlers registered');
 }

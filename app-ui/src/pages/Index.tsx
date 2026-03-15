@@ -256,9 +256,18 @@ const Index = () => {
     setIsGenerating(false);
   }, []);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete
   });
+
+  // Stop generation: abort the backend stream and fast-flush the visual buffer.
+  // The backend resolves the aborted promise with partial text, which flows
+  // through the normal onMessageReceived → handleFinalMessage → animate path
+  // to commit the message — so we don't force-complete here.
+  const handleStopGeneration = useCallback(() => {
+    window.electronAPI?.stopGeneration?.();
+    stopStreaming(); // skip typewriter delay, show partial text immediately
+  }, [stopStreaming]);
 
   // Filter history to avoid duplicates
   // We filter out the message being currently streamed from history to avoid duplicates
@@ -281,14 +290,26 @@ const Index = () => {
           setCurrentChatTitle(data.chat.title);
         }
 
-        // Add user message to local state
+        // Add user message to local state, replacing any optimistic placeholder
+        // that was inserted by edit/retry to prevent the empty-screen flash.
         const userMessage: Message = {
           id: data.userMessage.id,
           role: "user",
           content: data.userMessage.content,
           timestamp: new Date(data.userMessage.createdAt),
         };
-        setMessages((prev) => [...prev, userMessage]);
+        setMessages((prev) => {
+          // Replace the last placeholder (id starts with 'edit-placeholder-' or 'retry-placeholder-')
+          const placeholderIdx = prev.findLastIndex(
+            (m) => m.id.startsWith("edit-placeholder-") || m.id.startsWith("retry-placeholder-")
+          );
+          if (placeholderIdx !== -1) {
+            const next = [...prev];
+            next[placeholderIdx] = userMessage;
+            return next;
+          }
+          return [...prev, userMessage];
+        });
 
         // Show generating indicator and start streaming
         setIsGenerating(true);
@@ -545,6 +566,39 @@ Your prompt was: "${content}"`;
     });
   };
 
+  // Edit a user message: replace it in local state and re-send from that point.
+  // All messages after the edited one are removed (same as ChatGPT behaviour).
+  // We slice + immediately insert a placeholder user message in ONE setState call
+  // so the UI never sees an empty messages array (which would flash the welcome screen).
+  const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    const placeholderId = `edit-placeholder-${Date.now()}`;
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === messageId);
+      if (idx === -1) return prev;
+      return [
+        ...prev.slice(0, idx),
+        { id: placeholderId, role: "user" as const, content: newContent, timestamp: new Date() },
+      ];
+    });
+    handleSendMessage(newContent, "fast");
+  }, [handleSendMessage]);
+
+  // Retry a user message: remove everything after it and re-send the same content.
+  const handleRetryMessage = useCallback((messageId: string) => {
+    // We need the content synchronously before modifying messages
+    setMessages((prev) => {
+      const idx = prev.findIndex((m) => m.id === messageId);
+      if (idx === -1) return prev;
+      const content = prev[idx].content;
+      // Schedule the IPC call after this render — content is captured in closure
+      setTimeout(() => handleSendMessage(content, "fast"), 0);
+      return [
+        ...prev.slice(0, idx),
+        { id: `retry-placeholder-${Date.now()}`, role: "user" as const, content, timestamp: new Date() },
+      ];
+    });
+  }, [handleSendMessage]);
+
   const handleSavePromptClick = (id: string) => {
     let message = displayMessages.find((m) => m.id === id);
     if (!message && streamingMessage?.id === id) {
@@ -794,11 +848,14 @@ Your prompt was: "${content}"`;
             onCopyPrompt={handleCopyPrompt}
             onSavePrompt={handleSavePromptClick}
             onFeedback={handleFeedback}
+            onEditMessage={handleEditMessage}
+            onRetryMessage={handleRetryMessage}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
             isOnline={isOnline}
             offlineChatUnavailable={offlineChatUnavailable}
             sendError={sendError}
+            onStopGeneration={handleStopGeneration}
             onRetryLoad={() => {
               if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
                 setOfflineChatUnavailable(false);

@@ -473,4 +473,11 @@ export function registerChatHandlers(
             }
         }
     });
+
+    // APP WINDOW: Stop generation mid-stream
+    // ============================================
+    ipcMain.on('app:stop-generation', () => {
+        console.log('[Chat] Stop generation requested');
+        pythonClient.abortLatestStream();
+    });
 }

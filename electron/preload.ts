@@ -25,6 +25,7 @@ declare global {
         getSettings: () => Promise<any>;
         onSettingsUpdate: (callback: (settings: any) => void) => void;
         newSession: () => void;
+        stopGeneration: () => void;
       };
 
       // ============================================
@@ -61,6 +62,7 @@ declare global {
       signOut: () => void;
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
+      stopGeneration: () => void;
 
       // Streaming optimization (app window)
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
@@ -183,6 +185,9 @@ const electronAPI = {
     newSession: () => {
       ipcRenderer.send('overlay:new-session');
     },
+    stopGeneration: () => {
+      ipcRenderer.send('overlay:stop-generation');
+    },
   },
 
   // ============================================
@@ -293,6 +298,9 @@ const electronAPI = {
   },
   saveFeedback: (messageId: string, rating: 'positive' | 'negative') => {
     ipcRenderer.send('app:save-feedback', { messageId, rating });
+  },
+  stopGeneration: () => {
+    ipcRenderer.send('app:stop-generation');
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
