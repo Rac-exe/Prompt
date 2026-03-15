@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, FileText, X } from "lucide-react";
+import { Copy, Check, FileText } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -40,7 +40,7 @@ export const PromptPreviewModal = ({ open, onOpenChange, prompt }: PromptPreview
       <DialogContent className="sm:max-w-[700px] max-h-[80vh] bg-card border-border p-0 gap-0">
         {/* Header */}
         <DialogHeader className="p-6 pb-4 border-b border-border">
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
             <div className="flex-1">
               <DialogTitle className="flex items-center gap-2 text-foreground text-xl mb-2">
                 <FileText className="w-5 h-5 text-emerald" />
@@ -57,14 +57,6 @@ export const PromptPreviewModal = ({ open, onOpenChange, prompt }: PromptPreview
                 )}
               </DialogDescription>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-              onClick={() => onOpenChange(false)}
-            >
-              <X className="w-4 h-4" />
-            </Button>
           </div>
         </DialogHeader>
 

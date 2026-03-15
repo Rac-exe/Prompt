@@ -1,4 +1,5 @@
 import { SupabaseClientManager } from '../supabase-client';
+import { randomBytes } from 'crypto';
 
 // ============================================
 // INTERFACES
@@ -11,6 +12,31 @@ export interface PromptCollection {
   icon?: string;
   created_at: string;
   updated_at: string;
+  // Sharing fields (added in migration 20260315_add_shared_libraries)
+  share_token?: string | null;
+  original_collection_id?: string | null;
+  original_creator_id?: string | null;
+  original_creator_name?: string | null;
+}
+
+export interface SharedCollectionView {
+  id: string;
+  name: string;
+  icon?: string;
+  share_token: string;
+  owner_name: string;
+  owner_id: string;
+  prompts: SavedPrompt[];
+}
+
+export interface SharedPromptView {
+  id: string;
+  title: string;
+  content: string;
+  share_token: string;
+  owner_name: string;
+  owner_id: string;
+  created_at: string;
 }
 
 export interface SavedPrompt {
@@ -418,6 +444,284 @@ export class PromptLibraryService {
     ]);
 
     return { collections, prompts };
+  }
+
+  // ============================================
+  // SHARING
+  // ============================================
+
+  /**
+   * Generate (or return existing) share token for an individual prompt.
+   * Idempotent — calling twice returns the same token.
+   */
+  async getOrCreatePromptShareToken(promptId: string): Promise<{ shareToken: string; shareUrl: string }> {
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) throw new Error('Not authenticated');
+
+    // Fetch the prompt — must belong to the current user
+    const { data: prompt, error: fetchError } = await this.client
+      .from('saved_prompts')
+      .select('id, share_token')
+      .eq('id', promptId)
+      .eq('user_id', userData.user.id)
+      .single();
+
+    if (fetchError || !prompt) throw new Error('Prompt not found');
+
+    // Re-use existing token (idempotent)
+    if (prompt.share_token) {
+      return {
+        shareToken: prompt.share_token,
+        shareUrl: `promptweaver://share/prompt/${prompt.share_token}`,
+      };
+    }
+
+    // Generate a new crypto-random URL-safe token
+    const token = randomBytes(24).toString('base64url');
+
+    const { data: updated, error: updateError } = await this.client
+      .from('saved_prompts')
+      .update({ share_token: token })
+      .eq('id', promptId)
+      .eq('user_id', userData.user.id)
+      .select('share_token')
+      .single();
+
+    if (updateError || !updated) throw new Error('Failed to generate prompt share token');
+
+    return {
+      shareToken: updated.share_token!,
+      shareUrl: `promptweaver://share/prompt/${updated.share_token}`,
+    };
+  }
+
+  /**
+   * Fetch a shared prompt by its public token (no auth required).
+   */
+  async getSharedPrompt(token: string): Promise<SharedPromptView> {
+    // RLS policy allows reading prompts with a share_token
+    const { data: prompt, error: promptError } = await this.client
+      .from('saved_prompts')
+      .select('id, title, content, share_token, user_id, created_at')
+      .eq('share_token', token)
+      .single();
+
+    if (promptError || !prompt) {
+      throw new Error('Shared prompt not found or link is invalid');
+    }
+
+    // Fetch owner name from profiles
+    const { data: profile } = await this.client
+      .from('profiles')
+      .select('name')
+      .eq('id', prompt.user_id)
+      .single();
+
+    return {
+      id: prompt.id,
+      title: prompt.title,
+      content: prompt.content,
+      share_token: prompt.share_token,
+      owner_name: profile?.name || 'Unknown User',
+      owner_id: prompt.user_id,
+      created_at: prompt.created_at,
+    };
+  }
+
+  /**
+   * Generate (or return existing) share token for a collection.
+   * Idempotent — calling twice returns the same token.
+   */
+  async getOrCreateShareToken(collectionId: string): Promise<{ shareToken: string; shareUrl: string }> {
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) throw new Error('Not authenticated');
+
+    // Fetch the collection (must belong to this user)
+    const { data: collection, error: fetchError } = await this.client
+      .from('prompt_collections')
+      .select('id, share_token')
+      .eq('id', collectionId)
+      .eq('user_id', userData.user.id)
+      .single();
+
+    if (fetchError || !collection) throw new Error('Collection not found');
+
+    // Re-use existing token if present
+    if (collection.share_token) {
+      return {
+        shareToken: collection.share_token,
+        shareUrl: `promptweaver://share/${collection.share_token}`,
+      };
+    }
+
+    // Generate a new unique token (crypto-random, URL-safe)
+    const token = randomBytes(24).toString('base64url');
+
+    const { data: updated, error: updateError } = await this.client
+      .from('prompt_collections')
+      .update({ share_token: token })
+      .eq('id', collectionId)
+      .eq('user_id', userData.user.id)
+      .select('share_token')
+      .single();
+
+    if (updateError || !updated) throw new Error('Failed to generate share token');
+
+    return {
+      shareToken: updated.share_token!,
+      shareUrl: `promptweaver://share/${updated.share_token}`,
+    };
+  }
+
+  /**
+   * Fetch a shared collection by its public token (no auth required on DB side,
+   * but we do want to enrich it with owner name).
+   */
+  async getSharedCollection(token: string): Promise<SharedCollectionView> {
+    // Fetch collection by share token (public RLS allows this)
+    const { data: collection, error: collectionError } = await this.client
+      .from('prompt_collections')
+      .select('id, name, icon, share_token, user_id')
+      .eq('share_token', token)
+      .single();
+
+    if (collectionError || !collection) {
+      throw new Error('Shared library not found or link is invalid');
+    }
+
+    // Fetch owner profile name
+    const { data: profile } = await this.client
+      .from('profiles')
+      .select('name')
+      .eq('id', collection.user_id)
+      .single();
+
+    const ownerName = profile?.name || 'Unknown User';
+
+    // Fetch prompts (public RLS allows this for shared collections)
+    const { data: prompts, error: promptsError } = await this.client
+      .from('saved_prompts')
+      .select('*')
+      .eq('collection_id', collection.id)
+      .order('created_at', { ascending: false });
+
+    if (promptsError) throw promptsError;
+
+    return {
+      id: collection.id,
+      name: collection.name,
+      icon: collection.icon,
+      share_token: collection.share_token,
+      owner_name: ownerName,
+      owner_id: collection.user_id,
+      prompts: prompts || [],
+    };
+  }
+
+  /**
+   * Save a shared collection (fork) under the current user.
+   * Idempotent — if the user already saved this collection, returns existing copy.
+   */
+  async saveSharedCollection(originalCollectionId: string): Promise<{
+    collection: PromptCollection;
+    alreadyExisted: boolean;
+  }> {
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) throw new Error('Not authenticated');
+
+    // Check if user already forked this collection (idempotency — Task 7)
+    const { data: existing } = await this.client
+      .from('prompt_collections')
+      .select('*')
+      .eq('user_id', userData.user.id)
+      .eq('original_collection_id', originalCollectionId)
+      .maybeSingle();
+
+    if (existing) {
+      return { collection: existing as PromptCollection, alreadyExisted: true };
+    }
+
+    // Fetch original collection + owner name
+    const { data: original, error: originalError } = await this.client
+      .from('prompt_collections')
+      .select('id, name, icon, user_id, share_token')
+      .eq('id', originalCollectionId)
+      .single();
+
+    if (originalError || !original) throw new Error('Original collection not found');
+
+    // Only allow saving collections that have a share token (are actually shared)
+    if (!original.share_token) throw new Error('This collection is not shared publicly');
+
+    const { data: ownerProfile } = await this.client
+      .from('profiles')
+      .select('name')
+      .eq('id', original.user_id)
+      .single();
+
+    const creatorName = ownerProfile?.name || 'Unknown User';
+
+    // ── Resolve a unique name for the forked collection ──────────────────────
+    // The user may already own a collection with the same name (e.g. they are
+    // saving their own shared library, or they saved it before under a different
+    // flow). Auto-suffix with " (2)", " (3)", … until the name is free.
+    const { data: existingNames } = await this.client
+      .from('prompt_collections')
+      .select('name')
+      .eq('user_id', userData.user.id);
+
+    const takenNames = new Set((existingNames || []).map((c: any) => c.name as string));
+
+    let candidateName = original.name;
+    if (takenNames.has(candidateName)) {
+      let counter = 2;
+      while (takenNames.has(`${original.name} (${counter})`)) counter++;
+      candidateName = `${original.name} (${counter})`;
+    }
+
+    // Create a copy of the collection under the current user
+    const { data: newCollection, error: createError } = await this.client
+      .from('prompt_collections')
+      .insert({
+        user_id: userData.user.id,
+        name: candidateName,
+        icon: original.icon || 'folder',
+        original_collection_id: original.id,
+        original_creator_id: original.user_id,
+        original_creator_name: creatorName,
+      })
+      .select()
+      .single();
+
+    if (createError || !newCollection) throw createError || new Error('Failed to save collection');
+
+    // Copy all prompts from original to the new collection
+    const { data: originalPrompts } = await this.client
+      .from('saved_prompts')
+      .select('title, content, metadata')
+      .eq('collection_id', original.id)
+      .order('created_at', { ascending: true });
+
+    if (originalPrompts && originalPrompts.length > 0) {
+      const promptsToInsert = originalPrompts.map((p: any) => ({
+        user_id: userData.user.id,
+        collection_id: newCollection.id,
+        title: p.title,
+        content: p.content,
+        metadata: p.metadata || {},
+      }));
+
+      const { error: insertError } = await this.client
+        .from('saved_prompts')
+        .insert(promptsToInsert);
+
+      if (insertError) {
+        console.error('[PromptLibraryService] ⚠️ Failed to copy prompts:', insertError);
+      }
+    }
+
+    console.log('[PromptLibraryService] ✅ Collection forked:', newCollection.id);
+    return { collection: newCollection as PromptCollection, alreadyExisted: false };
   }
 
   /**

@@ -311,16 +311,72 @@ const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  // ============================================
+  // DEEP LINK PROTOCOL: promptweaver://share/<token>
+  // ============================================
+  // Register the custom protocol so the OS routes promptweaver:// URLs to us.
+  if (process.defaultApp) {
+    if (process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient('promptweaver', process.execPath, [process.argv[1]]);
+    }
+  } else {
+    app.setAsDefaultProtocolClient('promptweaver');
+  }
+
+  /**
+   * Extract a share token from a protocol URL such as:
+   *   promptweaver://share/abc123
+   */
+  function handleDeepLink(url: string): void {
+    try {
+      const parsed = new URL(url);
+      // hostname = "share", pathname = "/<token>"
+      if (parsed.hostname === 'share') {
+        const token = parsed.pathname.replace(/^\//, '');
+        if (token && appWindowManager) {
+          appWindowManager.show();
+          // Navigate the renderer to the share page via a hash route change
+          const win = appWindowManager.getWindow();
+          if (win && !win.isDestroyed()) {
+            win.webContents.executeJavaScript(
+              `window.location.hash = '/share/${token}';`
+            ).catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[Main] Failed to handle deep link:', url, err);
+    }
+  }
+
+  // macOS: open-url event fires for protocol links
+  app.on('open-url', (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+
+  // Windows/Linux: the URL arrives as a command-line argument on second-instance
+  app.on('second-instance', (_event, commandLine) => {
     if (appWindowManager) {
       appWindowManager.show();
     }
+    // The last arg may be the protocol URL on Windows
+    const url = commandLine.find((arg) => arg.startsWith('promptweaver://'));
+    if (url) handleDeepLink(url);
   });
 
   // ============================================
   // APP LIFECYCLE
   // ============================================
   app.whenReady().then(async () => {
+    // Handle protocol URL passed on startup (Windows/Linux first-launch)
+    const startUrl = process.argv.find((arg) => arg.startsWith('promptweaver://'));
+    if (startUrl) {
+      // Defer until the window is ready
+      app.once('browser-window-created', () => {
+        setTimeout(() => handleDeepLink(startUrl), 1500);
+      });
+    }
     await initialize();
   });
 

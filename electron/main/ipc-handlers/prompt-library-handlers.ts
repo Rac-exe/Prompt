@@ -379,4 +379,83 @@ ipcMain.handle('prompt-library:toggle-favorite', async (event, { promptId }) => 
     }
 });
 
+// ============================================
+// SHARING
+// ============================================
+
+ipcMain.handle('prompt-library:get-share-link', async (event, { collectionId }) => {
+    try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
+        console.log('[IPC] prompt-library:get-share-link:', collectionId);
+        const result = await getService().getOrCreateShareToken(collectionId);
+        console.log('[IPC] ✅ Share token generated for collection:', collectionId);
+        return result; // { shareToken, shareUrl }
+    } catch (error: any) {
+        console.error('[IPC] ❌ Error generating share link:', error);
+        throw error;
+    }
+});
+
+ipcMain.handle('prompt-library:get-prompt-share-link', async (event, { promptId }) => {
+    try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
+        console.log('[IPC] prompt-library:get-prompt-share-link:', promptId);
+        const result = await getService().getOrCreatePromptShareToken(promptId);
+        console.log('[IPC] ✅ Share token generated for prompt:', promptId);
+        return result; // { shareToken, shareUrl }
+    } catch (error: any) {
+        console.error('[IPC] ❌ Error generating prompt share link:', error);
+        throw error;
+    }
+});
+
+ipcMain.handle('prompt-library:get-shared-prompt', async (event, { token }) => {
+    try {
+        console.log('[IPC] prompt-library:get-shared-prompt:', token);
+        const result = await getService().getSharedPrompt(token);
+        console.log('[IPC] ✅ Shared prompt loaded:', result.id);
+        return result;
+    } catch (error: any) {
+        console.error('[IPC] ❌ Error loading shared prompt:', error);
+        throw error;
+    }
+});
+
+ipcMain.handle('prompt-library:get-shared-collection', async (event, { token }) => {
+    try {
+        console.log('[IPC] prompt-library:get-shared-collection:', token);
+        const result = await getService().getSharedCollection(token);
+        console.log('[IPC] ✅ Shared collection loaded:', result.id);
+        return result;
+    } catch (error: any) {
+        console.error('[IPC] ❌ Error loading shared collection:', error);
+        throw error;
+    }
+});
+
+ipcMain.handle('prompt-library:save-shared-collection', async (event, { originalCollectionId }) => {
+    try {
+        if (!authState.isAuthenticated) throw new Error('Not authenticated');
+        const userId = authState.currentUserId;
+        console.log('[IPC] prompt-library:save-shared-collection:', originalCollectionId);
+        const result = await getService().saveSharedCollection(originalCollectionId);
+
+        // Update local cache so the new collection appears immediately
+        if (userId && !result.alreadyExisted) {
+            localCache.addOrUpdateCollection(userId, result.collection as any);
+            // Re-fetch prompts so the copied prompts also land in cache
+            try {
+                const prompts = await getService().getPrompts();
+                localCache.setPrompts(userId, prompts as any);
+            } catch (_) { /* best-effort */ }
+        }
+
+        console.log('[IPC] ✅ Shared collection saved. alreadyExisted:', result.alreadyExisted);
+        return result; // { collection, alreadyExisted }
+    } catch (error: any) {
+        console.error('[IPC] ❌ Error saving shared collection:', error);
+        throw error;
+    }
+});
+
 console.log('[PromptLibraryHandlers] ✅ IPC handlers registered');
