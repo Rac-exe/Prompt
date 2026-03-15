@@ -65,20 +65,28 @@ export class MemoryAnalyzer {
 
       const allText = data.map((r: { original_text: string }) => r.original_text.toLowerCase()).join(' ');
 
-      // ── Domain detection ────────────────────────────────────────────
-      let topDomain: string | null = null;
-      let topCount = 0;
+      // ── Multi-domain detection ───────────────────────────────────────
+      // Collect ALL domains that cross the minimum keyword-hit threshold.
+      // A person can work across multiple domains simultaneously.
+      const MIN_DOMAIN_HITS = 3;
+      const domainScores: { domain: string; count: number }[] = [];
+
       for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
         const count = keywords.reduce((acc, kw) => acc + (allText.split(kw).length - 1), 0);
-        if (count > topCount) {
-          topCount = count;
-          topDomain = domain;
+        if (count >= MIN_DOMAIN_HITS) {
+          domainScores.push({ domain, count });
         }
       }
-      if (topDomain && topCount >= 3) {
-        const confidence = Math.min(1.0, topCount / 15);
-        await this.memoryService.upsertMemoryEntry('behavioral', 'domain', topDomain, 'inferred', confidence);
+
+      if (domainScores.length > 0) {
+        // Sort descending by keyword hit count
+        domainScores.sort((a, b) => b.count - a.count);
+        const detectedDomains = domainScores.map((d) => d.domain).join(', ');
+        // Confidence is based on the top scorer, capped at 1.0
+        const confidence = Math.min(1.0, domainScores[0].count / 15);
+        await this.memoryService.upsertMemoryEntry('behavioral', 'domains', detectedDomains, 'inferred', confidence);
       }
+
 
       // ── Style detection ─────────────────────────────────────────────
       const styleHits: { style: string; count: number }[] = [];
@@ -101,7 +109,8 @@ export class MemoryAnalyzer {
         1.0,
       );
 
-      console.log(`[MemoryAnalyzer] ✅ Memory updated for user ${userId}: domain=${topDomain}`);
+      console.log(`[MemoryAnalyzer] ✅ Memory updated for user ${userId}: domains=[${domainScores.map((d) => d.domain).join(', ')}]`);
+
     } catch (err) {
       // Non-critical: log and continue
       console.warn('[MemoryAnalyzer] Analysis failed (non-critical):', err);
