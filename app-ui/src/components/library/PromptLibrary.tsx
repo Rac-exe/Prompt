@@ -259,7 +259,7 @@ export const PromptLibrary = ({
               placeholder="Search by title or content…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 h-9 bg-surface border-border text-sm focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/50 transition-smooth"
+              className="pl-9 h-9 bg-surface border-border text-sm focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/70 transition-smooth"
               data-testid="search-prompts-input"
             />
           </div>

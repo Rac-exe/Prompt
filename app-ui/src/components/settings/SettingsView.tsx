@@ -340,7 +340,7 @@ export const SettingsView = () => {
                     value={localInstructions}
                     onChange={(e) => setLocalInstructions(e.target.value)}
                     placeholder="e.g. 'Always use formal tone', 'Include code examples', 'Prefer concise responses'…"
-                    className="min-h-[110px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/40 leading-relaxed"
+                    className="min-h-[110px] bg-secondary border-border font-mono text-xs resize-none focus-visible:border-emerald/50 focus-visible:ring-emerald/15 placeholder:text-muted-foreground/60 leading-relaxed"
                     maxLength={1000}
                   />
                   <div className="flex items-center justify-between">

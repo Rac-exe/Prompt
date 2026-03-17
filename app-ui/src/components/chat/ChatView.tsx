@@ -333,7 +333,7 @@ export const ChatView = ({
             className={cn(
               "w-full bg-transparent border-0 outline-none resize-none",
               "px-5 pt-4 pb-2 text-[14px] leading-relaxed text-foreground",
-              "placeholder:text-muted-foreground/40",
+              "placeholder:text-muted-foreground/60",
               "disabled:opacity-40",
               "scrollbar-none"
             )}
