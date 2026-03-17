@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, X, ZoomIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -34,6 +34,8 @@ export const MessageBubble = ({
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [lightboxName, setLightboxName] = useState<string>('');
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === "user";
 
@@ -44,6 +46,14 @@ export const MessageBubble = ({
     ta.style.height = "auto";
     ta.style.height = ta.scrollHeight + "px";
   }, [editValue, isEditing]);
+
+  // Escape closes lightbox
+  useEffect(() => {
+    if (!lightboxSrc) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxSrc(null); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [lightboxSrc]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -70,6 +80,7 @@ export const MessageBubble = ({
 
   if (isUser) {
     return (
+      <>
       <div className="flex justify-end gap-3 animate-slide-up group/user">
         <div className="max-w-[80%]">
           {isEditing ? (
@@ -122,23 +133,29 @@ export const MessageBubble = ({
                     const hasBase64 = !!(file as any).base64;
 
                     if (isImage && hasBase64) {
-                      // Real thumbnail from base64
+                      // Real thumbnail — clickable to expand
+                      const src = `data:${file.mimeType};base64,${(file as any).base64}`;
                       return (
-                        <div
+                        <button
                           key={idx}
-                          className="relative group rounded-xl overflow-hidden border border-emerald/20 shadow-sm"
+                          onClick={() => { setLightboxSrc(src); setLightboxName(file.name); }}
+                          className="relative group rounded-xl overflow-hidden border border-emerald/20 shadow-sm cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald/50"
                           style={{ width: 80, height: 80 }}
+                          title={`${file.name} — click to expand`}
                         >
                           <img
-                            src={`data:${file.mimeType};base64,${(file as any).base64}`}
+                            src={src}
                             alt={file.name}
                             className="w-full h-full object-cover"
                           />
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors rounded-xl" />
+                          {/* Hover overlay */}
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors flex items-center justify-center">
+                            <ZoomIn className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                          </div>
                           <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <span className="text-[9px] text-white truncate block">{file.name}</span>
                           </div>
-                        </div>
+                        </button>
                       );
                     }
 
@@ -218,7 +235,38 @@ export const MessageBubble = ({
           <User className="w-3.5 h-3.5 text-muted-foreground" />
         </div>
       </div>
-    );
+
+      {/* Lightbox */}
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in-0 duration-150"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <div
+            className="relative max-w-[90vw] max-h-[90vh]"
+            onClick={e => e.stopPropagation()}
+          >
+            <img
+              src={lightboxSrc}
+              alt={lightboxName}
+              className="max-w-full max-h-[85vh] rounded-xl shadow-2xl object-contain"
+            />
+            <button
+              onClick={() => setLightboxSrc(null)}
+              className="absolute -top-3 -right-3 w-7 h-7 rounded-full bg-background border border-border flex items-center justify-center shadow-lg hover:bg-secondary transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+            {lightboxName && (
+              <div className="absolute bottom-0 left-0 right-0 px-4 py-2 bg-black/50 rounded-b-xl">
+                <span className="text-xs text-white/80 truncate block text-center">{lightboxName}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
   }
 
   /* ── Assistant message ─────────────────────────────────── */
