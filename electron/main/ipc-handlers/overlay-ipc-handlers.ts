@@ -1,4 +1,4 @@
-import { ipcMain, clipboard } from 'electron';
+import { ipcMain, clipboard, screen } from 'electron';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import { PythonClient } from '../api/python-client';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -83,11 +83,40 @@ function clearOverlayHistory() {
   console.log('[OverlayHandlers] Overlay session history cleared');
 }
 
+// Cursor polling interval reference (so we can clear it)
+let cursorPollInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startCursorPolling(overlayManager: OverlayWindowManager) {
+  if (cursorPollInterval) return; // already running
+  cursorPollInterval = setInterval(() => {
+    if (!overlayManager.isVisible()) return;
+    const win = overlayManager.getWindow();
+    if (!win || win.isDestroyed()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const [winX, winY] = win.getPosition();
+    // Send cursor position relative to the overlay window
+    overlayManager.send('overlay:cursor-pos', {
+      x: cursor.x - winX,
+      y: cursor.y - winY,
+    });
+  }, 16); // ~60fps
+}
+
+export function stopCursorPolling() {
+  if (cursorPollInterval) {
+    clearInterval(cursorPollInterval);
+    cursorPollInterval = null;
+  }
+}
+
 export function registerOverlayHandlers(
   overlayManager: OverlayWindowManager,
   pythonClient: PythonClient,
   appWindowManager: AppWindowManager
 ) {
+  // Start cursor polling for the glow effect
+  startCursorPolling(overlayManager);
+
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================

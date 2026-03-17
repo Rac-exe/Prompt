@@ -38,12 +38,23 @@
       justify-content: center;
     }
 
-    .overlay-panel {
+    /* Gradient border wrapper — sits outside the panel */
+    .panel-glow-wrapper {
+      position: relative;
       width: 480px;
+      height: 100%;
+      border-radius: 21px;
+      padding: 1px; /* this 1px becomes the visible border */
+      background: hsl(var(--border));
+      transition: background 0.1s ease;
+    }
+
+    .overlay-panel {
+      width: 100%;
       height: 100%;
       border-radius: 20px;
       background: hsl(var(--background));
-      border: 1px solid hsl(var(--border));
+      border: none; /* border is now handled by wrapper */
       box-shadow: none;
       overflow: hidden;
       position: relative;
@@ -924,6 +935,7 @@
 
 <body>
   <div id="panel" class="panel-enter">
+    <div class="panel-glow-wrapper" id="panel-glow-wrapper">
     <div class="overlay-panel">
 
       <!-- ===== HEADER ===== -->
@@ -1195,6 +1207,7 @@
         </div>
       </div>
     </div>
+    </div><!-- end panel-glow-wrapper -->
   </div>
 
   <script>
@@ -1257,6 +1270,46 @@
     const btnAddCollection = document.getElementById('btn-add-collection');
     const saveTitleInput = document.getElementById('save-title-input');
     const offlineBanner = document.getElementById('offline-banner');
+
+    // ==========================================
+    // MOUSE-FOLLOWING BORDER GLOW
+    // Uses IPC cursor polling from main process so the glow
+    // responds even when the mouse is outside the overlay window.
+    // Technique: wrapper background IS the 1px border — panel's
+    // dark bg covers the interior, only the padding edge glows.
+    // ==========================================
+    const panelGlowWrapper = document.getElementById('panel-glow-wrapper');
+    let glowTimeout;
+
+    function updateGlow(x, y) {
+      if (!panelGlowWrapper) return;
+      const rect = panelGlowWrapper.getBoundingClientRect();
+      const xPct = (x / rect.width) * 100;
+      const yPct = (y / rect.height) * 100;
+
+      panelGlowWrapper.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--emerald) / 0.8), hsl(var(--emerald) / 0.3) 40%, hsl(var(--border)) 70%)`;
+
+      clearTimeout(glowTimeout);
+      glowTimeout = setTimeout(() => {
+        panelGlowWrapper.style.background = 'hsl(var(--border))';
+      }, 1500);
+    }
+
+    // IPC cursor position (works outside the window too)
+    if (window.electronAPI?.overlay?.onCursorPos) {
+      window.electronAPI.overlay.onCursorPos(({ x, y }) => updateGlow(x, y));
+    }
+
+    // Fallback: also listen to local mousemove for responsiveness when inside
+    document.addEventListener('mousemove', (e) => {
+      updateGlow(e.clientX, e.clientY);
+    });
+
+    document.addEventListener('mouseleave', () => {
+      if (panelGlowWrapper) {
+        panelGlowWrapper.style.background = 'hsl(var(--border))';
+      }
+    });
 
     // ==========================================
     // VIEW MANAGEMENT

@@ -48,6 +48,9 @@ const electronAPI = {
     onOptimizationError: (callback: (data: { error: string }) => void) => {
       ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
     },
+    onCursorPos: (callback: (data: { x: number; y: number }) => void) => {
+      ipcRenderer.on('overlay:cursor-pos', (_event, data) => callback(data));
+    },
     getSettings: () => {
       return ipcRenderer.invoke('overlay:get-settings');
     },
