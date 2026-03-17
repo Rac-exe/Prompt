@@ -15,7 +15,7 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Tuple, List, Dict, Union
+from typing import Tuple, List, Dict, Union, Optional, Generator
 
 import litellm
 
@@ -50,13 +50,25 @@ SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "claude-haiku-4-5-20251001
 # ── Model capabilities ───────────────────────────────────────────────────────
 # Focus on reliable, budget-friendly vision models
 VISION_MODELS = {
-    # Most reliable and cost-effective
+    # OpenAI
     "gpt-4o-mini", "openai/gpt-4o-mini", "openrouter/openai/gpt-4o-mini",
     "gpt-4o", "openai/gpt-4o", "openrouter/openai/gpt-4o",
-    
-    # Good alternatives
+
+    # Anthropic Claude — all Sonnet and Haiku variants support vision
     "claude-3-5-sonnet", "anthropic/claude-3-5-sonnet", "openrouter/anthropic/claude-3-5-sonnet",
+    "claude-3-5-haiku", "anthropic/claude-3-5-haiku", "openrouter/anthropic/claude-3-5-haiku",
+    "claude-3-haiku",   "anthropic/claude-3-haiku",   "openrouter/anthropic/claude-3-haiku",
+    # Haiku 4.x (OpenRouter uses dot notation)
+    "claude-haiku-4",   "claude-haiku-4.5",
+    "anthropic/claude-haiku-4",   "anthropic/claude-haiku-4.5",
+    "openrouter/anthropic/claude-haiku-4", "openrouter/anthropic/claude-haiku-4.5",
+    # Version-specific strings that appear in .env / LiteLLM
+    "claude-haiku-4-5", "claude-haiku-4-5-20251001",
+    "anthropic/claude-haiku-4.5-20251001",
+
+    # Google Gemini
     "gemini-1.5-flash", "google/gemini-1.5-flash", "openrouter/google/gemini-1.5-flash",
+    "gemini-1.5-pro",   "google/gemini-1.5-pro",   "openrouter/google/gemini-1.5-pro",
 }
 
 
@@ -150,9 +162,9 @@ def optimize(
     stream: bool = False,
     mode: str = "thinking",
     custom_instructions: str = "",
-    attached_files: List[Dict] = None,
-    forced_skill: str = None,
-) -> str:
+    attached_files: Optional[List[Dict]] = None,
+    forced_skill: Optional[str] = None,
+) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
     Automatically summarizes context if token budget exceeded.

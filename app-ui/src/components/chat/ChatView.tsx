@@ -10,6 +10,8 @@ import { PlusMenu } from "./PlusMenu";
 import { SkillPicker } from "./SkillPicker";
 import type { AttachedFile } from "@/types/electron";
 
+const PASTE_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
+
 interface ChatViewProps {
   messages: Message[];
   streamingMessage?: Message | null;
@@ -209,6 +211,35 @@ export const ChatView = ({
     }
   }, [voiceState]);
 
+  // ── Clipboard paste handler ────────────────────────────────
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    const fileItems = items.filter(item => PASTE_ALLOWED_TYPES.includes(item.type));
+    if (fileItems.length === 0) return; // let normal text paste proceed
+
+    e.preventDefault();
+    const newFiles: AttachedFile[] = [];
+
+    for (const item of fileItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      if (file.size > 10_000_000) continue; // skip oversized
+
+      try {
+        const base64 = await fileToBase64(file);
+        const ext = file.type.split('/')[1] || 'img';
+        const name = file.name || `pasted-image.${ext}`;
+        newFiles.push({ name, mimeType: file.type, base64, sizeBytes: file.size });
+      } catch {
+        // silently skip failed items
+      }
+    }
+
+    if (newFiles.length > 0) {
+      setAttachedFiles(prev => [...prev, ...newFiles].slice(0, 5));
+    }
+  }, []);
+
   const isEmpty = messages.length === 0;
   const canSend = input.trim().length > 0 && !isGenerating && voiceState !== "processing" && isOnline;
 
@@ -235,28 +266,50 @@ export const ChatView = ({
           </div>
         )}
 
-        {/* File pills */}
+        {/* File pills — thumbnails for images, pill for PDFs */}
         {attachedFiles.length > 0 && (
           <div className="flex flex-wrap gap-2 px-5 pt-3">
-            {attachedFiles.map((file, idx) => (
-              <div
-                key={idx}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-secondary text-xs"
-              >
-                {file.mimeType === 'application/pdf' ? (
-                  <FileText className="h-3 w-3" />
-                ) : (
-                  <Image className="h-3 w-3" />
-                )}
-                <span className="max-w-[150px] truncate">{file.name}</span>
-                <button
-                  onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                  className="hover:text-destructive transition-colors"
+            {attachedFiles.map((file, idx) => {
+              const isImage = file.mimeType.startsWith('image/');
+              return (
+                <div
+                  key={idx}
+                  className={cn(
+                    "relative inline-flex items-center gap-2 rounded-xl bg-secondary text-xs",
+                    isImage ? "p-0 overflow-hidden" : "px-3 py-1.5"
+                  )}
                 >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+                  {isImage ? (
+                    /* Image thumbnail */
+                    <div className="relative" style={{ width: 56, height: 56 }}>
+                      <img
+                        src={`data:${file.mimeType};base64,${file.base64}`}
+                        alt={file.name}
+                        className="w-full h-full object-cover rounded-xl"
+                      />
+                      <button
+                        onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    /* PDF pill */
+                    <>
+                      <FileText className="h-3 w-3 text-muted-foreground" />
+                      <span className="max-w-[150px] truncate">{file.name}</span>
+                      <button
+                        onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
+                        className="hover:text-destructive transition-colors"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -269,11 +322,12 @@ export const ChatView = ({
                 ? "Messaging unavailable while offline…"
                 : voiceState === "processing"
                 ? "Transcribing your voice…"
-                : isEmpty ? "How can I help you today?" : "Ask anything"
+                : isEmpty ? "How can I help you today?" : "Ask anything, or paste an image"
             }
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             disabled={isGenerating || voiceState === "processing" || !isOnline}
             rows={2}
             className={cn(
@@ -617,3 +671,13 @@ export const ChatView = ({
     </div>
   );
 };
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}

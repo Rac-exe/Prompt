@@ -27,8 +27,8 @@ function shortTitle(title: string): string {
 }
 
 interface SidebarProps {
-  currentView: "chat" | "library" | "settings" | "history";
-  onViewChange: (view: "chat" | "library" | "settings" | "history") => void;
+  currentView: "chat" | "library" | "settings" | "history" | "shared-library";
+  onViewChange: (view: "chat" | "library" | "settings" | "history" | "shared-library") => void;
   recentChats: { id: string; title: string; date: string }[];
   onSelectChat: (id: string) => void;
   selectedChatId: string | null;

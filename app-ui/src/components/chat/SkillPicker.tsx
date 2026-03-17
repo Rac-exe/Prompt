@@ -72,8 +72,10 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
   return (
     <div
       className={cn(
-        "absolute bottom-full left-0 mb-2 w-96 rounded-lg border bg-popover shadow-lg",
+        "w-96 rounded-lg border bg-popover shadow-lg",
         "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
+        // When className is provided (inline mode), let caller override fully
+        !className && "absolute bottom-full left-0 mb-2",
         className
       )}
       onKeyDown={handleKeyDown}

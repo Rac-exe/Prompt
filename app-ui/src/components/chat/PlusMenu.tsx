@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { FileText, Image, Sparkles, Paperclip, Camera, BookOpen, Lightbulb, Globe, MoreHorizontal } from "lucide-react";
+import { Paperclip, Sparkles, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SkillPicker } from "./SkillPicker";
 import type { AttachedFile } from "@/types/electron";
@@ -12,6 +12,10 @@ interface PlusMenuProps {
   anchorRef: React.RefObject<HTMLButtonElement>;
 }
 
+const ALLOWED_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+const MAX_FILE_SIZE = 10_000_000; // 10 MB
+const MAX_FILES = 5;
+
 export const PlusMenu = ({
   isOpen,
   onClose,
@@ -23,8 +27,9 @@ export const PlusMenu = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [showSkillPicker, setShowSkillPicker] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ bottom: string; left: string }>({ bottom: '0', left: '0' });
+  const [fileError, setFileError] = useState<string | null>(null);
 
-  // Calculate menu position when opened
+  // Calculate position above the anchor button
   useEffect(() => {
     if (isOpen && anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
@@ -33,87 +38,67 @@ export const PlusMenu = ({
         left: `${rect.left}px`,
       });
     }
+    // Reset sub-state when menu opens/closes
+    if (!isOpen) {
+      setShowSkillPicker(false);
+      setFileError(null);
+    }
   }, [isOpen, anchorRef]);
 
-  // Close on click outside
+  // Close on outside click
   useEffect(() => {
     if (!isOpen) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
+    const onMouseDown = (e: MouseEvent) => {
       if (
-        menuRef.current &&
-        !menuRef.current.contains(e.target as Node) &&
-        anchorRef.current &&
-        !anchorRef.current.contains(e.target as Node)
+        menuRef.current && !menuRef.current.contains(e.target as Node) &&
+        anchorRef.current && !anchorRef.current.contains(e.target as Node)
       ) {
         onClose();
       }
     };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
   }, [isOpen, onClose, anchorRef]);
 
   // Close on Escape
   useEffect(() => {
     if (!isOpen) return;
-
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   }, [isOpen, onClose]);
 
-  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    setFileError(null);
 
-    const attachedFiles: AttachedFile[] = [];
+    const attached: AttachedFile[] = [];
 
-    for (let i = 0; i < Math.min(files.length, 5); i++) {
+    for (let i = 0; i < Math.min(files.length, MAX_FILES); i++) {
       const file = files[i];
-
-      // Validate file size
-      if (file.size > 10_000_000) {
-        alert(`File "${file.name}" exceeds 10 MB limit`);
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        setFileError(`"${file.name}" is not a supported type (PDF, PNG, JPG, WEBP)`);
         continue;
       }
-
-      // Validate file type
-      const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
-      if (!allowedTypes.includes(file.type)) {
-        alert(`File type not allowed: ${file.type}`);
+      if (file.size > MAX_FILE_SIZE) {
+        setFileError(`"${file.name}" exceeds the 10 MB limit`);
         continue;
       }
-
-      // Convert to base64
       try {
         const base64 = await fileToBase64(file);
-        attachedFiles.push({
-          name: file.name,
-          mimeType: file.type,
-          base64,
-          sizeBytes: file.size,
-        });
-      } catch (error) {
-        console.error(`[PlusMenu] Failed to process file ${file.name}:`, error);
-        alert(`Failed to process file "${file.name}"`);
+        attached.push({ name: file.name, mimeType: file.type, base64, sizeBytes: file.size });
+      } catch {
+        setFileError(`Failed to read "${file.name}"`);
       }
     }
 
-    if (attachedFiles.length > 0) {
-      onFilesSelected(attachedFiles);
+    if (attached.length > 0) {
+      onFilesSelected(attached);
       onClose();
     }
 
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleSkillSelect = (skillName: string) => {
@@ -132,177 +117,98 @@ export const PlusMenu = ({
         type="file"
         accept=".pdf,.png,.jpg,.jpeg,.webp"
         multiple
-        onChange={handleFileInputChange}
+        onChange={handleFileChange}
         className="hidden"
       />
 
-      {/* Plus menu popover - ChatGPT Style */}
-      {!showSkillPicker ? (
-        <div
-          ref={menuRef}
-          className={cn(
-            "fixed z-50 w-80 rounded-2xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700",
-            "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-200"
-          )}
-          style={menuPosition}
-        >
-          {/* Header */}
-          <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                <Paperclip className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-gray-900 dark:text-gray-100">Add photos & files</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Upload files or choose a skill</p>
-              </div>
-            </div>
+      <div
+        ref={menuRef}
+        className={cn(
+          "fixed z-50 w-72 rounded-2xl bg-popover border border-border shadow-elevated",
+          "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2 duration-150"
+        )}
+        style={menuPosition}
+      >
+        {/* Header */}
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border/60">
+          <div className="w-7 h-7 rounded-lg bg-emerald/10 border border-emerald/20 flex items-center justify-center">
+            <Paperclip className="w-3.5 h-3.5 text-emerald" />
           </div>
+          <span className="text-sm font-semibold text-foreground">Add to message</span>
+        </div>
 
-          {/* Menu Items */}
-          <div className="p-2">
-            {/* Add Files */}
+        {/* Error strip */}
+        {fileError && (
+          <div className="mx-3 mt-2 px-3 py-2 rounded-lg bg-destructive/8 border border-destructive/20 text-xs text-destructive">
+            {fileError}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="p-2 space-y-0.5">
+          {/* Upload Files */}
+          <button
+            onClick={() => { setFileError(null); fileInputRef.current?.click(); }}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors duration-150",
+              "hover:bg-secondary group text-left"
+            )}
+          >
+            <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/15 transition-colors flex-shrink-0">
+              <Upload className="w-4 h-4 text-blue-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-foreground">Upload files</div>
+              <div className="text-xs text-muted-foreground">PDF, PNG, JPG, WEBP · max 10 MB</div>
+            </div>
+          </button>
+
+          {/* Divider */}
+          <div className="h-px bg-border/60 my-1 mx-1" />
+
+          {/* Choose Skill */}
+          {!showSkillPicker ? (
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => setShowSkillPicker(true)}
               className={cn(
-                "w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200",
-                "hover:bg-gray-50 dark:hover:bg-gray-700/50 group"
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors duration-150",
+                "hover:bg-secondary group text-left"
               )}
             >
-              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center group-hover:bg-blue-100 dark:group-hover:bg-blue-900/40 transition-colors">
-                <Camera className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+              <div className="w-8 h-8 rounded-lg bg-emerald/10 flex items-center justify-center group-hover:bg-emerald/15 transition-colors flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-emerald" />
               </div>
-              <div className="flex-1 text-left">
-                <div className="font-medium text-gray-900 dark:text-gray-100">Upload files</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">PDF, PNG, JPG, WEBP</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-foreground">Choose skill</div>
+                <div className="text-xs text-muted-foreground">Specialise how your prompt is optimised</div>
               </div>
+              <svg className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
             </button>
-
-            {/* Divider */}
-            <div className="h-px bg-gray-100 dark:bg-gray-700 my-2" />
-
-            {/* Skills Section */}
-            <div className="space-y-1">
-              {/* Create image */}
-              <button
-                onClick={() => onSkillSelected('creative')}
-                className={cn(
-                  "w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200",
-                  "hover:bg-gray-50 dark:hover:bg-gray-700/50 group"
-                )}
-              >
-                <div className="w-10 h-10 rounded-xl bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center group-hover:bg-purple-100 dark:group-hover:bg-purple-900/40 transition-colors">
-                  <Image className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-gray-100">Create image</div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">Generate images with AI</div>
-                </div>
-              </button>
-
-              {/* Thinking */}
-              <button
-                onClick={() => onSkillSelected('analytical')}
-                className={cn(
-                  "w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200",
-                  "hover:bg-gray-50 dark:hover:bg-gray-700/50 group"
-                )}
-              >
-                <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center group-hover:bg-amber-100 dark:group-hover:bg-amber-900/40 transition-colors">
-                  <Lightbulb className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-gray-100">Thinking</div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">Deep analysis and reasoning</div>
-                </div>
-              </button>
-
-              {/* Study and learn */}
-              <button
-                onClick={() => onSkillSelected('educational')}
-                className={cn(
-                  "w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200",
-                  "hover:bg-gray-50 dark:hover:bg-gray-700/50 group"
-                )}
-              >
-                <div className="w-10 h-10 rounded-xl bg-green-50 dark:bg-green-900/20 flex items-center justify-center group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
-                  <BookOpen className="w-5 h-5 text-green-600 dark:text-green-400" />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-gray-100">Study and learn</div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">Educational assistance</div>
-                </div>
-              </button>
-
-              {/* Web search */}
-              <button
-                onClick={() => onSkillSelected('research')}
-                className={cn(
-                  "w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200",
-                  "hover:bg-gray-50 dark:hover:bg-gray-700/50 group"
-                )}
-              >
-                <div className="w-10 h-10 rounded-xl bg-cyan-50 dark:bg-cyan-900/20 flex items-center justify-center group-hover:bg-cyan-100 dark:group-hover:bg-cyan-900/40 transition-colors">
-                  <Globe className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-gray-100">Web search</div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">Search the internet</div>
-                </div>
-              </button>
-
-              {/* More skills */}
-              <button
-                onClick={() => setShowSkillPicker(true)}
-                className={cn(
-                  "w-full flex items-center gap-4 p-3 rounded-xl transition-all duration-200",
-                  "hover:bg-gray-50 dark:hover:bg-gray-700/50 group"
-                )}
-              >
-                <div className="w-10 h-10 rounded-xl bg-gray-50 dark:bg-gray-700 flex items-center justify-center group-hover:bg-gray-100 dark:group-hover:bg-gray-600 transition-colors">
-                  <MoreHorizontal className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-gray-900 dark:text-gray-100">More</div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">Browse all skills</div>
-                </div>
-                <div className="text-gray-400">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </div>
-              </button>
+          ) : (
+            /* Inline skill picker */
+            <div className="pt-1">
+              <SkillPicker
+                onSelect={handleSkillSelect}
+                onClose={() => setShowSkillPicker(false)}
+                className="static w-full shadow-none border-0 rounded-xl bg-secondary/50"
+              />
             </div>
-          </div>
+          )}
         </div>
-      ) : (
-        <div
-          ref={menuRef}
-          className="fixed z-50"
-          style={menuPosition}
-        >
-          <SkillPicker
-            onSelect={handleSkillSelect}
-            onClose={() => {
-              setShowSkillPicker(false);
-              onClose();
-            }}
-          />
-        </div>
-      )}
+      </div>
     </>
   );
 };
 
-// Helper function to convert File to base64
+// Helper: File → base64 string (no data URL prefix)
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      // Remove data URL prefix (e.g., "data:application/pdf;base64,")
-      const base64 = result.split(',')[1];
-      resolve(base64);
+      resolve(result.split(',')[1]);
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);

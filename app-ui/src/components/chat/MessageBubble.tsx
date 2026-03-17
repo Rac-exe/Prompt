@@ -114,27 +114,66 @@ export const MessageBubble = ({
           ) : (
             /* ── Display mode ── */
             <div className="flex flex-col items-end gap-1.5">
-              {/* Attached files */}
+              {/* Attached files — thumbnails for images, pills for PDFs */}
               {message.attachedFiles && message.attachedFiles.length > 0 && (
-                <div className="flex flex-wrap gap-2 max-w-md">
-                  {message.attachedFiles.map((file, idx) => (
-                    <div
-                      key={idx}
-                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald/5 border border-emerald/15 text-xs"
-                    >
-                      {file.mimeType === 'application/pdf' ? (
-                        <FileText className="h-3.5 w-3.5 text-emerald" />
-                      ) : (
-                        <Image className="h-3.5 w-3.5 text-emerald" />
-                      )}
-                      <span className="max-w-[120px] truncate text-emerald font-medium">{file.name}</span>
-                      <span className="text-emerald/60">
-                        {(file.sizeBytes / 1024 / 1024).toFixed(1)}MB
-                      </span>
-                    </div>
-                  ))}
+                <div className="flex flex-wrap gap-2 max-w-md justify-end">
+                  {message.attachedFiles.map((file, idx) => {
+                    const isImage = file.mimeType.startsWith('image/');
+                    const hasBase64 = !!(file as any).base64;
+
+                    if (isImage && hasBase64) {
+                      // Real thumbnail from base64
+                      return (
+                        <div
+                          key={idx}
+                          className="relative group rounded-xl overflow-hidden border border-emerald/20 shadow-sm"
+                          style={{ width: 80, height: 80 }}
+                        >
+                          <img
+                            src={`data:${file.mimeType};base64,${(file as any).base64}`}
+                            alt={file.name}
+                            className="w-full h-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors rounded-xl" />
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="text-[9px] text-white truncate block">{file.name}</span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (isImage) {
+                      // From DB history — no base64, show icon pill
+                      return (
+                        <div
+                          key={idx}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald/8 border border-emerald/20 text-xs"
+                        >
+                          <Image className="h-3.5 w-3.5 text-emerald flex-shrink-0" />
+                          <span className="max-w-[100px] truncate text-emerald/90 font-medium">{file.name}</span>
+                        </div>
+                      );
+                    }
+
+                    // PDF pill
+                    return (
+                      <div
+                        key={idx}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald/8 border border-emerald/20 text-xs max-w-[200px]"
+                      >
+                        <FileText className="h-4 w-4 text-emerald flex-shrink-0" />
+                        <div className="min-w-0">
+                          <div className="truncate text-emerald font-medium">{file.name}</div>
+                          <div className="text-emerald/50 text-[10px]">
+                            {(file.sizeBytes / 1024).toFixed(0)} KB • PDF
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
+
               
               {/* Selected skill pill */}
               {message.selectedSkill && (

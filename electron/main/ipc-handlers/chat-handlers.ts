@@ -408,10 +408,14 @@ export function registerChatHandlers(
                 chat = await chatService.getChat(chatId);
             }
 
-            // Save user message
-            const userMessage = await chatService.addMessage(chatId, data.content, 'user');
+            // Save user message — store file metadata (no base64) so history can show pills
+            const filesMeta = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, sizeBytes: f.sizeBytes }));
+            const userMessage = await chatService.addMessage(chatId, data.content, 'user', undefined, {
+                attachedFiles: filesMeta.length > 0 ? filesMeta : undefined,
+                selectedSkill: data.forcedSkill || undefined,
+            });
 
-            // Send immediate confirmation
+            // Send immediate confirmation — include full AttachedFile (with base64) for in-session thumbnail
             if (appWindowManager) {
                 appWindowManager.send('message-sent', {
                     chatId,

@@ -304,6 +304,8 @@ const Index = () => {
           role: "user",
           content: data.userMessage.content,
           timestamp: new Date(data.userMessage.createdAt),
+          attachedFiles: data.userMessage.attachedFiles?.length > 0 ? data.userMessage.attachedFiles : undefined,
+          selectedSkill: data.userMessage.selectedSkill || undefined,
         };
         setMessages((prev) => {
           // Replace the last placeholder (id starts with 'edit-placeholder-' or 'retry-placeholder-')
@@ -435,6 +437,9 @@ const Index = () => {
             content: msg.content,
             timestamp: new Date(msg.created_at),
             feedback: msg.metadata?.feedback,
+            // Restore file metadata from DB (no base64 — just name/mimeType/sizeBytes for pills)
+            attachedFiles: msg.metadata?.attachedFiles?.length > 0 ? msg.metadata.attachedFiles : undefined,
+            selectedSkill: msg.metadata?.selectedSkill || undefined,
           }));
           setMessages(formattedMessages);
 
