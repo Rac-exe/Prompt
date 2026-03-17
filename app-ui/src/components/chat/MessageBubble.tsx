@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
+import type { AttachedFile } from "@/types/electron";
 
 export interface Message {
   id: string;
@@ -12,6 +13,8 @@ export interface Message {
   feedback?: {
     rating: "positive" | "negative";
   };
+  attachedFiles?: AttachedFile[];
+  selectedSkill?: string | null;
 }
 
 interface MessageBubbleProps {
@@ -111,6 +114,36 @@ export const MessageBubble = ({
           ) : (
             /* ── Display mode ── */
             <div className="flex flex-col items-end gap-1.5">
+              {/* Attached files */}
+              {message.attachedFiles && message.attachedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 max-w-md">
+                  {message.attachedFiles.map((file, idx) => (
+                    <div
+                      key={idx}
+                      className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald/5 border border-emerald/15 text-xs"
+                    >
+                      {file.mimeType === 'application/pdf' ? (
+                        <FileText className="h-3.5 w-3.5 text-emerald" />
+                      ) : (
+                        <Image className="h-3.5 w-3.5 text-emerald" />
+                      )}
+                      <span className="max-w-[120px] truncate text-emerald font-medium">{file.name}</span>
+                      <span className="text-emerald/60">
+                        {(file.sizeBytes / 1024 / 1024).toFixed(1)}MB
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Selected skill pill */}
+              {message.selectedSkill && (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
+                  <Sparkles className="h-3 w-3 text-emerald" />
+                  <span className="text-emerald font-medium capitalize">{message.selectedSkill}</span>
+                </div>
+              )}
+              
               <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
               </div>

@@ -141,7 +141,9 @@ export class PythonClient extends EventEmitter {
     messages: Array<{ role: string; content: string }> | null = null,
     onChunk: (chunk: string, accumulated: string) => void,
     mode: string = "fast",
-    customInstructions: string = ""
+    customInstructions: string = "",
+    attachedFiles: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }> = [],
+    forcedSkill: string | null = null
   ): Promise<string> {
     await this.ensureConnection();
 
@@ -245,7 +247,9 @@ export class PythonClient extends EventEmitter {
           skip_cache: skipCache,
           messages,
           mode,
-          custom_instructions: customInstructions
+          custom_instructions: customInstructions,
+          attached_files: attachedFiles,
+          forced_skill: forcedSkill
         }));
       } catch (error) {
         clearTimeout(timeoutId);

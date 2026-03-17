@@ -132,6 +132,11 @@ declare global {
         upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
         delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) => Promise<{ success: boolean; error?: string }>;
       };
+
+      // Skills API
+      skills: {
+        list: () => Promise<Array<{ name: string; label: string; description: string }>>;
+      };
     };
   }
 }
@@ -286,7 +291,13 @@ const electronAPI = {
     ipcRenderer.on('messages-loaded', handler);
     return () => ipcRenderer.removeListener('messages-loaded', handler);
   },
-  sendMessage: (data: { chatId: string | null; content: string; mode?: string }) => {
+  sendMessage: (data: { 
+    chatId: string | null; 
+    content: string; 
+    mode?: string;
+    attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
+    forcedSkill?: string | null;
+  }) => {
     ipcRenderer.send('app:send-message', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
@@ -459,6 +470,13 @@ const electronAPI = {
       ipcRenderer.invoke('memory:upsert', data),
     delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
       ipcRenderer.invoke('memory:delete', data),
+  },
+
+  // ============================================
+  // SKILLS API
+  // ============================================
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
   },
 };
 

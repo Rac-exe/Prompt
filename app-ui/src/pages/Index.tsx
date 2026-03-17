@@ -307,9 +307,14 @@ const Index = () => {
         };
         setMessages((prev) => {
           // Replace the last placeholder (id starts with 'edit-placeholder-' or 'retry-placeholder-')
-          const placeholderIdx = prev.findLastIndex(
-            (m) => m.id.startsWith("edit-placeholder-") || m.id.startsWith("retry-placeholder-")
-          );
+          // Using reverse iteration since findLastIndex is not available in older TypeScript targets
+          let placeholderIdx = -1;
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].id.startsWith("edit-placeholder-") || prev[i].id.startsWith("retry-placeholder-")) {
+              placeholderIdx = i;
+              break;
+            }
+          }
           if (placeholderIdx !== -1) {
             const next = [...prev];
             next[placeholderIdx] = userMessage;
@@ -510,11 +515,18 @@ const Index = () => {
     setOfflineChatUnavailable(false);
   };
 
-  const handleSendMessage = useCallback((content: string, mode: "fast" | "thinking" = "fast") => {
+  const handleSendMessage = useCallback((
+    content: string, 
+    mode: "fast" | "thinking" = "fast",
+    attachedFiles?: any[],
+    selectedSkill?: string | null
+  ) => {
     console.log('[Index] Sending message:', {
       chatId: selectedChatId,
       contentLength: content.length,
-      mode
+      mode,
+      filesCount: attachedFiles?.length || 0,
+      skill: selectedSkill || 'auto'
     });
 
     // Clear any previous send error
@@ -531,7 +543,9 @@ const Index = () => {
       window.electronAPI.sendMessage({
         chatId: selectedChatId,
         content: content,
-        mode
+        mode,
+        attachedFiles,
+        forcedSkill: selectedSkill
       });
 
       console.log('[Index] Message sent to Electron main process');

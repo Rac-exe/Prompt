@@ -453,8 +453,19 @@ async def optimize_stream(websocket: WebSocket):
             messages = data.get("messages", None)
             mode = data.get("mode", "fast")
             custom_instructions = data.get("custom_instructions", "")
+            attached_files = data.get("attached_files", [])
+            forced_skill = data.get("forced_skill", None)
             
-            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode})")
+            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'})")
+            
+            # Validate file count
+            if len(attached_files) > 5:
+                await websocket.send_json({
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": "Maximum 5 files allowed per message"
+                })
+                continue
             
             if not prompt_text or len(prompt_text) < 3:
                 await websocket.send_json({
@@ -480,7 +491,9 @@ async def optimize_stream(websocket: WebSocket):
                     provider="auto",
                     stream=True,
                     mode=mode,
-                    custom_instructions=custom_instructions
+                    custom_instructions=custom_instructions,
+                    attached_files=attached_files,
+                    forced_skill=forced_skill
                 )
                 
                 accumulated_text = ""
