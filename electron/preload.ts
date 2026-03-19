@@ -17,6 +17,8 @@ declare global {
         checkAuth: () => Promise<{ isAuthenticated: boolean }>;
         getCollections: () => Promise<any>;
         createCollection: (name: string, icon?: string) => Promise<any>;
+        getChats: () => Promise<Array<{ id: string; title: string }>>;
+        saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
         onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => void;
         onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
@@ -64,8 +66,7 @@ declare global {
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
-
-      // Streaming optimization (app window)
+      optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
       onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
       onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
@@ -168,6 +169,12 @@ const electronAPI = {
     },
     createCollection: (name: string, icon?: string) => {
       return ipcRenderer.invoke('overlay:create-collection', { name, icon });
+    },
+    getChats: () => {
+      return ipcRenderer.invoke('overlay:get-chats');
+    },
+    saveToChat: (chatId: string, content: string) => {
+      return ipcRenderer.invoke('overlay:save-to-chat', { chatId, content });
     },
     onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
       ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
@@ -312,6 +319,9 @@ const electronAPI = {
   },
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
+  },
+  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => {
+    ipcRenderer.send('overlay:open-with-context', data);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');

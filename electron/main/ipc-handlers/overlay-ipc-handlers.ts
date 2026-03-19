@@ -91,7 +91,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string }) => {
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -124,10 +124,29 @@ export function registerOverlayHandlers(
         }
       }
 
-      // We pass the current history before adding the new message
-      const historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
-      
-      // Add the user's new message to history
+      // ── Build history context ──────────────────────────────────────
+      // Priority: if a chatId is attached, use that chat's real messages
+      // as context (up to last 8). Otherwise fall back to in-memory overlay
+      // session history.
+      let historyContext: Array<{role: string; content: string}> | null = null;
+
+      if (data.chatId) {
+        try {
+          const chatMessages = await getChatService().getMessages(data.chatId);
+          // Take last 8 messages, exclude any that were already sent in this
+          // overlay session to avoid duplication.
+          const recent = chatMessages.slice(-8);
+          historyContext = recent.map((m: any) => ({ role: m.role, content: m.content }));
+          console.log(`[Overlay] Using chat context from chatId=${data.chatId} (${historyContext.length} msgs)`);
+        } catch (ctxErr) {
+          console.warn('[Overlay] Failed to load chat context, falling back to session history:', ctxErr);
+          historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
+        }
+      } else {
+        historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
+      }
+
+      // Add the user's new message to in-memory history (used when no chatId)
       inMemoryOverlayHistory.push({ role: 'user', content: data.text });
 
       const optimizedText = await pythonClient.optimizeStream(
@@ -313,6 +332,18 @@ export function registerOverlayHandlers(
   });
 
   // ============================================
+  // overlay:open-with-context — Open overlay pre-filled with text + chatId
+  // Called from the app window's "Optimize Again" button
+  // ============================================
+  ipcMain.on('overlay:open-with-context', (_event, data: { text: string; chatId: string; chatName: string }) => {
+    overlayManager.open(authState.isAuthenticated, undefined, {
+      text: data.text,
+      chatId: data.chatId,
+      chatName: data.chatName,
+    });
+  });
+
+  // ============================================
   // overlay:open-app — Show the main app window (for login)
   // ============================================
   ipcMain.on('overlay:open-app', () => {
@@ -435,6 +466,57 @@ export function registerOverlayHandlers(
     clipboard.writeText(data.text);
     console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
     return { success: false, fallback: 'clipboard' };
+  });
+
+  // ============================================
+  // overlay:get-chats — List user's chats for context picker
+  // ============================================
+  ipcMain.handle('overlay:get-chats', async () => {
+    if (!authState.isAuthenticated) throw new Error('Not authenticated');
+    try {
+      const chats = await getChatService().getChats();
+      // Return lightweight list: id + title only
+      return chats.map((c: any) => ({ id: c.id, title: c.title }));
+    } catch (err: any) {
+      const userId = authState.currentUserId;
+      if (userId && !networkMonitor.isOnline) {
+        const cached = localCache.getChats(userId);
+        return (cached as any[]).map((c: any) => ({ id: c.id, title: c.title }));
+      }
+      throw err;
+    }
+  });
+
+  // ============================================
+  // overlay:save-to-chat — Append optimized prompt as a message into a chat
+  // ============================================
+  ipcMain.handle('overlay:save-to-chat', async (_event, data: {
+    chatId: string;
+    content: string;
+  }) => {
+    if (!authState.isAuthenticated) throw new Error('Not authenticated');
+    if (!data?.chatId || !data?.content) throw new Error('chatId and content are required');
+
+    const svc = getChatService();
+    const msg = await svc.addMessage(
+      data.chatId,
+      data.content,
+      'assistant',
+      undefined,
+      { model: 'llama3.2', optimized: true, source_app: 'overlay', message_type: 'optimized_prompt' }
+    );
+
+    console.log('[Overlay] Saved optimized prompt to chat:', data.chatId, 'msgId:', msg.id);
+
+    // Notify the app window to reload messages for this chat
+    const userId = authState.currentUserId;
+    if (userId) {
+      const msgs = await svc.getMessages(data.chatId);
+      localCache.setMessages(userId, data.chatId, msgs as any);
+      appWindowManager.send('messages-loaded', { chatId: data.chatId, messages: msgs });
+    }
+
+    return { messageId: msg.id };
   });
 
   // ============================================

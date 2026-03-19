@@ -899,6 +899,153 @@
       gap: 8px;
     }
 
+    /* ======== CHAT CONTEXT PILL ======== */
+    .context-pill-row {
+      padding: 0 18px 8px;
+      flex-shrink: 0;
+    }
+
+    .context-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px 4px 8px;
+      border-radius: 20px;
+      background: hsl(var(--emerald) / 0.08);
+      border: 1px solid hsl(var(--emerald) / 0.25);
+      font-size: 11px;
+      font-weight: 500;
+      color: hsl(var(--emerald));
+      cursor: default;
+      max-width: 100%;
+    }
+
+    .context-pill-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+      max-width: 240px;
+    }
+
+    .context-pill-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: hsl(var(--emerald) / 0.6);
+      padding: 0;
+      line-height: 1;
+      font-size: 14px;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      transition: color 0.15s ease;
+      flex-shrink: 0;
+    }
+
+    .context-pill-remove:hover {
+      color: hsl(var(--emerald));
+    }
+
+    /* Attach context button (shown when no context selected) */
+    .btn-attach-context {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 26px;
+      padding: 0 10px;
+      border-radius: 8px;
+      border: 1px dashed hsl(var(--border));
+      background: transparent;
+      color: hsl(var(--muted-foreground) / 0.6);
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s ease;
+    }
+
+    .btn-attach-context:hover {
+      border-color: hsl(var(--emerald) / 0.4);
+      color: hsl(var(--emerald));
+      background: hsl(var(--emerald) / 0.05);
+    }
+
+    /* ======== CHAT PICKER MODAL ======== */
+    .chat-picker-panel {
+      width: 380px;
+      max-height: 420px;
+      border-radius: 16px;
+      background: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      animation: fade-slide-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .chat-picker-search {
+      width: 100%;
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 8px;
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s ease;
+    }
+
+    .chat-picker-search:focus {
+      border-color: hsl(var(--emerald) / 0.5);
+    }
+
+    .chat-picker-search::placeholder {
+      color: hsl(var(--muted-foreground) / 0.5);
+    }
+
+    .chat-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 8px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .chat-list-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      background: transparent;
+      border: 1.5px solid transparent;
+      transition: all 0.12s ease;
+      font-size: 12px;
+      color: hsl(var(--foreground));
+      width: 100%;
+      text-align: left;
+      font-family: inherit;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chat-list-item:hover {
+      background: hsl(var(--muted));
+    }
+
+    .chat-list-item.selected {
+      background: hsl(var(--emerald) / 0.08);
+      border-color: hsl(var(--emerald) / 0.4);
+    }
+
     /* ======== AUTH VIEW ======== */
     .auth-icon-ring {
       width: 64px;
@@ -1056,6 +1203,26 @@
 
         <!-- INPUT SECTION (Claude-style: textarea + bottom toolbar inside one box) -->
         <div class="input-section">
+          <!-- Context pill row — shown above the input box -->
+          <div class="context-pill-row" id="context-pill-row" style="display: none;">
+            <!-- Filled when a chat is attached -->
+            <div id="context-pill" style="display: none;">
+              <span class="context-pill">
+                <svg style="width: 11px; height: 11px; flex-shrink: 0;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                </svg>
+                <span class="context-pill-name" id="context-chat-name">Chat name</span>
+                <button class="context-pill-remove" id="btn-remove-context" title="Remove context">✕</button>
+              </span>
+            </div>
+            <!-- Button to attach a chat (shown when none is selected) -->
+            <button class="btn-attach-context" id="btn-attach-context">
+              <svg style="width: 11px; height: 11px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+              </svg>
+              Attach Chat Context
+            </button>
+          </div>
           <div class="chat-input-box">
             <!-- Textarea -->
             <textarea id="prompt-input" rows="2"
@@ -1138,6 +1305,51 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- ===== CHAT CONTEXT PICKER MODAL ===== -->
+    <div id="chat-picker-backdrop" class="modal-backdrop">
+      <div class="chat-picker-panel">
+        <div class="modal-header">
+          <span style="font-size: 14px; font-weight: 700; color: hsl(var(--foreground)); letter-spacing: -0.01em;">Attach Chat Context</span>
+          <button id="chat-picker-close" class="btn-ghost"
+            style="width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+            <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="divider" style="margin: 0 14px;"></div>
+
+        <!-- Search -->
+        <div style="padding: 10px 14px 4px;">
+          <input id="chat-search-input" class="chat-picker-search" type="text" placeholder="Search chats…" autocomplete="off">
+        </div>
+
+        <!-- Chat list -->
+        <div id="chat-list" class="chat-list">
+          <div style="padding: 24px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">
+            Loading chats...
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="divider" style="margin: 0 14px;"></div>
+        <div class="modal-footer">
+          <button id="chat-picker-cancel" class="btn-secondary"
+            style="flex: 1; height: 36px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center;">
+            Cancel
+          </button>
+          <button id="chat-picker-confirm" class="btn-primary" disabled
+            style="flex: 1; height: 36px; border-radius: 10px; font-size: 12px; display: flex; align-items: center; justify-content: center; gap: 6px;">
+            <svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+            Attach
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- ===== COLLECTION PICKER MODAL ===== -->
@@ -1226,6 +1438,12 @@
     let selectedCollectionId = null;
     let collectionsCache = [];
     const savedMessageIds = new Set();   // Track which messages have been saved
+
+    // Chat context state
+    let selectedChatId = null;           // chatId of the attached chat context
+    let selectedChatName = '';           // display name for the pill
+    let chatsCache = [];                 // cached list for the picker
+    const savedToChatIds = new Set();    // track messages already saved to chat
 
     // ==========================================
     // DOM REFS
@@ -1453,6 +1671,7 @@
       const copyIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>';
       const replaceIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>';
       const saveIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>';
+      const chatIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>';
       const checkIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
 
       let saveBtn;
@@ -1462,10 +1681,16 @@
         saveBtn = '<button class="btn-msg-action btn-msg-save" data-msg-id="' + msgId + '">' + saveIcon + ' Save</button>';
       }
 
+      // "Save to Chat" button — only shown when a chat context is attached
+      const saveToChatBtn = selectedChatId
+        ? '<button class="btn-msg-action btn-msg-save-to-chat" data-msg-id="' + msgId + '">' + chatIcon + ' Save to Chat</button>'
+        : '';
+
       return (
         '<button class="btn-msg-action btn-msg-copy" data-msg-id="' + msgId + '">' + copyIcon + ' Copy</button>' +
         '<button class="btn-msg-action btn-msg-replace" data-msg-id="' + msgId + '">' + replaceIcon + ' Replace</button>' +
-        saveBtn
+        saveBtn +
+        saveToChatBtn
       );
     }
 
@@ -1539,10 +1764,16 @@
     function clearSession() {
       messages = [];
       savedMessageIds.clear();
+      savedToChatIds.clear();
       currentOptimizedPrompt = '';
       isOptimizing = false;
       streamingMsgEl = null;
       streamingContent = '';
+
+      // Reset chat context
+      selectedChatId = null;
+      selectedChatName = '';
+      updateContextPill();
 
       messagesContainer.innerHTML = '';
       updateEmptyState();
@@ -1587,7 +1818,7 @@
 
       // Send to backend
       if (window.electronAPI?.overlay?.optimize) {
-        window.electronAPI.overlay.optimize({ text, isRegenerate: false, mode: currentMode });
+        window.electronAPI.overlay.optimize({ text, isRegenerate: false, mode: currentMode, chatId: selectedChatId || undefined });
       }
     }
 
@@ -1721,6 +1952,7 @@
       const copyBtn = e.target.closest('.btn-msg-copy');
       const replaceBtn = e.target.closest('.btn-msg-replace');
       const saveBtn = e.target.closest('.btn-msg-save');
+      const saveToChatBtn = e.target.closest('.btn-msg-save-to-chat');
       const editBtn = e.target.closest('.btn-user-edit');
       const retryBtn = e.target.closest('.btn-user-retry');
       const cancelEditBtn = e.target.closest('.btn-edit-cancel');
@@ -1732,6 +1964,8 @@
         handleReplaceMessage(replaceBtn.dataset.msgId);
       } else if (saveBtn) {
         handleSaveMessage(saveBtn.dataset.msgId);
+      } else if (saveToChatBtn) {
+        handleSaveToChatMessage(saveToChatBtn.dataset.msgId);
       } else if (editBtn && !isOptimizing) {
         openEditMode(editBtn.dataset.msgId);
       } else if (retryBtn && !isOptimizing) {
@@ -1848,7 +2082,7 @@
       showLoading();
 
       if (window.electronAPI?.overlay?.optimize) {
-        window.electronAPI.overlay.optimize({ text: content, isRegenerate: false, mode: currentMode });
+        window.electronAPI.overlay.optimize({ text: content, isRegenerate: false, mode: currentMode, chatId: selectedChatId || undefined });
       }
     }
 
@@ -2014,6 +2248,178 @@
     });
 
     // ==========================================
+    // CHAT CONTEXT — STATE & UI
+    // ==========================================
+    const contextPillRow = document.getElementById('context-pill-row');
+    const contextPill = document.getElementById('context-pill');
+    const contextChatName = document.getElementById('context-chat-name');
+    const btnAttachContext = document.getElementById('btn-attach-context');
+    const btnRemoveContext = document.getElementById('btn-remove-context');
+    const chatPickerBackdrop = document.getElementById('chat-picker-backdrop');
+    const chatPickerClose = document.getElementById('chat-picker-close');
+    const chatPickerCancel = document.getElementById('chat-picker-cancel');
+    const chatPickerConfirm = document.getElementById('chat-picker-confirm');
+    const chatSearchInput = document.getElementById('chat-search-input');
+    const chatListEl = document.getElementById('chat-list');
+
+    let chatPickerSelectedId = null;
+    let chatPickerSelectedName = '';
+
+    function updateContextPill() {
+      // Show the pill row only when authenticated
+      if (!isAuthenticated) {
+        contextPillRow.style.display = 'none';
+        return;
+      }
+      contextPillRow.style.display = '';
+
+      if (selectedChatId) {
+        contextPill.style.display = '';
+        btnAttachContext.style.display = 'none';
+        contextChatName.textContent = selectedChatName;
+      } else {
+        contextPill.style.display = 'none';
+        btnAttachContext.style.display = '';
+      }
+    }
+
+    function openChatPicker() {
+      chatPickerSelectedId = selectedChatId;
+      chatPickerSelectedName = selectedChatName;
+      chatPickerConfirm.disabled = !chatPickerSelectedId;
+      chatPickerBackdrop.classList.add('open');
+      chatSearchInput.value = '';
+
+      chatListEl.innerHTML = '<div style="padding: 24px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">Loading...</div>';
+
+      const load = window.electronAPI?.overlay?.getChats
+        ? window.electronAPI.overlay.getChats()
+        : Promise.resolve([]);
+
+      load.then((chats) => {
+        chatsCache = chats || [];
+        renderChatList(chatsCache);
+        // Focus search after paint
+        requestAnimationFrame(() => chatSearchInput.focus());
+      }).catch(() => {
+        chatListEl.innerHTML = '<div style="padding: 24px; text-align: center; color: hsl(0 72% 51%); font-size: 12px;">Failed to load chats</div>';
+      });
+    }
+
+    function closeChatPicker() {
+      chatPickerBackdrop.classList.remove('open');
+      chatPickerSelectedId = null;
+      chatPickerSelectedName = '';
+    }
+
+    function renderChatList(chats) {
+      if (!chats || chats.length === 0) {
+        chatListEl.innerHTML = '<div style="padding: 20px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">No chats found.</div>';
+        return;
+      }
+
+      chatListEl.innerHTML = '';
+      chats.forEach((chat) => {
+        const btn = document.createElement('button');
+        btn.className = 'chat-list-item';
+        if (chat.id === chatPickerSelectedId) btn.classList.add('selected');
+        btn.innerHTML =
+          '<svg style="width: 13px; height: 13px; flex-shrink: 0; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>' +
+          '</svg>' +
+          '<span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(chat.title) + '</span>';
+
+        btn.addEventListener('click', () => {
+          chatPickerSelectedId = chat.id;
+          chatPickerSelectedName = chat.title;
+          chatListEl.querySelectorAll('.chat-list-item').forEach(el => el.classList.remove('selected'));
+          btn.classList.add('selected');
+          chatPickerConfirm.disabled = false;
+        });
+        chatListEl.appendChild(btn);
+      });
+    }
+
+    // Live search filter
+    chatSearchInput.addEventListener('input', () => {
+      const q = chatSearchInput.value.toLowerCase().trim();
+      const filtered = q
+        ? chatsCache.filter(c => c.title.toLowerCase().includes(q))
+        : chatsCache;
+      renderChatList(filtered);
+    });
+
+    btnAttachContext.addEventListener('click', () => openChatPicker());
+
+    btnRemoveContext.addEventListener('click', () => {
+      selectedChatId = null;
+      selectedChatName = '';
+      updateContextPill();
+      // Rebuild action buttons for existing messages to remove Save to Chat btns
+      messages.filter(m => m.role === 'assistant').forEach(m => {
+        const actionsEl = document.getElementById('msg-actions-' + m.id);
+        if (actionsEl) actionsEl.innerHTML = buildActionButtons(m.id, savedMessageIds.has(m.id));
+      });
+    });
+
+    chatPickerClose.addEventListener('click', closeChatPicker);
+    chatPickerCancel.addEventListener('click', closeChatPicker);
+    chatPickerBackdrop.addEventListener('click', (e) => {
+      if (e.target === chatPickerBackdrop) closeChatPicker();
+    });
+
+    chatPickerConfirm.addEventListener('click', () => {
+      if (!chatPickerSelectedId) return;
+      selectedChatId = chatPickerSelectedId;
+      selectedChatName = chatPickerSelectedName;
+      updateContextPill();
+      closeChatPicker();
+      // Rebuild action buttons for existing messages to add Save to Chat btns
+      messages.filter(m => m.role === 'assistant').forEach(m => {
+        const actionsEl = document.getElementById('msg-actions-' + m.id);
+        if (actionsEl) actionsEl.innerHTML = buildActionButtons(m.id, savedMessageIds.has(m.id));
+      });
+    });
+
+    // ── Save to Chat handler ───────────────────────────────────────
+    async function handleSaveToChatMessage(msgId) {
+      if (!selectedChatId) { openChatPicker(); return; }
+      if (savedToChatIds.has(msgId)) return;
+
+      const content = getMessageContent(msgId);
+      if (!content) return;
+
+      const btn = messagesContainer.querySelector('.btn-msg-save-to-chat[data-msg-id="' + msgId + '"]');
+      const chatIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>';
+      const checkIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+      const spinnerSvg = '<svg style="width: 12px; height: 12px;" fill="none" viewBox="0 0 24 24" class="animate-spin"><circle style="opacity: 0.25;" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path style="opacity: 0.8;" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>';
+
+      if (btn) { btn.disabled = true; btn.innerHTML = spinnerSvg + ' Saving…'; }
+
+      try {
+        await window.electronAPI.overlay.saveToChat(selectedChatId, content);
+        savedToChatIds.add(msgId);
+        if (btn) {
+          btn.innerHTML = checkIcon + ' Saved to Chat';
+          btn.classList.add('action-success');
+        }
+      } catch (err) {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = chatIcon + ' Save to Chat';
+          showError('Failed to save to chat. Please try again.');
+        }
+      }
+    }
+
+    // ── Prefill overlay from app window (Optimize Again flow) ────────
+    // The app window can send { text, chatId, chatName } to pre-fill the overlay
+    if (window.electronAPI?.overlay?.onOpened) {
+      // Extend the existing onOpened handler by also reading prefill data
+      // We'll patch this after the original handler is registered (see IPC LISTENERS)
+    }
+
+    // ==========================================
     // MODE DROPDOWN (Claude-style)
     // ==========================================
     function updateModeUI() {
@@ -2177,6 +2583,19 @@
         if (isAuthenticated) {
           showView(viewMain);
           updateEmptyState();
+          updateContextPill();
+
+          // Handle prefill from "Optimize Again" (app window → overlay)
+          if (data.prefill) {
+            promptInput.value = data.prefill.text || '';
+            autoResizeTextarea();
+            updateSendButton();
+          }
+          if (data.prefill?.chatId) {
+            selectedChatId = data.prefill.chatId;
+            selectedChatName = data.prefill.chatName || 'Chat';
+            updateContextPill();
+          }
 
           // Re-fetch settings every time the overlay opens so theme/font
           // stay in sync with whatever the user set in the app.
@@ -2189,6 +2608,9 @@
           requestAnimationFrame(() => {
             setTimeout(() => {
               promptInput.focus();
+              if (data.prefill?.text) {
+                promptInput.selectionStart = promptInput.selectionEnd = promptInput.value.length;
+              }
               scrollToBottom();
             }, 80);
           });

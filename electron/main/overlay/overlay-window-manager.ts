@@ -94,21 +94,21 @@ export class OverlayWindowManager {
    *
    * @param isAuthenticated - Current auth state to send to renderer.
    * @param anchorHwnd      - Optional: HWND of the window that triggered the open.
-   *                          When provided, forceFocusWindow() steals focus from it
-   *                          so the overlay reliably receives keyboard input even
-   *                          during fast typing (bypasses Electron's async focus queue).
+   * @param prefill         - Optional: pre-fill the input with text + attach a chat context.
    */
-  open(isAuthenticated: boolean, anchorHwnd?: number) {
+  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }) {
+    const openedPayload = { isAuthenticated, prefill: prefill || null };
+
     if (!this.window || this.window.isDestroyed()) {
       this.createWindow();
 
       // First load: send state after HTML finishes loading
       this.window!.webContents.once('did-finish-load', () => {
-        this.send('overlay:opened', { isAuthenticated });
+        this.send('overlay:opened', openedPayload);
       });
     } else {
       // Subsequent opens: send immediately since content is already loaded
-      this.send('overlay:opened', { isAuthenticated });
+      this.send('overlay:opened', openedPayload);
     }
 
     // Position near cursor (like Raycast / Cursor inline assistant)
