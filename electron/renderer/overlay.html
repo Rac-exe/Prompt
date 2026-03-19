@@ -1452,12 +1452,6 @@
     let streamingMsgEl = null;           // Reference to the DOM element being streamed
     let streamingContent = '';           // Accumulated content during streaming
 
-    // Save flow
-    let saveTargetContent = '';          // Content of the message being saved
-    let selectedCollectionId = null;
-    let collectionsCache = [];
-    const savedMessageIds = new Set();   // Track which messages have been saved
-
     // Chat context state
     let selectedChatId = null;           // chatId of the attached chat context
     let selectedChatName = '';           // display name for the pill
@@ -1491,16 +1485,7 @@
     const modeIconFast = document.getElementById('mode-icon-fast');
     const modeIconThinking = document.getElementById('mode-icon-thinking');
 
-    // Modal refs
-    const modalBackdrop = document.getElementById('modal-backdrop');
-    const modalClose = document.getElementById('modal-close');
-    const modalCancel = document.getElementById('modal-cancel');
-    const modalConfirm = document.getElementById('modal-confirm');
-    const modalConfirmText = document.getElementById('modal-confirm-text');
-    const collectionListEl = document.getElementById('collection-list');
-    const newCollectionInput = document.getElementById('new-collection-input');
-    const btnAddCollection = document.getElementById('btn-add-collection');
-    const saveTitleInput = document.getElementById('save-title-input');
+    // Modal refs — collection picker HTML still present in DOM but no longer used
     const offlineBanner = document.getElementById('offline-banner');
 
     // ==========================================
@@ -1706,8 +1691,6 @@
       el.className = 'chat-message';
       el.id = 'msg-el-' + msg.id;
 
-      const isSaved = savedMessageIds.has(msg.id);
-
       el.innerHTML =
         '<div class="message-label">' +
           '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
@@ -1719,29 +1702,26 @@
           '<div class="message-text" id="msg-text-' + msg.id + '">' + escapeHtml(msg.content) + '</div>' +
         '</div>' +
         '<div class="message-actions" id="msg-actions-' + msg.id + '">' +
-          buildActionButtons(msg.id, isSaved) +
+          buildActionButtons(msg.id, msg.autoSavedToChat) +
         '</div>';
 
       messagesContainer.appendChild(el);
     }
 
-    function buildActionButtons(msgId, isSaved) {
+    function buildActionButtons(msgId, wasAutoSavedToChat) {
       const copyIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>';
       const replaceIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>';
-      const saveIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>';
-      const checkIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+      const chatIcon = '<svg style="width: 11px; height: 11px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>';
 
-      let saveBtn;
-      if (isSaved) {
-        saveBtn = '<button class="btn-msg-action action-success" disabled>' + checkIcon + ' Saved</button>';
-      } else {
-        saveBtn = '<button class="btn-msg-action btn-msg-save" data-msg-id="' + msgId + '">' + saveIcon + ' Save</button>';
-      }
+      // Auto-saved-to-chat badge (non-interactive, shown when chatId context was active)
+      const chatBadge = wasAutoSavedToChat
+        ? '<span class="btn-msg-action action-success" style="pointer-events:none;cursor:default;">' + chatIcon + ' Saved to chat</span>'
+        : '';
 
       return (
         '<button class="btn-msg-action btn-msg-copy" data-msg-id="' + msgId + '">' + copyIcon + ' Copy</button>' +
         '<button class="btn-msg-action btn-msg-replace" data-msg-id="' + msgId + '">' + replaceIcon + ' Replace</button>' +
-        saveBtn
+        chatBadge
       );
     }
 
@@ -1763,7 +1743,7 @@
       return el;
     }
 
-    function finalizeStreamingMessage(msgId, content) {
+    function finalizeStreamingMessage(msgId, content, autoSavedToChat) {
       if (!streamingMsgEl) return;
 
       // Update the element ID and text ID
@@ -1778,7 +1758,7 @@
       const actionsDiv = document.createElement('div');
       actionsDiv.className = 'message-actions';
       actionsDiv.id = 'msg-actions-' + msgId;
-      actionsDiv.innerHTML = buildActionButtons(msgId, false);
+      actionsDiv.innerHTML = buildActionButtons(msgId, autoSavedToChat);
       streamingMsgEl.appendChild(actionsDiv);
     }
 
@@ -1794,8 +1774,8 @@
       return msg;
     }
 
-    function addAssistantMessage(content) {
-      const msg = { id: generateId(), role: 'assistant', content, timestamp: Date.now() };
+    function addAssistantMessage(content, autoSavedToChat) {
+      const msg = { id: generateId(), role: 'assistant', content, timestamp: Date.now(), autoSavedToChat: !!autoSavedToChat };
       messages.push(msg);
       currentOptimizedPrompt = content;
       updateEmptyState();
@@ -1814,7 +1794,6 @@
     // ==========================================
     function clearSession() {
       messages = [];
-      savedMessageIds.clear();
       currentOptimizedPrompt = '';
       isOptimizing = false;
       streamingMsgEl = null;
@@ -1886,8 +1865,9 @@
       // Finalise whatever has been streamed so far as a real message
       if (streamingMsgEl && streamingContent) {
         const msgId = generateId();
-        finalizeStreamingMessage(msgId, streamingContent);
-        messages.push({ id: msgId, role: 'assistant', content: streamingContent, timestamp: Date.now() });
+        const autoSavedToChat = !!selectedChatId;
+        finalizeStreamingMessage(msgId, streamingContent, autoSavedToChat);
+        messages.push({ id: msgId, role: 'assistant', content: streamingContent, timestamp: Date.now(), autoSavedToChat });
         currentOptimizedPrompt = streamingContent;
         streamingMsgEl = null;
         streamingContent = '';
@@ -1986,22 +1966,10 @@
       }
     }
 
-    function handleSaveMessage(msgId) {
-      const content = getMessageContent(msgId);
-      if (!content || savedMessageIds.has(msgId)) return;
-
-      saveTargetContent = content;
-      saveTargetMsgId = msgId;
-      openCollectionPicker();
-    }
-
-    let saveTargetMsgId = null;
-
     // Event delegation for message actions
     messagesContainer.addEventListener('click', (e) => {
       const copyBtn = e.target.closest('.btn-msg-copy');
       const replaceBtn = e.target.closest('.btn-msg-replace');
-      const saveBtn = e.target.closest('.btn-msg-save');
       const editBtn = e.target.closest('.btn-user-edit');
       const retryBtn = e.target.closest('.btn-user-retry');
       const cancelEditBtn = e.target.closest('.btn-edit-cancel');
@@ -2011,8 +1979,6 @@
         handleCopyMessage(copyBtn.dataset.msgId);
       } else if (replaceBtn) {
         handleReplaceMessage(replaceBtn.dataset.msgId);
-      } else if (saveBtn) {
-        handleSaveMessage(saveBtn.dataset.msgId);
       } else if (editBtn && !isOptimizing) {
         openEditMode(editBtn.dataset.msgId);
       } else if (retryBtn && !isOptimizing) {
@@ -2145,152 +2111,6 @@
           const msgId = e.target.id.replace('user-edit-ta-', '');
           closeEditMode(msgId);
         }
-      }
-    });
-
-    // ==========================================
-    // COLLECTION PICKER MODAL
-    // ==========================================
-
-    function updateConfirmState() {
-      modalConfirm.disabled = !(selectedCollectionId && saveTitleInput.value.trim());
-    }
-
-    saveTitleInput.addEventListener('input', updateConfirmState);
-
-    async function openCollectionPicker() {
-      selectedCollectionId = null;
-      modalConfirm.disabled = true;
-      modalBackdrop.classList.add('open');
-
-      // Pre-fill title from the first user message
-      const firstUserMsg = messages.find(m => m.role === 'user');
-      const autoTitle = firstUserMsg ? firstUserMsg.content.substring(0, 80).trim() : 'Optimized Prompt';
-      saveTitleInput.value = autoTitle;
-
-      // Render loading
-      collectionListEl.innerHTML = '<div style="padding: 24px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">Loading collections...</div>';
-
-      try {
-        collectionsCache = await window.electronAPI.overlay.getCollections();
-        renderCollections(collectionsCache);
-      } catch (err) {
-        collectionListEl.innerHTML = '<div style="padding: 24px; text-align: center; color: hsl(0 72% 51%); font-size: 12px;">Failed to load collections</div>';
-      }
-    }
-
-    function closeCollectionPicker() {
-      modalBackdrop.classList.remove('open');
-      selectedCollectionId = null;
-      newCollectionInput.value = '';
-      saveTitleInput.value = '';
-      btnAddCollection.disabled = true;
-      modalConfirmText.textContent = 'Save to Collection';
-    }
-
-    function renderCollections(collections) {
-      if (!collections || collections.length === 0) {
-        collectionListEl.innerHTML = '<div style="padding: 20px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 12px;">No collections yet. Create one below.</div>';
-        return;
-      }
-
-      collectionListEl.innerHTML = '';
-      collections.forEach((col) => {
-        const btn = document.createElement('button');
-        btn.className = 'collection-item';
-        if (col.id === selectedCollectionId) btn.classList.add('selected');
-        btn.innerHTML = '<svg style="width: 14px; height: 14px; flex-shrink: 0; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>'
-          + '<span class="collection-name">' + escapeHtml(col.name) + '</span>';
-        btn.addEventListener('click', () => {
-          selectedCollectionId = col.id;
-          collectionListEl.querySelectorAll('.collection-item').forEach(el => el.classList.remove('selected'));
-          btn.classList.add('selected');
-          updateConfirmState();
-        });
-        collectionListEl.appendChild(btn);
-      });
-    }
-
-    // Create new collection inline
-    newCollectionInput.addEventListener('input', () => {
-      btnAddCollection.disabled = !newCollectionInput.value.trim();
-    });
-
-    newCollectionInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && newCollectionInput.value.trim()) {
-        createNewCollection();
-      }
-    });
-
-    btnAddCollection.addEventListener('click', () => {
-      if (newCollectionInput.value.trim()) createNewCollection();
-    });
-
-    async function createNewCollection() {
-      const name = newCollectionInput.value.trim();
-      if (!name) return;
-
-      btnAddCollection.disabled = true;
-      btnAddCollection.textContent = '...';
-
-      try {
-        const newCol = await window.electronAPI.overlay.createCollection(name);
-        collectionsCache.unshift(newCol);
-        selectedCollectionId = newCol.id;
-        renderCollections(collectionsCache);
-        updateConfirmState();
-        newCollectionInput.value = '';
-        btnAddCollection.textContent = 'Create';
-      } catch (err) {
-        btnAddCollection.textContent = 'Error';
-        setTimeout(() => { btnAddCollection.textContent = 'Create'; btnAddCollection.disabled = false; }, 1500);
-      }
-    }
-
-    // Modal buttons
-    modalClose.addEventListener('click', closeCollectionPicker);
-    modalCancel.addEventListener('click', closeCollectionPicker);
-
-    modalBackdrop.addEventListener('click', (e) => {
-      if (e.target === modalBackdrop) closeCollectionPicker();
-    });
-
-    modalConfirm.addEventListener('click', async () => {
-      const title = saveTitleInput.value.trim();
-      if (!selectedCollectionId || !saveTargetContent || !title) return;
-
-      modalConfirm.disabled = true;
-      modalConfirmText.textContent = 'Saving...';
-
-      try {
-        await window.electronAPI.overlay.save({
-          title: title,
-          content: saveTargetContent,
-          collectionId: selectedCollectionId,
-        });
-
-        closeCollectionPicker();
-
-        // Mark the message as saved
-        if (saveTargetMsgId) {
-          savedMessageIds.add(saveTargetMsgId);
-
-          // Update the Save button on the message
-          const actionsEl = document.getElementById('msg-actions-' + saveTargetMsgId);
-          const saveBtn = actionsEl?.querySelector('.btn-msg-save[data-msg-id="' + saveTargetMsgId + '"]');
-          if (saveBtn) {
-            saveBtn.innerHTML = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Saved';
-            saveBtn.classList.add('action-success');
-            saveBtn.disabled = true;
-          }
-        }
-
-        saveTargetMsgId = null;
-        saveTargetContent = '';
-      } catch (err) {
-        modalConfirmText.textContent = 'Failed — Retry';
-        modalConfirm.disabled = false;
-        setTimeout(() => { modalConfirmText.textContent = 'Save to Collection'; }, 2000);
       }
     });
 
@@ -2500,9 +2320,7 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        if (modalBackdrop.classList.contains('open')) {
-          closeCollectionPicker();
-        } else if (window.electronAPI?.overlay?.close) {
+        if (window.electronAPI?.overlay?.close) {
           window.electronAPI.overlay.close();
         }
       }
@@ -2683,10 +2501,12 @@
         currentOptimizedPrompt = optimized;
 
         const msgId = generateId();
+        // Was this optimization auto-saved into a chat?
+        const autoSavedToChat = !!selectedChatId;
 
         if (streamingMsgEl) {
           // Finalize the streaming element
-          finalizeStreamingMessage(msgId, optimized);
+          finalizeStreamingMessage(msgId, optimized, autoSavedToChat);
           streamingMsgEl = null;
           streamingContent = '';
         } else {
@@ -2706,13 +2526,13 @@
               '<div class="message-text" id="msg-text-' + msgId + '">' + escapeHtml(optimized) + '</div>' +
             '</div>' +
             '<div class="message-actions" id="msg-actions-' + msgId + '">' +
-              buildActionButtons(msgId, false) +
+              buildActionButtons(msgId, autoSavedToChat) +
             '</div>';
           messagesContainer.appendChild(el);
         }
 
         // Add to messages array
-        messages.push({ id: msgId, role: 'assistant', content: optimized, timestamp: Date.now() });
+        messages.push({ id: msgId, role: 'assistant', content: optimized, timestamp: Date.now(), autoSavedToChat });
 
         enableInput();
         scrollToBottom();

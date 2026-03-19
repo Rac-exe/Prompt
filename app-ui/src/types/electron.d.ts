@@ -76,6 +76,7 @@ export interface ElectronAPI {
   onChatCreated: (callback: (data: { chat: any }) => void) => void;
   loadMessages: (chatId: string) => void;
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
+  onOverlayMessagesAppended: (callback: (data: { chatId: string; messages: any[] }) => void) => (() => void);
   sendMessage: (data: { 
     chatId: string | null; 
     content: string; 

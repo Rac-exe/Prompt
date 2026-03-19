@@ -46,6 +46,10 @@ const Index = () => {
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  // Ref always holds the latest selectedChatId — used in long-lived IPC listeners
+  // to avoid stale closures when the user switches chats.
+  const selectedChatIdRef = useRef<string | null>(null);
+  useEffect(() => { selectedChatIdRef.current = selectedChatId; }, [selectedChatId]);
   const [recentChats, setRecentChats] = useState<any[]>([]);
 
   // Shared library token (set when opening a share link)
@@ -456,6 +460,45 @@ const Index = () => {
       return cleanup; // Cleanup listener on unmount or dependency change
     }
   }, [selectedChatId, isOnline]);
+
+  // ── Real-time overlay append ──────────────────────────────────────────────
+  // When the overlay optimizes with a chat context, the backend saves the new
+  // user + assistant messages into that chat and immediately fires
+  // 'overlay:messages-appended' so we can append them without a full reload.
+  //
+  // Registered ONCE (empty deps) — reads selectedChatIdRef.current so it
+  // always has the latest chat without stale-closure issues when the user
+  // starts a new overlay session with a different chat context attached.
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onOverlayMessagesAppended) return;
+
+    const handleOverlayAppend = (data: { chatId: string; messages: any[] }) => {
+      // Use the ref so this handler is never stale, regardless of when it fires
+      if (data.chatId !== selectedChatIdRef.current) return;
+
+      console.log('[Index] overlay:messages-appended for current chat, appending', data.messages.length, 'msgs');
+
+      const newMessages: Message[] = data.messages.map((msg: any) => ({
+        id: msg.id,
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+        timestamp: new Date(msg.created_at),
+        feedback: msg.metadata?.feedback,
+      }));
+
+      setMessages(prev => {
+        // Deduplicate: skip any message whose id already exists
+        const existingIds = new Set(prev.map(m => m.id));
+        const toAdd = newMessages.filter(m => !existingIds.has(m.id));
+        if (toAdd.length === 0) return prev;
+        return [...prev, ...toAdd];
+      });
+    };
+
+    const cleanup = window.electronAPI.onOverlayMessagesAppended(handleOverlayAppend);
+    return cleanup;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — handler reads selectedChatIdRef, not selectedChatId
 
   // Generate history from chat sessions (sorted by most recent)
   const history = useMemo((): HistoryItem[] => {

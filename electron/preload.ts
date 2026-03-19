@@ -56,6 +56,7 @@ declare global {
       onChatCreated: (callback: (data: { chat: any }) => void) => void;
       loadMessages: (chatId: string) => void;
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
+      onOverlayMessagesAppended: (callback: (data: { chatId: string; messages: any[] }) => void) => (() => void);
       deleteChat: (chatId: string) => void;
       onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
       onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
@@ -295,6 +296,11 @@ const electronAPI = {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('messages-loaded', handler);
     return () => ipcRenderer.removeListener('messages-loaded', handler);
+  },
+  onOverlayMessagesAppended: (callback: (data: { chatId: string; messages: any[] }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('overlay:messages-appended', handler);
+    return () => ipcRenderer.removeListener('overlay:messages-appended', handler);
   },
   sendMessage: (data: { 
     chatId: string | null; 

@@ -116,6 +116,22 @@ export class ChatService {
   }
 
   /**
+   * Bump a chat's updated_at to now so it floats to the top of the recents list.
+   */
+  async touchChat(chatId: string): Promise<void> {
+    const { data: userData, error: authError } = await this.client.auth.getUser();
+    if (authError || !userData.user) throw new Error('Not authenticated');
+
+    const { error } = await this.client
+      .from('chats')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', chatId)
+      .eq('user_id', userData.user.id);
+
+    if (error) throw error;
+  }
+
+  /**
    * Update chat title
    */
   async updateChatTitle(chatId: string, title: string): Promise<void> {

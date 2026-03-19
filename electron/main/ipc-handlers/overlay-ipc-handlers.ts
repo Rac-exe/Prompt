@@ -197,7 +197,7 @@ export function registerOverlayHandlers(
         optimized: optimizedText,
       });
 
-      // Save to DB (fire-and-forget, non-blocking)
+        // Save to DB (fire-and-forget, non-blocking)
       if (authState.isAuthenticated) {
         // 1. Save optimization record
         let optimizationId: string | undefined;
@@ -226,8 +226,8 @@ export function registerOverlayHandlers(
               // ── Context chat path: append into the selected chat ──
               console.log('[Overlay] Appending to existing chat:', targetChatId);
 
-              await svc.addMessage(targetChatId, data.text, 'user');
-              await svc.addMessage(
+              const userMsg = await svc.addMessage(targetChatId, data.text, 'user');
+              const assistantMsg = await svc.addMessage(
                 targetChatId,
                 optimizedText,
                 'assistant',
@@ -235,12 +235,29 @@ export function registerOverlayHandlers(
                 { model: 'llama3.2', optimized: true, source_app: 'overlay' }
               );
 
-              // Refresh cache + notify app window to reload messages
+              // Update cache
               if (authState.currentUserId) {
                 const userId = authState.currentUserId;
                 const msgs = await svc.getMessages(targetChatId);
                 localCache.setMessages(userId, targetChatId, msgs as any);
-                appWindowManager.send('messages-loaded', { chatId: targetChatId, messages: msgs });
+
+                // ── Real-time push: send only the two new messages so the
+                // app window can append them instantly without a full reload.
+                appWindowManager.send('overlay:messages-appended', {
+                  chatId: targetChatId,
+                  messages: [userMsg, assistantMsg],
+                });
+
+                // ── Bump updated_at so this chat rises to the top of the
+                // sidebar recents list, then push a fresh chats-loaded event.
+                try {
+                  await svc.touchChat(targetChatId);
+                  const chats = await svc.getChats();
+                  localCache.setChats(userId, chats as any);
+                  appWindowManager.send('chats-loaded', { chats });
+                } catch (touchErr) {
+                  console.warn('[Overlay] Failed to touch chat updated_at:', touchErr);
+                }
               }
 
               console.log('[Overlay] Saved messages to context chat:', targetChatId);
