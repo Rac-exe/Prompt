@@ -592,6 +592,29 @@ Your prompt was: "${content}"`;
     });
   };
 
+  // Open overlay pre-filled with this assistant message + the current chat as context
+  const handleOptimizeAgain = useCallback((messageId: string) => {
+    const message = displayMessages.find((m) => m.id === messageId)
+      || (streamingMessage?.id === messageId ? streamingMessage : null);
+    if (!message) return;
+
+    const chat = recentChats.find((c) => c.id === selectedChatId);
+    const chatName = chat?.title || currentChatTitle || 'Current Chat';
+
+    if (isElectron && window.electronAPI?.optimizeAgain) {
+      window.electronAPI.optimizeAgain({
+        text: message.content,
+        chatId: selectedChatId || '',
+        chatName,
+      });
+    } else {
+      toast({
+        title: "Open the overlay",
+        description: "Press Ctrl+5 to open the optimizer overlay.",
+      });
+    }
+  }, [displayMessages, streamingMessage, selectedChatId, recentChats, currentChatTitle]);
+
   // Edit a user message: replace it in local state and re-send from that point.
   // All messages after the edited one are removed (same as ChatGPT behaviour).
   // We slice + immediately insert a placeholder user message in ONE setState call
@@ -956,6 +979,7 @@ Your prompt was: "${content}"`;
             onFeedback={handleFeedback}
             onEditMessage={handleEditMessage}
             onRetryMessage={handleRetryMessage}
+            onOptimizeAgain={handleOptimizeAgain}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
             isOnline={isOnline}

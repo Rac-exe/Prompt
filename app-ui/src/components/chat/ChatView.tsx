@@ -27,6 +27,7 @@ interface ChatViewProps {
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEditMessage?: (messageId: string, newContent: string) => void;
   onRetryMessage?: (messageId: string) => void;
+  onOptimizeAgain?: (messageId: string) => void;
   savedPromptIds: string[];
   isGenerating: boolean;
   isOnline?: boolean;
@@ -41,7 +42,7 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  onEditMessage, onRetryMessage,
+  onEditMessage, onRetryMessage, onOptimizeAgain,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
   onRetryLoad, sendError, onStopGeneration,
 }: ChatViewProps) => {
@@ -626,6 +627,7 @@ export const ChatView = ({
                   isEditRetryRef.current = true;
                   onRetryMessage?.(id);
                 } : undefined}
+                onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
                 isGenerating={isGenerating}
               />
             ))}

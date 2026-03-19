@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, X, ZoomIn } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, X, ZoomIn, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -25,11 +25,12 @@ interface MessageBubbleProps {
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEdit?: (messageId: string, currentContent: string) => void;
   onRetry?: (messageId: string) => void;
+  onOptimizeAgain?: (messageId: string) => void;
   isGenerating?: boolean;
 }
 
 export const MessageBubble = ({
-  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, isGenerating,
+  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onOptimizeAgain, isGenerating,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -324,6 +325,20 @@ export const MessageBubble = ({
                 <><Bookmark className="w-3 h-3" />Save</>
               )}
             </Button>
+
+            {onOptimizeAgain && !isGenerating && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2.5 text-xs rounded-md font-medium transition-smooth gap-1.5 text-muted-foreground hover:text-emerald hover:bg-emerald/8"
+                onClick={() => onOptimizeAgain(message.id)}
+                title="Open overlay and refine this prompt further"
+                data-testid="optimize-again-button"
+              >
+                <Wand2 className="w-3 h-3" />
+                Optimize Again
+              </Button>
+            )}
 
           </div>
         </div>

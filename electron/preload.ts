@@ -1,5 +1,142 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Declare window type for TypeScript
+declare global {
+  interface Window {
+    electronAPI: {
+      // ============================================
+      // OVERLAY API (for overlay.html)
+      // ============================================
+      overlay: {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string }) => void;
+        save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
+        copy: (text: string) => void;
+        close: () => void;
+        openApp: () => void;
+        insert: (text: string) => Promise<{ success: boolean; fallback?: string }>;
+        checkAuth: () => Promise<{ isAuthenticated: boolean }>;
+        getCollections: () => Promise<any>;
+        createCollection: (name: string, icon?: string) => Promise<any>;
+        getChats: () => Promise<Array<{ id: string; title: string }>>;
+        saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
+        onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => void;
+        onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
+        onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
+        onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
+        onOptimizationError: (callback: (data: { error: string }) => void) => void;
+        getSettings: () => Promise<any>;
+        onSettingsUpdate: (callback: (settings: any) => void) => void;
+        newSession: () => void;
+        stopGeneration: () => void;
+        truncateHistory: (keepCount: number) => void;
+      };
+
+      // ============================================
+      // TRANSCRIPTION API (voice input)
+      // ============================================
+      transcription: {
+        start: (sessionId: string) => void;
+        stop: () => void;
+        onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => void;
+        onStatus: (callback: (status: string) => void) => void;
+        onError: (callback: (error: string) => void) => void;
+      };
+
+      // ============================================
+      // APP WINDOW API
+      // ============================================
+      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string) => void;
+      saveToChat: (originalText: string, optimizedText: string) => void;
+      requestUserData: () => void;
+      onUserDataLoaded: (callback: (user: any) => void) => void;
+      onChatSaved: (callback: (data: { chatId: string }) => void) => void;
+      loadChats: () => void;
+      onChatsLoaded: (callback: (data: { chats: any[] }) => void) => void;
+      createChat: (title?: string) => void;
+      onChatCreated: (callback: (data: { chat: any }) => void) => void;
+      loadMessages: (chatId: string) => void;
+      onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
+      deleteChat: (chatId: string) => void;
+      onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
+      onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
+      renameChat: (chatId: string, title: string) => void;
+      onChatRenamed: (callback: (data: { chatId: string; title: string }) => void) => (() => void);
+      onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
+      signOut: () => void;
+      copyToClipboard: (text: string) => void;
+      saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
+      stopGeneration: () => void;
+      optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
+      onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
+      onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
+      onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
+
+      // Auth API
+      signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
+      signIn: (data: { email: string; password: string }) => void;
+      checkAuth: () => void;
+      onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
+      updateProfile: (updates: any) => void;
+      uploadAvatar: (imageData: string, filename: string) => Promise<{ success: boolean; url?: string; error?: string }>;
+      updatePreferences: (updates: any) => void;
+      setPersonalizationPrompt: (prompt: string) => void;
+      onProfileUpdated: (callback: () => void) => void;
+      onPreferencesUpdated: (callback: () => void) => void;
+
+      // Settings API
+      loadSettings: () => Promise<any>;
+      saveSettings: (settings: any) => Promise<any>;
+
+      // Prompt Library API
+      promptLibrary: {
+        getAll: () => Promise<any>;
+        getCollections: () => Promise<any>;
+        createCollection: (name: string, icon?: string) => Promise<any>;
+        renameCollection: (collectionId: string, name: string) => Promise<any>;
+        deleteCollection: (collectionId: string) => Promise<any>;
+        savePrompt: (collectionId: string, title: string, content: string, metadata?: any) => Promise<any>;
+        createCollectionAndSave: (collectionName: string, promptTitle: string, promptContent: string, collectionIcon?: string, metadata?: any) => Promise<any>;
+        updatePrompt: (promptId: string, updates: any) => Promise<any>;
+        deletePrompt: (promptId: string) => Promise<any>;
+        toggleFavorite: (promptId: string) => Promise<any>;
+        // Sharing
+        getShareLink: (collectionId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+        getSharedCollection: (token: string) => Promise<any>;
+        saveSharedCollection: (originalCollectionId: string) => Promise<{ collection: any; alreadyExisted: boolean }>;
+        // Prompt sharing
+        getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+        getSharedPrompt: (token: string) => Promise<any>;
+      };
+      onPromptLibraryLoaded: (callback: (data: any) => void) => void;
+
+      // Window controls (frameless window)
+      windowControls: {
+        minimize: () => void;
+        maximize: () => void;
+        close: () => void;
+      };
+
+      // Common API
+      send: (channel: string, data: any) => void;
+
+      // Network status
+      onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
+      onNetworkReconnected: (callback: () => void) => void;
+
+      // Memory API
+      memory: {
+        get: () => Promise<{
+          user: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          behavioral: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          context: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+        }>;
+        upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
+        delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) => Promise<{ success: boolean; error?: string }>;
+      };
+    };
+  }
+}
+
 // Expose protected methods to the renderer process
 const electronAPI = {
   // ============================================
@@ -32,6 +169,12 @@ const electronAPI = {
     },
     createCollection: (name: string, icon?: string) => {
       return ipcRenderer.invoke('overlay:create-collection', { name, icon });
+    },
+    getChats: () => {
+      return ipcRenderer.invoke('overlay:get-chats');
+    },
+    saveToChat: (chatId: string, content: string) => {
+      return ipcRenderer.invoke('overlay:save-to-chat', { chatId, content });
     },
     onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
       ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
@@ -185,6 +328,9 @@ const electronAPI = {
   },
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
+  },
+  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => {
+    ipcRenderer.send('overlay:open-with-context', data);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
