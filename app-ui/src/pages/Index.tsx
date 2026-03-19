@@ -1045,6 +1045,7 @@ Your prompt was: "${content}"`;
             offlineChatUnavailable={offlineChatUnavailable}
             sendError={sendError}
             onStopGeneration={handleStopGeneration}
+            avatarUrl={user?.profile?.avatar_url}
             onRetryLoad={() => {
               if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
                 setOfflineChatUnavailable(false);

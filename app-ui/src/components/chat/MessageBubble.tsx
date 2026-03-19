@@ -30,10 +30,12 @@ interface MessageBubbleProps {
   isGenerating?: boolean;
   /** Number of files that were included in context for this response (assistant only) */
   fileContextCount?: number;
+  /** User's profile avatar URL (shown on user messages) */
+  avatarUrl?: string | null;
 }
 
 export const MessageBubble = ({
-  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onOptimizeAgain, isGenerating, fileContextCount,
+  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onOptimizeAgain, isGenerating, fileContextCount, avatarUrl,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -234,9 +236,13 @@ export const MessageBubble = ({
             </div>
           )}
         </div>
-        <div className="w-7 h-7 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 mt-0.5">
-          <User className="w-3.5 h-3.5 text-muted-foreground" />
-        </div>
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0 mt-0.5 border border-border" />
+        ) : (
+          <div className="w-7 h-7 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 mt-0.5">
+            <User className="w-3.5 h-3.5 text-muted-foreground" />
+          </div>
+        )}
       </div>
 
       {/* File preview modal */}

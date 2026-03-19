@@ -36,6 +36,7 @@ interface ChatViewProps {
   onRetryLoad?: () => void;
   sendError?: string | null;
   onStopGeneration?: () => void;
+  avatarUrl?: string | null;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -45,7 +46,7 @@ export const ChatView = ({
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
   onEditMessage, onRetryMessage, onOptimizeAgain,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
-  onRetryLoad, sendError, onStopGeneration,
+  onRetryLoad, sendError, onStopGeneration, avatarUrl,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
@@ -288,24 +289,24 @@ export const ChatView = ({
                     onClick={openPreview}
                     className="w-full h-full rounded-xl overflow-hidden cursor-zoom-in focus:outline-none border border-border/50 hover:border-border transition-colors"
                   >
-                    <img
-                      src={`data:${file.mimeType};base64,${file.base64}`}
-                      alt={file.name}
+                      <img
+                        src={`data:${file.mimeType};base64,${file.base64}`}
+                        alt={file.name}
                       className="w-full h-full object-cover"
-                    />
+                      />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 rounded-xl transition-colors flex items-center justify-center">
                       <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
                     </div>
                   </button>
-                  <button
+                      <button
                     type="button"
                     onClick={removeFile}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              ) : (
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  ) : (
                 /* ── PDF card (ChatGPT style) ── */
                 <div key={idx} className="relative group flex-shrink-0">
                   <button
@@ -324,13 +325,13 @@ export const ChatView = ({
                       </p>
                     </div>
                   </button>
-                  <button
+                      <button
                     type="button"
                     onClick={removeFile}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
-                  >
+                      >
                     <X className="h-2.5 w-2.5" />
-                  </button>
+                      </button>
                 </div>
               );
             })}
@@ -635,7 +636,7 @@ export const ChatView = ({
   // ── Conversation state ──────────────────────────────────────
   return (
     <div className="flex-1 flex flex-col h-full bg-background">
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0">
         <div
           ref={scrollRef}
           className="h-full overflow-y-auto scrollbar-none"
@@ -655,25 +656,26 @@ export const ChatView = ({
                   })()
                 : undefined;
               return (
-                <MessageBubble
-                  key={message.id}
-                  message={message}
-                  onCopy={() => onCopyPrompt(message.id)}
-                  onSave={() => onSavePrompt(message.id)}
-                  onFeedback={onFeedback}
-                  isSaved={savedPromptIds.includes(message.id)}
-                  onEdit={message.role === "user" ? (id, content) => {
-                    isEditRetryRef.current = true;
-                    onEditMessage?.(id, content);
-                  } : undefined}
-                  onRetry={message.role === "user" ? (id) => {
-                    isEditRetryRef.current = true;
-                    onRetryMessage?.(id);
-                  } : undefined}
-                  onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
-                  isGenerating={isGenerating}
-                  fileContextCount={fileContextCount}
-                />
+              <MessageBubble
+                key={message.id}
+                message={message}
+                onCopy={() => onCopyPrompt(message.id)}
+                onSave={() => onSavePrompt(message.id)}
+                onFeedback={onFeedback}
+                isSaved={savedPromptIds.includes(message.id)}
+                onEdit={message.role === "user" ? (id, content) => {
+                  isEditRetryRef.current = true;
+                  onEditMessage?.(id, content);
+                } : undefined}
+                onRetry={message.role === "user" ? (id) => {
+                  isEditRetryRef.current = true;
+                  onRetryMessage?.(id);
+                } : undefined}
+                onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
+                isGenerating={isGenerating}
+                fileContextCount={fileContextCount}
+                avatarUrl={avatarUrl}
+              />
               );
             })}
 
@@ -701,6 +703,7 @@ export const ChatView = ({
                   onSave={() => onSavePrompt(streamingMessage.id)}
                   onFeedback={onFeedback}
                   isSaved={false}
+                  avatarUrl={avatarUrl}
                 />
               </div>
             )}
