@@ -84,7 +84,7 @@ def _get_litellm_kwargs(provider: str, model: str) -> Tuple[str, dict]:
     if provider == "openrouter" or model.startswith("openrouter/"):
         api_key = os.getenv("OPENROUTER_API_KEY")
         if not api_key:
-            print("❌  OPENROUTER_API_KEY not set in .env")
+            print("ERROR: OPENROUTER_API_KEY not set in .env")
             sys.exit(1)
         # We leave the openrouter prefix if it's there, LiteLLM handles it gracefully
         return model, {"api_key": api_key}
@@ -219,25 +219,25 @@ def optimize(
         
         # Select skills (or use forced skill)
         if forced_skill:
-            print(f"🎯  Using forced skill: {forced_skill}")
+            print(f"[Optimizer] Using forced skill: {forced_skill}")
             skill_names = [forced_skill]
             skills_content = load_skill_file(forced_skill)
             if not skills_content:
-                print(f"⚠️  Forced skill '{forced_skill}' not found, falling back to auto-selection")
+                print(f"[Optimizer] WARNING: Forced skill '{forced_skill}' not found, falling back to auto-selection")
                 skill_names, skills_content = load_selected_skills(user_input)
         else:
             skill_names, skills_content = load_selected_skills(user_input)
     
         # Context management: compact if CC exceeds token budget
         if cc.token_estimate() > SUMMARIZE_THRESHOLD:
-            print("🔄  Compacting context (haiku summarizer)...")
+            print("[Optimizer] Compacting context (haiku summarizer)...")
             try:
                 summary_text = summarize_context(cc, provider)
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
                 from .context import save_chat_context as _save
                 _save(cc)
             except Exception as exc:
-                print(f"⚠️  Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
+                print(f"[Optimizer] WARNING: Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
     
         cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
         

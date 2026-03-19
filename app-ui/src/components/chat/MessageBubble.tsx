@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, X, ZoomIn, Wand2 } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Wand2, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
+import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
 import type { AttachedFile } from "@/types/electron";
 
 export interface Message {
@@ -27,16 +28,17 @@ interface MessageBubbleProps {
   onRetry?: (messageId: string) => void;
   onOptimizeAgain?: (messageId: string) => void;
   isGenerating?: boolean;
+  /** Number of files that were included in context for this response (assistant only) */
+  fileContextCount?: number;
 }
 
 export const MessageBubble = ({
-  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onOptimizeAgain, isGenerating,
+  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onOptimizeAgain, isGenerating, fileContextCount,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  const [lightboxName, setLightboxName] = useState<string>('');
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === "user";
 
@@ -47,14 +49,6 @@ export const MessageBubble = ({
     ta.style.height = "auto";
     ta.style.height = ta.scrollHeight + "px";
   }, [editValue, isEditing]);
-
-  // Escape closes lightbox
-  useEffect(() => {
-    if (!lightboxSrc) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setLightboxSrc(null); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [lightboxSrc]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -126,7 +120,7 @@ export const MessageBubble = ({
           ) : (
             /* ── Display mode ── */
             <div className="flex flex-col items-end gap-1.5">
-              {/* Attached files — thumbnails for images, pills for PDFs */}
+              {/* Attached files — thumbnails for images, PDF cards — all clickable */}
               {message.attachedFiles && message.attachedFiles.length > 0 && (
                 <div className="flex flex-wrap gap-2 max-w-md justify-end">
                   {message.attachedFiles.map((file, idx) => {
@@ -134,57 +128,65 @@ export const MessageBubble = ({
                     const hasBase64 = !!(file as any).base64;
 
                     if (isImage && hasBase64) {
-                      // Real thumbnail — clickable to expand
                       const src = `data:${file.mimeType};base64,${(file as any).base64}`;
                       return (
                         <button
                           key={idx}
-                          onClick={() => { setLightboxSrc(src); setLightboxName(file.name); }}
-                          className="relative group rounded-xl overflow-hidden border border-emerald/20 shadow-sm cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald/50"
+                          onClick={() => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: (file as any).base64, sizeBytes: file.sizeBytes })}
+                          className="relative group rounded-xl overflow-hidden border border-white/10 shadow cursor-zoom-in focus:outline-none"
                           style={{ width: 80, height: 80 }}
-                          title={`${file.name} — click to expand`}
+                          title={`${file.name} — click to preview`}
                         >
-                          <img
-                            src={src}
-                            alt={file.name}
-                            className="w-full h-full object-cover"
-                          />
-                          {/* Hover overlay */}
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-colors flex items-center justify-center">
+                          <img src={src} alt={file.name} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
                             <ZoomIn className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
-                          </div>
-                          <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <span className="text-[9px] text-white truncate block">{file.name}</span>
                           </div>
                         </button>
                       );
                     }
 
                     if (isImage) {
-                      // From DB history — no base64, show icon pill
                       return (
-                        <div
-                          key={idx}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald/8 border border-emerald/20 text-xs"
-                        >
+                        <div key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald/8 border border-emerald/20 text-xs">
                           <Image className="h-3.5 w-3.5 text-emerald flex-shrink-0" />
                           <span className="max-w-[100px] truncate text-emerald/90 font-medium">{file.name}</span>
                         </div>
                       );
                     }
 
-                    // PDF pill
-                    return (
-                      <div
-                        key={idx}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald/8 border border-emerald/20 text-xs max-w-[200px]"
-                      >
-                        <FileText className="h-4 w-4 text-emerald flex-shrink-0" />
-                        <div className="min-w-0">
-                          <div className="truncate text-emerald font-medium">{file.name}</div>
-                          <div className="text-emerald/50 text-[10px]">
-                            {(file.sizeBytes / 1024).toFixed(0)} KB • PDF
+                    // PDF card — ChatGPT style
+                    if (hasBase64) {
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: (file as any).base64, sizeBytes: file.sizeBytes })}
+                          className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border hover:border-border/60 hover:bg-secondary/80 transition-colors max-w-[220px] focus:outline-none group"
+                          title={`${file.name} — click to preview`}
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                            <FileText className="h-4 w-4 text-red-400" />
                           </div>
+                          <div className="min-w-0 text-left">
+                            <p className="text-xs font-medium text-foreground truncate max-w-[140px] group-hover:underline">{file.name}</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                              {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    }
+
+                    // PDF from DB — no base64, non-interactive
+                    return (
+                      <div key={idx} className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border max-w-[220px]">
+                        <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                          <FileText className="h-4 w-4 text-red-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate max-w-[140px]">{file.name}</p>
+                          <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                            {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                          </p>
                         </div>
                       </div>
                     );
@@ -237,35 +239,16 @@ export const MessageBubble = ({
         </div>
       </div>
 
-      {/* Lightbox */}
-      {lightboxSrc && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in-0 duration-150"
-          onClick={() => setLightboxSrc(null)}
-        >
-          <div
-            className="relative max-w-[90vw] max-h-[90vh]"
-            onClick={e => e.stopPropagation()}
-          >
-            <img
-              src={lightboxSrc}
-              alt={lightboxName}
-              className="max-w-full max-h-[85vh] rounded-xl shadow-2xl object-contain"
-            />
-            <button
-              onClick={() => setLightboxSrc(null)}
-              className="absolute -top-3 -right-3 w-7 h-7 rounded-full bg-background border border-border flex items-center justify-center shadow-lg hover:bg-secondary transition-colors"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-            {lightboxName && (
-              <div className="absolute bottom-0 left-0 right-0 px-4 py-2 bg-black/50 rounded-b-xl">
-                <span className="text-xs text-white/80 truncate block text-center">{lightboxName}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {/* File preview modal */}
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        allFiles={
+          (message.attachedFiles ?? [])
+            .filter(f => !!(f as any).base64)
+            .map(f => ({ name: f.name, mimeType: f.mimeType, base64: (f as any).base64 as string, sizeBytes: f.sizeBytes }))
+        }
+      />
     </>
   );
   }
@@ -281,6 +264,15 @@ export const MessageBubble = ({
       {/* Bubble */}
       <div className="flex-1 min-w-0 max-w-[96%]">
         <div className="bg-surface border border-border rounded-2xl rounded-tl-sm">
+          {/* File context indicator — shown when files were included */}
+          {fileContextCount != null && fileContextCount > 0 && (
+            <div className="flex items-center gap-1.5 px-4 pt-3 pb-0">
+              <Paperclip className="w-3 h-3 text-emerald/70 flex-shrink-0" />
+              <span className="text-[11px] text-emerald/70 font-medium">
+                {fileContextCount === 1 ? "Using attached file" : `Using ${fileContextCount} attached files`}
+              </span>
+            </div>
+          )}
           {/* Content */}
           <div className="px-4 py-3.5">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>

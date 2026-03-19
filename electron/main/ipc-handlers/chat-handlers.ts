@@ -408,10 +408,11 @@ export function registerChatHandlers(
                 chat = await chatService.getChat(chatId);
             }
 
-            // Save user message — store file metadata (no base64) so history can show pills
-            const filesMeta = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, sizeBytes: f.sizeBytes }));
+            // Save user message — store full file data (including base64) so PDF/image
+            // preview works even after switching chats or restarting the app.
+            const filesForDb = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }));
             const userMessage = await chatService.addMessage(chatId, data.content, 'user', undefined, {
-                attachedFiles: filesMeta.length > 0 ? filesMeta : undefined,
+                attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
                 selectedSkill: data.forcedSkill || undefined,
             });
 

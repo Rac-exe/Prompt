@@ -445,7 +445,23 @@ const Index = () => {
             attachedFiles: msg.metadata?.attachedFiles?.length > 0 ? msg.metadata.attachedFiles : undefined,
             selectedSkill: msg.metadata?.selectedSkill || undefined,
           }));
-          setMessages(formattedMessages);
+
+          // Preserve base64 data from in-memory messages so file previews
+          // keep working after a DB reload replaces them.
+          setMessages(prev => {
+            const base64Map = new Map<string, any[]>();
+            for (const m of prev) {
+              if (m.attachedFiles?.some((f: any) => f.base64)) {
+                base64Map.set(m.id, m.attachedFiles!);
+              }
+            }
+            if (base64Map.size === 0) return formattedMessages;
+            return formattedMessages.map(m => {
+              const rich = base64Map.get(m.id);
+              if (rich) return { ...m, attachedFiles: rich };
+              return m;
+            });
+          });
 
           // If offline and no cached messages, show the offline empty-state instead of a toast
           if (!isOnline && formattedMessages.length === 0) {

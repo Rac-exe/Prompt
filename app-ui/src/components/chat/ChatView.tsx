@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image } from "lucide-react";
+import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
+import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -54,6 +55,8 @@ export const ChatView = ({
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
+  // File preview modal — null = closed
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const plusButtonRef = useRef<HTMLButtonElement>(null);
@@ -267,47 +270,67 @@ export const ChatView = ({
           </div>
         )}
 
-        {/* File pills — thumbnails for images, pill for PDFs */}
+        {/* File pills — thumbnails for images, PDF cards — all clickable for preview */}
         {attachedFiles.length > 0 && (
           <div className="flex flex-wrap gap-2 px-5 pt-3">
             {attachedFiles.map((file, idx) => {
               const isImage = file.mimeType.startsWith('image/');
-              return (
-                <div
-                  key={idx}
-                  className={cn(
-                    "relative inline-flex items-center gap-2 rounded-xl bg-secondary text-xs",
-                    isImage ? "p-0 overflow-hidden" : "px-3 py-1.5"
-                  )}
-                >
-                  {isImage ? (
-                    /* Image thumbnail */
-                    <div className="relative" style={{ width: 56, height: 56 }}>
-                      <img
-                        src={`data:${file.mimeType};base64,${file.base64}`}
-                        alt={file.name}
-                        className="w-full h-full object-cover rounded-xl"
-                      />
-                      <button
-                        onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors"
-                      >
-                        <X className="h-2.5 w-2.5" />
-                      </button>
+              const openPreview = () => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: file.base64, sizeBytes: file.sizeBytes });
+              const removeFile = (e: React.MouseEvent) => {
+                e.stopPropagation();
+                setAttachedFiles(prev => prev.filter((_, i) => i !== idx));
+              };
+              return isImage ? (
+                /* ── Image thumbnail ── */
+                <div key={idx} className="relative group flex-shrink-0" style={{ width: 64, height: 64 }}>
+                  <button
+                    type="button"
+                    onClick={openPreview}
+                    className="w-full h-full rounded-xl overflow-hidden cursor-zoom-in focus:outline-none border border-border/50 hover:border-border transition-colors"
+                  >
+                    <img
+                      src={`data:${file.mimeType};base64,${file.base64}`}
+                      alt={file.name}
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 rounded-xl transition-colors flex items-center justify-center">
+                      <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
                     </div>
-                  ) : (
-                    /* PDF pill */
-                    <>
-                      <FileText className="h-3 w-3 text-muted-foreground" />
-                      <span className="max-w-[150px] truncate">{file.name}</span>
-                      <button
-                        onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
-                        className="hover:text-destructive transition-colors"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </>
-                  )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeFile}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ) : (
+                /* ── PDF card (ChatGPT style) ── */
+                <div key={idx} className="relative group flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={openPreview}
+                    className="flex items-center gap-2.5 h-14 px-3 pr-8 rounded-xl bg-secondary border border-border hover:border-border/80 hover:bg-secondary/80 transition-colors max-w-[220px] focus:outline-none"
+                    title={`${file.name} — click to preview`}
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                      <FileText className="h-4 w-4 text-red-400" />
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <p className="text-xs font-medium text-foreground truncate max-w-[140px]">{file.name}</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                      </p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeFile}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
                 </div>
               );
             })}
@@ -598,6 +621,13 @@ export const ChatView = ({
             {inputBar}
           </div>
         </div>
+
+        {/* File preview modal */}
+        <FilePreviewModal
+          file={previewFile}
+          onClose={() => setPreviewFile(null)}
+          allFiles={attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }))}
+        />
       </div>
     );
   }
@@ -611,26 +641,41 @@ export const ChatView = ({
           className="h-full overflow-y-auto scrollbar-none"
         >
           <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
-            {messages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                onCopy={() => onCopyPrompt(message.id)}
-                onSave={() => onSavePrompt(message.id)}
-                onFeedback={onFeedback}
-                isSaved={savedPromptIds.includes(message.id)}
-                onEdit={message.role === "user" ? (id, content) => {
-                  isEditRetryRef.current = true;
-                  onEditMessage?.(id, content);
-                } : undefined}
-                onRetry={message.role === "user" ? (id) => {
-                  isEditRetryRef.current = true;
-                  onRetryMessage?.(id);
-                } : undefined}
-                onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
-                isGenerating={isGenerating}
-              />
-            ))}
+            {messages.map((message, idx) => {
+              // For assistant messages, look back for the most recent preceding
+              // user message to determine if files were included in context.
+              const fileContextCount = message.role === "assistant"
+                ? (() => {
+                    for (let i = idx - 1; i >= 0; i--) {
+                      if (messages[i].role === "user") {
+                        return messages[i].attachedFiles?.length ?? 0;
+                      }
+                    }
+                    return 0;
+                  })()
+                : undefined;
+              return (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  onCopy={() => onCopyPrompt(message.id)}
+                  onSave={() => onSavePrompt(message.id)}
+                  onFeedback={onFeedback}
+                  isSaved={savedPromptIds.includes(message.id)}
+                  onEdit={message.role === "user" ? (id, content) => {
+                    isEditRetryRef.current = true;
+                    onEditMessage?.(id, content);
+                  } : undefined}
+                  onRetry={message.role === "user" ? (id) => {
+                    isEditRetryRef.current = true;
+                    onRetryMessage?.(id);
+                  } : undefined}
+                  onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
+                  isGenerating={isGenerating}
+                  fileContextCount={fileContextCount}
+                />
+              );
+            })}
 
             {isGenerating && !streamingMessage && (
               <div className="flex items-center gap-3 animate-fade-in pl-1">
@@ -667,6 +712,13 @@ export const ChatView = ({
       <div className="flex-shrink-0 px-6 pb-5 pt-3 bg-background">
         {inputBar}
       </div>
+
+      {/* File preview modal */}
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        allFiles={attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }))}
+      />
     </div>
   );
 };
