@@ -13,6 +13,29 @@
     <meta property="og:type" content="website" />
 
     <meta name="twitter:card" content="summary_large_image" />
+
+    <!-- CRITICAL: Blocking theme script — runs BEFORE first paint to prevent flash of wrong theme -->
+    <!-- Reads theme from localStorage and applies it immediately, before React loads -->
+    <script>
+      (function() {
+        try {
+          var stored = localStorage.getItem('prompt-weaver-settings');
+          if (stored) {
+            var settings = JSON.parse(stored);
+            if (settings.theme === 'dark') {
+              document.documentElement.classList.add('dark');
+            }
+            // Note: light theme = no class needed (default)
+          } else {
+            // No settings stored yet — default to dark
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) {
+          // If anything fails, default to dark
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
 
   <body>
