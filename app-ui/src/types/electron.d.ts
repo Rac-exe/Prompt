@@ -18,6 +18,21 @@ export type UserMemoryMap = {
   context: Record<string, MemoryEntry>;
 };
 
+// ── File Attachments ──────────────────────────────────────────────────────────
+export interface AttachedFile {
+  name: string;
+  mimeType: string;
+  base64: string;
+  sizeBytes: number;
+}
+
+// ── Skills ────────────────────────────────────────────────────────────────────
+export interface SkillInfo {
+  name: string;
+  label: string;
+  description: string;
+}
+
 export interface SharedCollectionView {
   id: string;
   name: string;
@@ -61,7 +76,14 @@ export interface ElectronAPI {
   onChatCreated: (callback: (data: { chat: any }) => void) => void;
   loadMessages: (chatId: string) => void;
   onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
-  sendMessage: (data: { chatId: string | null; content: string; mode?: string }) => void;
+  onOverlayMessagesAppended: (callback: (data: { chatId: string; messages: any[] }) => void) => (() => void);
+  sendMessage: (data: { 
+    chatId: string | null; 
+    content: string; 
+    mode?: string;
+    attachedFiles?: AttachedFile[];
+    forcedSkill?: string | null;
+  }) => void;
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
@@ -125,6 +147,8 @@ export interface ElectronAPI {
   copyToClipboard: (text: string) => void;
   saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
   send: (channel: string, data: any) => void;
+  stopGeneration: () => void;
+  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
 
   // Window controls
   windowControls: {
@@ -143,6 +167,14 @@ export interface ElectronAPI {
     upsert: (data: { memoryType: MemoryType; key: string; value: string; source?: MemorySource; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
     delete: (data: { memoryType: MemoryType; key: string }) => Promise<{ success: boolean; error?: string }>;
   };
+
+  // Skills
+  skills: {
+    list: () => Promise<SkillInfo[]>;
+  };
+
+  // Stop generation
+  stopGeneration: () => void;
 }
 
 declare global {

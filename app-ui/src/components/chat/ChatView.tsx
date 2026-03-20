@@ -1,22 +1,34 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square } from "lucide-react";
+import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
+import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { PlusMenu } from "./PlusMenu";
+import { SkillPicker } from "./SkillPicker";
+import type { AttachedFile } from "@/types/electron";
+
+const PASTE_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
 
 interface ChatViewProps {
   messages: Message[];
   streamingMessage?: Message | null;
   generationStats?: { ttft: number | null; total: number | null };
-  onSendMessage: (content: string, mode: "fast" | "thinking") => void;
+  onSendMessage: (
+    content: string, 
+    mode: "fast" | "thinking",
+    attachedFiles?: AttachedFile[],
+    selectedSkill?: string | null
+  ) => void;
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEditMessage?: (messageId: string, newContent: string) => void;
   onRetryMessage?: (messageId: string) => void;
+  onOptimizeAgain?: (messageId: string) => void;
   savedPromptIds: string[];
   isGenerating: boolean;
   isOnline?: boolean;
@@ -24,6 +36,7 @@ interface ChatViewProps {
   onRetryLoad?: () => void;
   sendError?: string | null;
   onStopGeneration?: () => void;
+  avatarUrl?: string | null;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -31,16 +44,23 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  onEditMessage, onRetryMessage,
+  onEditMessage, onRetryMessage, onOptimizeAgain,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
-  onRetryLoad, sendError, onStopGeneration,
+  onRetryLoad, sendError, onStopGeneration, avatarUrl,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+  const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
+  const [showSlashPicker, setShowSlashPicker] = useState(false);
+  // File preview modal — null = closed
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const plusButtonRef = useRef<HTMLButtonElement>(null);
   // true = keep auto-scrolling to bottom; set to false the instant the user
   // wheels/touches upward; reset to true when a new message is sent.
   const shouldAutoScroll = useRef(true);
@@ -152,14 +172,34 @@ export const ChatView = ({
   // ── Submit ──────────────────────────────────────────────────
   const handleSubmit = () => {
     if (!input.trim() || isGenerating || !isOnline) return;
-    onSendMessage(input.trim(), mode);
+    onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
+    setAttachedFiles([]);
+    setSelectedSkill(null);
+    setShowSlashPicker(false);
+    shouldAutoScroll.current = true;
+    isEditRetryRef.current = false;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+      return;
+    }
+    
+    // Slash command for skill picker
+    if (e.key === "/" && input.length === 0) {
+      e.preventDefault();
+      setShowSlashPicker(true);
+      return;
+    }
+    
+    // Escape to close slash picker
+    if (e.key === "Escape" && showSlashPicker) {
+      e.preventDefault();
+      setShowSlashPicker(false);
+      return;
     }
   };
 
@@ -175,6 +215,35 @@ export const ChatView = ({
       window.electronAPI?.transcription?.start?.(Date.now().toString());
     }
   }, [voiceState]);
+
+  // ── Clipboard paste handler ────────────────────────────────
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    const fileItems = items.filter(item => PASTE_ALLOWED_TYPES.includes(item.type));
+    if (fileItems.length === 0) return; // let normal text paste proceed
+
+    e.preventDefault();
+    const newFiles: AttachedFile[] = [];
+
+    for (const item of fileItems) {
+      const file = item.getAsFile();
+      if (!file) continue;
+      if (file.size > 10_000_000) continue; // skip oversized
+
+      try {
+        const base64 = await fileToBase64(file);
+        const ext = file.type.split('/')[1] || 'img';
+        const name = file.name || `pasted-image.${ext}`;
+        newFiles.push({ name, mimeType: file.type, base64, sizeBytes: file.size });
+      } catch {
+        // silently skip failed items
+      }
+    }
+
+    if (newFiles.length > 0) {
+      setAttachedFiles(prev => [...prev, ...newFiles].slice(0, 5));
+    }
+  }, []);
 
   const isEmpty = messages.length === 0;
   const canSend = input.trim().length > 0 && !isGenerating && voiceState !== "processing" && isOnline;
@@ -202,30 +271,115 @@ export const ChatView = ({
           </div>
         )}
 
+        {/* File pills — thumbnails for images, PDF cards — all clickable for preview */}
+        {attachedFiles.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-5 pt-3">
+            {attachedFiles.map((file, idx) => {
+              const isImage = file.mimeType.startsWith('image/');
+              const openPreview = () => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: file.base64, sizeBytes: file.sizeBytes });
+              const removeFile = (e: React.MouseEvent) => {
+                e.stopPropagation();
+                setAttachedFiles(prev => prev.filter((_, i) => i !== idx));
+              };
+              return isImage ? (
+                /* ── Image thumbnail ── */
+                <div key={idx} className="relative group flex-shrink-0" style={{ width: 64, height: 64 }}>
+                  <button
+                    type="button"
+                    onClick={openPreview}
+                    className="w-full h-full rounded-xl overflow-hidden cursor-zoom-in focus:outline-none border border-border/50 hover:border-border transition-colors"
+                  >
+                      <img
+                        src={`data:${file.mimeType};base64,${file.base64}`}
+                        alt={file.name}
+                      className="w-full h-full object-cover"
+                      />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 rounded-xl transition-colors flex items-center justify-center">
+                      <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                    </div>
+                  </button>
+                      <button
+                    type="button"
+                    onClick={removeFile}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  ) : (
+                /* ── PDF card (ChatGPT style) ── */
+                <div key={idx} className="relative group flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={openPreview}
+                    className="flex items-center gap-2.5 h-14 px-3 pr-8 rounded-xl bg-secondary border border-border hover:border-border/80 hover:bg-secondary/80 transition-colors max-w-[220px] focus:outline-none"
+                    title={`${file.name} — click to preview`}
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                      <FileText className="h-4 w-4 text-red-400" />
+                    </div>
+                    <div className="min-w-0 text-left">
+                      <p className="text-xs font-medium text-foreground truncate max-w-[140px]">{file.name}</p>
+                      <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                      </p>
+                    </div>
+                  </button>
+                      <button
+                    type="button"
+                    onClick={removeFile}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
+                      >
+                    <X className="h-2.5 w-2.5" />
+                      </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Textarea area */}
-        <textarea
-          ref={textareaRef}
-          placeholder={
-            !isOnline
-              ? "Messaging unavailable while offline…"
-              : voiceState === "processing"
-              ? "Transcribing your voice…"
-              : isEmpty ? "How can I help you today?" : "Ask anything"
-          }
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={isGenerating || voiceState === "processing" || !isOnline}
-          rows={2}
-          className={cn(
-            "w-full bg-transparent border-0 outline-none resize-none",
-            "px-5 pt-4 pb-2 text-[14px] leading-relaxed text-foreground",
-            "placeholder:text-muted-foreground/40",
-            "disabled:opacity-40",
-            "scrollbar-none"
+        <div className="relative">
+          <textarea
+            ref={textareaRef}
+            placeholder={
+              !isOnline
+                ? "Messaging unavailable while offline…"
+                : voiceState === "processing"
+                ? "Transcribing your voice…"
+                : isEmpty ? "How can I help you today?" : "Ask anything, or paste an image"
+            }
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            disabled={isGenerating || voiceState === "processing" || !isOnline}
+            rows={2}
+            className={cn(
+              "w-full bg-transparent border-0 outline-none resize-none",
+              "px-5 pt-4 pb-2 text-[14px] leading-relaxed text-foreground",
+              "placeholder:text-muted-foreground/60",
+              "disabled:opacity-40",
+              "scrollbar-none"
+            )}
+            style={{ minHeight: "72px", maxHeight: "200px", overflow: input.split("\n").length > 6 ? "auto" : "hidden" }}
+          />
+          
+          {/* Slash command skill picker */}
+          {showSlashPicker && (
+            <div className="absolute bottom-full left-0 mb-2">
+              <SkillPicker
+                onSelect={(skillName) => {
+                  setSelectedSkill(skillName);
+                  setShowSlashPicker(false);
+                  setInput("");
+                  textareaRef.current?.focus();
+                }}
+                onClose={() => setShowSlashPicker(false)}
+              />
+            </div>
           )}
-          style={{ minHeight: "72px", maxHeight: "200px", overflow: input.split("\n").length > 6 ? "auto" : "hidden" }}
-        />
+        </div>
 
         {/* Bottom toolbar inside the box (like Claude) */}
         <div className="flex items-center justify-between px-3 py-2.5">
@@ -233,13 +387,28 @@ export const ChatView = ({
           <div className="flex items-center gap-1">
             {/* Plus / attach */}
             <button
+              ref={plusButtonRef}
               type="button"
               disabled={!isOnline}
+              onClick={() => setIsPlusMenuOpen(!isPlusMenuOpen)}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
-              title="Attach"
+              title="Add files or pick skill"
             >
               <Plus className="w-5 h-5" />
             </button>
+            
+            {/* Plus Menu */}
+            <PlusMenu
+              isOpen={isPlusMenuOpen}
+              onClose={() => setIsPlusMenuOpen(false)}
+              onFilesSelected={(files) => {
+                setAttachedFiles(prev => [...prev, ...files].slice(0, 5));
+              }}
+              onSkillSelected={(skillName) => {
+                setSelectedSkill(skillName);
+              }}
+              anchorRef={plusButtonRef}
+            />
 
             {/* Model selector dropdown (inside the bar, like Claude) */}
             <DropdownMenu>
@@ -288,6 +457,20 @@ export const ChatView = ({
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* Skill pill */}
+            {selectedSkill && (
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-xs text-emerald-500 border border-emerald-500/20 ml-1">
+                <Sparkles className="h-3 w-3" />
+                <span className="capitalize">{selectedSkill}</span>
+                <button
+                  onClick={() => setSelectedSkill(null)}
+                  className="hover:text-emerald-400 transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
 
             {/* Voice state indicators */}
             {voiceState === "listening" && (
@@ -439,6 +622,13 @@ export const ChatView = ({
             {inputBar}
           </div>
         </div>
+
+        {/* File preview modal */}
+        <FilePreviewModal
+          file={previewFile}
+          onClose={() => setPreviewFile(null)}
+          allFiles={attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }))}
+        />
       </div>
     );
   }
@@ -446,13 +636,26 @@ export const ChatView = ({
   // ── Conversation state ──────────────────────────────────────
   return (
     <div className="flex-1 flex flex-col h-full bg-background">
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0">
         <div
           ref={scrollRef}
           className="h-full overflow-y-auto scrollbar-none"
         >
           <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
-            {messages.map((message) => (
+            {messages.map((message, idx) => {
+              // For assistant messages, look back for the most recent preceding
+              // user message to determine if files were included in context.
+              const fileContextCount = message.role === "assistant"
+                ? (() => {
+                    for (let i = idx - 1; i >= 0; i--) {
+                      if (messages[i].role === "user") {
+                        return messages[i].attachedFiles?.length ?? 0;
+                      }
+                    }
+                    return 0;
+                  })()
+                : undefined;
+              return (
               <MessageBubble
                 key={message.id}
                 message={message}
@@ -468,15 +671,16 @@ export const ChatView = ({
                   isEditRetryRef.current = true;
                   onRetryMessage?.(id);
                 } : undefined}
+                onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
                 isGenerating={isGenerating}
+                fileContextCount={fileContextCount}
+                avatarUrl={avatarUrl}
               />
-            ))}
+              );
+            })}
 
             {isGenerating && !streamingMessage && (
               <div className="flex items-center gap-3 animate-fade-in pl-1">
-                <div className="w-8 h-8 rounded-lg bg-emerald/10 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald" />
-                </div>
                 <div className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald/60 animate-bounce" style={{ animationDelay: "0ms" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald/60 animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -499,6 +703,7 @@ export const ChatView = ({
                   onSave={() => onSavePrompt(streamingMessage.id)}
                   onFeedback={onFeedback}
                   isSaved={false}
+                  avatarUrl={avatarUrl}
                 />
               </div>
             )}
@@ -510,6 +715,23 @@ export const ChatView = ({
       <div className="flex-shrink-0 px-6 pb-5 pt-3 bg-background">
         {inputBar}
       </div>
+
+      {/* File preview modal */}
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        allFiles={attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }))}
+      />
     </div>
   );
 };
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}

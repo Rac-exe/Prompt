@@ -46,6 +46,10 @@ const Index = () => {
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  // Ref always holds the latest selectedChatId — used in long-lived IPC listeners
+  // to avoid stale closures when the user switches chats.
+  const selectedChatIdRef = useRef<string | null>(null);
+  useEffect(() => { selectedChatIdRef.current = selectedChatId; }, [selectedChatId]);
   const [recentChats, setRecentChats] = useState<any[]>([]);
 
   // Shared library token (set when opening a share link)
@@ -304,12 +308,19 @@ const Index = () => {
           role: "user",
           content: data.userMessage.content,
           timestamp: new Date(data.userMessage.createdAt),
+          attachedFiles: data.userMessage.attachedFiles?.length > 0 ? data.userMessage.attachedFiles : undefined,
+          selectedSkill: data.userMessage.selectedSkill || undefined,
         };
         setMessages((prev) => {
           // Replace the last placeholder (id starts with 'edit-placeholder-' or 'retry-placeholder-')
-          const placeholderIdx = prev.findLastIndex(
-            (m) => m.id.startsWith("edit-placeholder-") || m.id.startsWith("retry-placeholder-")
-          );
+          // Using reverse iteration since findLastIndex is not available in older TypeScript targets
+          let placeholderIdx = -1;
+          for (let i = prev.length - 1; i >= 0; i--) {
+            if (prev[i].id.startsWith("edit-placeholder-") || prev[i].id.startsWith("retry-placeholder-")) {
+              placeholderIdx = i;
+              break;
+            }
+          }
           if (placeholderIdx !== -1) {
             const next = [...prev];
             next[placeholderIdx] = userMessage;
@@ -430,8 +441,27 @@ const Index = () => {
             content: msg.content,
             timestamp: new Date(msg.created_at),
             feedback: msg.metadata?.feedback,
+            // Restore file metadata from DB (no base64 — just name/mimeType/sizeBytes for pills)
+            attachedFiles: msg.metadata?.attachedFiles?.length > 0 ? msg.metadata.attachedFiles : undefined,
+            selectedSkill: msg.metadata?.selectedSkill || undefined,
           }));
-          setMessages(formattedMessages);
+
+          // Preserve base64 data from in-memory messages so file previews
+          // keep working after a DB reload replaces them.
+          setMessages(prev => {
+            const base64Map = new Map<string, any[]>();
+            for (const m of prev) {
+              if (m.attachedFiles?.some((f: any) => f.base64)) {
+                base64Map.set(m.id, m.attachedFiles!);
+              }
+            }
+            if (base64Map.size === 0) return formattedMessages;
+            return formattedMessages.map(m => {
+              const rich = base64Map.get(m.id);
+              if (rich) return { ...m, attachedFiles: rich };
+              return m;
+            });
+          });
 
           // If offline and no cached messages, show the offline empty-state instead of a toast
           if (!isOnline && formattedMessages.length === 0) {
@@ -446,6 +476,45 @@ const Index = () => {
       return cleanup; // Cleanup listener on unmount or dependency change
     }
   }, [selectedChatId, isOnline]);
+
+  // ── Real-time overlay append ──────────────────────────────────────────────
+  // When the overlay optimizes with a chat context, the backend saves the new
+  // user + assistant messages into that chat and immediately fires
+  // 'overlay:messages-appended' so we can append them without a full reload.
+  //
+  // Registered ONCE (empty deps) — reads selectedChatIdRef.current so it
+  // always has the latest chat without stale-closure issues when the user
+  // starts a new overlay session with a different chat context attached.
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onOverlayMessagesAppended) return;
+
+    const handleOverlayAppend = (data: { chatId: string; messages: any[] }) => {
+      // Use the ref so this handler is never stale, regardless of when it fires
+      if (data.chatId !== selectedChatIdRef.current) return;
+
+      console.log('[Index] overlay:messages-appended for current chat, appending', data.messages.length, 'msgs');
+
+      const newMessages: Message[] = data.messages.map((msg: any) => ({
+        id: msg.id,
+        role: msg.role as 'user' | 'assistant' | 'system',
+        content: msg.content,
+        timestamp: new Date(msg.created_at),
+        feedback: msg.metadata?.feedback,
+      }));
+
+      setMessages(prev => {
+        // Deduplicate: skip any message whose id already exists
+        const existingIds = new Set(prev.map(m => m.id));
+        const toAdd = newMessages.filter(m => !existingIds.has(m.id));
+        if (toAdd.length === 0) return prev;
+        return [...prev, ...toAdd];
+      });
+    };
+
+    const cleanup = window.electronAPI.onOverlayMessagesAppended(handleOverlayAppend);
+    return cleanup;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — handler reads selectedChatIdRef, not selectedChatId
 
   // Generate history from chat sessions (sorted by most recent)
   const history = useMemo((): HistoryItem[] => {
@@ -510,11 +579,18 @@ const Index = () => {
     setOfflineChatUnavailable(false);
   };
 
-  const handleSendMessage = useCallback((content: string, mode: "fast" | "thinking" = "fast") => {
+  const handleSendMessage = useCallback((
+    content: string, 
+    mode: "fast" | "thinking" = "fast",
+    attachedFiles?: any[],
+    selectedSkill?: string | null
+  ) => {
     console.log('[Index] Sending message:', {
       chatId: selectedChatId,
       contentLength: content.length,
-      mode
+      mode,
+      filesCount: attachedFiles?.length || 0,
+      skill: selectedSkill || 'auto'
     });
 
     // Clear any previous send error
@@ -531,7 +607,9 @@ const Index = () => {
       window.electronAPI.sendMessage({
         chatId: selectedChatId,
         content: content,
-        mode
+        mode,
+        attachedFiles,
+        forcedSkill: selectedSkill
       });
 
       console.log('[Index] Message sent to Electron main process');
@@ -572,6 +650,29 @@ Your prompt was: "${content}"`;
       description: "Prompt copied to clipboard.",
     });
   };
+
+  // Open overlay pre-filled with this assistant message + the current chat as context
+  const handleOptimizeAgain = useCallback((messageId: string) => {
+    const message = displayMessages.find((m) => m.id === messageId)
+      || (streamingMessage?.id === messageId ? streamingMessage : null);
+    if (!message) return;
+
+    const chat = recentChats.find((c) => c.id === selectedChatId);
+    const chatName = chat?.title || currentChatTitle || 'Current Chat';
+
+    if (isElectron && window.electronAPI?.optimizeAgain) {
+      window.electronAPI.optimizeAgain({
+        text: message.content,
+        chatId: selectedChatId || '',
+        chatName,
+      });
+    } else {
+      toast({
+        title: "Open the overlay",
+        description: "Press Ctrl+5 to open the optimizer overlay.",
+      });
+    }
+  }, [displayMessages, streamingMessage, selectedChatId, recentChats, currentChatTitle]);
 
   // Edit a user message: replace it in local state and re-send from that point.
   // All messages after the edited one are removed (same as ChatGPT behaviour).
@@ -937,12 +1038,14 @@ Your prompt was: "${content}"`;
             onFeedback={handleFeedback}
             onEditMessage={handleEditMessage}
             onRetryMessage={handleRetryMessage}
+            onOptimizeAgain={handleOptimizeAgain}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
             isOnline={isOnline}
             offlineChatUnavailable={offlineChatUnavailable}
             sendError={sendError}
             onStopGeneration={handleStopGeneration}
+            avatarUrl={user?.profile?.avatar_url}
             onRetryLoad={() => {
               if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
                 setOfflineChatUnavailable(false);

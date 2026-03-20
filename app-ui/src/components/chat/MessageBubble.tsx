@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Wand2, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
+import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
+import type { AttachedFile } from "@/types/electron";
 
 export interface Message {
   id: string;
@@ -12,6 +14,8 @@ export interface Message {
   feedback?: {
     rating: "positive" | "negative";
   };
+  attachedFiles?: AttachedFile[];
+  selectedSkill?: string | null;
 }
 
 interface MessageBubbleProps {
@@ -22,15 +26,21 @@ interface MessageBubbleProps {
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEdit?: (messageId: string, currentContent: string) => void;
   onRetry?: (messageId: string) => void;
+  onOptimizeAgain?: (messageId: string) => void;
   isGenerating?: boolean;
+  /** Number of files that were included in context for this response (assistant only) */
+  fileContextCount?: number;
+  /** User's profile avatar URL (shown on user messages) */
+  avatarUrl?: string | null;
 }
 
 export const MessageBubble = ({
-  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, isGenerating,
+  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onOptimizeAgain, isGenerating, fileContextCount, avatarUrl,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
+  const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === "user";
 
@@ -67,6 +77,7 @@ export const MessageBubble = ({
 
   if (isUser) {
     return (
+      <>
       <div className="flex justify-end gap-3 animate-slide-up group/user">
         <div className="max-w-[80%]">
           {isEditing ? (
@@ -111,6 +122,89 @@ export const MessageBubble = ({
           ) : (
             /* ── Display mode ── */
             <div className="flex flex-col items-end gap-1.5">
+              {/* Attached files — thumbnails for images, PDF cards — all clickable */}
+              {message.attachedFiles && message.attachedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 max-w-md justify-end">
+                  {message.attachedFiles.map((file, idx) => {
+                    const isImage = file.mimeType.startsWith('image/');
+                    const hasBase64 = !!(file as any).base64;
+
+                    if (isImage && hasBase64) {
+                      const src = `data:${file.mimeType};base64,${(file as any).base64}`;
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: (file as any).base64, sizeBytes: file.sizeBytes })}
+                          className="relative group rounded-xl overflow-hidden border border-white/10 shadow cursor-zoom-in focus:outline-none"
+                          style={{ width: 80, height: 80 }}
+                          title={`${file.name} — click to preview`}
+                        >
+                          <img src={src} alt={file.name} className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                            <ZoomIn className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                          </div>
+                        </button>
+                      );
+                    }
+
+                    if (isImage) {
+                      return (
+                        <div key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald/8 border border-emerald/20 text-xs">
+                          <Image className="h-3.5 w-3.5 text-emerald flex-shrink-0" />
+                          <span className="max-w-[100px] truncate text-emerald/90 font-medium">{file.name}</span>
+                        </div>
+                      );
+                    }
+
+                    // PDF card — ChatGPT style
+                    if (hasBase64) {
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: (file as any).base64, sizeBytes: file.sizeBytes })}
+                          className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border hover:border-border/60 hover:bg-secondary/80 transition-colors max-w-[220px] focus:outline-none group"
+                          title={`${file.name} — click to preview`}
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                            <FileText className="h-4 w-4 text-red-400" />
+                          </div>
+                          <div className="min-w-0 text-left">
+                            <p className="text-xs font-medium text-foreground truncate max-w-[140px] group-hover:underline">{file.name}</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                              {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    }
+
+                    // PDF from DB — no base64, non-interactive
+                    return (
+                      <div key={idx} className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border max-w-[220px]">
+                        <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                          <FileText className="h-4 w-4 text-red-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate max-w-[140px]">{file.name}</p>
+                          <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                            {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              
+              {/* Selected skill pill */}
+              {message.selectedSkill && (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
+                  <Sparkles className="h-3 w-3 text-emerald" />
+                  <span className="text-emerald font-medium capitalize">{message.selectedSkill}</span>
+                </div>
+              )}
+              
               <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
               </div>
@@ -142,11 +236,27 @@ export const MessageBubble = ({
             </div>
           )}
         </div>
-        <div className="w-7 h-7 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 mt-0.5">
-          <User className="w-3.5 h-3.5 text-muted-foreground" />
-        </div>
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0 mt-0.5 border border-border" />
+        ) : (
+          <div className="w-7 h-7 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 mt-0.5">
+            <User className="w-3.5 h-3.5 text-muted-foreground" />
+          </div>
+        )}
       </div>
-    );
+
+      {/* File preview modal */}
+      <FilePreviewModal
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        allFiles={
+          (message.attachedFiles ?? [])
+            .filter(f => !!(f as any).base64)
+            .map(f => ({ name: f.name, mimeType: f.mimeType, base64: (f as any).base64 as string, sizeBytes: f.sizeBytes }))
+        }
+      />
+    </>
+  );
   }
 
   /* ── Assistant message ─────────────────────────────────── */
@@ -160,6 +270,15 @@ export const MessageBubble = ({
       {/* Bubble */}
       <div className="flex-1 min-w-0 max-w-[96%]">
         <div className="bg-surface border border-border rounded-2xl rounded-tl-sm">
+          {/* File context indicator — shown when files were included */}
+          {fileContextCount != null && fileContextCount > 0 && (
+            <div className="flex items-center gap-1.5 px-4 pt-3 pb-0">
+              <Paperclip className="w-3 h-3 text-emerald/70 flex-shrink-0" />
+              <span className="text-[11px] text-emerald/70 font-medium">
+                {fileContextCount === 1 ? "Using attached file" : `Using ${fileContextCount} attached files`}
+              </span>
+            </div>
+          )}
           {/* Content */}
           <div className="px-4 py-3.5">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
@@ -204,6 +323,20 @@ export const MessageBubble = ({
                 <><Bookmark className="w-3 h-3" />Save</>
               )}
             </Button>
+
+            {onOptimizeAgain && !isGenerating && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2.5 text-xs rounded-md font-medium transition-smooth gap-1.5 text-muted-foreground hover:text-emerald hover:bg-emerald/8"
+                onClick={() => onOptimizeAgain(message.id)}
+                title="Open overlay and refine this prompt further"
+                data-testid="optimize-again-button"
+              >
+                <Wand2 className="w-3 h-3" />
+                Optimize Again
+              </Button>
+            )}
 
           </div>
         </div>

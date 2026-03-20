@@ -2,6 +2,15 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+import sys
+
+# Force UTF-8 stdout/stderr so emoji and non-ASCII chars don't crash the server
+# on Windows where the default console encoding is cp1252.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
 import time
 import re
 import whisper
@@ -48,9 +57,9 @@ async def startup_event():
             kwargs["api_key"] = api_key
             
         litellm.completion(**kwargs)
-        print("[Startup] ✓ OpenRouter connection warmed up")
+        print("[Startup] OpenRouter connection warmed up")
     except Exception as e:
-        print(f"[Startup] ⚠️ Warmup failed (this is harmless if no internet): {e}")
+        print(f"[Startup] WARNING: Warmup failed (this is harmless if no internet): {e}")
 
 def provider_check(model: str) -> bool:
     return "openrouter" in model.lower()
@@ -453,8 +462,19 @@ async def optimize_stream(websocket: WebSocket):
             messages = data.get("messages", None)
             mode = data.get("mode", "fast")
             custom_instructions = data.get("custom_instructions", "")
+            attached_files = data.get("attached_files", [])
+            forced_skill = data.get("forced_skill", None)
             
-            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode})")
+            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'})")
+            
+            # Validate file count
+            if len(attached_files) > 5:
+                await websocket.send_json({
+                    "type": "error",
+                    "request_id": request_id,
+                    "message": "Maximum 5 files allowed per message"
+                })
+                continue
             
             if not prompt_text or len(prompt_text) < 3:
                 await websocket.send_json({
@@ -480,7 +500,9 @@ async def optimize_stream(websocket: WebSocket):
                     provider="auto",
                     stream=True,
                     mode=mode,
-                    custom_instructions=custom_instructions
+                    custom_instructions=custom_instructions,
+                    attached_files=attached_files,
+                    forced_skill=forced_skill
                 )
                 
                 accumulated_text = ""
@@ -505,7 +527,7 @@ async def optimize_stream(websocket: WebSocket):
                     "original": prompt_text
                 })
                 
-                print(f"[OptimizeStream] ✓ Request {request_id} complete. Chunks: {chunk_count}")
+                print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")
                 
             except Exception as e:
                 print(f"[OptimizeStream] ✗ Error processing request {request_id}: {e}")
@@ -585,7 +607,7 @@ async def generate_title(request: TitleRequest):
         words = raw_title.split()[:5]
         title = " ".join(words) if words else fallback_title
 
-        print(f"[TitleGen] '{prompt_text[:50]}' → '{title}'")
+        print(f"[TitleGen] '{prompt_text[:50]}' -> '{title}'")
         return {"title": title}
 
     except Exception as exc:
@@ -727,7 +749,7 @@ def _resample(audio_int16: np.ndarray, src_rate: int) -> np.ndarray:
     up  = WHISPER_RATE // g
     dn  = src_rate      // g
 
-    print(f"[Resample] {src_rate} Hz → {WHISPER_RATE} Hz  (up={up}, dn={dn})")
+    print(f"[Resample] {src_rate} Hz -> {WHISPER_RATE} Hz  (up={up}, dn={dn})")
     audio_f32 = audio_int16.astype(np.float32) / 32768.0
     resampled  = resample_poly(audio_f32, up, dn).astype(np.float32)
     return resampled
@@ -786,13 +808,13 @@ class TranscriptionSession:
             target=self._capture_audio, daemon=True, name="audio-capture"
         )
         self.audio_thread.start()
-        print("[Transcription] ✓ Audio capture thread started")
+        print("[Transcription] Audio capture thread started")
 
         self.transcription_thread = threading.Thread(
             target=self._transcribe_loop, daemon=True, name="transcribe-loop"
         )
         self.transcription_thread.start()
-        print("[Transcription] ✓ Transcription thread started")
+        print("[Transcription] Transcription thread started")
         print("[Transcription] ===== SESSION ACTIVE =====")
 
     def stop_recording(self):
@@ -1111,7 +1133,7 @@ class TranscriptionSession:
         _save_debug_wav(audio_int16, cap_rate, tag=f"_{tag.lower()}")
 
         # ── 3. Resample to WHISPER_RATE ───────────────────────────────────
-        print(f"[Infer:{tag}] resampling {cap_rate} Hz → {WHISPER_RATE} Hz …")
+        print(f"[Infer:{tag}] resampling {cap_rate} Hz -> {WHISPER_RATE} Hz ...")
         audio_f32 = _resample(audio_int16, cap_rate)
 
         resampled_dur = len(audio_f32) / WHISPER_RATE

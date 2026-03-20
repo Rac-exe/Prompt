@@ -17,6 +17,8 @@ declare global {
         checkAuth: () => Promise<{ isAuthenticated: boolean }>;
         getCollections: () => Promise<any>;
         createCollection: (name: string, icon?: string) => Promise<any>;
+        getChats: () => Promise<Array<{ id: string; title: string }>>;
+        saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
         onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => void;
         onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
@@ -54,6 +56,7 @@ declare global {
       onChatCreated: (callback: (data: { chat: any }) => void) => void;
       loadMessages: (chatId: string) => void;
       onMessagesLoaded: (callback: (data: { chatId: string; messages: any[] }) => void) => void;
+      onOverlayMessagesAppended: (callback: (data: { chatId: string; messages: any[] }) => void) => (() => void);
       deleteChat: (chatId: string) => void;
       onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
       onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
@@ -64,8 +67,7 @@ declare global {
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
-
-      // Streaming optimization (app window)
+      optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
       onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
       onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
@@ -169,6 +171,12 @@ const electronAPI = {
     createCollection: (name: string, icon?: string) => {
       return ipcRenderer.invoke('overlay:create-collection', { name, icon });
     },
+    getChats: () => {
+      return ipcRenderer.invoke('overlay:get-chats');
+    },
+    saveToChat: (chatId: string, content: string) => {
+      return ipcRenderer.invoke('overlay:save-to-chat', { chatId, content });
+    },
     onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
       ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
     },
@@ -183,6 +191,9 @@ const electronAPI = {
     },
     onOptimizationError: (callback: (data: { error: string }) => void) => {
       ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
+    },
+    onCursorPos: (callback: (data: { x: number; y: number }) => void) => {
+      ipcRenderer.on('overlay:cursor-pos', (_event, data) => callback(data));
     },
     getSettings: () => {
       return ipcRenderer.invoke('overlay:get-settings');
@@ -286,7 +297,18 @@ const electronAPI = {
     ipcRenderer.on('messages-loaded', handler);
     return () => ipcRenderer.removeListener('messages-loaded', handler);
   },
-  sendMessage: (data: { chatId: string | null; content: string; mode?: string }) => {
+  onOverlayMessagesAppended: (callback: (data: { chatId: string; messages: any[] }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('overlay:messages-appended', handler);
+    return () => ipcRenderer.removeListener('overlay:messages-appended', handler);
+  },
+  sendMessage: (data: { 
+    chatId: string | null; 
+    content: string; 
+    mode?: string;
+    attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
+    forcedSkill?: string | null;
+  }) => {
     ipcRenderer.send('app:send-message', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
@@ -312,6 +334,9 @@ const electronAPI = {
   },
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
+  },
+  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => {
+    ipcRenderer.send('overlay:open-with-context', data);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');
@@ -459,6 +484,13 @@ const electronAPI = {
       ipcRenderer.invoke('memory:upsert', data),
     delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
       ipcRenderer.invoke('memory:delete', data),
+  },
+
+  // ============================================
+  // SKILLS API
+  // ============================================
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
   },
 };
 

@@ -36,9 +36,9 @@
     --secondary:          20 60% 95%;
     --secondary-foreground: 215 20% 35%;
 
-    /* Muted — quiet UI text (#94A3B8) */
+    /* Muted — quiet UI text — darkened for light mode readability */
     --muted:              20 50% 94%;
-    --muted-foreground:   215 20% 65%;
+    --muted-foreground:   215 20% 38%;
 
     /* Accent — active / selected items (#DBEAFE bg + #3B82F6 text) */
     --accent:             214 95% 93%;

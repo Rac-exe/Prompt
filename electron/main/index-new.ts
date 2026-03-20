@@ -18,6 +18,7 @@ import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
+import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
 import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 
@@ -171,6 +172,7 @@ async function initialize() {
   registerSettingsHandlers(overlayManager);
   registerChatHandlers(appWindowManager, pythonClient);
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
+  registerSkillHandlers();
   registerAvatarHandlers();
 
   // ============================================

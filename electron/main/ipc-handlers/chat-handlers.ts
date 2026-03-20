@@ -11,6 +11,54 @@ import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { localCache } from '../database/local-cache';
 import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 
+// ── File attachment types ─────────────────────────────────────────────────────
+export interface AttachedFile {
+  name: string;
+  mimeType: string;
+  base64: string;
+  sizeBytes: number;
+}
+
+const ALLOWED_MIME_TYPES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+];
+
+const MAX_FILE_SIZE = 10_000_000; // 10 MB
+const MAX_FILES_PER_MESSAGE = 5;
+const MAX_TOTAL_SIZE = 25_000_000; // 25 MB total
+
+/**
+ * Validate attached files before forwarding to Python.
+ * Returns error message if validation fails, null if valid.
+ */
+function validateAttachedFiles(files: AttachedFile[]): string | null {
+  if (files.length > MAX_FILES_PER_MESSAGE) {
+    return `Maximum ${MAX_FILES_PER_MESSAGE} files allowed per message`;
+  }
+
+  let totalSize = 0;
+  for (const file of files) {
+    if (!ALLOWED_MIME_TYPES.includes(file.mimeType)) {
+      return `File type not allowed: ${file.mimeType}`;
+    }
+
+    if (file.sizeBytes > MAX_FILE_SIZE) {
+      return `File "${file.name}" exceeds 10 MB limit`;
+    }
+
+    totalSize += file.sizeBytes;
+  }
+
+  if (totalSize > MAX_TOTAL_SIZE) {
+    return `Total upload size exceeds 25 MB limit`;
+  }
+
+  return null; // Valid
+}
+
 // Lazy load services
 let chatService: ChatService | null = null;
 let optimizationService: OptimizationService | null = null;
@@ -300,8 +348,28 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Send message (creates chat if needed, saves, optimizes)
     // ============================================
-    ipcMain.on('app:send-message', async (event, data: { chatId: string | null; content: string; mode?: string }) => {
+    ipcMain.on('app:send-message', async (event, data: { 
+        chatId: string | null; 
+        content: string; 
+        mode?: string;
+        attachedFiles?: AttachedFile[];
+        forcedSkill?: string | null;
+    }) => {
         try {
+            // Validate attached files if present
+            const attachedFiles = data.attachedFiles || [];
+            if (attachedFiles.length > 0) {
+                const validationError = validateAttachedFiles(attachedFiles);
+                if (validationError) {
+                    console.error('[Chat] File validation failed:', validationError);
+                    if (appWindowManager) {
+                        appWindowManager.send('send-message-error', { error: validationError });
+                    }
+                    return;
+                }
+                console.log(`[Chat] Validated ${attachedFiles.length} attached files`);
+            }
+            
             let chatId = data.chatId;
             let chat;
 
@@ -340,10 +408,15 @@ export function registerChatHandlers(
                 chat = await chatService.getChat(chatId);
             }
 
-            // Save user message
-            const userMessage = await chatService.addMessage(chatId, data.content, 'user');
+            // Save user message — store full file data (including base64) so PDF/image
+            // preview works even after switching chats or restarting the app.
+            const filesForDb = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }));
+            const userMessage = await chatService.addMessage(chatId, data.content, 'user', undefined, {
+                attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                selectedSkill: data.forcedSkill || undefined,
+            });
 
-            // Send immediate confirmation
+            // Send immediate confirmation — include full AttachedFile (with base64) for in-session thumbnail
             if (appWindowManager) {
                 appWindowManager.send('message-sent', {
                     chatId,
@@ -354,6 +427,8 @@ export function registerChatHandlers(
                         role: userMessage.role,
                         content: userMessage.content,
                         createdAt: userMessage.created_at,
+                        attachedFiles: data.attachedFiles || [],
+                        selectedSkill: data.forcedSkill || null,
                     }
                 });
             }
@@ -404,7 +479,9 @@ export function registerChatHandlers(
                     }
                 },
                 data.mode || 'fast',
-                customInstructions
+                customInstructions,
+                attachedFiles,
+                data.forcedSkill || null
             );
 
             // Save optimization record and trigger background memory analysis
