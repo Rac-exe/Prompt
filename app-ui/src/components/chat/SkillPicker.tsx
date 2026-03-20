@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Sparkles } from "lucide-react";
+import { Search, Settings2, Briefcase, MessageSquare, Palette, GraduationCap, FlaskConical, Code2, ImageIcon, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { SkillInfo } from "@/types/electron";
 
@@ -10,6 +9,18 @@ interface SkillPickerProps {
   onClose: () => void;
   className?: string;
 }
+
+// Map skill names to specific icons
+const SKILL_ICON_MAP: Record<string, React.ElementType> = {
+  automation:    Settings2,
+  business:      Briefcase,
+  communication: MessageSquare,
+  creative:      Palette,
+  educational:   GraduationCap,
+  research:      FlaskConical,
+  technical:     Code2,
+  visual:        ImageIcon,
+};
 
 export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) => {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -50,7 +61,7 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
   return (
     <div
       className={cn(
-        "w-80 rounded-lg border bg-popover shadow-lg",
+        "w-[500px] flex flex-col rounded-xl border border-border bg-popover shadow-2xl",
         "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
         !className && "absolute bottom-full left-0 mb-2",
         className
@@ -58,57 +69,69 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
       onKeyDown={handleKeyDown}
     >
       {/* Search */}
-      <div className="border-b p-3">
+      <div className="p-3 border-b border-border flex-shrink-0">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
           <Input
             ref={inputRef}
             type="text"
             placeholder="Search skills..."
             value={filter}
             onChange={e => setFilter(e.target.value)}
-            className="pl-9 h-9"
+            className="pl-9 h-10 bg-background border-border text-sm"
           />
         </div>
       </div>
 
-      {/* Scrollable list — fixed height so it scrolls */}
-      <ScrollArea className="h-56">
-        <div className="p-1">
-          {loading ? (
-            <div className="p-4 text-center text-sm text-muted-foreground">Loading skills...</div>
-          ) : filteredSkills.length === 0 ? (
-            <div className="p-4 text-center text-sm text-muted-foreground">No skills found</div>
-          ) : filteredSkills.map((skill, index) => (
+      {/* Skill list — plain scrollable div, no ScrollArea wrapper */}
+      <div className="flex-1 min-h-0 overflow-y-auto max-h-[400px] py-1">
+        {loading ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground/60">Loading skills...</div>
+        ) : filteredSkills.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-muted-foreground/60">No skills found</div>
+        ) : filteredSkills.map((skill, index) => {
+          const isSelected = selectedIndex === index;
+          const Icon = SKILL_ICON_MAP[skill.name] ?? Sparkles;
+          return (
             <button
               key={skill.name}
               onClick={() => onSelect(skill.name)}
               onMouseEnter={() => setSelectedIndex(index)}
               className={cn(
-                "w-full rounded-md px-3 py-2.5 text-left transition-colors",
-                "hover:bg-accent focus:bg-accent focus:outline-none",
-                selectedIndex === index && "bg-accent"
+                "w-full flex items-center gap-4 px-4 py-3.5 text-left transition-colors relative",
+                "hover:bg-accent/50 focus:outline-none",
+                isSelected && "bg-accent/40"
               )}
             >
-              <div className="flex items-start gap-2">
-                <Sparkles className="h-4 w-4 mt-0.5 text-emerald-500 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm">{skill.label}</div>
-                  <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-                    {skill.description}
-                  </div>
+              {/* Left accent bar */}
+              {isSelected && (
+                <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-full bg-emerald" />
+              )}
+
+              {/* Icon square */}
+              <div className="w-11 h-11 rounded-xl bg-muted/60 border border-border/50 flex items-center justify-center flex-shrink-0">
+                <Icon className="w-5 h-5 text-emerald" />
+              </div>
+
+              {/* Text */}
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-[15px] leading-snug text-foreground">
+                  {skill.label}
+                </div>
+                <div className="text-xs text-muted-foreground leading-relaxed whitespace-normal break-words line-clamp-2 mt-0.5">
+                  {skill.description}
                 </div>
               </div>
             </button>
-          ))}
-        </div>
-      </ScrollArea>
+          );
+        })}
+      </div>
 
       {/* Footer */}
-      <div className="border-t px-3 py-2 text-xs text-muted-foreground">
-        <span className="font-medium">↑↓</span> Navigate{" "}
-        <span className="font-medium">Enter</span> Select{" "}
-        <span className="font-medium">Esc</span> Close
+      <div className="border-t border-border px-4 py-2 flex items-center gap-4 text-[11px] text-muted-foreground/50 flex-shrink-0">
+        <span><kbd className="font-semibold text-muted-foreground/70">↑↓</kbd> navigate</span>
+        <span><kbd className="font-semibold text-muted-foreground/70">↵</kbd> select</span>
+        <span><kbd className="font-semibold text-muted-foreground/70">esc</kbd> close</span>
       </div>
     </div>
   );

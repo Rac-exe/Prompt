@@ -10,36 +10,49 @@ export interface SkillInfo {
 
 /**
  * Extract skill metadata from markdown file.
- * Looks for first heading and first paragraph as description.
+ * - Label  : strips "SKILL FILE:" prefix, title-cases the result.
+ * - Description: "Use this skill when the request involves: " +
+ *                first two bullet items from the WHEN TO USE section.
  */
 function parseSkillMetadata(content: string, skillName: string): SkillInfo {
   const lines = content.split('\n');
-  let label = skillName.charAt(0).toUpperCase() + skillName.slice(1);
-  let description = '';
 
-  // Try to find first heading (# Title)
+  // ── Label ──────────────────────────────────────────────────────────────────
+  let label = skillName.charAt(0).toUpperCase() + skillName.slice(1).toLowerCase();
   for (const line of lines) {
-    const headingMatch = line.match(/^#\s+(.+)/);
-    if (headingMatch) {
-      label = headingMatch[1].trim();
+    const m = line.match(/^#\s+(.+)/);
+    if (m) {
+      const raw = m[1].replace(/^SKILL\s+FILE:\s*/i, '').trim();
+      label = raw
+        .split(/\s+/)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(' ');
       break;
     }
   }
 
-  // Try to find first non-empty paragraph
-  let foundHeading = false;
+  // ── Description ────────────────────────────────────────────────────────────
+  // Collect the first two bullet items under "## WHEN TO USE THIS SKILL"
+  let description = '';
+  let inSection = false;
+  const bullets: string[] = [];
+
   for (const line of lines) {
-    if (line.startsWith('#')) {
-      foundHeading = true;
-      continue;
-    }
-    if (foundHeading && line.trim() && !line.startsWith('---')) {
-      description = line.trim();
-      if (description.length > 100) {
-        description = description.substring(0, 97) + '...';
+    if (/^##\s+WHEN TO USE/i.test(line)) { inSection = true; continue; }
+    if (inSection && line.startsWith('##')) break;
+    if (inSection && line.startsWith('- ')) {
+      const bullet = line.replace(/^-\s*/, '').trim();
+      if (bullet) {
+        bullets.push(bullet.charAt(0).toLowerCase() + bullet.slice(1));
+        if (bullets.length >= 2) break;
       }
-      break;
     }
+  }
+
+  if (bullets.length > 0) {
+    // Join bullets naturally, no verbose prefix
+    description = bullets.join(', ');
+    if (description.length > 80) description = description.substring(0, 77) + '...';
   }
 
   return {
@@ -53,14 +66,10 @@ function parseSkillMetadata(content: string, skillName: string): SkillInfo {
  * Register IPC handlers for skill management.
  */
 export function registerSkillHandlers() {
-  /**
-   * List all available skills from files/skill_*.md
-   */
   ipcMain.handle('skills:list', async (): Promise<SkillInfo[]> => {
     try {
-      // Path to skills directory (relative to electron/main)
       const skillsDir = path.join(__dirname, '..', '..', '..', 'files');
-      
+
       if (!fs.existsSync(skillsDir)) {
         console.error('[SkillHandlers] Skills directory not found:', skillsDir);
         return [];
@@ -74,14 +83,11 @@ export function registerSkillHandlers() {
       for (const file of skillFiles) {
         const skillName = file.replace('skill_', '').replace('.md', '');
         const filePath = path.join(skillsDir, file);
-        
         try {
           const content = fs.readFileSync(filePath, 'utf-8');
-          const skillInfo = parseSkillMetadata(content, skillName);
-          skills.push(skillInfo);
+          skills.push(parseSkillMetadata(content, skillName));
         } catch (err) {
           console.error(`[SkillHandlers] Failed to read ${file}:`, err);
-          // Add fallback entry
           skills.push({
             name: skillName,
             label: skillName.charAt(0).toUpperCase() + skillName.slice(1),
@@ -90,9 +96,7 @@ export function registerSkillHandlers() {
         }
       }
 
-      // Sort alphabetically by label
       skills.sort((a, b) => a.label.localeCompare(b.label));
-
       console.log(`[SkillHandlers] Loaded ${skills.length} skills`);
       return skills;
     } catch (error) {
