@@ -355,7 +355,7 @@ export const ChatView = ({
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            disabled={isGenerating || voiceState === "processing" || !isOnline}
+            disabled={voiceState === "processing" || !isOnline}
             rows={2}
             className={cn(
               "w-full bg-transparent border-0 outline-none resize-none",
