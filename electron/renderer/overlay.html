@@ -2002,7 +2002,7 @@
     // INPUT CONTROL
     // ==========================================
     function disableInput() {
-      promptInput.disabled = true;
+      // Keep promptInput enabled so user can type next prompt while generating
       btnSend.disabled = true;
       btnPlus.disabled = true;
       closePlusMenu();
@@ -2024,6 +2024,7 @@
     }
 
     function updateSendButton() {
+      // Send is blocked while optimizing or offline, but typing is always allowed
       btnSend.disabled = !promptInput.value.trim() || isOptimizing || !isOnline;
     }
 
@@ -2034,7 +2035,8 @@
       isOnline = online;
       if (online) {
         offlineBanner.classList.remove('visible');
-        promptInput.disabled = isOptimizing;
+        // Don't disable textarea when optimizing — user can type next prompt
+        promptInput.disabled = false;
         updateSendButton();
       } else {
         offlineBanner.classList.add('visible');
