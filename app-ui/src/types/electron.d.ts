@@ -83,6 +83,17 @@ export interface ElectronAPI {
     mode?: string;
     attachedFiles?: AttachedFile[];
     forcedSkill?: string | null;
+    groupId?: string;
+    versionIndex?: number;
+  }) => void;
+  regenerateResponse: (data: {
+    chatId: string;
+    content: string;
+    mode?: string;
+    groupId?: string;
+    versionIndex?: number;
+    attachedFiles?: AttachedFile[];
+    forcedSkill?: string | null;
   }) => void;
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;

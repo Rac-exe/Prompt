@@ -307,8 +307,21 @@ const electronAPI = {
     mode?: string;
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
+    groupId?: string;
+    versionIndex?: number;
   }) => {
     ipcRenderer.send('app:send-message', data);
+  },
+  regenerateResponse: (data: {
+    chatId: string;
+    content: string;
+    mode?: string;
+    groupId?: string;
+    versionIndex?: number;
+    attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
+    forcedSkill?: string | null;
+  }) => {
+    ipcRenderer.send('app:regenerate-response', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
     const handler = (_event: any, data: any) => callback(data);

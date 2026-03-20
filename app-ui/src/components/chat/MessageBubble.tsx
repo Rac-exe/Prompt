@@ -16,6 +16,10 @@ export interface Message {
   };
   attachedFiles?: AttachedFile[];
   selectedSkill?: string | null;
+  /** Shared by all versions of the same logical message. */
+  groupId?: string;
+  /** 0-based index within the group (0 = original, 1 = first edit, …). */
+  versionIndex?: number;
 }
 
 interface MessageBubbleProps {
@@ -26,6 +30,7 @@ interface MessageBubbleProps {
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEdit?: (messageId: string, currentContent: string) => void;
   onRetry?: (messageId: string) => void;
+  onRegenerate?: (messageId: string) => void;
   isGenerating?: boolean;
   /** Number of files that were included in context for this response (assistant only) */
   fileContextCount?: number;
@@ -34,7 +39,7 @@ interface MessageBubbleProps {
 }
 
 export const MessageBubble = ({
-  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, isGenerating, fileContextCount, avatarUrl,
+  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onRegenerate, isGenerating, fileContextCount, avatarUrl,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -322,6 +327,18 @@ export const MessageBubble = ({
                 <><Bookmark className="w-3 h-3" />Save</>
               )}
             </Button>
+
+            {onRegenerate && !isGenerating && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2.5 text-xs rounded-md font-medium transition-smooth gap-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                onClick={() => onRegenerate(message.id)}
+              >
+                <RotateCcw className="w-3 h-3" />
+                Regenerate
+              </Button>
+            )}
 
           </div>
         </div>
