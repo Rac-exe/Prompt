@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn } from "lucide-react";
+import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn, Loader2, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
 import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { PlusMenu } from "./PlusMenu";
-import { SkillPicker } from "./SkillPicker";
+import { SkillPicker, SKILL_ICON_MAP } from "./SkillPicker";
 import { VersionNavigator } from "./VersionNavigator";
 import type { AttachedFile } from "@/types/electron";
 import type { VersionInfo } from "@/hooks/useMessageTree";
@@ -422,7 +422,7 @@ export const ChatView = ({
                   {mode === "fast" ? (
                     <Zap className="w-3.5 h-3.5" />
                   ) : (
-                    <Sparkles className="w-3.5 h-3.5" />
+                    <Brain className="w-3.5 h-3.5" />
                   )}
                   <span>{modeLabel}</span>
                   <ChevronDown className="w-3 h-3 opacity-50" />
@@ -450,7 +450,7 @@ export const ChatView = ({
                     mode === "thinking" && "bg-secondary"
                   )}
                 >
-                  <Sparkles className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                  <Brain className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">Thinking</p>
                     <p className="text-xs text-muted-foreground">Think longer for complex tasks</p>
@@ -460,19 +460,22 @@ export const ChatView = ({
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Skill pill */}
-            {selectedSkill && (
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-xs text-emerald-500 border border-emerald-500/20 ml-1">
-                <Sparkles className="h-3 w-3" />
-                <span className="capitalize">{selectedSkill}</span>
-                <button
-                  onClick={() => setSelectedSkill(null)}
-                  className="hover:text-emerald-400 transition-colors"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            )}
+            {/* Skill pill — shows skill-specific icon */}
+            {selectedSkill && (() => {
+              const SkillIcon = SKILL_ICON_MAP[selectedSkill] ?? Sparkles;
+              return (
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-xs text-emerald-500 border border-emerald-500/20 ml-1">
+                  <SkillIcon className="h-3 w-3" />
+                  <span className="capitalize">{selectedSkill}</span>
+                  <button
+                    onClick={() => setSelectedSkill(null)}
+                    className="hover:text-emerald-400 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })()}
 
             {/* Voice state indicators */}
             {voiceState === "listening" && (
