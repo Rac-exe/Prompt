@@ -1602,7 +1602,7 @@
 
                 <!-- Skill pill (shown when a skill is selected) -->
                 <div id="skill-pill" class="skill-pill" style="display: none;">
-                  <svg style="width: 10px; height: 10px; flex-shrink: 0;" fill="currentColor" viewBox="0 0 24 24">
+                  <svg id="skill-pill-icon" style="width: 10px; height: 10px; flex-shrink: 0;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
                   </svg>
                   <span id="skill-pill-name"></span>
@@ -1870,6 +1870,7 @@
     const attachmentsRow = document.getElementById('attachments-row');
     const skillPill = document.getElementById('skill-pill');
     const skillPillName = document.getElementById('skill-pill-name');
+    const skillPillIcon = document.getElementById('skill-pill-icon');
     const skillPillRemove = document.getElementById('skill-pill-remove');
 
     // ==========================================
@@ -3289,6 +3290,13 @@
       if (selectedSkill && skillPill && skillPillName) {
         skillPill.style.display = 'inline-flex';
         skillPillName.textContent = selectedSkillLabel || selectedSkill;
+
+        // Update the icon to match the selected skill
+        if (skillPillIcon) {
+          const iconPath = SKILL_ICON_SVGS[selectedSkill] ||
+            '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>';
+          skillPillIcon.innerHTML = iconPath;
+        }
       } else if (skillPill) {
         skillPill.style.display = 'none';
       }
