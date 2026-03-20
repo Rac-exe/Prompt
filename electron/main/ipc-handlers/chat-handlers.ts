@@ -19,6 +19,55 @@ export interface AttachedFile {
   sizeBytes: number;
 }
 
+// ── Smart title helpers ───────────────────────────────────────────────────────
+
+/** Patterns that indicate a message is too generic to drive a meaningful title. */
+const WEAK_PATTERNS = [
+  /^(help|assist)\s+(me\s+)?(with\s+)?(this|it|my|the)?\.?\s*$/i,
+  /^(fix|improve|optimize|edit|review|check|update|rewrite|change|tune|tweak|adjust)\s+(this|it|my|the)?\s*[.!?]?\s*$/i,
+  /^(can\s+you|please|could\s+you)\s+(help|fix|improve|optimize|review)/i,
+  /^(make\s+(this|it)\s+better)/i,
+  /^(do\s+(this|it|that))/i,
+];
+
+function isWeakMessage(content: string): boolean {
+  const trimmed = content.trim();
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  if (wordCount <= 2) return true;
+  return WEAK_PATTERNS.some(p => p.test(trimmed));
+}
+
+/**
+ * Build the prompt string to send to /generate-title.
+ * Returns null if the message is too generic — in that case use "New Chat".
+ */
+function buildTitlePrompt(
+  content: string,
+  attachedFiles: Pick<AttachedFile, 'name' | 'mimeType'>[]
+): string | null {
+  const trimmed = content.trim();
+  const hasFiles = attachedFiles.length > 0;
+  const fileNames = attachedFiles.map(f => f.name).join(', ');
+
+  // No text and no files → nothing to work with
+  if (!trimmed && !hasFiles) return null;
+
+  // Files only (empty message) → title from file names
+  if (!trimmed && hasFiles) return fileNames;
+
+  // Weak/generic text + files → use file names as the signal
+  if (isWeakMessage(trimmed) && hasFiles) return fileNames;
+
+  // Weak/generic text, no files → skip LLM, default to "New Chat"
+  if (isWeakMessage(trimmed)) return null;
+
+  // Meaningful text + files → combine both signals
+  if (hasFiles) return `${trimmed.slice(0, 180)} (files: ${fileNames})`;
+
+  // Meaningful text only → pass it directly, capped at 200 chars
+  return trimmed.slice(0, 200);
+}
+
 const ALLOWED_MIME_TYPES = [
   'application/pdf',
   'image/png',
@@ -378,17 +427,21 @@ export function registerChatHandlers(
                 if (!authState.isAuthenticated) {
                     throw new Error('User must be authenticated to create chat');
                 }
-                // Create the chat immediately with a first-4-words placeholder title
-                // so the user sees something in the sidebar right away.
-                const placeholderTitle = data.content.trim().split(/\s+/).slice(0, 4).join(' ');
-                chat = await chatService.createChat(placeholderTitle);
-                chatId = chat.id;
+            // Create the chat immediately with a placeholder title so the user
+            // sees something in the sidebar right away.
+            const titlePrompt = buildTitlePrompt(data.content, attachedFiles);
+            const placeholderTitle = titlePrompt
+              ? data.content.trim().split(/\s+/).slice(0, 4).join(' ') || titlePrompt.split(/\s+/).slice(0, 4).join(' ')
+              : 'New Chat';
+            chat = await chatService.createChat(placeholderTitle);
+            chatId = chat.id;
 
-                // Fire-and-forget: generate a smart title in the background.
-                // Once the title is ready, update the DB and push to the renderer.
+            // Fire-and-forget: generate a smart title in the background.
+            // Only triggered when there is meaningful user input to work from.
+            if (titlePrompt) {
                 (async () => {
                     try {
-                        const smartTitle = await pythonClient.generateTitle(data.content);
+                        const smartTitle = await pythonClient.generateTitle(titlePrompt);
                         if (smartTitle && smartTitle !== placeholderTitle) {
                             await chatService.updateChatTitle(chatId!, smartTitle);
                             // Push the rename to the sidebar immediately
@@ -404,6 +457,7 @@ export function registerChatHandlers(
                         console.warn('[Chat] Smart title generation failed (non-critical):', err);
                     }
                 })();
+            }
             } else {
                 chat = await chatService.getChat(chatId);
             }

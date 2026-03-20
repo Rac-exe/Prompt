@@ -329,16 +329,16 @@ export class PythonClient extends EventEmitter {
   /**
    * Generate a short smart title for a new chat from the first user message.
    * Calls /generate-title on the Python service (GPT-4o-mini via OpenRouter).
-   * Returns the generated title, or the first 4 words as a fallback.
+   * Returns the generated title, or "New Chat" as a fallback.
    */
   async generateTitle(prompt: string): Promise<string> {
-    const fallback = prompt.trim().split(/\s+/).slice(0, 4).join(' ');
     try {
       const response = await this.client.post('/generate-title', { prompt }, { timeout: 8000 });
-      return response.data?.title || fallback;
+      const title = response.data?.title?.trim();
+      return title && title.length > 0 ? title : 'New Chat';
     } catch (error) {
       console.warn('[PythonClient] generateTitle failed, using fallback:', error);
-      return fallback;
+      return 'New Chat';
     }
   }
 }
