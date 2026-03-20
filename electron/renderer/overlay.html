@@ -1568,7 +1568,8 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                   </svg>
                   <svg id="mode-icon-thinking" style="width: 13px; height: 13px; display: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    <!-- Brain icon for thinking mode -->
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
                   </svg>
                   <span id="mode-label">Fast</span>
                   <svg style="width: 10px; height: 10px; opacity: 0.5;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3189,22 +3190,30 @@
       }
     }
 
-    // SVG icon paths keyed by skill name
+    // SVG icon paths keyed by skill name — matches app's Lucide icon set exactly
     const SKILL_ICON_SVGS = {
+      // Settings2 (two gears) — matches app's automation icon
       automation:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M20 7h-9"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14 10V4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 17h9"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 14v6"/><circle cx="17" cy="7" r="3" stroke-width="1.8"/><circle cx="7" cy="17" r="3" stroke-width="1.8"/>',
+      // Briefcase — matches app's business icon
       business:
         '<rect x="2" y="7" width="20" height="14" rx="2" ry="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>',
+      // MessageSquare — matches app's communication icon
       communication:
         '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+      // Palette — matches app's creative icon
       creative:
         '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 011.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/><circle cx="6.5" cy="11.5" r="1" stroke-width="1.8"/><circle cx="9.5" cy="7.5" r="1" stroke-width="1.8"/><circle cx="14.5" cy="7.5" r="1" stroke-width="1.8"/><circle cx="17.5" cy="11.5" r="1" stroke-width="1.8"/>',
+      // GraduationCap — matches app's educational icon
       educational:
         '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/>',
+      // FlaskConical — matches app's research icon
       research:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v11m0 0H5a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2h-4m-6 0h6"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14 2v6l3 3-3 3v6H7v-6l-3-3 3-3V2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 2h12"/>',
+      // Code2 — matches app's technical icon
       technical:
         '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>',
+      // ImageIcon — matches app's visual icon
       visual:
         '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
     };
