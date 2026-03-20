@@ -148,7 +148,6 @@ export interface ElectronAPI {
   saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
   send: (channel: string, data: any) => void;
   stopGeneration: () => void;
-  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
 
   // Window controls
   windowControls: {

@@ -67,7 +67,6 @@ declare global {
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
-      optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
       onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
       onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
@@ -334,9 +333,6 @@ const electronAPI = {
   },
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
-  },
-  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => {
-    ipcRenderer.send('overlay:open-with-context', data);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');

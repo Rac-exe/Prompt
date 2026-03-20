@@ -404,18 +404,6 @@ export function registerOverlayHandlers(
   });
 
   // ============================================
-  // overlay:open-with-context — Open overlay pre-filled with text + chatId
-  // Called from the app window's "Optimize Again" button
-  // ============================================
-  ipcMain.on('overlay:open-with-context', (_event, data: { text: string; chatId: string; chatName: string }) => {
-    overlayManager.open(authState.isAuthenticated, undefined, {
-      text: data.text,
-      chatId: data.chatId,
-      chatName: data.chatName,
-    });
-  });
-
-  // ============================================
   // overlay:open-app — Show the main app window (for login)
   // ============================================
   ipcMain.on('overlay:open-app', () => {
