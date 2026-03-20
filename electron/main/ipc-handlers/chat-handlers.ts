@@ -661,10 +661,10 @@ export function registerChatHandlers(
                 console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
             }
 
-            // Trigger streaming optimization
+            // Trigger streaming optimization (regeneration — skip cache for fresh result)
             const optimizedText = await pythonClient.optimizeStream(
                 data.content,
-                false,
+                true,
                 messagesContext.length > 0 ? messagesContext : null,
                 (chunk, accumulated) => {
                     if (appWindowManager) {

@@ -592,6 +592,8 @@ const Index = () => {
         content: msg.content,
         timestamp: new Date(msg.created_at),
         feedback: msg.metadata?.feedback,
+        groupId: msg.groupId || msg.metadata?.groupId || undefined,
+        versionIndex: msg.versionIndex ?? msg.metadata?.versionIndex ?? undefined,
       }));
 
       setMessages(prev => {
@@ -790,35 +792,6 @@ Your prompt was: "${content}"`;
     ]);
 
     handleSendMessage(newContent, "fast", undefined, undefined, { groupId, versionIndex });
-  }, [handleSendMessage, messageTree.addBranch]);
-
-  // Retry a user message: create a new branch with the same content.
-  const handleRetryMessage = useCallback((messageId: string) => {
-    const cur = messagesRef.current;
-    const msg = cur.find(m => m.id === messageId);
-    if (!msg) return;
-
-    const placeholderId = `retry-placeholder-${Date.now()}`;
-
-    // Mark edit in progress so tree isn't flattened by a reload
-    editInProgressRef.current = true;
-    pendingPlaceholderId.current = placeholderId;
-
-    // Compute version metadata — reuse the original's groupId
-    const groupId = msg.groupId || messageId;
-    const existingCount = cur.filter(m => m.groupId === groupId).length;
-    const versionIndex = existingCount > 0 ? existingCount : 1;
-
-    // Create a sibling branch in the tree
-    messageTree.addBranch(messageId, placeholderId);
-
-    // Append placeholder with same content
-    setMessages((prev) => [
-      ...prev,
-      { id: placeholderId, role: "user" as const, content: msg.content, timestamp: new Date(), groupId, versionIndex },
-    ]);
-
-    handleSendMessage(msg.content, "fast", undefined, undefined, { groupId, versionIndex });
   }, [handleSendMessage, messageTree.addBranch]);
 
   // Regenerate an assistant response: creates a new assistant version
@@ -1218,7 +1191,6 @@ Your prompt was: "${content}"`;
             onSavePrompt={handleSavePromptClick}
             onFeedback={handleFeedback}
             onEditMessage={handleEditMessage}
-            onRetryMessage={handleRetryMessage}
             onRegenerateMessage={handleRegenerateMessage}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}

@@ -111,31 +111,16 @@ export function useMessageTree() {
 
         lastId = msg.id;
       } else {
-        // ── Additional version (edit / retry) ──
+        // ── Additional version (edit / retry / regen) ──
+        // All versions of the same group are siblings under the SAME parent
+        // as the first version. This ensures regenerations stay under the
+        // correct user message and edits stay under the correct parent.
         const versions = groupVersions.get(gid)!;
-        const verIdx = versions.length; // 0-based index of THIS version
         versions.push(msg.id);
         msgToGroup.set(msg.id, gid);
 
-        // Determine the correct parent for this version.
         const v0Id = versions[0];
-        const v0Parent = t.parent[v0Id]; // parent of the first version
-
-        let parentForVersion: string;
-
-        if (v0Parent === ROOT) {
-          parentForVersion = ROOT;
-        } else {
-          // Find the group the v0-parent belongs to, then pick
-          // the matching version index (or the last available one).
-          const parentGid = msgToGroup.get(v0Parent);
-          if (parentGid) {
-            const parentVersions = groupVersions.get(parentGid)!;
-            parentForVersion = parentVersions[Math.min(verIdx, parentVersions.length - 1)];
-          } else {
-            parentForVersion = v0Parent; // safety fallback
-          }
-        }
+        const parentForVersion = t.parent[v0Id]; // always same parent as first version
 
         if (!t.children[parentForVersion]) t.children[parentForVersion] = [];
         t.children[parentForVersion].push(msg.id);

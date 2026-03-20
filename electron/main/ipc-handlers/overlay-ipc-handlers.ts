@@ -1,4 +1,5 @@
 import { ipcMain, clipboard, screen } from 'electron';
+import * as crypto from 'crypto';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import { PythonClient } from '../api/python-client';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -120,7 +121,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => {
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -228,13 +229,25 @@ export function registerOverlayHandlers(
               // ── Context chat path: append into the selected chat ──
               console.log('[Overlay] Appending to existing chat:', targetChatId);
 
-              const userMsg = await svc.addMessage(targetChatId, data.text, 'user');
+              const userGroupId = data.userGroupId || crypto.randomUUID();
+              const userVersionIndex = data.userVersionIndex ?? 0;
+              const assistantGroupId = data.assistantGroupId || crypto.randomUUID();
+              const assistantVersionIndex = data.assistantVersionIndex ?? 0;
+
+              // For regenerations we only save the assistant message (user already exists)
+              let userMsg: any = null;
+              if (!data.isRegenerate) {
+                userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
+                  groupId: userGroupId,
+                  versionIndex: userVersionIndex,
+                });
+              }
               const assistantMsg = await svc.addMessage(
                 targetChatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, source_app: 'overlay' }
+                { model: 'llama3.2', optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
               );
 
               // Update cache
@@ -243,11 +256,16 @@ export function registerOverlayHandlers(
                 const msgs = await svc.getMessages(targetChatId);
                 localCache.setMessages(userId, targetChatId, msgs as any);
 
-                // ── Real-time push: send only the two new messages so the
+                // ── Real-time push: send only the new messages so the
                 // app window can append them instantly without a full reload.
+                const appendMessages: any[] = [];
+                if (userMsg) {
+                  appendMessages.push({ ...userMsg, groupId: userGroupId, versionIndex: userVersionIndex });
+                }
+                appendMessages.push({ ...assistantMsg, groupId: assistantGroupId, versionIndex: assistantVersionIndex });
                 appWindowManager.send('overlay:messages-appended', {
                   chatId: targetChatId,
-                  messages: [userMsg, assistantMsg],
+                  messages: appendMessages,
                 });
 
                 // ── Bump updated_at so this chat rises to the top of the
@@ -273,13 +291,23 @@ export function registerOverlayHandlers(
                 console.log('[Overlay] Created new chat for overlay session:', currentOverlayChatId);
               }
 
-              await svc.addMessage(currentOverlayChatId, data.text, 'user');
+              const olUserGroupId = data.userGroupId || crypto.randomUUID();
+              const olUserVersionIndex = data.userVersionIndex ?? 0;
+              const olAssistantGroupId = data.assistantGroupId || crypto.randomUUID();
+              const olAssistantVersionIndex = data.assistantVersionIndex ?? 0;
+
+              if (!data.isRegenerate) {
+                await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
+                  groupId: olUserGroupId,
+                  versionIndex: olUserVersionIndex,
+                });
+              }
               await svc.addMessage(
                 currentOverlayChatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, source_app: 'overlay' }
+                { model: 'llama3.2', optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex }
               );
 
               if (authState.currentUserId) {

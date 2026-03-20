@@ -29,7 +29,6 @@ interface ChatViewProps {
   onSavePrompt: (id: string) => void;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEditMessage?: (messageId: string, newContent: string) => void;
-  onRetryMessage?: (messageId: string) => void;
   onRegenerateMessage?: (messageId: string) => void;
   savedPromptIds: string[];
   isGenerating: boolean;
@@ -48,7 +47,7 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  onEditMessage, onRetryMessage, onRegenerateMessage,
+  onEditMessage, onRegenerateMessage,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
@@ -682,10 +681,6 @@ export const ChatView = ({
                 onEdit={message.role === "user" ? (id, content) => {
                   isEditRetryRef.current = true;
                   onEditMessage?.(id, content);
-                } : undefined}
-                onRetry={message.role === "user" ? (id) => {
-                  isEditRetryRef.current = true;
-                  onRetryMessage?.(id);
                 } : undefined}
                 onRegenerate={message.role === "assistant" ? onRegenerateMessage : undefined}
                 isGenerating={isGenerating}

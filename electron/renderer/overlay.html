@@ -293,6 +293,58 @@
       padding: 40px 20px;
     }
 
+    /* ======== VERSION NAVIGATOR ======== */
+    .version-nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 0;
+    }
+
+    .version-nav.align-right {
+      justify-content: flex-end;
+    }
+
+    .version-nav.align-left {
+      justify-content: flex-start;
+    }
+
+    .btn-vnav {
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--muted-foreground) / 0.6);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-family: inherit;
+      transition: all 0.12s ease;
+      padding: 0;
+    }
+
+    .btn-vnav:hover:not(:disabled) {
+      background: hsl(var(--muted));
+      color: hsl(var(--foreground));
+    }
+
+    .btn-vnav:disabled {
+      opacity: 0.25;
+      cursor: default;
+    }
+
+    .vnav-label {
+      font-size: 11px;
+      font-weight: 500;
+      color: hsl(var(--muted-foreground) / 0.6);
+      min-width: 32px;
+      text-align: center;
+      user-select: none;
+    }
+
     /* ======== CHAT MESSAGES ======== */
     .chat-message {
       display: flex;
@@ -1789,6 +1841,13 @@
     let skillsCache = [];                // cached skill list
     let skillHighlightIndex = 0;
 
+    // Versioning state — turns-based model
+    // Each turn = { userVersions: [...], userActiveIdx, assistantGroups: { [uIdx]: [...] }, assistantActiveIdx: { [uIdx]: 0 } }
+    let turns = [];
+    let pendingTurnIdx = -1;             // Which turn the current optimization belongs to
+    let pendingUserVerIdx = -1;          // Which user version index triggered the optimization
+    let pendingIsRegen = false;          // Whether the current optimization is a regeneration
+
     const MAX_ATTACHED_FILES = 5;
     const MAX_FILE_SIZE = 10_000_000;   // 10 MB
     const ALLOWED_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
@@ -2006,91 +2065,99 @@
     }
 
     // ==========================================
-    // MESSAGE RENDERING
+    // MESSAGE RENDERING (Turn-based versioning)
     // ==========================================
-    function renderUserMessage(msg) {
+
+    // Build file attachment chips HTML
+    function buildFilesHtml(files) {
+      if (!files || files.length === 0) return '';
+      const chips = files.map(file => {
+        const isImage = file.mimeType && file.mimeType.startsWith('image/');
+        if (isImage) {
+          return (
+            '<div style="position:relative;width:48px;height:48px;flex-shrink:0;">' +
+              '<img src="data:' + file.mimeType + ';base64,' + file.base64 + '" alt="' + escapeHtml(file.name) + '" ' +
+                'style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--emerald)/0.2);display:block;">' +
+            '</div>'
+          );
+        } else {
+          return (
+            '<div style="display:flex;align-items:center;gap:6px;height:38px;padding:0 8px;border-radius:8px;background:hsl(var(--emerald)/0.06);border:1px solid hsl(var(--emerald)/0.15);max-width:160px;flex-shrink:0;">' +
+              '<svg style="width:12px;height:12px;flex-shrink:0;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+                '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>' +
+              '</svg>' +
+              '<span style="font-size:11px;font-weight:500;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(file.name) + '</span>' +
+            '</div>'
+          );
+        }
+      }).join('');
+      return '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">' + chips + '</div>';
+    }
+
+    // Build skill tag HTML
+    function buildSkillHtml(skill, skillLabel) {
+      if (!skill) return '';
+      const label = skillLabel || skill;
+      return (
+        '<div style="display:inline-flex;align-items:center;gap:4px;margin-bottom:8px;height:20px;padding:0 7px;border-radius:20px;background:hsl(var(--emerald)/0.1);border:1px solid hsl(var(--emerald)/0.25);font-size:10px;font-weight:600;color:hsl(var(--emerald));letter-spacing:0.02em;">' +
+          '<svg style="width:9px;height:9px;flex-shrink:0;" fill="currentColor" viewBox="0 0 24 24">' +
+            '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
+          '</svg>' +
+          escapeHtml(label) +
+        '</div>'
+      );
+    }
+
+    // Build version navigator HTML
+    function buildVersionNav(id, align) {
+      return (
+        '<div class="version-nav ' + (align === 'right' ? 'align-right' : 'align-left') + '" id="' + id + '" style="display:none">' +
+          '<button class="btn-vnav btn-vnav-prev" disabled>' +
+            '<svg style="width:12px;height:12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>' +
+          '</button>' +
+          '<span class="vnav-label">1 / 1</span>' +
+          '<button class="btn-vnav btn-vnav-next" disabled>' +
+            '<svg style="width:12px;height:12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>' +
+          '</button>' +
+        '</div>'
+      );
+    }
+
+    // Build a user message element (not appended to DOM yet)
+    function buildUserMsgEl(msg, turnIdx) {
       const el = document.createElement('div');
       el.className = 'chat-message';
       el.id = 'msg-el-' + msg.id;
-
-      // Build file attachments HTML for inside the bubble
-      let filesHtml = '';
-      if (msg.attachedFiles && msg.attachedFiles.length > 0) {
-        const chips = msg.attachedFiles.map(file => {
-          const isImage = file.mimeType && file.mimeType.startsWith('image/');
-          if (isImage) {
-            return (
-              '<div style="position:relative;width:48px;height:48px;flex-shrink:0;">' +
-                '<img src="data:' + file.mimeType + ';base64,' + file.base64 + '" alt="' + escapeHtml(file.name) + '" ' +
-                  'style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--emerald)/0.2);display:block;">' +
-              '</div>'
-            );
-          } else {
-            return (
-              '<div style="display:flex;align-items:center;gap:6px;height:38px;padding:0 8px;border-radius:8px;background:hsl(var(--emerald)/0.06);border:1px solid hsl(var(--emerald)/0.15);max-width:160px;flex-shrink:0;">' +
-                '<svg style="width:12px;height:12px;flex-shrink:0;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
-                  '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>' +
-                '</svg>' +
-                '<span style="font-size:11px;font-weight:500;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(file.name) + '</span>' +
-              '</div>'
-            );
-          }
-        }).join('');
-        filesHtml =
-          '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">' +
-            chips +
-          '</div>';
-      }
-
-      // Build skill tag HTML
-      let skillHtml = '';
-      if (msg.skill) {
-        const label = msg.skillLabel || msg.skill;
-        skillHtml =
-          '<div style="display:inline-flex;align-items:center;gap:4px;margin-bottom:8px;height:20px;padding:0 7px;border-radius:20px;background:hsl(var(--emerald)/0.1);border:1px solid hsl(var(--emerald)/0.25);font-size:10px;font-weight:600;color:hsl(var(--emerald));letter-spacing:0.02em;">' +
-            '<svg style="width:9px;height:9px;flex-shrink:0;" fill="currentColor" viewBox="0 0 24 24">' +
-              '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
-            '</svg>' +
-            escapeHtml(label) +
-          '</div>';
-      }
-
       el.innerHTML =
         '<div class="message-label">You</div>' +
-        // Display mode
         '<div class="user-bubble-display" id="user-display-' + msg.id + '">' +
           '<div class="message-bubble user-bubble">' +
-            filesHtml +
-            skillHtml +
+            buildFilesHtml(msg.attachedFiles) +
+            buildSkillHtml(msg.skill, msg.skillLabel) +
             '<div class="message-text" id="user-text-' + msg.id + '">' + escapeHtml(msg.content) + '</div>' +
           '</div>' +
           '<div class="user-message-actions" id="user-actions-' + msg.id + '">' +
-            '<button class="btn-user-action btn-user-edit" data-msg-id="' + msg.id + '">' +
+            '<button class="btn-user-action btn-user-edit" data-turn-idx="' + turnIdx + '">' +
               '<svg style="width:10px;height:10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>' +
               'Edit' +
             '</button>' +
-            '<button class="btn-user-action btn-user-retry" data-msg-id="' + msg.id + '">' +
-              '<svg style="width:10px;height:10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>' +
-              'Retry' +
-            '</button>' +
           '</div>' +
         '</div>' +
-        // Edit mode (hidden by default)
         '<div class="user-edit-container" id="user-edit-' + msg.id + '">' +
           '<textarea class="user-edit-textarea" id="user-edit-ta-' + msg.id + '" rows="1">' + escapeHtml(msg.content) + '</textarea>' +
           '<div class="user-edit-actions">' +
-            '<button class="btn-edit-cancel" data-msg-id="' + msg.id + '">Cancel</button>' +
-            '<button class="btn-edit-send" data-msg-id="' + msg.id + '">Send</button>' +
+            '<button class="btn-edit-cancel" data-turn-idx="' + turnIdx + '">Cancel</button>' +
+            '<button class="btn-edit-send" data-turn-idx="' + turnIdx + '">Send</button>' +
           '</div>' +
         '</div>';
-      messagesContainer.appendChild(el);
+      return el;
     }
 
-    function renderAssistantMessage(msg) {
+    // Build an assistant message element (not appended to DOM yet)
+    function buildAssistantMsgEl(msg, turnIdx) {
       const el = document.createElement('div');
       el.className = 'chat-message';
       el.id = 'msg-el-' + msg.id;
-
       el.innerHTML =
         '<div class="message-label">' +
           '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
@@ -2102,18 +2169,17 @@
           '<div class="message-text" id="msg-text-' + msg.id + '">' + escapeHtml(msg.content) + '</div>' +
         '</div>' +
         '<div class="message-actions" id="msg-actions-' + msg.id + '">' +
-          buildActionButtons(msg.id, msg.autoSavedToChat) +
+          buildActionButtons(msg.id, msg.autoSavedToChat, turnIdx) +
         '</div>';
-
-      messagesContainer.appendChild(el);
+      return el;
     }
 
-    function buildActionButtons(msgId, wasAutoSavedToChat) {
+    function buildActionButtons(msgId, wasAutoSavedToChat, turnIdx) {
       const copyIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>';
       const replaceIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>';
+      const regenIcon = '<svg style="width: 12px; height: 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>';
       const chatIcon = '<svg style="width: 11px; height: 11px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>';
 
-      // Auto-saved-to-chat badge (non-interactive, shown when chatId context was active)
       const chatBadge = wasAutoSavedToChat
         ? '<span class="btn-msg-action action-success" style="pointer-events:none;cursor:default;">' + chatIcon + ' Saved to chat</span>'
         : '';
@@ -2121,11 +2187,17 @@
       return (
         '<button class="btn-msg-action btn-msg-copy" data-msg-id="' + msgId + '">' + copyIcon + ' Copy</button>' +
         '<button class="btn-msg-action btn-msg-replace" data-msg-id="' + msgId + '">' + replaceIcon + ' Replace</button>' +
+        '<button class="btn-msg-action btn-msg-regen" data-turn-idx="' + turnIdx + '">' + regenIcon + ' Regenerate</button>' +
         chatBadge
       );
     }
 
-    function createStreamingElement() {
+    function createStreamingElement(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return null;
+      const container = document.getElementById('turn-' + turnIdx);
+      if (!container) return null;
+
       const el = document.createElement('div');
       el.className = 'chat-message';
       el.id = 'streaming-message';
@@ -2139,14 +2211,20 @@
         '<div class="message-bubble assistant-bubble">' +
           '<div class="message-text" id="streaming-text"></div>' +
         '</div>';
-      messagesContainer.appendChild(el);
+
+      // Insert before the assistant version navigator
+      const assistantNav = document.getElementById('assistant-vnav-' + turnIdx);
+      if (assistantNav) {
+        container.insertBefore(el, assistantNav);
+      } else {
+        container.appendChild(el);
+      }
       return el;
     }
 
-    function finalizeStreamingMessage(msgId, content, autoSavedToChat) {
+    function finalizeStreamingMessage(msgId, content, autoSavedToChat, turnIdx) {
       if (!streamingMsgEl) return;
 
-      // Update the element ID and text ID
       streamingMsgEl.id = 'msg-el-' + msgId;
       const textEl = document.getElementById('streaming-text');
       if (textEl) {
@@ -2154,33 +2232,153 @@
         textEl.id = 'msg-text-' + msgId;
       }
 
-      // Add action buttons
       const actionsDiv = document.createElement('div');
       actionsDiv.className = 'message-actions';
       actionsDiv.id = 'msg-actions-' + msgId;
-      actionsDiv.innerHTML = buildActionButtons(msgId, autoSavedToChat);
+      actionsDiv.innerHTML = buildActionButtons(msgId, autoSavedToChat, turnIdx);
       streamingMsgEl.appendChild(actionsDiv);
     }
 
+    // Render a turn container (user msg + user nav + assistant slot + assistant nav)
+    function renderTurn(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+
+      const container = document.createElement('div');
+      container.id = 'turn-' + turnIdx;
+      container.style.marginBottom = '0';
+
+      // User version navigator (above user message, right-aligned)
+      container.insertAdjacentHTML('beforeend', buildVersionNav('user-vnav-' + turnIdx, 'right'));
+
+      // User message (first version)
+      const userVer = turn.userVersions[turn.userActiveIdx];
+      const userEl = buildUserMsgEl(userVer, turnIdx);
+      container.appendChild(userEl);
+
+      // Assistant version navigator (below assistant message, left-aligned)
+      container.insertAdjacentHTML('beforeend', buildVersionNav('assistant-vnav-' + turnIdx, 'left'));
+
+      messagesContainer.appendChild(container);
+    }
+
+    // Update version navigator display
+    function updateVersionNav(navId, current, total) {
+      const nav = document.getElementById(navId);
+      if (!nav) return;
+      if (total <= 1) {
+        nav.style.display = 'none';
+        return;
+      }
+      nav.style.display = 'flex';
+      const label = nav.querySelector('.vnav-label');
+      if (label) label.textContent = current + ' / ' + total;
+      const prevBtn = nav.querySelector('.btn-vnav-prev');
+      const nextBtn = nav.querySelector('.btn-vnav-next');
+      if (prevBtn) prevBtn.disabled = (current <= 1);
+      if (nextBtn) nextBtn.disabled = (current >= total);
+    }
+
+    // Show only the active user version in a turn, hide others
+    function showActiveUserVersion(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+      turn.userVersions.forEach((ver, i) => {
+        const el = document.getElementById('msg-el-' + ver.id);
+        if (el) el.style.display = (i === turn.userActiveIdx) ? '' : 'none';
+      });
+      updateVersionNav('user-vnav-' + turnIdx, turn.userActiveIdx + 1, turn.userVersions.length);
+    }
+
+    // Show only the active assistant version for the current user version
+    function showActiveAssistantVersion(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+      const uIdx = turn.userActiveIdx;
+      // Hide all assistant messages in this turn
+      Object.values(turn.assistantGroups).forEach(group => {
+        group.forEach(ver => {
+          const el = document.getElementById('msg-el-' + ver.id);
+          if (el) el.style.display = 'none';
+        });
+      });
+      // Show the active one
+      const group = turn.assistantGroups[uIdx];
+      if (group && group.length > 0) {
+        const activeIdx = turn.assistantActiveIdx[uIdx] || 0;
+        const activeVer = group[activeIdx];
+        if (activeVer) {
+          const el = document.getElementById('msg-el-' + activeVer.id);
+          if (el) el.style.display = '';
+        }
+        updateVersionNav('assistant-vnav-' + turnIdx, activeIdx + 1, group.length);
+      } else {
+        updateVersionNav('assistant-vnav-' + turnIdx, 0, 0);
+      }
+    }
+
     // ==========================================
-    // MESSAGE MANAGEMENT
+    // MESSAGE MANAGEMENT (Turn-based)
     // ==========================================
+
+    // Generate a UUID for version grouping
+    function generateGroupId() {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    }
+
+    // Add a new user message (creates a new turn)
     function addUserMessage(content, files, skill, skillLabel) {
       const msg = { id: generateId(), role: 'user', content, timestamp: Date.now(), attachedFiles: files || [], skill: skill || null, skillLabel: skillLabel || null };
       messages.push(msg);
+
+      const turnIdx = turns.length;
+      const turn = {
+        userVersions: [msg],
+        userActiveIdx: 0,
+        assistantGroups: {},    // keyed by user version index
+        assistantActiveIdx: {}, // keyed by user version index
+        userGroupId: generateGroupId(),        // version group for all user edits in this turn
+        assistantGroupIds: {},                  // keyed by user version index → UUID per assistant group
+      };
+      turns.push(turn);
+
       updateEmptyState();
-      renderUserMessage(msg);
+      renderTurn(turnIdx);
+
+      // Track pending optimization target
+      pendingTurnIdx = turnIdx;
+      pendingUserVerIdx = 0;
+      pendingIsRegen = false;
+
       scrollToBottom();
       return msg;
     }
 
-    function addAssistantMessage(content, autoSavedToChat) {
+    // Register an assistant message into the correct turn/version
+    function registerAssistantMessage(content, autoSavedToChat) {
       const msg = { id: generateId(), role: 'assistant', content, timestamp: Date.now(), autoSavedToChat: !!autoSavedToChat };
       messages.push(msg);
       currentOptimizedPrompt = content;
-      updateEmptyState();
-      renderAssistantMessage(msg);
-      scrollToBottom();
+
+      const turnIdx = pendingTurnIdx;
+      const uIdx = pendingUserVerIdx;
+      const turn = turns[turnIdx];
+      if (!turn) return msg;
+
+      if (!turn.assistantGroups[uIdx]) {
+        turn.assistantGroups[uIdx] = [];
+        turn.assistantActiveIdx[uIdx] = 0;
+        // Generate a new assistant group ID for this user version
+        if (!turn.assistantGroupIds) turn.assistantGroupIds = {};
+        turn.assistantGroupIds[uIdx] = generateGroupId();
+      }
+      turn.assistantGroups[uIdx].push(msg);
+      turn.assistantActiveIdx[uIdx] = turn.assistantGroups[uIdx].length - 1;
+
       return msg;
     }
 
@@ -2194,6 +2392,10 @@
     // ==========================================
     function clearSession() {
       messages = [];
+      turns = [];
+      pendingTurnIdx = -1;
+      pendingUserVerIdx = -1;
+      pendingIsRegen = false;
       currentOptimizedPrompt = '';
       isOptimizing = false;
       streamingMsgEl = null;
@@ -2246,7 +2448,7 @@
       const filesToSend = attachedFiles.length > 0 ? [...attachedFiles] : undefined;
       const skillToSend = selectedSkill || undefined;
 
-      // Add user message to chat (with attached files so they appear in the bubble)
+      // Add user message to chat — creates a new turn
       addUserMessage(text, filesToSend, skillToSend, selectedSkillLabel);
 
       // Clear input and reset height only
@@ -2257,7 +2459,12 @@
       // Show loading
       showLoading();
 
-      // Send to backend
+      // Send to backend with version metadata
+      const turn = turns[pendingTurnIdx];
+      // Pre-generate the assistant group ID for user version 0
+      if (turn && !turn.assistantGroupIds) turn.assistantGroupIds = {};
+      if (turn && !turn.assistantGroupIds[0]) turn.assistantGroupIds[0] = generateGroupId();
+
       if (window.electronAPI?.overlay?.optimize) {
         window.electronAPI.overlay.optimize({
           text,
@@ -2266,6 +2473,10 @@
           chatId: selectedChatId || undefined,
           attachedFiles: filesToSend,
           forcedSkill: skillToSend,
+          userGroupId: turn ? turn.userGroupId : undefined,
+          userVersionIndex: 0,
+          assistantGroupId: turn ? turn.assistantGroupIds[0] : undefined,
+          assistantVersionIndex: 0,
         });
       }
     }
@@ -2283,15 +2494,17 @@
 
       // Finalise whatever has been streamed so far as a real message
       if (streamingMsgEl && streamingContent) {
-        const msgId = generateId();
         const autoSavedToChat = !!selectedChatId;
-        finalizeStreamingMessage(msgId, streamingContent, autoSavedToChat);
-        messages.push({ id: msgId, role: 'assistant', content: streamingContent, timestamp: Date.now(), autoSavedToChat });
-        currentOptimizedPrompt = streamingContent;
+
+        // Register into turn first to get the real message ID
+        const msg = registerAssistantMessage(streamingContent, autoSavedToChat);
+        finalizeStreamingMessage(msg.id, streamingContent, autoSavedToChat, pendingTurnIdx);
+
         streamingMsgEl = null;
         streamingContent = '';
+
+        showActiveAssistantVersion(pendingTurnIdx);
       } else if (streamingMsgEl) {
-        // Nothing was streamed yet — just remove the empty element
         streamingMsgEl.remove();
         streamingMsgEl = null;
         streamingContent = '';
@@ -2316,7 +2529,6 @@
         window.electronAPI.overlay.copy(content);
       }
 
-      // Show feedback on the button
       const btn = messagesContainer.querySelector('.btn-msg-copy[data-msg-id="' + msgId + '"]');
       if (btn) {
         const original = btn.innerHTML;
@@ -2330,7 +2542,6 @@
     }
 
     async function handleReplaceMessage(msgId) {
-      // Read the optimized prompt directly from message.content — never from clipboard.
       const content = getMessageContent(msgId);
       if (!content) return;
 
@@ -2345,13 +2556,9 @@
       }
 
       try {
-        // Inject message.content into the original window where @prompt was typed.
-        // overlay:insert closes the overlay, then the Rust native bridge writes
-        // the text into the anchored external window.
         const result = await window.electronAPI.overlay.insert(content);
 
         if (result && result.success) {
-          // Overlay is now hidden; update button state for when user reopens.
           if (btn) {
             btn.innerHTML = checkIconSvg + ' Replaced!';
             btn.classList.add('action-success');
@@ -2385,150 +2592,267 @@
       }
     }
 
-    // Event delegation for message actions
-    messagesContainer.addEventListener('click', (e) => {
-      const copyBtn = e.target.closest('.btn-msg-copy');
-      const replaceBtn = e.target.closest('.btn-msg-replace');
-      const editBtn = e.target.closest('.btn-user-edit');
-      const retryBtn = e.target.closest('.btn-user-retry');
-      const cancelEditBtn = e.target.closest('.btn-edit-cancel');
-      const sendEditBtn = e.target.closest('.btn-edit-send');
-
-      if (copyBtn) {
-        handleCopyMessage(copyBtn.dataset.msgId);
-      } else if (replaceBtn) {
-        handleReplaceMessage(replaceBtn.dataset.msgId);
-      } else if (editBtn && !isOptimizing) {
-        openEditMode(editBtn.dataset.msgId);
-      } else if (retryBtn && !isOptimizing) {
-        handleRetryMessage(retryBtn.dataset.msgId);
-      } else if (cancelEditBtn) {
-        closeEditMode(cancelEditBtn.dataset.msgId);
-      } else if (sendEditBtn) {
-        commitEdit(sendEditBtn.dataset.msgId);
-      }
-    });
-
-    // ==========================================
-    // EDIT & RETRY USER MESSAGES
-    // ==========================================
-    function autoResizeEditTa(ta) {
-      ta.style.height = 'auto';
-      ta.style.height = ta.scrollHeight + 'px';
-    }
-
-    function openEditMode(msgId) {
-      const displayEl = document.getElementById('user-display-' + msgId);
-      const editEl = document.getElementById('user-edit-' + msgId);
-      const ta = document.getElementById('user-edit-ta-' + msgId);
-      if (!displayEl || !editEl || !ta) return;
-
-      displayEl.classList.add('hidden');
-      editEl.classList.add('active');
-      autoResizeEditTa(ta);
-      // Auto-resize as user types
-      ta.oninput = () => autoResizeEditTa(ta);
-      ta.focus();
-      ta.selectionStart = ta.selectionEnd = ta.value.length;
-    }
-
-    function closeEditMode(msgId) {
-      const displayEl = document.getElementById('user-display-' + msgId);
-      const editEl = document.getElementById('user-edit-' + msgId);
-      const msg = messages.find(m => m.id === msgId);
-      const ta = document.getElementById('user-edit-ta-' + msgId);
-      if (!displayEl || !editEl) return;
-
-      if (ta && msg) ta.value = msg.content; // reset
-      editEl.classList.remove('active');
-      displayEl.classList.remove('hidden');
-    }
-
-    function commitEdit(msgId) {
-      const ta = document.getElementById('user-edit-ta-' + msgId);
-      if (!ta) return;
-      const newContent = ta.value.trim();
-      if (!newContent) return;
-
-      const idx = messages.findIndex(m => m.id === msgId);
-      if (idx === -1) return;
-
-      const originalContent = messages[idx].content;
-      if (newContent === originalContent) { closeEditMode(msgId); return; }
-
-      // Remove all messages AFTER (not including) the edited message from DOM + state
-      const toRemove = messages.splice(idx + 1);
-      toRemove.forEach(m => {
-        const el = document.getElementById('msg-el-' + m.id);
-        if (el) el.remove();
-      });
-
-      // Update the edited message content in state and DOM
-      messages[idx].content = newContent;
-      const textEl = document.getElementById('user-text-' + msgId);
-      if (textEl) textEl.textContent = newContent;
-      ta.value = newContent;
-
-      closeEditMode(msgId);
-
-      // Sync backend history: keep only messages up to (and including) the edited one.
-      // messages.length now reflects the trimmed state.
-      if (window.electronAPI?.overlay?.truncateHistory) {
-        // Backend history has 2 entries per round (user + assistant).
-        // We want to keep history up to the edited user msg index.
-        // Each frontend message maps to one backend history entry.
-        window.electronAPI.overlay.truncateHistory(messages.length);
-      }
-
-      sendEditedMessage(newContent);
-    }
-
-    function handleRetryMessage(msgId) {
-      const idx = messages.findIndex(m => m.id === msgId);
-      if (idx === -1) return;
-      const content = messages[idx].content;
-
-      // Remove all messages AFTER (not including) the retried message from DOM + state
-      const toRemove = messages.splice(idx + 1);
-      toRemove.forEach(m => {
-        const el = document.getElementById('msg-el-' + m.id);
-        if (el) el.remove();
-      });
-
-      // Sync backend history to match the trimmed frontend state
-      if (window.electronAPI?.overlay?.truncateHistory) {
-        window.electronAPI.overlay.truncateHistory(messages.length);
-      }
-
-      sendEditedMessage(content);
-    }
-
-    // Re-send a message (used by both edit and retry).
-    // The user message bubble is already in the DOM — don't re-add it.
-    function sendEditedMessage(content) {
+    // Regenerate — create a new assistant version for the current user version
+    function handleRegenerate(turnIdx) {
       if (isOptimizing) return;
+      const turn = turns[turnIdx];
+      if (!turn) return;
+
+      const uIdx = turn.userActiveIdx;
+      const userVer = turn.userVersions[uIdx];
+      if (!userVer) return;
+
+      // Hide current assistant version
+      const group = turn.assistantGroups[uIdx];
+      if (group && group.length > 0) {
+        const activeIdx = turn.assistantActiveIdx[uIdx] || 0;
+        const activeVer = group[activeIdx];
+        if (activeVer) {
+          const el = document.getElementById('msg-el-' + activeVer.id);
+          if (el) el.style.display = 'none';
+        }
+      }
 
       isOptimizing = true;
       hideError();
       disableInput();
       showLoading();
 
+      // Set pending state for when the response arrives
+      pendingTurnIdx = turnIdx;
+      pendingUserVerIdx = uIdx;
+      pendingIsRegen = true;
+
+      // Determine assistant group ID for this regen
+      if (!turn.assistantGroupIds) turn.assistantGroupIds = {};
+      if (!turn.assistantGroupIds[uIdx]) turn.assistantGroupIds[uIdx] = generateGroupId();
+      const assistGroupId = turn.assistantGroupIds[uIdx];
+      const assistVerIdx = (turn.assistantGroups[uIdx] || []).length; // next version index
+
       if (window.electronAPI?.overlay?.optimize) {
-        window.electronAPI.overlay.optimize({ text: content, isRegenerate: false, mode: currentMode, chatId: selectedChatId || undefined });
+        window.electronAPI.overlay.optimize({
+          text: userVer.content,
+          isRegenerate: true,
+          mode: currentMode,
+          chatId: selectedChatId || undefined,
+          attachedFiles: userVer.attachedFiles && userVer.attachedFiles.length > 0 ? userVer.attachedFiles : undefined,
+          forcedSkill: userVer.skill || undefined,
+          assistantGroupId: assistGroupId,
+          assistantVersionIndex: assistVerIdx,
+        });
       }
+    }
+
+    // Event delegation for message actions
+    messagesContainer.addEventListener('click', (e) => {
+      const copyBtn = e.target.closest('.btn-msg-copy');
+      const replaceBtn = e.target.closest('.btn-msg-replace');
+      const regenBtn = e.target.closest('.btn-msg-regen');
+      const editBtn = e.target.closest('.btn-user-edit');
+      const cancelEditBtn = e.target.closest('.btn-edit-cancel');
+      const sendEditBtn = e.target.closest('.btn-edit-send');
+      const vnavPrev = e.target.closest('.btn-vnav-prev');
+      const vnavNext = e.target.closest('.btn-vnav-next');
+
+      if (copyBtn) {
+        handleCopyMessage(copyBtn.dataset.msgId);
+      } else if (replaceBtn) {
+        handleReplaceMessage(replaceBtn.dataset.msgId);
+      } else if (regenBtn && !isOptimizing) {
+        const tIdx = parseInt(regenBtn.dataset.turnIdx, 10);
+        handleRegenerate(tIdx);
+      } else if (editBtn && !isOptimizing) {
+        const tIdx = parseInt(editBtn.dataset.turnIdx, 10);
+        openEditMode(tIdx);
+      } else if (cancelEditBtn) {
+        const tIdx = parseInt(cancelEditBtn.dataset.turnIdx, 10);
+        closeEditMode(tIdx);
+      } else if (sendEditBtn) {
+        const tIdx = parseInt(sendEditBtn.dataset.turnIdx, 10);
+        commitEdit(tIdx);
+      } else if (vnavPrev || vnavNext) {
+        const navEl = (vnavPrev || vnavNext).closest('.version-nav');
+        if (navEl) {
+          const navId = navEl.id; // e.g. "user-vnav-0" or "assistant-vnav-2"
+          const parts = navId.split('-');
+          const type = parts[0]; // "user" or "assistant"
+          const tIdx = parseInt(parts[2], 10);
+          const dir = vnavPrev ? -1 : 1;
+          navigateVersion(tIdx, type, dir);
+        }
+      }
+    });
+
+    // ==========================================
+    // VERSION NAVIGATION
+    // ==========================================
+    function navigateVersion(turnIdx, type, direction) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+
+      if (type === 'user') {
+        const newIdx = turn.userActiveIdx + direction;
+        if (newIdx < 0 || newIdx >= turn.userVersions.length) return;
+        turn.userActiveIdx = newIdx;
+        showActiveUserVersion(turnIdx);
+        showActiveAssistantVersion(turnIdx);
+      } else if (type === 'assistant') {
+        const uIdx = turn.userActiveIdx;
+        const group = turn.assistantGroups[uIdx];
+        if (!group) return;
+        const curIdx = turn.assistantActiveIdx[uIdx] || 0;
+        const newIdx = curIdx + direction;
+        if (newIdx < 0 || newIdx >= group.length) return;
+        turn.assistantActiveIdx[uIdx] = newIdx;
+        showActiveAssistantVersion(turnIdx);
+      }
+    }
+
+    // ==========================================
+    // EDIT USER MESSAGES (Version-based)
+    // ==========================================
+    function autoResizeEditTa(ta) {
+      ta.style.height = 'auto';
+      ta.style.height = ta.scrollHeight + 'px';
+    }
+
+    function openEditMode(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+      const activeMsg = turn.userVersions[turn.userActiveIdx];
+      if (!activeMsg) return;
+
+      const displayEl = document.getElementById('user-display-' + activeMsg.id);
+      const editEl = document.getElementById('user-edit-' + activeMsg.id);
+      const ta = document.getElementById('user-edit-ta-' + activeMsg.id);
+      if (!displayEl || !editEl || !ta) return;
+
+      displayEl.classList.add('hidden');
+      editEl.classList.add('active');
+      autoResizeEditTa(ta);
+      ta.oninput = () => autoResizeEditTa(ta);
+      ta.focus();
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+    }
+
+    function closeEditMode(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+      const activeMsg = turn.userVersions[turn.userActiveIdx];
+      if (!activeMsg) return;
+
+      const displayEl = document.getElementById('user-display-' + activeMsg.id);
+      const editEl = document.getElementById('user-edit-' + activeMsg.id);
+      const ta = document.getElementById('user-edit-ta-' + activeMsg.id);
+      if (!displayEl || !editEl) return;
+
+      if (ta) ta.value = activeMsg.content; // reset
+      editEl.classList.remove('active');
+      displayEl.classList.remove('hidden');
+    }
+
+    function commitEdit(turnIdx) {
+      const turn = turns[turnIdx];
+      if (!turn) return;
+      const activeMsg = turn.userVersions[turn.userActiveIdx];
+      if (!activeMsg) return;
+
+      const ta = document.getElementById('user-edit-ta-' + activeMsg.id);
+      if (!ta) return;
+      const newContent = ta.value.trim();
+      if (!newContent) return;
+      if (newContent === activeMsg.content) { closeEditMode(turnIdx); return; }
+
+      // Close edit mode on the current version
+      closeEditMode(turnIdx);
+
+      // Create a new user version with the edited content
+      const newMsg = {
+        id: generateId(),
+        role: 'user',
+        content: newContent,
+        timestamp: Date.now(),
+        attachedFiles: activeMsg.attachedFiles || [],
+        skill: activeMsg.skill || null,
+        skillLabel: activeMsg.skillLabel || null,
+      };
+      messages.push(newMsg);
+      turn.userVersions.push(newMsg);
+
+      // Hide old user version, build new one
+      const oldEl = document.getElementById('msg-el-' + activeMsg.id);
+      if (oldEl) oldEl.style.display = 'none';
+
+      // Switch to new version
+      turn.userActiveIdx = turn.userVersions.length - 1;
+
+      // Insert new user message element into the turn container
+      const container = document.getElementById('turn-' + turnIdx);
+      if (container) {
+        const newEl = buildUserMsgEl(newMsg, turnIdx);
+        // Insert after the user version navigator
+        const userNav = document.getElementById('user-vnav-' + turnIdx);
+        if (userNav && userNav.nextSibling) {
+          container.insertBefore(newEl, userNav.nextSibling);
+        } else {
+          container.appendChild(newEl);
+        }
+      }
+
+      // Update user version navigator
+      showActiveUserVersion(turnIdx);
+      // Hide old assistant versions (new user version has no assistant yet)
+      showActiveAssistantVersion(turnIdx);
+
+      // Start optimization for the new content
+      isOptimizing = true;
+      hideError();
+      disableInput();
+      showLoading();
+
+      pendingTurnIdx = turnIdx;
+      pendingUserVerIdx = turn.userActiveIdx;
+      pendingIsRegen = false;
+
+      // Pre-generate assistant group ID for this new user version
+      const newUserVerIdx = turn.userVersions.length - 1;
+      if (!turn.assistantGroupIds) turn.assistantGroupIds = {};
+      if (!turn.assistantGroupIds[newUserVerIdx]) turn.assistantGroupIds[newUserVerIdx] = generateGroupId();
+
+      if (window.electronAPI?.overlay?.optimize) {
+        window.electronAPI.overlay.optimize({
+          text: newContent,
+          isRegenerate: false,
+          mode: currentMode,
+          chatId: selectedChatId || undefined,
+          attachedFiles: newMsg.attachedFiles && newMsg.attachedFiles.length > 0 ? newMsg.attachedFiles : undefined,
+          forcedSkill: newMsg.skill || undefined,
+          userGroupId: turn.userGroupId,
+          userVersionIndex: newUserVerIdx,
+          assistantGroupId: turn.assistantGroupIds[newUserVerIdx],
+          assistantVersionIndex: 0,
+        });
+      }
+
+      scrollToBottom();
     }
 
     // Enter key in user-edit textareas
     messagesContainer.addEventListener('keydown', (e) => {
       if (e.target.classList.contains('user-edit-textarea')) {
+        // Find the turn index from the nearby buttons
+        const editContainer = e.target.closest('.user-edit-container');
+        if (!editContainer) return;
+        const sendBtn = editContainer.querySelector('.btn-edit-send');
+        if (!sendBtn) return;
+        const tIdx = parseInt(sendBtn.dataset.turnIdx, 10);
+
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          const msgId = e.target.id.replace('user-edit-ta-', '');
-          commitEdit(msgId);
+          commitEdit(tIdx);
         }
         if (e.key === 'Escape') {
-          const msgId = e.target.id.replace('user-edit-ta-', '');
-          closeEditMode(msgId);
+          closeEditMode(tIdx);
         }
       }
     });
@@ -3231,10 +3555,10 @@
       window.electronAPI.overlay.onOptimizationChunk((data) => {
         if (!isOptimizing) return;
 
-        // First chunk: create the streaming message element
+        // First chunk: create the streaming message element inside the correct turn
         if (!streamingMsgEl) {
           hideLoading();
-          streamingMsgEl = createStreamingElement();
+          streamingMsgEl = createStreamingElement(pendingTurnIdx);
           streamingContent = '';
         }
 
@@ -3252,47 +3576,42 @@
     // Optimization complete
     if (window.electronAPI?.overlay?.onOptimizationComplete) {
       window.electronAPI.overlay.onOptimizationComplete((data) => {
-        // Guard: if the user already stopped, the partial message was committed
-        // by stopGeneration() — nothing more to do here.
         if (!isOptimizing) return;
 
         isOptimizing = false;
         const optimized = data.optimized || '';
         currentOptimizedPrompt = optimized;
 
-        const msgId = generateId();
-        // Was this optimization auto-saved into a chat?
         const autoSavedToChat = !!selectedChatId;
+        const turnIdx = pendingTurnIdx;
+
+        // Register the assistant message into the turn
+        const msg = registerAssistantMessage(optimized, autoSavedToChat);
 
         if (streamingMsgEl) {
-          // Finalize the streaming element
-          finalizeStreamingMessage(msgId, optimized, autoSavedToChat);
+          // Finalize the streaming element with the real message data
+          finalizeStreamingMessage(msg.id, optimized, autoSavedToChat, turnIdx);
           streamingMsgEl = null;
           streamingContent = '';
         } else {
-          // No chunks arrived — hide loading and render full message
+          // No chunks arrived — render full message inside the turn container
           hideLoading();
-          const el = document.createElement('div');
-          el.className = 'chat-message';
-          el.id = 'msg-el-' + msgId;
-          el.innerHTML =
-            '<div class="message-label">' +
-              '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
-                '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
-              '</svg>' +
-              ' Optimized Prompt' +
-            '</div>' +
-            '<div class="message-bubble assistant-bubble">' +
-              '<div class="message-text" id="msg-text-' + msgId + '">' + escapeHtml(optimized) + '</div>' +
-            '</div>' +
-            '<div class="message-actions" id="msg-actions-' + msgId + '">' +
-              buildActionButtons(msgId, autoSavedToChat) +
-            '</div>';
-          messagesContainer.appendChild(el);
+          const el = buildAssistantMsgEl(msg, turnIdx);
+          const container = document.getElementById('turn-' + turnIdx);
+          if (container) {
+            const assistantNav = document.getElementById('assistant-vnav-' + turnIdx);
+            if (assistantNav) {
+              container.insertBefore(el, assistantNav);
+            } else {
+              container.appendChild(el);
+            }
+          } else {
+            messagesContainer.appendChild(el);
+          }
         }
 
-        // Add to messages array
-        messages.push({ id: msgId, role: 'assistant', content: optimized, timestamp: Date.now(), autoSavedToChat });
+        // Show only the active assistant version and update navigator
+        showActiveAssistantVersion(turnIdx);
 
         enableInput();
         scrollToBottom();

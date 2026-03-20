@@ -29,7 +29,6 @@ interface MessageBubbleProps {
   isSaved: boolean;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEdit?: (messageId: string, currentContent: string) => void;
-  onRetry?: (messageId: string) => void;
   onRegenerate?: (messageId: string) => void;
   isGenerating?: boolean;
   /** Number of files that were included in context for this response (assistant only) */
@@ -39,7 +38,7 @@ interface MessageBubbleProps {
 }
 
 export const MessageBubble = ({
-  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRetry, onRegenerate, isGenerating, fileContextCount, avatarUrl,
+  message, onCopy, onSave, isSaved, onFeedback, onEdit, onRegenerate, isGenerating, fileContextCount, avatarUrl,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -213,28 +212,16 @@ export const MessageBubble = ({
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
               </div>
               {/* Action row — visible on hover, hidden while generating */}
-              {!isGenerating && (onEdit || onRetry) && (
+              {!isGenerating && onEdit && (
                 <div className="flex items-center gap-1 opacity-0 group-hover/user:opacity-100 transition-opacity duration-150">
-                  {onEdit && (
-                    <button
-                      onClick={() => { setIsEditing(true); setEditValue(message.content); }}
-                      className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition-colors"
-                      title="Edit message"
-                    >
-                      <Pencil className="w-3 h-3" />
-                      Edit
-                    </button>
-                  )}
-                  {onRetry && (
-                    <button
-                      onClick={() => onRetry(message.id)}
-                      className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition-colors"
-                      title="Retry with this message"
-                    >
-                      <RotateCcw className="w-3 h-3" />
-                      Retry
-                    </button>
-                  )}
+                  <button
+                    onClick={() => { setIsEditing(true); setEditValue(message.content); }}
+                    className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition-colors"
+                    title="Edit message"
+                  >
+                    <Pencil className="w-3 h-3" />
+                    Edit
+                  </button>
                 </div>
               )}
             </div>
