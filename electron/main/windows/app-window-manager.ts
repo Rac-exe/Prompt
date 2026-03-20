@@ -7,16 +7,24 @@ import * as path from 'path';
  */
 export class AppWindowManager {
   private window: BrowserWindow | null = null;
+  private isLoaded = false;
 
   /**
-   * Create the main application window
+   * Pre-create the window (hidden) so the first open is instant.
+   * Call this during app initialization, before the user opens the app.
    */
-  create() {
-    if (this.window && !this.window.isDestroyed()) {
-      this.window.show();
-      this.window.focus();
-      return;
-    }
+  preload() {
+    if (this.window && !this.window.isDestroyed()) return;
+    this.createWindowHidden();
+    console.log('[AppWindowManager] App window preloaded (hidden)');
+  }
+
+  /**
+   * Create the window hidden and load the HTML.
+   * Used by both preload() and create() when no window exists.
+   */
+  private createWindowHidden() {
+    this.isLoaded = false;
 
     this.window = new BrowserWindow({
       width: 1400,
@@ -38,17 +46,14 @@ export class AppWindowManager {
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'index.html');
     this.window.loadFile(htmlPath);
 
+    // Track when the window is fully loaded
     this.window.once('ready-to-show', () => {
-      if (this.window) {
-        this.window.show();
-        this.window.focus();
-      }
+      this.isLoaded = true;
     });
 
     // CRITICAL: Don't quit app when window closes
-    this.window.on('close', (event) => {
+    this.window.on('close', () => {
       console.log('[AppWindowManager] Window closing - hiding instead of quitting');
-      // Just hide the window, don't quit the app
       if (this.window) {
         this.window.hide();
       }
@@ -56,20 +61,53 @@ export class AppWindowManager {
 
     this.window.on('closed', () => {
       this.window = null;
+      this.isLoaded = false;
     });
 
     console.log('[AppWindowManager] Main app window created');
   }
 
   /**
-   * Show the window (create if needed)
+   * Create the main application window and show it immediately.
+   * If already preloaded, shows instantly. Otherwise creates and waits for ready-to-show.
+   */
+  create() {
+    if (this.window && !this.window.isDestroyed()) {
+      this.window.show();
+      this.window.focus();
+      return;
+    }
+
+    this.createWindowHidden();
+
+    // Not preloaded — wait for ready-to-show
+    this.window!.once('ready-to-show', () => {
+      if (this.window) {
+        this.window.show();
+        this.window.focus();
+      }
+    });
+  }
+
+  /**
+   * Show the window (create if needed).
+   * If preloaded and loaded, shows instantly.
    */
   show() {
     if (!this.window || this.window.isDestroyed()) {
       this.create();
-    } else {
+    } else if (this.isLoaded) {
+      // Already fully loaded — show instantly
       this.window.show();
       this.window.focus();
+    } else {
+      // Window exists but still loading — wait for ready-to-show
+      this.window.once('ready-to-show', () => {
+        if (this.window) {
+          this.window.show();
+          this.window.focus();
+        }
+      });
     }
   }
 

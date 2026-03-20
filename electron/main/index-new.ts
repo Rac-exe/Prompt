@@ -82,8 +82,9 @@ async function initialize() {
 
   SupabaseClientManager.initialize(SUPABASE_URL, SUPABASE_KEY);
 
-  // Create app window manager
+  // Create app window manager and preload it (hidden) for instant first open
   appWindowManager = new AppWindowManager();
+  appWindowManager.preload();
 
   // Create overlay manager (pre-load hidden window for instant open)
   overlayManager = new OverlayWindowManager();

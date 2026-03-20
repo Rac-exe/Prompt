@@ -21,6 +21,13 @@ Thumbs.db
 .idea/
 *.iml
 
+# AI Assistant tools (Kilo Code, Claude, Cursor, etc.)
+.claude/
+.cursor/
+.agent/
+.agents/
+.kilocode/
+
 # Environment
 .env
 .env.local

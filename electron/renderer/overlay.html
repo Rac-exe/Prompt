@@ -381,18 +381,12 @@
       border: 1px solid hsl(var(--emerald) / 0.15);
     }
 
-    /* ── User message action row (edit / retry) ── */
+    /* ── User message action row (edit / retry) — always visible ── */
     .user-message-actions {
       display: flex;
       justify-content: flex-end;
       gap: 4px;
       margin-top: 4px;
-      opacity: 0;
-      transition: opacity 0.15s ease;
-    }
-
-    .chat-message:hover .user-message-actions {
-      opacity: 1;
     }
 
     .btn-user-action {
@@ -1097,28 +1091,6 @@
       min-width: 260px;
     }
 
-    .skill-picker-search {
-      width: 100%;
-      height: 30px;
-      padding: 0 10px 0 28px;
-      border-radius: 7px;
-      border: 1px solid hsl(var(--border));
-      background: hsl(var(--card));
-      color: hsl(var(--foreground));
-      font-size: 12px;
-      font-family: inherit;
-      outline: none;
-      box-sizing: border-box;
-    }
-
-    .skill-picker-search:focus {
-      border-color: hsl(var(--emerald) / 0.5);
-    }
-
-    .skill-picker-search::placeholder {
-      color: hsl(var(--muted-foreground) / 0.5);
-    }
-
     .skill-list {
       flex: 1;
       overflow-y: scroll;
@@ -1149,7 +1121,7 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 8px 10px 8px 14px;
+      padding: 8px 12px 8px 12px;
       border-radius: 0;
       border: none;
       background: transparent;
@@ -1164,22 +1136,36 @@
 
     .skill-item:hover,
     .skill-item.highlighted {
-      background: hsl(var(--muted) / 0.5);
+      background: hsl(var(--accent) / 0.4);
     }
 
     .skill-item-name {
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 500;
+      color: hsl(var(--foreground));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
-    .skill-item-desc {
+    /* Tooltip shown to the right of the skill picker panel */
+    .skill-tooltip {
+      position: absolute;
+      left: 100%;
+      margin-left: 8px;
+      z-index: 10000;
+      pointer-events: none;
+      width: 200px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      /* Always dark background regardless of theme — matches app's tooltip style */
+      background: #111;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
       font-size: 11px;
-      color: hsl(var(--muted-foreground));
-      margin-top: 1px;
-      overflow: hidden;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
+      color: rgba(255,255,255,0.7);
+      line-height: 1.5;
+      transform: translateY(-50%);
     }
 
     /* ======== FILE ATTACHMENTS AREA ======== */
@@ -1576,7 +1562,16 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                   </svg>
                   <svg id="mode-icon-thinking" style="width: 13px; height: 13px; display: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    <!-- Brain icon (Lucide Brain v0.462.0) -->
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.599 6.5a3 3 0 0 0 .399-1.375"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.477 10.896a4 4 0 0 1 .585-.396"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.938 10.5a4 4 0 0 1 .585.396"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18a4 4 0 0 1-1.967-.516"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.967 17.484A4 4 0 0 1 18 18"/>
                   </svg>
                   <span id="mode-label">Fast</span>
                   <svg style="width: 10px; height: 10px; opacity: 0.5;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1598,7 +1593,16 @@
                   </button>
                   <button class="mode-dropdown-item" data-mode="thinking" type="button">
                     <svg class="mode-icon" fill="none" stroke="#3b82f6" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                      <!-- Brain icon (Lucide Brain v0.462.0) -->
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.599 6.5a3 3 0 0 0 .399-1.375"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.477 10.896a4 4 0 0 1 .585-.396"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.938 10.5a4 4 0 0 1 .585.396"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18a4 4 0 0 1-1.967-.516"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.967 17.484A4 4 0 0 1 18 18"/>
                     </svg>
                     <div style="flex: 1;">
                       <div style="font-weight: 600;">Thinking</div>
@@ -1610,7 +1614,7 @@
 
                 <!-- Skill pill (shown when a skill is selected) -->
                 <div id="skill-pill" class="skill-pill" style="display: none;">
-                  <svg style="width: 10px; height: 10px; flex-shrink: 0;" fill="currentColor" viewBox="0 0 24 24">
+                  <svg id="skill-pill-icon" style="width: 10px; height: 10px; flex-shrink: 0;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
                   </svg>
                   <span id="skill-pill-name"></span>
@@ -1784,31 +1788,13 @@
       </div>
 
       <!-- Skill picker view (shown when "Choose skill" clicked) -->
-      <div id="plus-skill-view" style="display: none;" class="skill-picker-panel">
-        <!-- Header: back button + search -->
-        <div style="padding: 6px 6px 4px; display: flex; align-items: center; gap: 6px;">
-          <button id="btn-skill-back" type="button" title="Back"
-            style="background: none; border: none; cursor: pointer; color: hsl(var(--muted-foreground)); padding: 2px 4px; display: flex; align-items: center; flex-shrink: 0; border-radius: 6px; transition: background 0.1s ease;"
-            onmouseover="this.style.background='hsl(var(--muted))'" onmouseout="this.style.background='none'">
-            <svg style="width: 13px; height: 13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/>
-            </svg>
-          </button>
-          <div style="position: relative; flex: 1;">
-            <svg style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; color: hsl(var(--muted-foreground)); pointer-events: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-            </svg>
-            <input id="skill-search-input" class="skill-picker-search" type="text" placeholder="Search skills..." autocomplete="off">
-          </div>
-        </div>
-        <!-- Skill list -->
-        <div id="skill-list" class="skill-list">
+      <div id="plus-skill-view" style="display: none; position: relative;" class="skill-picker-panel">
+        <!-- Skill list (no search bar — cleaner like app) -->
+        <div id="skill-list" class="skill-list" style="max-height: 320px; padding: 4px 0;">
           <div style="padding: 16px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 11px;">Loading...</div>
         </div>
-        <!-- Footer hint -->
-        <div style="padding: 4px 10px 6px; border-top: 1px solid hsl(var(--border) / 0.5);">
-          <span style="font-size: 10px; color: hsl(var(--muted-foreground) / 0.5);">↑↓ Navigate · Enter Select · Esc Back</span>
-        </div>
+        <!-- Tooltip element (positioned absolute, outside scroll container) -->
+        <div id="skill-tooltip" class="skill-tooltip" style="display: none;"></div>
       </div>
     </div>
   </div>
@@ -1890,13 +1876,13 @@
     const plusSkillView = document.getElementById('plus-skill-view');
     const btnAttachFiles = document.getElementById('btn-attach-files');
     const btnChooseSkill = document.getElementById('btn-choose-skill');
-    const btnSkillBack = document.getElementById('btn-skill-back');
-    const skillSearchInput = document.getElementById('skill-search-input');
     const skillListEl = document.getElementById('skill-list');
+    const skillTooltipEl = document.getElementById('skill-tooltip');
     const fileInput = document.getElementById('file-input');
     const attachmentsRow = document.getElementById('attachments-row');
     const skillPill = document.getElementById('skill-pill');
     const skillPillName = document.getElementById('skill-pill-name');
+    const skillPillIcon = document.getElementById('skill-pill-icon');
     const skillPillRemove = document.getElementById('skill-pill-remove');
 
     // ==========================================
@@ -2010,7 +1996,7 @@
     // INPUT CONTROL
     // ==========================================
     function disableInput() {
-      promptInput.disabled = true;
+      // Keep promptInput enabled so user can type next prompt while generating
       btnSend.disabled = true;
       btnPlus.disabled = true;
       closePlusMenu();
@@ -2032,6 +2018,7 @@
     }
 
     function updateSendButton() {
+      // Send is blocked while optimizing or offline, but typing is always allowed
       btnSend.disabled = !promptInput.value.trim() || isOptimizing || !isOnline;
     }
 
@@ -2042,7 +2029,8 @@
       isOnline = online;
       if (online) {
         offlineBanner.classList.remove('visible');
-        promptInput.disabled = isOptimizing;
+        // Don't disable textarea when optimizing — user can type next prompt
+        promptInput.disabled = false;
         updateSendButton();
       } else {
         offlineBanner.classList.add('visible');
@@ -2248,13 +2236,13 @@
       container.id = 'turn-' + turnIdx;
       container.style.marginBottom = '0';
 
-      // User version navigator (above user message, right-aligned)
-      container.insertAdjacentHTML('beforeend', buildVersionNav('user-vnav-' + turnIdx, 'right'));
-
       // User message (first version)
       const userVer = turn.userVersions[turn.userActiveIdx];
       const userEl = buildUserMsgEl(userVer, turnIdx);
       container.appendChild(userEl);
+
+      // User version navigator (below user message, right-aligned)
+      container.insertAdjacentHTML('beforeend', buildVersionNav('user-vnav-' + turnIdx, 'right'));
 
       // Assistant version navigator (below assistant message, left-aligned)
       container.insertAdjacentHTML('beforeend', buildVersionNav('assistant-vnav-' + turnIdx, 'left'));
@@ -2280,6 +2268,7 @@
     }
 
     // Show only the active user version in a turn, hide others
+    // Also moves the version navigator into the active user message's action row
     function showActiveUserVersion(turnIdx) {
       const turn = turns[turnIdx];
       if (!turn) return;
@@ -2288,6 +2277,17 @@
         if (el) el.style.display = (i === turn.userActiveIdx) ? '' : 'none';
       });
       updateVersionNav('user-vnav-' + turnIdx, turn.userActiveIdx + 1, turn.userVersions.length);
+
+      // Move the version navigator into the active user message's action row
+      const nav = document.getElementById('user-vnav-' + turnIdx);
+      const activeVer = turn.userVersions[turn.userActiveIdx];
+      if (nav && activeVer) {
+        const actionsEl = document.getElementById('user-actions-' + activeVer.id);
+        if (actionsEl && nav.parentElement !== actionsEl) {
+          // Prepend navigator before the edit button
+          actionsEl.insertBefore(nav, actionsEl.firstChild);
+        }
+      }
     }
 
     // Show only the active assistant version for the current user version
@@ -2790,10 +2790,10 @@
       const container = document.getElementById('turn-' + turnIdx);
       if (container) {
         const newEl = buildUserMsgEl(newMsg, turnIdx);
-        // Insert after the user version navigator
+        // Insert before the user version navigator (navigator is now below user messages)
         const userNav = document.getElementById('user-vnav-' + turnIdx);
-        if (userNav && userNav.nextSibling) {
-          container.insertBefore(newEl, userNav.nextSibling);
+        if (userNav) {
+          container.insertBefore(newEl, userNav);
         } else {
           container.appendChild(newEl);
         }
@@ -3060,6 +3060,7 @@
       plusMenu.classList.remove('open');
       plusMainView.style.display = '';
       plusSkillView.style.display = 'none';
+      if (skillTooltipEl) skillTooltipEl.style.display = 'none';
     }
 
     btnPlus.addEventListener('click', (e) => {
@@ -3193,23 +3194,10 @@
       if (skillsCache.length === 0) {
         loadSkills();
       } else {
-        renderSkillList(skillsCache, '');
-        if (skillSearchInput) skillSearchInput.value = '';
+        renderSkillList(skillsCache);
       }
 
       // Reposition popup (height changed)
-      const rect = btnPlus.getBoundingClientRect();
-      plusMenu.style.left = rect.left + 'px';
-      plusMenu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
-
-      requestAnimationFrame(() => skillSearchInput && skillSearchInput.focus());
-    });
-
-    btnSkillBack.addEventListener('click', () => {
-      plusMainView.style.display = '';
-      plusSkillView.style.display = 'none';
-
-      // Reposition popup back to smaller size
       const rect = btnPlus.getBoundingClientRect();
       plusMenu.style.left = rect.left + 'px';
       plusMenu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
@@ -3220,52 +3208,56 @@
       try {
         const skills = await window.electronAPI?.skills?.list?.();
         skillsCache = skills || [];
-        renderSkillList(skillsCache, skillSearchInput ? skillSearchInput.value : '');
+        renderSkillList(skillsCache);
       } catch (err) {
         console.error('[Overlay] Failed to load skills:', err);
         skillListEl.innerHTML = '<div style="padding: 16px; text-align: center; color: hsl(0 72% 51%); font-size: 11px;">Failed to load skills</div>';
       }
     }
 
-    // SVG icon paths keyed by skill name
+    // SVG icon paths keyed by skill name — exact Lucide v0.462.0 paths (same as app)
     const SKILL_ICON_SVGS = {
+      // Settings2 — exact Lucide path
       automation:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>',
+        '<path d="M20 7h-9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M14 17H5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<circle cx="17" cy="17" r="3" stroke-width="2"/>' +
+        '<circle cx="7" cy="7" r="3" stroke-width="2"/>',
+      // Briefcase — matches app's business icon
       business:
-        '<rect x="2" y="7" width="20" height="14" rx="2" ry="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>',
+        '<rect x="2" y="7" width="20" height="14" rx="2" ry="2" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>',
+      // MessageSquare — matches app's communication icon
       communication:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+      // Palette — matches app's creative icon
       creative:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 011.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/><circle cx="6.5" cy="11.5" r="1" stroke-width="1.8"/><circle cx="9.5" cy="7.5" r="1" stroke-width="1.8"/><circle cx="14.5" cy="7.5" r="1" stroke-width="1.8"/><circle cx="17.5" cy="11.5" r="1" stroke-width="1.8"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 011.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/><circle cx="6.5" cy="11.5" r="1" stroke-width="2"/><circle cx="9.5" cy="7.5" r="1" stroke-width="2"/><circle cx="14.5" cy="7.5" r="1" stroke-width="2"/><circle cx="17.5" cy="11.5" r="1" stroke-width="2"/>',
+      // GraduationCap — matches app's educational icon
       educational:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/>',
+      // FlaskConical — exact Lucide path
       research:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v11m0 0H5a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2h-4m-6 0h6"/>',
+        '<path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M8.5 2h7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M7 16h10" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
+      // Code2 — matches app's technical icon
       technical:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>',
+      // ImageIcon — matches app's visual icon
       visual:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
     };
 
-    function renderSkillList(skills, query) {
-      const q = (query || '').toLowerCase().trim();
-      const filtered = q
-        ? skills.filter(s =>
-            s.label.toLowerCase().includes(q) ||
-            s.name.toLowerCase().includes(q) ||
-            (s.description || '').toLowerCase().includes(q)
-          )
-        : skills;
-
+    function renderSkillList(skills) {
       skillListEl.innerHTML = '';
 
-      if (filtered.length === 0) {
+      if (!skills || skills.length === 0) {
         skillListEl.innerHTML =
           '<div style="padding: 20px; text-align: center; color: hsl(var(--muted-foreground) / 0.5); font-size: 12px;">No skills found</div>';
         return;
       }
 
-      filtered.forEach((skill, index) => {
+      skills.forEach((skill, index) => {
         const isHighlighted = index === skillHighlightIndex;
         const iconPath = SKILL_ICON_SVGS[skill.name] ||
           '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>';
@@ -3275,30 +3267,20 @@
         btn.type = 'button';
         btn.dataset.skillName = skill.name;
         btn.dataset.skillLabel = skill.label;
+        btn.style.position = 'relative';
         btn.innerHTML =
-          // Left accent bar
+          // Left accent bar (shown when highlighted)
           (isHighlighted
-            ? '<span style="position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--emerald));"></span>'
+            ? '<span class="skill-accent" style="position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--emerald));"></span>'
             : '') +
           // Icon square
-          '<div style="width:38px;height:38px;border-radius:10px;background:hsl(var(--muted)/0.6);border:1px solid hsl(var(--border)/0.5);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-            '<svg style="width:16px;height:16px;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+          '<div style="width:32px;height:32px;border-radius:8px;background:hsl(var(--muted)/0.6);border:1px solid hsl(var(--border)/0.5);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
+            '<svg style="width:14px;height:14px;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
               iconPath +
             '</svg>' +
           '</div>' +
-          // Text
-          '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:13px;font-weight:600;color:hsl(var(--foreground));line-height:1.3;">' +
-              escapeHtml(skill.label) +
-            '</div>' +
-            (skill.description
-              ? '<div style="font-size:11px;color:hsl(var(--muted-foreground)/0.7);line-height:1.4;margin-top:1px;">' +
-                  escapeHtml(skill.description) +
-                '</div>'
-              : '') +
-          '</div>';
-
-        btn.style.position = 'relative';
+          // Skill name only (no description inline — shown in tooltip)
+          '<span class="skill-item-name">' + escapeHtml(skill.label) + '</span>';
 
         btn.addEventListener('click', () => {
           selectedSkill = skill.name;
@@ -3307,20 +3289,36 @@
           closePlusMenu();
         });
 
-        btn.addEventListener('mouseenter', () => {
+        btn.addEventListener('mouseenter', (e) => {
           skillHighlightIndex = index;
+          // Update highlighted state and accent bars
           skillListEl.querySelectorAll('.skill-item').forEach((el, i) => {
             el.classList.toggle('highlighted', i === index);
-            // Update accent bar
             const accent = el.querySelector('.skill-accent');
-            if (accent) accent.remove();
             if (i === index) {
-              const bar = document.createElement('span');
-              bar.className = 'skill-accent';
-              bar.style.cssText = 'position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--emerald));';
-              el.insertBefore(bar, el.firstChild);
+              if (!accent) {
+                const bar = document.createElement('span');
+                bar.className = 'skill-accent';
+                bar.style.cssText = 'position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--emerald));';
+                el.insertBefore(bar, el.firstChild);
+              }
+            } else {
+              if (accent) accent.remove();
             }
           });
+
+          // Show tooltip with description
+          if (skill.description && skillTooltipEl) {
+            const btnRect = btn.getBoundingClientRect();
+            const panelRect = plusSkillView.getBoundingClientRect();
+            skillTooltipEl.textContent = skill.description;
+            skillTooltipEl.style.top = (btnRect.top - panelRect.top + btnRect.height / 2) + 'px';
+            skillTooltipEl.style.display = 'block';
+          }
+        });
+
+        btn.addEventListener('mouseleave', () => {
+          if (skillTooltipEl) skillTooltipEl.style.display = 'none';
         });
 
         skillListEl.appendChild(btn);
@@ -3331,6 +3329,13 @@
       if (selectedSkill && skillPill && skillPillName) {
         skillPill.style.display = 'inline-flex';
         skillPillName.textContent = selectedSkillLabel || selectedSkill;
+
+        // Update the icon to match the selected skill
+        if (skillPillIcon) {
+          const iconPath = SKILL_ICON_SVGS[selectedSkill] ||
+            '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>';
+          skillPillIcon.innerHTML = iconPath;
+        }
       } else if (skillPill) {
         skillPill.style.display = 'none';
       }
@@ -3342,14 +3347,9 @@
       updateSkillPill();
     });
 
-    // Skill search filtering
-    skillSearchInput.addEventListener('input', () => {
-      skillHighlightIndex = 0;
-      renderSkillList(skillsCache, skillSearchInput.value);
-    });
-
-    // Keyboard navigation in skill picker
-    skillSearchInput.addEventListener('keydown', (e) => {
+    // Keyboard navigation in skill picker (via document keydown when skill view is open)
+    document.addEventListener('keydown', (e) => {
+      if (plusSkillView.style.display === 'none' || !isPlusMenuOpen) return;
       const items = skillListEl.querySelectorAll('.skill-item');
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -3664,6 +3664,19 @@
         root.style.fontFamily = 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif';
       } else {
         root.style.fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
+      }
+
+      // Persist to localStorage so the blocking theme script reads the correct
+      // theme on next open (prevents the flash of wrong theme when overlay opens)
+      try {
+        const cached = {
+          theme: settings.theme || 'dark',
+          fontSize: settings.font_size || 'medium',
+          fontFamily: settings.font_family || 'inter',
+        };
+        localStorage.setItem('prompt-weaver-settings', JSON.stringify(cached));
+      } catch (e) {
+        // localStorage write failed — not critical
       }
     }
 

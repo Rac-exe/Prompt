@@ -9,7 +9,7 @@ interface SkillPickerProps {
   className?: string;
 }
 
-const SKILL_ICON_MAP: Record<string, React.ElementType> = {
+export const SKILL_ICON_MAP: Record<string, React.ElementType> = {
   automation:    Settings2,
   business:      Briefcase,
   communication: MessageSquare,
