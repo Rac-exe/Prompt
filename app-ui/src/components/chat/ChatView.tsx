@@ -9,7 +9,9 @@ import {
 import { cn } from "@/lib/utils";
 import { PlusMenu } from "./PlusMenu";
 import { SkillPicker } from "./SkillPicker";
+import { VersionNavigator } from "./VersionNavigator";
 import type { AttachedFile } from "@/types/electron";
+import type { VersionInfo } from "@/hooks/useMessageTree";
 
 const PASTE_ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf'];
 
@@ -27,8 +29,7 @@ interface ChatViewProps {
   onSavePrompt: (id: string) => void;
   onFeedback?: (messageId: string, rating: "positive" | "negative") => void;
   onEditMessage?: (messageId: string, newContent: string) => void;
-  onRetryMessage?: (messageId: string) => void;
-  onOptimizeAgain?: (messageId: string) => void;
+  onRegenerateMessage?: (messageId: string) => void;
   savedPromptIds: string[];
   isGenerating: boolean;
   isOnline?: boolean;
@@ -37,6 +38,8 @@ interface ChatViewProps {
   sendError?: string | null;
   onStopGeneration?: () => void;
   avatarUrl?: string | null;
+  versionInfoMap?: Map<string, VersionInfo>;
+  onNavigateVersion?: (parentId: string, direction: 'prev' | 'next') => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -44,9 +47,10 @@ type VoiceState = "idle" | "listening" | "processing";
 export const ChatView = ({
   messages, streamingMessage, generationStats,
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
-  onEditMessage, onRetryMessage, onOptimizeAgain,
+  onEditMessage, onRegenerateMessage,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
+  versionInfoMap, onNavigateVersion,
 }: ChatViewProps) => {
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("fast");
@@ -653,9 +657,22 @@ export const ChatView = ({
                     return 0;
                   })()
                 : undefined;
+
+              const versionInfo = versionInfoMap?.get(message.id);
+
               return (
+              <div key={message.id}>
+              {/* User edit navigator — ABOVE the user bubble */}
+              {message.role === "user" && versionInfo && (
+                <VersionNavigator
+                  current={versionInfo.current}
+                  total={versionInfo.total}
+                  onPrev={() => onNavigateVersion?.(versionInfo.parentId, 'prev')}
+                  onNext={() => onNavigateVersion?.(versionInfo.parentId, 'next')}
+                  align="right"
+                />
+              )}
               <MessageBubble
-                key={message.id}
                 message={message}
                 onCopy={() => onCopyPrompt(message.id)}
                 onSave={() => onSavePrompt(message.id)}
@@ -665,15 +682,22 @@ export const ChatView = ({
                   isEditRetryRef.current = true;
                   onEditMessage?.(id, content);
                 } : undefined}
-                onRetry={message.role === "user" ? (id) => {
-                  isEditRetryRef.current = true;
-                  onRetryMessage?.(id);
-                } : undefined}
-                onOptimizeAgain={message.role === "assistant" ? onOptimizeAgain : undefined}
+                onRegenerate={message.role === "assistant" ? onRegenerateMessage : undefined}
                 isGenerating={isGenerating}
                 fileContextCount={fileContextCount}
                 avatarUrl={avatarUrl}
               />
+              {/* Assistant regenerate navigator — BELOW the assistant bubble */}
+              {message.role === "assistant" && versionInfo && (
+                <VersionNavigator
+                  current={versionInfo.current}
+                  total={versionInfo.total}
+                  onPrev={() => onNavigateVersion?.(versionInfo.parentId, 'prev')}
+                  onNext={() => onNavigateVersion?.(versionInfo.parentId, 'next')}
+                  align="left"
+                />
+              )}
+              </div>
               );
             })}
 

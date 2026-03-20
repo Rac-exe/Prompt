@@ -83,6 +83,17 @@ export interface ElectronAPI {
     mode?: string;
     attachedFiles?: AttachedFile[];
     forcedSkill?: string | null;
+    groupId?: string;
+    versionIndex?: number;
+  }) => void;
+  regenerateResponse: (data: {
+    chatId: string;
+    content: string;
+    mode?: string;
+    groupId?: string;
+    versionIndex?: number;
+    attachedFiles?: AttachedFile[];
+    forcedSkill?: string | null;
   }) => void;
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
@@ -148,7 +159,6 @@ export interface ElectronAPI {
   saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
   send: (channel: string, data: any) => void;
   stopGeneration: () => void;
-  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
 
   // Window controls
   windowControls: {

@@ -8,7 +8,7 @@ declare global {
       // OVERLAY API (for overlay.html)
       // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string }) => void;
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => void;
         save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
         copy: (text: string) => void;
         close: () => void;
@@ -67,7 +67,6 @@ declare global {
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
-      optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => void;
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
       onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
       onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
@@ -144,7 +143,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -308,8 +307,21 @@ const electronAPI = {
     mode?: string;
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
+    groupId?: string;
+    versionIndex?: number;
   }) => {
     ipcRenderer.send('app:send-message', data);
+  },
+  regenerateResponse: (data: {
+    chatId: string;
+    content: string;
+    mode?: string;
+    groupId?: string;
+    versionIndex?: number;
+    attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
+    forcedSkill?: string | null;
+  }) => {
+    ipcRenderer.send('app:regenerate-response', data);
   },
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
@@ -334,9 +346,6 @@ const electronAPI = {
   },
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
-  },
-  optimizeAgain: (data: { text: string; chatId: string; chatName: string }) => {
-    ipcRenderer.send('overlay:open-with-context', data);
   },
   signOut: () => {
     ipcRenderer.send('app:sign-out');

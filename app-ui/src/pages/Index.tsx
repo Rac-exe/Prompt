@@ -14,6 +14,8 @@ import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
+import { useMessageTree } from "@/hooks/useMessageTree";
+import type { VersionInfo } from "@/hooks/useMessageTree";
 import { useAuth } from "@/context/AuthContext";
 
 // Empty initial data
@@ -60,7 +62,11 @@ const Index = () => {
 
   // Chat state
   const [messages, setMessages] = useState<Message[]>([]);
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages; // always-current ref for use outside render
   const [isGenerating, setIsGenerating] = useState(false);
+  const isGeneratingRef = useRef(false);
+  isGeneratingRef.current = isGenerating;
   const [savedPromptIds, setSavedPromptIds] = useState<string[]>([]);
   const [currentChatTitle, setCurrentChatTitle] = useState<string>('');
 
@@ -84,6 +90,19 @@ const Index = () => {
 
   // Send error state — shown inline in the input bar instead of a toast
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // Message version tree (edit/retry creates branches instead of slicing)
+  const messageTree = useMessageTree();
+  // Ref: when an edit/retry is in flight, holds the placeholder ID so
+  // onMessageSent can reliably replace it.  Cleared after replacement.
+  const pendingPlaceholderId = useRef<string | null>(null);
+  // Ref: true while an edit/retry + response cycle is in progress.
+  // Prevents onMessagesLoaded from flattening the tree mid-edit.
+  const editInProgressRef = useRef(false);
+  // Ref: prevents double sends between handleSubmit → IPC and onMessageSent.
+  const sendingRef = useRef(false);
+  // Ref: placeholder ID for an in-flight regeneration (assistant-only version).
+  const pendingRegenPlaceholderId = useRef<string | null>(null);
 
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
@@ -225,6 +244,7 @@ const Index = () => {
         if (selectedChatId === data.chatId) {
           setSelectedChatId(null);
           setMessages([]);
+          messageTree.init([]);
           setCurrentChatTitle('');
         }
         toast({
@@ -258,14 +278,32 @@ const Index = () => {
 
   // Initialize the smooth streaming hook
   const handleStreamingComplete = useCallback((finalMessage: Message) => {
-    setMessages((prev) => {
-      // Avoid duplicates if already added
-      if (prev.some(m => m.id === finalMessage.id)) return prev;
-      return [...prev, finalMessage];
-    });
-    setStreamedMessageId(null); // Reset filtered ID
+    // ── Regeneration path: replace the assistant placeholder ──
+    const regenPlaceholder = pendingRegenPlaceholderId.current;
+    if (regenPlaceholder) {
+      pendingRegenPlaceholderId.current = null;
+      messageTree.replaceId(regenPlaceholder, finalMessage.id);
+      setMessages((prev) => {
+        // The placeholder was never in the messages array, so just add
+        if (prev.some(m => m.id === finalMessage.id)) return prev;
+        return [...prev, finalMessage];
+      });
+    } else if (!messageTree.has(finalMessage.id)) {
+      // ── Normal path: add assistant as child of last active node ──
+      const activePath = messageTree.getActivePath();
+      const parentId = activePath.length > 0 ? activePath[activePath.length - 1] : messageTree.ROOT;
+      messageTree.addChild(parentId, finalMessage.id);
+      setMessages((prev) => {
+        if (prev.some(m => m.id === finalMessage.id)) return prev;
+        return [...prev, finalMessage];
+      });
+    }
+
+    setStreamedMessageId(null);
     setIsGenerating(false);
-  }, []);
+    editInProgressRef.current = false;
+    sendingRef.current = false;
+  }, [messageTree.getActivePath, messageTree.addChild, messageTree.has, messageTree.ROOT, messageTree.replaceId]);
 
   const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete
@@ -280,14 +318,25 @@ const Index = () => {
     stopStreaming(); // skip typewriter delay, show partial text immediately
   }, [stopStreaming]);
 
-  // Filter history to avoid duplicates
-  // We filter out the message being currently streamed from history to avoid duplicates
-  // if it arrives via other means (like onMessagesLoaded) before streaming finishes.
+  // Build display messages from the tree's active path.
+  // Only messages on the currently-active branch are shown.
   const displayMessages = useMemo(() => {
-    return streamedMessageId
-      ? messages.filter(m => m.id !== streamedMessageId)
-      : messages;
-  }, [messages, streamedMessageId]);
+    const activePath = messageTree.getActivePath();
+    const messageMap = new Map(messages.map(m => [m.id, m]));
+
+    let display = activePath
+      .map(id => messageMap.get(id))
+      .filter((m): m is Message => !!m);
+
+    // Hide the message currently being streamed (it's rendered separately)
+    if (streamedMessageId) {
+      display = display.filter(m => m.id !== streamedMessageId);
+    }
+
+    console.log('[VersionTree] RENDERING IDS:', activePath, '| total in array:', messages.length);
+
+    return display;
+  }, [messages, streamedMessageId, messageTree.version]);
 
   // Listen for message send confirmation (user message saved to DB)
   useEffect(() => {
@@ -310,24 +359,34 @@ const Index = () => {
           timestamp: new Date(data.userMessage.createdAt),
           attachedFiles: data.userMessage.attachedFiles?.length > 0 ? data.userMessage.attachedFiles : undefined,
           selectedSkill: data.userMessage.selectedSkill || undefined,
+          groupId: data.userMessage.groupId || undefined,
+          versionIndex: data.userMessage.versionIndex ?? undefined,
         };
-        setMessages((prev) => {
-          // Replace the last placeholder (id starts with 'edit-placeholder-' or 'retry-placeholder-')
-          // Using reverse iteration since findLastIndex is not available in older TypeScript targets
-          let placeholderIdx = -1;
-          for (let i = prev.length - 1; i >= 0; i--) {
-            if (prev[i].id.startsWith("edit-placeholder-") || prev[i].id.startsWith("retry-placeholder-")) {
-              placeholderIdx = i;
-              break;
+
+        // Determine if we're replacing a placeholder or adding a new message
+        const placeholderId = pendingPlaceholderId.current;
+
+        if (placeholderId) {
+          // Replace placeholder ID in the version tree, then update the messages array
+          pendingPlaceholderId.current = null;
+          messageTree.replaceId(placeholderId, userMessage.id);
+          setMessages((prev) => {
+            const idx = prev.findIndex(m => m.id === placeholderId);
+            if (idx !== -1) {
+              const next = [...prev];
+              next[idx] = userMessage;
+              return next;
             }
-          }
-          if (placeholderIdx !== -1) {
-            const next = [...prev];
-            next[placeholderIdx] = userMessage;
-            return next;
-          }
-          return [...prev, userMessage];
-        });
+            // Placeholder somehow missing — append but DON'T add to tree again
+            return [...prev, userMessage];
+          });
+        } else {
+          // Normal new message — add to tree as child of last active node
+          const activePath = messageTree.getActivePath();
+          const parentId = activePath.length > 0 ? activePath[activePath.length - 1] : messageTree.ROOT;
+          messageTree.addChild(parentId, userMessage.id);
+          setMessages((prev) => [...prev, userMessage]);
+        }
 
         // Show generating indicator and start streaming
         setIsGenerating(true);
@@ -373,6 +432,8 @@ const Index = () => {
           role: "assistant",
           content: data.message.content,
           timestamp: new Date(data.message.createdAt),
+          groupId: data.message.groupId || undefined,
+          versionIndex: data.message.versionIndex ?? undefined,
         };
 
         // Track this ID to hide it from main history while streaming
@@ -402,6 +463,10 @@ const Index = () => {
       const handleMessageSendError = (data: { error: string; details?: string }) => {
         console.error('[Index] Message send error:', data);
         setIsGenerating(false);
+        editInProgressRef.current = false;
+        pendingPlaceholderId.current = null;
+        pendingRegenPlaceholderId.current = null;
+        sendingRef.current = false;
         setSendError(data.error);
         // Auto-clear after 6 s so it doesn't linger forever
         setTimeout(() => setSendError(null), 6000);
@@ -413,6 +478,12 @@ const Index = () => {
   }, []);
 
   // Load messages from Supabase when a chat is selected
+  // IMPORTANT: deps must NOT include recentChats — the backend sends
+  // 'chats-loaded' after every message, which would reload messages
+  // mid-stream and flatten the version tree.
+  const recentChatsRef = useRef(recentChats);
+  recentChatsRef.current = recentChats;
+
   useEffect(() => {
     if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
       console.log('[Index] Loading messages for chat:', selectedChatId);
@@ -420,13 +491,24 @@ const Index = () => {
       setCurrentView("chat");
       setOfflineChatUnavailable(false); // reset while loading
 
-      // Find chat title
+      // Find chat title from the ref (avoids recentChats in deps)
+      const chat = recentChatsRef.current.find((c) => c.id === selectedChatId);
+      if (chat) {
+        setCurrentChatTitle(chat.title);
+      }
+    }
+  }, [selectedChatId]); // ← only selectedChatId — NOT recentChats
+
+  // Separate effect: keep the header title in sync when a chat is renamed
+  // (e.g. smart-title generation) WITHOUT reloading messages.
+  useEffect(() => {
+    if (selectedChatId) {
       const chat = recentChats.find((c) => c.id === selectedChatId);
       if (chat) {
         setCurrentChatTitle(chat.title);
       }
     }
-  }, [selectedChatId, recentChats]);
+  }, [recentChats, selectedChatId]);
 
   // Listen for messages loaded from Supabase
   useEffect(() => {
@@ -444,6 +526,8 @@ const Index = () => {
             // Restore file metadata from DB (no base64 — just name/mimeType/sizeBytes for pills)
             attachedFiles: msg.metadata?.attachedFiles?.length > 0 ? msg.metadata.attachedFiles : undefined,
             selectedSkill: msg.metadata?.selectedSkill || undefined,
+            groupId: msg.metadata?.groupId || undefined,
+            versionIndex: msg.metadata?.versionIndex ?? undefined,
           }));
 
           // Preserve base64 data from in-memory messages so file previews
@@ -468,6 +552,14 @@ const Index = () => {
             setOfflineChatUnavailable(true);
           } else {
             setOfflineChatUnavailable(false);
+          }
+
+          // (Re-)initialise the version tree as a linear chain —
+          // but ONLY if we're not in the middle of an edit/retry cycle
+          // or an active generation, otherwise we'd flatten the branches
+          // and cause duplicates.
+          if (!editInProgressRef.current && !isGeneratingRef.current && !sendingRef.current) {
+            messageTree.init(formattedMessages);
           }
         }
       };
@@ -500,6 +592,8 @@ const Index = () => {
         content: msg.content,
         timestamp: new Date(msg.created_at),
         feedback: msg.metadata?.feedback,
+        groupId: msg.groupId || msg.metadata?.groupId || undefined,
+        versionIndex: msg.versionIndex ?? msg.metadata?.versionIndex ?? undefined,
       }));
 
       setMessages(prev => {
@@ -507,6 +601,16 @@ const Index = () => {
         const existingIds = new Set(prev.map(m => m.id));
         const toAdd = newMessages.filter(m => !existingIds.has(m.id));
         if (toAdd.length === 0) return prev;
+
+        // Add each new message to the version tree linearly
+        for (const msg of toAdd) {
+          if (!messageTree.has(msg.id)) {
+            const activePath = messageTree.getActivePath();
+            const parentId = activePath.length > 0 ? activePath[activePath.length - 1] : messageTree.ROOT;
+            messageTree.addChild(parentId, msg.id);
+          }
+        }
+
         return [...prev, ...toAdd];
       });
     };
@@ -559,6 +663,7 @@ const Index = () => {
       if (selectedChatId === chatId) {
         setSelectedChatId(null);
         setMessages([]);
+        messageTree.init([]);
         setCurrentChatTitle('');
       }
       toast({
@@ -573,6 +678,7 @@ const Index = () => {
     console.log('[Index] Starting new chat');
     // Clear current chat selection and messages
     setMessages([]);
+    messageTree.init([]);
     setSelectedChatId(null);
     setCurrentChatTitle('');
     setCurrentView("chat");
@@ -583,14 +689,27 @@ const Index = () => {
     content: string, 
     mode: "fast" | "thinking" = "fast",
     attachedFiles?: any[],
-    selectedSkill?: string | null
+    selectedSkill?: string | null,
+    versionMeta?: { groupId: string; versionIndex: number }
   ) => {
+    // Prevent double sends (e.g. rapid clicks before isGenerating is set)
+    if (sendingRef.current) {
+      console.warn('[Index] Ignoring duplicate send — already in flight');
+      return;
+    }
+    sendingRef.current = true;
+
+    const groupId = versionMeta?.groupId || crypto.randomUUID();
+    const versionIndex = versionMeta?.versionIndex ?? 0;
+
     console.log('[Index] Sending message:', {
       chatId: selectedChatId,
       contentLength: content.length,
       mode,
       filesCount: attachedFiles?.length || 0,
-      skill: selectedSkill || 'auto'
+      skill: selectedSkill || 'auto',
+      groupId,
+      versionIndex,
     });
 
     // Clear any previous send error
@@ -598,18 +717,14 @@ const Index = () => {
 
     // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
-      // Send via IPC - this will:
-      // 1. Create chat if needed (chatId is null)
-      // 2. Save user message to DB
-      // 3. Trigger optimization
-      // 4. Save assistant message to DB
-      // 5. Notify renderer via events
       window.electronAPI.sendMessage({
         chatId: selectedChatId,
         content: content,
         mode,
         attachedFiles,
-        forcedSkill: selectedSkill
+        forcedSkill: selectedSkill,
+        groupId,
+        versionIndex,
       });
 
       console.log('[Index] Message sent to Electron main process');
@@ -651,61 +766,85 @@ Your prompt was: "${content}"`;
     });
   };
 
-  // Open overlay pre-filled with this assistant message + the current chat as context
-  const handleOptimizeAgain = useCallback((messageId: string) => {
-    const message = displayMessages.find((m) => m.id === messageId)
-      || (streamingMessage?.id === messageId ? streamingMessage : null);
-    if (!message) return;
-
-    const chat = recentChats.find((c) => c.id === selectedChatId);
-    const chatName = chat?.title || currentChatTitle || 'Current Chat';
-
-    if (isElectron && window.electronAPI?.optimizeAgain) {
-      window.electronAPI.optimizeAgain({
-        text: message.content,
-        chatId: selectedChatId || '',
-        chatName,
-      });
-    } else {
-      toast({
-        title: "Open the overlay",
-        description: "Press Ctrl+5 to open the optimizer overlay.",
-      });
-    }
-  }, [displayMessages, streamingMessage, selectedChatId, recentChats, currentChatTitle]);
-
-  // Edit a user message: replace it in local state and re-send from that point.
-  // All messages after the edited one are removed (same as ChatGPT behaviour).
-  // We slice + immediately insert a placeholder user message in ONE setState call
-  // so the UI never sees an empty messages array (which would flash the welcome screen).
+  // Edit a user message: create a new branch in the version tree instead of
+  // destroying old messages. The previous version + its responses remain
+  // accessible via the ← / → version navigator.
   const handleEditMessage = useCallback((messageId: string, newContent: string) => {
     const placeholderId = `edit-placeholder-${Date.now()}`;
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === messageId);
-      if (idx === -1) return prev;
-      return [
-        ...prev.slice(0, idx),
-        { id: placeholderId, role: "user" as const, content: newContent, timestamp: new Date() },
-      ];
-    });
-    handleSendMessage(newContent, "fast");
-  }, [handleSendMessage]);
 
-  // Retry a user message: remove everything after it and re-send the same content.
-  const handleRetryMessage = useCallback((messageId: string) => {
-    // We need the content synchronously before modifying messages
-    setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === messageId);
-      if (idx === -1) return prev;
-      const content = prev[idx].content;
-      // Schedule the IPC call after this render — content is captured in closure
-      setTimeout(() => handleSendMessage(content, "fast"), 0);
-      return [
-        ...prev.slice(0, idx),
-        { id: `retry-placeholder-${Date.now()}`, role: "user" as const, content, timestamp: new Date() },
-      ];
-    });
-  }, [handleSendMessage]);
+    // Mark edit in progress so tree isn't flattened by a reload
+    editInProgressRef.current = true;
+    pendingPlaceholderId.current = placeholderId;
+
+    // Compute version metadata — reuse the original message's groupId
+    const originalMsg = messagesRef.current.find(m => m.id === messageId);
+    const groupId = originalMsg?.groupId || messageId; // legacy fallback
+    const existingCount = messagesRef.current.filter(m => m.groupId === groupId).length;
+    const versionIndex = existingCount > 0 ? existingCount : 1;
+
+    // Create a sibling branch in the tree (makes the new branch active)
+    messageTree.addBranch(messageId, placeholderId);
+
+    // Append placeholder to messages array (old messages stay untouched)
+    setMessages((prev) => [
+      ...prev,
+      { id: placeholderId, role: "user" as const, content: newContent, timestamp: new Date(), groupId, versionIndex },
+    ]);
+
+    handleSendMessage(newContent, "fast", undefined, undefined, { groupId, versionIndex });
+  }, [handleSendMessage, messageTree.addBranch]);
+
+  // Regenerate an assistant response: creates a new assistant version
+  // under the SAME user message (no new user version created).
+  const handleRegenerateMessage = useCallback((assistantMessageId: string) => {
+    if (sendingRef.current) return;
+
+    // Walk the active path to find the user message before this assistant
+    const activePath = messageTree.getActivePath();
+    const aIdx = activePath.indexOf(assistantMessageId);
+    if (aIdx < 1) return;
+    const userMsgId = activePath[aIdx - 1];
+    const userMsg = messagesRef.current.find(m => m.id === userMsgId);
+    if (!userMsg || userMsg.role !== 'user') return;
+
+    const originalAssistant = messagesRef.current.find(m => m.id === assistantMessageId);
+
+    // Compute version metadata — reuse the assistant's groupId
+    const groupId = originalAssistant?.groupId || assistantMessageId;
+    const existingCount = messagesRef.current.filter(m => m.groupId === groupId).length;
+    const versionIndex = existingCount > 0 ? existingCount : 1;
+
+    const placeholderId = `regen-placeholder-${Date.now()}`;
+
+    sendingRef.current = true;
+    editInProgressRef.current = true;
+    pendingRegenPlaceholderId.current = placeholderId;
+
+    // Add as sibling of the current assistant (both children of the user message)
+    messageTree.addBranch(assistantMessageId, placeholderId);
+
+    // DON'T add the placeholder to the messages array — it has no content yet.
+    // The streaming bubble renders the animation instead. When streaming
+    // completes, handleStreamingComplete will replaceId + add the real message.
+
+    // Send regeneration request (assistant-only, no new user message)
+    if (isElectron && window.electronAPI?.regenerateResponse) {
+      window.electronAPI.regenerateResponse({
+        chatId: selectedChatId!,
+        content: userMsg.content,
+        mode: 'fast',
+        groupId,
+        versionIndex,
+        attachedFiles: userMsg.attachedFiles as any,
+        forcedSkill: userMsg.selectedSkill || null,
+      });
+    }
+
+    setIsGenerating(true);
+    generationStartTime.current = performance.now();
+    setGenerationStats({ ttft: null, total: null });
+    startStreaming();
+  }, [selectedChatId, startStreaming, messageTree]);
 
   const handleSavePromptClick = (id: string) => {
     let message = displayMessages.find((m) => m.id === id);
@@ -935,6 +1074,7 @@ Your prompt was: "${content}"`;
     if (session) {
       // Restore the conversation
       setMessages(session.messages);
+      messageTree.init(session.messages);
       setSelectedChatId(session.id);
       setCurrentView("chat");
       toast({
@@ -985,6 +1125,20 @@ Your prompt was: "${content}"`;
     setCurrentView("library");
     setSharedLibraryToken(null);
   }, [collections]);
+
+  // ── Version navigation ──────────────────────────────────────
+  const versionInfoMap = useMemo(() => {
+    const map = new Map<string, VersionInfo>();
+    for (const msg of displayMessages) {
+      const info = messageTree.getVersionInfo(msg.id);
+      if (info) map.set(msg.id, info);
+    }
+    return map;
+  }, [displayMessages, messageTree.version]);
+
+  const handleNavigateVersion = useCallback((parentId: string, direction: 'prev' | 'next') => {
+    messageTree.navigate(parentId, direction);
+  }, [messageTree.navigate]);
 
   // Render current view (auth is handled by AuthWrapper, so we're always authenticated here)
   const renderView = () => {
@@ -1037,8 +1191,7 @@ Your prompt was: "${content}"`;
             onSavePrompt={handleSavePromptClick}
             onFeedback={handleFeedback}
             onEditMessage={handleEditMessage}
-            onRetryMessage={handleRetryMessage}
-            onOptimizeAgain={handleOptimizeAgain}
+            onRegenerateMessage={handleRegenerateMessage}
             savedPromptIds={savedPromptIds}
             isGenerating={isGenerating}
             isOnline={isOnline}
@@ -1046,6 +1199,8 @@ Your prompt was: "${content}"`;
             sendError={sendError}
             onStopGeneration={handleStopGeneration}
             avatarUrl={user?.profile?.avatar_url}
+            versionInfoMap={versionInfoMap}
+            onNavigateVersion={handleNavigateVersion}
             onRetryLoad={() => {
               if (selectedChatId && isElectron && window.electronAPI?.loadMessages) {
                 setOfflineChatUnavailable(false);

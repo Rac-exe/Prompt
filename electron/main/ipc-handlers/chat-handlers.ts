@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import crypto from 'crypto';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -403,6 +404,8 @@ export function registerChatHandlers(
         mode?: string;
         attachedFiles?: AttachedFile[];
         forcedSkill?: string | null;
+        groupId?: string;
+        versionIndex?: number;
     }) => {
         try {
             // Validate attached files if present
@@ -465,9 +468,13 @@ export function registerChatHandlers(
             // Save user message — store full file data (including base64) so PDF/image
             // preview works even after switching chats or restarting the app.
             const filesForDb = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }));
+            const userGroupId = data.groupId || crypto.randomUUID();
+            const userVersionIndex = data.versionIndex ?? 0;
             const userMessage = await chatService.addMessage(chatId, data.content, 'user', undefined, {
                 attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
                 selectedSkill: data.forcedSkill || undefined,
+                groupId: userGroupId,
+                versionIndex: userVersionIndex,
             });
 
             // Send immediate confirmation — include full AttachedFile (with base64) for in-session thumbnail
@@ -483,6 +490,8 @@ export function registerChatHandlers(
                         createdAt: userMessage.created_at,
                         attachedFiles: data.attachedFiles || [],
                         selectedSkill: data.forcedSkill || null,
+                        groupId: userGroupId,
+                        versionIndex: userVersionIndex,
                     }
                 });
             }
@@ -561,12 +570,13 @@ export function registerChatHandlers(
             }
 
             // Save assistant message
+            const assistantGroupId = crypto.randomUUID();
             const assistantMessage = await chatService.addMessage(
                 chatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true }
+                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: 0 }
             );
 
             // Send assistant message to renderer
@@ -579,6 +589,8 @@ export function registerChatHandlers(
                         role: assistantMessage.role,
                         content: assistantMessage.content,
                         createdAt: assistantMessage.created_at,
+                        groupId: assistantGroupId,
+                        versionIndex: 0,
                     }
                 });
             }
@@ -590,6 +602,136 @@ export function registerChatHandlers(
             }
         } catch (error) {
             console.error('[Chat] Failed to send message:', error);
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            if (appWindowManager) {
+                appWindowManager.send('message-send-error', {
+                    error: errorMessage,
+                    details: error instanceof Error ? error.stack : undefined
+                });
+            }
+        }
+    });
+
+    // ============================================
+    // APP WINDOW: Regenerate assistant response (no new user message)
+    // ============================================
+    ipcMain.on('app:regenerate-response', async (event, data: {
+        chatId: string;
+        content: string;
+        mode?: string;
+        groupId?: string;
+        versionIndex?: number;
+        attachedFiles?: AttachedFile[];
+        forcedSkill?: string | null;
+    }) => {
+        try {
+            const chatId = data.chatId;
+            const attachedFiles = data.attachedFiles || [];
+
+            // Fetch custom instructions
+            let customInstructions = '';
+            if (authState.isAuthenticated && userService && settingsService) {
+                try {
+                    const profile = await userService.getUserProfile();
+                    if (profile) {
+                        const settings = await settingsService.getUserSettings(profile.id);
+                        customInstructions = settings?.prompt_instructions || '';
+                    }
+                } catch (settingsErr) {
+                    console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
+                }
+            }
+            if (authState.isAuthenticated && memory) {
+                try {
+                    const memCtx = await memory.buildMemoryContext();
+                    if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                } catch { /* non-critical */ }
+            }
+
+            // Fetch chat history for context
+            let messagesContext: Array<{role: string, content: string}> = [];
+            try {
+                const history = await chatService.getMessages(chatId);
+                const relevantHistory = history.slice(-10);
+                messagesContext = relevantHistory.map(m => ({
+                    role: m.role,
+                    content: m.content
+                }));
+            } catch (historyErr) {
+                console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
+            }
+
+            // Trigger streaming optimization (regeneration — skip cache for fresh result)
+            const optimizedText = await pythonClient.optimizeStream(
+                data.content,
+                true,
+                messagesContext.length > 0 ? messagesContext : null,
+                (chunk, accumulated) => {
+                    if (appWindowManager) {
+                        appWindowManager.send('optimization-chunk', { chunk, accumulated });
+                    }
+                },
+                data.mode || 'fast',
+                customInstructions,
+                attachedFiles,
+                data.forcedSkill || null
+            );
+
+            // Save optimization record
+            let optimizationId: string | undefined;
+            if (authState.isAuthenticated) {
+                try {
+                    const optimization = await optimizationService.saveOptimization(
+                        data.content,
+                        optimizedText,
+                        'app_window',
+                        { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                    );
+                    optimizationId = optimization.id;
+                    if (analyzer && authState.currentUserId) {
+                        analyzer.onNewOptimization(authState.currentUserId).catch((e: unknown) =>
+                            console.warn('[Memory] Analyzer error (non-critical):', e)
+                        );
+                    }
+                } catch (dbError) {
+                    console.error('[Chat] Failed to save optimization record:', dbError);
+                }
+            }
+
+            // Save assistant message with the caller-provided groupId
+            const assistantGroupId = data.groupId || crypto.randomUUID();
+            const assistantVersionIndex = data.versionIndex ?? 0;
+            const assistantMessage = await chatService.addMessage(
+                chatId,
+                optimizedText,
+                'assistant',
+                optimizationId,
+                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+            );
+
+            // Send assistant message to renderer
+            if (appWindowManager) {
+                appWindowManager.send('message-received', {
+                    chatId,
+                    message: {
+                        id: assistantMessage.id,
+                        chatId: assistantMessage.chat_id,
+                        role: assistantMessage.role,
+                        content: assistantMessage.content,
+                        createdAt: assistantMessage.created_at,
+                        groupId: assistantGroupId,
+                        versionIndex: assistantVersionIndex,
+                    }
+                });
+            }
+
+            // Reload chats list to update timestamps
+            const chats = await chatService.getChats();
+            if (appWindowManager) {
+                appWindowManager.send('chats-loaded', { chats });
+            }
+        } catch (error) {
+            console.error('[Chat] Failed to regenerate response:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {

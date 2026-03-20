@@ -484,6 +484,12 @@ async def optimize_stream(websocket: WebSocket):
                 })
                 continue
 
+            # If skip_cache, append a unique ID so the LLM sees a different prompt
+            if skip_cache:
+                unique_id = str(int(time.time() * 1000000))
+                prompt_text = f"{prompt_text}\n\n[REGENERATE_{unique_id}]"
+                print(f"[OptimizeStream] Regenerate request - added unique ID: {unique_id}")
+
             cc = ChatContext(session_id=request_id)
             if messages and isinstance(messages, list):
                 for msg in messages:
@@ -520,11 +526,17 @@ async def optimize_stream(websocket: WebSocket):
                 
                 cleaned_text = clean_optimized_text(accumulated_text)
                 
+                # Strip the regenerate tag from the original prompt for the response
+                original_prompt = prompt_text
+                if skip_cache and "[REGENERATE_" in original_prompt:
+                    import re
+                    original_prompt = re.sub(r'\n*\[REGENERATE_\d+\]', '', original_prompt).strip()
+                
                 await websocket.send_json({
                     "type": "complete",
                     "request_id": request_id,
                     "optimized": cleaned_text,
-                    "original": prompt_text
+                    "original": original_prompt
                 })
                 
                 print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")
