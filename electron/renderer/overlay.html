@@ -1568,8 +1568,16 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                   </svg>
                   <svg id="mode-icon-thinking" style="width: 13px; height: 13px; display: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <!-- Brain icon for thinking mode -->
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/>
+                    <!-- Brain icon (Lucide Brain v0.462.0) -->
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.599 6.5a3 3 0 0 0 .399-1.375"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.477 10.896a4 4 0 0 1 .585-.396"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.938 10.5a4 4 0 0 1 .585.396"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18a4 4 0 0 1-1.967-.516"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.967 17.484A4 4 0 0 1 18 18"/>
                   </svg>
                   <span id="mode-label">Fast</span>
                   <svg style="width: 10px; height: 10px; opacity: 0.5;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -3190,32 +3198,37 @@
       }
     }
 
-    // SVG icon paths keyed by skill name — matches app's Lucide icon set exactly
+    // SVG icon paths keyed by skill name — exact Lucide v0.462.0 paths (same as app)
     const SKILL_ICON_SVGS = {
-      // Settings2 (two gears) — matches app's automation icon
+      // Settings2 — exact Lucide path
       automation:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M20 7h-9"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14 10V4"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 17h9"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 14v6"/><circle cx="17" cy="7" r="3" stroke-width="1.8"/><circle cx="7" cy="17" r="3" stroke-width="1.8"/>',
+        '<path d="M20 7h-9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M14 17H5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<circle cx="17" cy="17" r="3" stroke-width="2"/>' +
+        '<circle cx="7" cy="7" r="3" stroke-width="2"/>',
       // Briefcase — matches app's business icon
       business:
-        '<rect x="2" y="7" width="20" height="14" rx="2" ry="2" stroke-width="1.8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>',
+        '<rect x="2" y="7" width="20" height="14" rx="2" ry="2" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>',
       // MessageSquare — matches app's communication icon
       communication:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
       // Palette — matches app's creative icon
       creative:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 011.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/><circle cx="6.5" cy="11.5" r="1" stroke-width="1.8"/><circle cx="9.5" cy="7.5" r="1" stroke-width="1.8"/><circle cx="14.5" cy="7.5" r="1" stroke-width="1.8"/><circle cx="17.5" cy="11.5" r="1" stroke-width="1.8"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 011.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/><circle cx="6.5" cy="11.5" r="1" stroke-width="2"/><circle cx="9.5" cy="7.5" r="1" stroke-width="2"/><circle cx="14.5" cy="7.5" r="1" stroke-width="2"/><circle cx="17.5" cy="11.5" r="1" stroke-width="2"/>',
       // GraduationCap — matches app's educational icon
       educational:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/>',
-      // FlaskConical — matches app's research icon
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/>',
+      // FlaskConical — exact Lucide path
       research:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M14 2v6l3 3-3 3v6H7v-6l-3-3 3-3V2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 2h12"/>',
+        '<path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M8.5 2h7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M7 16h10" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>',
       // Code2 — matches app's technical icon
       technical:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>',
       // ImageIcon — matches app's visual icon
       visual:
-        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
     };
 
     function renderSkillList(skills) {
