@@ -381,18 +381,12 @@
       border: 1px solid hsl(var(--emerald) / 0.15);
     }
 
-    /* ── User message action row (edit / retry) ── */
+    /* ── User message action row (edit / retry) — always visible ── */
     .user-message-actions {
       display: flex;
       justify-content: flex-end;
       gap: 4px;
       margin-top: 4px;
-      opacity: 0;
-      transition: opacity 0.15s ease;
-    }
-
-    .chat-message:hover .user-message-actions {
-      opacity: 1;
     }
 
     .btn-user-action {
@@ -2242,13 +2236,13 @@
       container.id = 'turn-' + turnIdx;
       container.style.marginBottom = '0';
 
-      // User version navigator (above user message, right-aligned)
-      container.insertAdjacentHTML('beforeend', buildVersionNav('user-vnav-' + turnIdx, 'right'));
-
       // User message (first version)
       const userVer = turn.userVersions[turn.userActiveIdx];
       const userEl = buildUserMsgEl(userVer, turnIdx);
       container.appendChild(userEl);
+
+      // User version navigator (below user message, right-aligned)
+      container.insertAdjacentHTML('beforeend', buildVersionNav('user-vnav-' + turnIdx, 'right'));
 
       // Assistant version navigator (below assistant message, left-aligned)
       container.insertAdjacentHTML('beforeend', buildVersionNav('assistant-vnav-' + turnIdx, 'left'));
@@ -2274,6 +2268,7 @@
     }
 
     // Show only the active user version in a turn, hide others
+    // Also moves the version navigator into the active user message's action row
     function showActiveUserVersion(turnIdx) {
       const turn = turns[turnIdx];
       if (!turn) return;
@@ -2282,6 +2277,17 @@
         if (el) el.style.display = (i === turn.userActiveIdx) ? '' : 'none';
       });
       updateVersionNav('user-vnav-' + turnIdx, turn.userActiveIdx + 1, turn.userVersions.length);
+
+      // Move the version navigator into the active user message's action row
+      const nav = document.getElementById('user-vnav-' + turnIdx);
+      const activeVer = turn.userVersions[turn.userActiveIdx];
+      if (nav && activeVer) {
+        const actionsEl = document.getElementById('user-actions-' + activeVer.id);
+        if (actionsEl && nav.parentElement !== actionsEl) {
+          // Prepend navigator before the edit button
+          actionsEl.insertBefore(nav, actionsEl.firstChild);
+        }
+      }
     }
 
     // Show only the active assistant version for the current user version
@@ -2784,10 +2790,10 @@
       const container = document.getElementById('turn-' + turnIdx);
       if (container) {
         const newEl = buildUserMsgEl(newMsg, turnIdx);
-        // Insert after the user version navigator
+        // Insert before the user version navigator (navigator is now below user messages)
         const userNav = document.getElementById('user-vnav-' + turnIdx);
-        if (userNav && userNav.nextSibling) {
-          container.insertBefore(newEl, userNav.nextSibling);
+        if (userNav) {
+          container.insertBefore(newEl, userNav);
         } else {
           container.appendChild(newEl);
         }
