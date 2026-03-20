@@ -120,7 +120,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string }) => {
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -186,7 +186,9 @@ export function registerOverlayHandlers(
           overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
         },
         data.mode || 'fast',
-        customInstructions
+        customInstructions,
+        data.attachedFiles || [],
+        data.forcedSkill || null
       );
 
       // Add the assistant's response to history

@@ -998,6 +998,241 @@
       background: hsl(var(--emerald) / 0.05);
     }
 
+    /* ======== PLUS MENU POPUP ======== */
+    .plus-menu {
+      display: none;
+      position: fixed;
+      background: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
+      border-radius: 12px;
+      padding: 4px;
+      min-width: 200px;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
+      z-index: 9999;
+    }
+
+    .plus-menu.open {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .plus-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--foreground));
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      text-align: left;
+      width: 100%;
+      transition: background 0.1s ease;
+    }
+
+    .plus-menu-item:hover {
+      background: hsl(var(--muted));
+    }
+
+    /* ======== SKILL PICKER PANEL (inside plus menu) ======== */
+    .skill-picker-panel {
+      display: flex;
+      flex-direction: column;
+      min-width: 260px;
+    }
+
+    .skill-picker-search {
+      width: 100%;
+      height: 30px;
+      padding: 0 10px 0 28px;
+      border-radius: 7px;
+      border: 1px solid hsl(var(--border));
+      background: hsl(var(--card));
+      color: hsl(var(--foreground));
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .skill-picker-search:focus {
+      border-color: hsl(var(--emerald) / 0.5);
+    }
+
+    .skill-picker-search::placeholder {
+      color: hsl(var(--muted-foreground) / 0.5);
+    }
+
+    .skill-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 0;
+      max-height: 210px;
+    }
+
+    .skill-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 7px;
+      border: none;
+      background: transparent;
+      color: hsl(var(--foreground));
+      cursor: pointer;
+      font-family: inherit;
+      text-align: left;
+      width: 100%;
+      transition: background 0.1s ease;
+    }
+
+    .skill-item:hover,
+    .skill-item.highlighted {
+      background: hsl(var(--muted));
+    }
+
+    .skill-item-name {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .skill-item-desc {
+      font-size: 11px;
+      color: hsl(var(--muted-foreground));
+      margin-top: 1px;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    /* ======== FILE ATTACHMENTS AREA ======== */
+    .attachments-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 12px 0;
+    }
+
+    .file-chip-img {
+      position: relative;
+      width: 52px;
+      height: 52px;
+      flex-shrink: 0;
+    }
+
+    .file-chip-img img {
+      width: 52px;
+      height: 52px;
+      object-fit: cover;
+      border-radius: 10px;
+      border: 1px solid hsl(var(--border) / 0.5);
+      display: block;
+    }
+
+    .file-chip-pdf {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      height: 44px;
+      padding: 0 26px 0 8px;
+      border-radius: 10px;
+      background: hsl(var(--secondary));
+      border: 1px solid hsl(var(--border));
+      flex-shrink: 0;
+      max-width: 175px;
+    }
+
+    .file-chip-pdf-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      background: hsl(0 72% 51% / 0.12);
+      border: 1px solid hsl(0 72% 51% / 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .file-chip-pdf-name {
+      font-size: 11px;
+      font-weight: 500;
+      color: hsl(var(--foreground));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 110px;
+    }
+
+    .file-chip-remove {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: hsl(var(--background));
+      border: 1px solid hsl(var(--border));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 8px;
+      line-height: 1;
+      color: hsl(var(--muted-foreground));
+      transition: all 0.12s ease;
+      z-index: 10;
+      padding: 0;
+      font-family: inherit;
+    }
+
+    .file-chip-remove:hover {
+      background: hsl(0 72% 51%);
+      border-color: hsl(0 72% 51%);
+      color: white;
+    }
+
+    /* ======== SKILL PILL (in toolbar-left) ======== */
+    .skill-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 24px;
+      padding: 0 7px;
+      border-radius: 20px;
+      background: hsl(var(--emerald) / 0.1);
+      border: 1px solid hsl(var(--emerald) / 0.25);
+      font-size: 11px;
+      font-weight: 500;
+      color: hsl(var(--emerald));
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .skill-pill-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: hsl(var(--emerald) / 0.6);
+      padding: 0;
+      display: flex;
+      align-items: center;
+      line-height: 1;
+      font-size: 12px;
+      transition: color 0.12s ease;
+      font-family: inherit;
+    }
+
+    .skill-pill-remove:hover {
+      color: hsl(var(--emerald));
+    }
+
     /* ======== CHAT PICKER MODAL ======== */
     .chat-picker-panel {
       width: 380px;
@@ -1241,15 +1476,28 @@
               Attach Chat Context
             </button>
           </div>
+          <!-- Hidden file input for attachments -->
+          <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple style="display:none;">
+
           <div class="chat-input-box">
+            <!-- File attachments row (shown when files are attached) -->
+            <div id="attachments-row" class="attachments-row" style="display: none;"></div>
+
             <!-- Textarea -->
             <textarea id="prompt-input" rows="2"
               placeholder="How can I help you today?"></textarea>
 
             <!-- Bottom toolbar inside the box -->
             <div class="input-toolbar">
-              <!-- Left: mode selector + voice indicators -->
-              <div class="input-toolbar-left" style="position: relative;">
+              <!-- Left: plus button + mode selector -->
+              <div class="input-toolbar-left" style="position: relative; display: flex; align-items: center; gap: 2px;">
+                <!-- Plus button -->
+                <button id="btn-plus" class="btn-toolbar" type="button" title="Add files or choose skill">
+                  <svg style="width: 16px; height: 16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/>
+                  </svg>
+                </button>
+
                 <!-- Mode dropdown trigger -->
                 <button id="btn-mode-trigger" class="mode-select-btn" type="button">
                   <svg id="mode-icon-fast" style="width: 13px; height: 13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1286,6 +1534,15 @@
                     </div>
                     <span class="mode-check" style="display: none;">✓</span>
                   </button>
+                </div>
+
+                <!-- Skill pill (shown when a skill is selected) -->
+                <div id="skill-pill" class="skill-pill" style="display: none;">
+                  <svg style="width: 10px; height: 10px; flex-shrink: 0;" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+                  </svg>
+                  <span id="skill-pill-name"></span>
+                  <button id="skill-pill-remove" class="skill-pill-remove" type="button" title="Remove skill">✕</button>
                 </div>
               </div>
 
@@ -1435,6 +1692,53 @@
       </div>
     </div>
     </div><!-- end panel-glow-wrapper -->
+
+    <!-- ===== PLUS MENU POPUP ===== -->
+    <div id="plus-menu" class="plus-menu">
+      <!-- Main options view -->
+      <div id="plus-main-view" style="padding: 2px;">
+        <button id="btn-attach-files" class="plus-menu-item" type="button">
+          <svg style="width: 14px; height: 14px; flex-shrink: 0; color: hsl(var(--muted-foreground));" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+          </svg>
+          <span>Add photos &amp; files</span>
+        </button>
+        <button id="btn-choose-skill" class="plus-menu-item" type="button">
+          <svg style="width: 14px; height: 14px; flex-shrink: 0; color: hsl(var(--muted-foreground));" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>
+          </svg>
+          <span>Choose skill</span>
+        </button>
+      </div>
+
+      <!-- Skill picker view (shown when "Choose skill" clicked) -->
+      <div id="plus-skill-view" style="display: none;" class="skill-picker-panel">
+        <!-- Header: back button + search -->
+        <div style="padding: 6px 6px 4px; display: flex; align-items: center; gap: 6px;">
+          <button id="btn-skill-back" type="button" title="Back"
+            style="background: none; border: none; cursor: pointer; color: hsl(var(--muted-foreground)); padding: 2px 4px; display: flex; align-items: center; flex-shrink: 0; border-radius: 6px; transition: background 0.1s ease;"
+            onmouseover="this.style.background='hsl(var(--muted))'" onmouseout="this.style.background='none'">
+            <svg style="width: 13px; height: 13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <div style="position: relative; flex: 1;">
+            <svg style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; color: hsl(var(--muted-foreground)); pointer-events: none;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input id="skill-search-input" class="skill-picker-search" type="text" placeholder="Search skills..." autocomplete="off">
+          </div>
+        </div>
+        <!-- Skill list -->
+        <div id="skill-list" class="skill-list">
+          <div style="padding: 16px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 11px;">Loading...</div>
+        </div>
+        <!-- Footer hint -->
+        <div style="padding: 4px 10px 6px; border-top: 1px solid hsl(var(--border) / 0.5);">
+          <span style="font-size: 10px; color: hsl(var(--muted-foreground) / 0.5);">↑↓ Navigate · Enter Select · Esc Back</span>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -1456,6 +1760,18 @@
     let selectedChatId = null;           // chatId of the attached chat context
     let selectedChatName = '';           // display name for the pill
     let chatsCache = [];                 // cached list for the picker
+
+    // Plus menu state
+    let attachedFiles = [];              // { name, mimeType, base64, sizeBytes }
+    let selectedSkill = null;            // skill internal name
+    let selectedSkillLabel = null;       // skill display label
+    let isPlusMenuOpen = false;
+    let skillsCache = [];                // cached skill list
+    let skillHighlightIndex = 0;
+
+    const MAX_ATTACHED_FILES = 5;
+    const MAX_FILE_SIZE = 10_000_000;   // 10 MB
+    const ALLOWED_MIME_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
 
     // ==========================================
     // DOM REFS
@@ -1487,6 +1803,22 @@
 
     // Modal refs — collection picker HTML still present in DOM but no longer used
     const offlineBanner = document.getElementById('offline-banner');
+
+    // Plus menu DOM refs
+    const btnPlus = document.getElementById('btn-plus');
+    const plusMenu = document.getElementById('plus-menu');
+    const plusMainView = document.getElementById('plus-main-view');
+    const plusSkillView = document.getElementById('plus-skill-view');
+    const btnAttachFiles = document.getElementById('btn-attach-files');
+    const btnChooseSkill = document.getElementById('btn-choose-skill');
+    const btnSkillBack = document.getElementById('btn-skill-back');
+    const skillSearchInput = document.getElementById('skill-search-input');
+    const skillListEl = document.getElementById('skill-list');
+    const fileInput = document.getElementById('file-input');
+    const attachmentsRow = document.getElementById('attachments-row');
+    const skillPill = document.getElementById('skill-pill');
+    const skillPillName = document.getElementById('skill-pill-name');
+    const skillPillRemove = document.getElementById('skill-pill-remove');
 
     // ==========================================
     // MOUSE-FOLLOWING BORDER GLOW
@@ -1601,6 +1933,8 @@
     function disableInput() {
       promptInput.disabled = true;
       btnSend.disabled = true;
+      btnPlus.disabled = true;
+      closePlusMenu();
       // Show stop button, hide send button
       btnSend.style.display = 'none';
       btnStop.classList.add('visible');
@@ -1608,6 +1942,7 @@
 
     function enableInput() {
       promptInput.disabled = false;
+      btnPlus.disabled = false;
       // Restore send button, hide stop button
       btnStop.classList.remove('visible');
       btnSend.style.display = '';
@@ -1657,11 +1992,56 @@
       const el = document.createElement('div');
       el.className = 'chat-message';
       el.id = 'msg-el-' + msg.id;
+
+      // Build file attachments HTML for inside the bubble
+      let filesHtml = '';
+      if (msg.attachedFiles && msg.attachedFiles.length > 0) {
+        const chips = msg.attachedFiles.map(file => {
+          const isImage = file.mimeType && file.mimeType.startsWith('image/');
+          if (isImage) {
+            return (
+              '<div style="position:relative;width:48px;height:48px;flex-shrink:0;">' +
+                '<img src="data:' + file.mimeType + ';base64,' + file.base64 + '" alt="' + escapeHtml(file.name) + '" ' +
+                  'style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--emerald)/0.2);display:block;">' +
+              '</div>'
+            );
+          } else {
+            return (
+              '<div style="display:flex;align-items:center;gap:6px;height:38px;padding:0 8px;border-radius:8px;background:hsl(var(--emerald)/0.06);border:1px solid hsl(var(--emerald)/0.15);max-width:160px;flex-shrink:0;">' +
+                '<svg style="width:12px;height:12px;flex-shrink:0;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+                  '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>' +
+                '</svg>' +
+                '<span style="font-size:11px;font-weight:500;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(file.name) + '</span>' +
+              '</div>'
+            );
+          }
+        }).join('');
+        filesHtml =
+          '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">' +
+            chips +
+          '</div>';
+      }
+
+      // Build skill tag HTML
+      let skillHtml = '';
+      if (msg.skill) {
+        const label = msg.skillLabel || msg.skill;
+        skillHtml =
+          '<div style="display:inline-flex;align-items:center;gap:4px;margin-bottom:8px;height:20px;padding:0 7px;border-radius:20px;background:hsl(var(--emerald)/0.1);border:1px solid hsl(var(--emerald)/0.25);font-size:10px;font-weight:600;color:hsl(var(--emerald));letter-spacing:0.02em;">' +
+            '<svg style="width:9px;height:9px;flex-shrink:0;" fill="currentColor" viewBox="0 0 24 24">' +
+              '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
+            '</svg>' +
+            escapeHtml(label) +
+          '</div>';
+      }
+
       el.innerHTML =
         '<div class="message-label">You</div>' +
         // Display mode
         '<div class="user-bubble-display" id="user-display-' + msg.id + '">' +
           '<div class="message-bubble user-bubble">' +
+            filesHtml +
+            skillHtml +
             '<div class="message-text" id="user-text-' + msg.id + '">' + escapeHtml(msg.content) + '</div>' +
           '</div>' +
           '<div class="user-message-actions" id="user-actions-' + msg.id + '">' +
@@ -1765,8 +2145,8 @@
     // ==========================================
     // MESSAGE MANAGEMENT
     // ==========================================
-    function addUserMessage(content) {
-      const msg = { id: generateId(), role: 'user', content, timestamp: Date.now() };
+    function addUserMessage(content, files, skill, skillLabel) {
+      const msg = { id: generateId(), role: 'user', content, timestamp: Date.now(), attachedFiles: files || [], skill: skill || null, skillLabel: skillLabel || null };
       messages.push(msg);
       updateEmptyState();
       renderUserMessage(msg);
@@ -1804,6 +2184,14 @@
       selectedChatName = '';
       updateContextPill();
 
+      // Reset attachments and skill
+      attachedFiles = [];
+      selectedSkill = null;
+      selectedSkillLabel = null;
+      closePlusMenu();
+      renderAttachmentsRow();
+      updateSkillPill();
+
       messagesContainer.innerHTML = '';
       updateEmptyState();
       hideLoading();
@@ -1834,10 +2222,14 @@
       hideError();
       disableInput();
 
-      // Add user message to chat
-      addUserMessage(text);
+      // Snapshot current files/skill for this message (they remain in state for next send)
+      const filesToSend = attachedFiles.length > 0 ? [...attachedFiles] : undefined;
+      const skillToSend = selectedSkill || undefined;
 
-      // Clear input and reset height
+      // Add user message to chat (with attached files so they appear in the bubble)
+      addUserMessage(text, filesToSend, skillToSend, selectedSkillLabel);
+
+      // Clear input and reset height only
       promptInput.value = '';
       promptInput.style.height = '';
       promptInput.style.overflowY = 'hidden';
@@ -1847,7 +2239,14 @@
 
       // Send to backend
       if (window.electronAPI?.overlay?.optimize) {
-        window.electronAPI.overlay.optimize({ text, isRegenerate: false, mode: currentMode, chatId: selectedChatId || undefined });
+        window.electronAPI.overlay.optimize({
+          text,
+          isRegenerate: false,
+          mode: currentMode,
+          chatId: selectedChatId || undefined,
+          attachedFiles: filesToSend,
+          forcedSkill: skillToSend,
+        });
       }
     }
 
@@ -2296,6 +2695,297 @@
 
     // Init
     updateModeUI();
+
+    // ==========================================
+    // PLUS MENU — open/close/positioning
+    // ==========================================
+    function openPlusMenu() {
+      isPlusMenuOpen = true;
+      plusMainView.style.display = '';
+      plusSkillView.style.display = 'none';
+
+      // Position the popup above the + button (fixed coords)
+      const rect = btnPlus.getBoundingClientRect();
+      plusMenu.style.left = rect.left + 'px';
+      plusMenu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+      plusMenu.classList.add('open');
+    }
+
+    function closePlusMenu() {
+      isPlusMenuOpen = false;
+      plusMenu.classList.remove('open');
+      plusMainView.style.display = '';
+      plusSkillView.style.display = 'none';
+    }
+
+    btnPlus.addEventListener('click', (e) => {
+      e.stopPropagation();
+      modeDropdown.classList.remove('open'); // close mode dropdown if open
+      if (isPlusMenuOpen) {
+        closePlusMenu();
+      } else {
+        openPlusMenu();
+      }
+    });
+
+    // Close plus menu on outside click
+    document.addEventListener('mousedown', (e) => {
+      if (
+        isPlusMenuOpen &&
+        plusMenu && !plusMenu.contains(e.target) &&
+        btnPlus && !btnPlus.contains(e.target)
+      ) {
+        closePlusMenu();
+      }
+    });
+
+    // Close plus menu on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && isPlusMenuOpen) {
+        closePlusMenu();
+      }
+    });
+
+    // Also close plus menu when mode dropdown opens
+    btnModeTrigger.addEventListener('click', () => {
+      closePlusMenu();
+    }, true); // capture phase so it runs before mode dropdown toggle
+
+    // ==========================================
+    // FILE ATTACHMENTS
+    // ==========================================
+    btnAttachFiles.addEventListener('click', () => {
+      closePlusMenu();
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', async (e) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      const newFiles = [];
+      const remaining = MAX_ATTACHED_FILES - attachedFiles.length;
+      for (let i = 0; i < Math.min(files.length, remaining); i++) {
+        const file = files[i];
+        if (!ALLOWED_MIME_TYPES.includes(file.type)) continue;
+        if (file.size > MAX_FILE_SIZE) continue;
+        try {
+          const base64 = await overlayFileToBase64(file);
+          newFiles.push({ name: file.name, mimeType: file.type, base64, sizeBytes: file.size });
+        } catch (err) {
+          console.warn('[Overlay] Failed to read file:', file.name);
+        }
+      }
+
+      if (newFiles.length > 0) {
+        attachedFiles = [...attachedFiles, ...newFiles].slice(0, MAX_ATTACHED_FILES);
+        renderAttachmentsRow();
+      }
+      fileInput.value = '';
+    });
+
+    function overlayFileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderAttachmentsRow() {
+      if (attachedFiles.length === 0) {
+        attachmentsRow.style.display = 'none';
+        attachmentsRow.innerHTML = '';
+        return;
+      }
+
+      attachmentsRow.style.display = 'flex';
+      attachmentsRow.innerHTML = '';
+
+      attachedFiles.forEach((file, idx) => {
+        const isImage = file.mimeType.startsWith('image/');
+        if (isImage) {
+          const chip = document.createElement('div');
+          chip.className = 'file-chip-img';
+          chip.innerHTML =
+            '<img src="data:' + file.mimeType + ';base64,' + file.base64 + '" alt="' + escapeHtml(file.name) + '">' +
+            '<button class="file-chip-remove" data-idx="' + idx + '" type="button" title="Remove">✕</button>';
+          attachmentsRow.appendChild(chip);
+        } else {
+          const chip = document.createElement('div');
+          chip.className = 'file-chip-pdf';
+          chip.innerHTML =
+            '<div class="file-chip-pdf-icon">' +
+              '<svg style="width: 11px; height: 11px; color: hsl(0 72% 51%);" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+                '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>' +
+              '</svg>' +
+            '</div>' +
+            '<span class="file-chip-pdf-name">' + escapeHtml(file.name) + '</span>' +
+            '<button class="file-chip-remove" data-idx="' + idx + '" type="button" title="Remove">✕</button>';
+          attachmentsRow.appendChild(chip);
+        }
+      });
+    }
+
+    // Remove file via event delegation on attachments row
+    attachmentsRow.addEventListener('click', (e) => {
+      const removeBtn = e.target.closest('.file-chip-remove');
+      if (removeBtn) {
+        const idx = parseInt(removeBtn.dataset.idx, 10);
+        attachedFiles = attachedFiles.filter((_, i) => i !== idx);
+        renderAttachmentsRow();
+      }
+    });
+
+    // ==========================================
+    // SKILL PICKER
+    // ==========================================
+    btnChooseSkill.addEventListener('click', () => {
+      plusMainView.style.display = 'none';
+      plusSkillView.style.display = '';
+      skillHighlightIndex = 0;
+
+      if (skillsCache.length === 0) {
+        loadSkills();
+      } else {
+        renderSkillList(skillsCache, '');
+        if (skillSearchInput) skillSearchInput.value = '';
+      }
+
+      // Reposition popup (height changed)
+      const rect = btnPlus.getBoundingClientRect();
+      plusMenu.style.left = rect.left + 'px';
+      plusMenu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+
+      requestAnimationFrame(() => skillSearchInput && skillSearchInput.focus());
+    });
+
+    btnSkillBack.addEventListener('click', () => {
+      plusMainView.style.display = '';
+      plusSkillView.style.display = 'none';
+
+      // Reposition popup back to smaller size
+      const rect = btnPlus.getBoundingClientRect();
+      plusMenu.style.left = rect.left + 'px';
+      plusMenu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+    });
+
+    async function loadSkills() {
+      skillListEl.innerHTML = '<div style="padding: 16px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 11px;">Loading...</div>';
+      try {
+        const skills = await window.electronAPI?.skills?.list?.();
+        skillsCache = skills || [];
+        renderSkillList(skillsCache, skillSearchInput ? skillSearchInput.value : '');
+      } catch (err) {
+        console.error('[Overlay] Failed to load skills:', err);
+        skillListEl.innerHTML = '<div style="padding: 16px; text-align: center; color: hsl(0 72% 51%); font-size: 11px;">Failed to load skills</div>';
+      }
+    }
+
+    function renderSkillList(skills, query) {
+      const q = (query || '').toLowerCase().trim();
+      const filtered = q
+        ? skills.filter(s =>
+            s.label.toLowerCase().includes(q) ||
+            s.name.toLowerCase().includes(q) ||
+            (s.description || '').toLowerCase().includes(q)
+          )
+        : skills;
+
+      skillListEl.innerHTML = '';
+
+      if (filtered.length === 0) {
+        skillListEl.innerHTML = '<div style="padding: 16px; text-align: center; color: hsl(var(--muted-foreground)); font-size: 11px;">No skills found</div>';
+        return;
+      }
+
+      filtered.forEach((skill, index) => {
+        const btn = document.createElement('button');
+        btn.className = 'skill-item' + (index === skillHighlightIndex ? ' highlighted' : '');
+        btn.type = 'button';
+        btn.dataset.skillName = skill.name;
+        btn.dataset.skillLabel = skill.label;
+        btn.innerHTML =
+          '<svg style="width: 11px; height: 11px; flex-shrink: 0; color: hsl(var(--emerald)); margin-top: 2px;" fill="currentColor" viewBox="0 0 24 24">' +
+            '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
+          '</svg>' +
+          '<div style="flex: 1; min-width: 0;">' +
+            '<div class="skill-item-name">' + escapeHtml(skill.label) + '</div>' +
+            '<div class="skill-item-desc">' + escapeHtml(skill.description || '') + '</div>' +
+          '</div>';
+
+        btn.addEventListener('click', () => {
+          selectedSkill = skill.name;
+          selectedSkillLabel = skill.label;
+          updateSkillPill();
+          closePlusMenu();
+        });
+
+        btn.addEventListener('mouseenter', () => {
+          skillHighlightIndex = index;
+          skillListEl.querySelectorAll('.skill-item').forEach((el, i) => {
+            el.classList.toggle('highlighted', i === index);
+          });
+        });
+
+        skillListEl.appendChild(btn);
+      });
+    }
+
+    function updateSkillPill() {
+      if (selectedSkill && skillPill && skillPillName) {
+        skillPill.style.display = 'inline-flex';
+        skillPillName.textContent = selectedSkillLabel || selectedSkill;
+      } else if (skillPill) {
+        skillPill.style.display = 'none';
+      }
+    }
+
+    skillPillRemove.addEventListener('click', () => {
+      selectedSkill = null;
+      selectedSkillLabel = null;
+      updateSkillPill();
+    });
+
+    // Skill search filtering
+    skillSearchInput.addEventListener('input', () => {
+      skillHighlightIndex = 0;
+      renderSkillList(skillsCache, skillSearchInput.value);
+    });
+
+    // Keyboard navigation in skill picker
+    skillSearchInput.addEventListener('keydown', (e) => {
+      const items = skillListEl.querySelectorAll('.skill-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        skillHighlightIndex = Math.min(skillHighlightIndex + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('highlighted', i === skillHighlightIndex));
+        items[skillHighlightIndex] && items[skillHighlightIndex].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        skillHighlightIndex = Math.max(skillHighlightIndex - 1, 0);
+        items.forEach((el, i) => el.classList.toggle('highlighted', i === skillHighlightIndex));
+        items[skillHighlightIndex] && items[skillHighlightIndex].scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const highlightedBtn = items[skillHighlightIndex];
+        if (highlightedBtn) {
+          selectedSkill = highlightedBtn.dataset.skillName;
+          selectedSkillLabel = highlightedBtn.dataset.skillLabel;
+          updateSkillPill();
+          closePlusMenu();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        // Go back to main menu
+        plusMainView.style.display = '';
+        plusSkillView.style.display = 'none';
+        const rect = btnPlus.getBoundingClientRect();
+        plusMenu.style.left = rect.left + 'px';
+        plusMenu.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
+      }
+    });
 
     // ==========================================
     // AUTO-RESIZE TEXTAREA
