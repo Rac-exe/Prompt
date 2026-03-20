@@ -3665,6 +3665,19 @@
       } else {
         root.style.fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
       }
+
+      // Persist to localStorage so the blocking theme script reads the correct
+      // theme on next open (prevents the flash of wrong theme when overlay opens)
+      try {
+        const cached = {
+          theme: settings.theme || 'dark',
+          fontSize: settings.font_size || 'medium',
+          fontFamily: settings.font_family || 'inter',
+        };
+        localStorage.setItem('prompt-weaver-settings', JSON.stringify(cached));
+      } catch (e) {
+        // localStorage write failed — not critical
+      }
     }
 
     if (window.electronAPI?.overlay?.getSettings) {
