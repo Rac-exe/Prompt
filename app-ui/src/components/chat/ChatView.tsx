@@ -665,16 +665,6 @@ export const ChatView = ({
 
               return (
               <div key={message.id}>
-              {/* User edit navigator — ABOVE the user bubble */}
-              {message.role === "user" && versionInfo && (
-                <VersionNavigator
-                  current={versionInfo.current}
-                  total={versionInfo.total}
-                  onPrev={() => onNavigateVersion?.(versionInfo.parentId, 'prev')}
-                  onNext={() => onNavigateVersion?.(versionInfo.parentId, 'next')}
-                  align="right"
-                />
-              )}
               <MessageBubble
                 message={message}
                 onCopy={() => onCopyPrompt(message.id)}
@@ -689,6 +679,8 @@ export const ChatView = ({
                 isGenerating={isGenerating}
                 fileContextCount={fileContextCount}
                 avatarUrl={avatarUrl}
+                versionInfo={message.role === "user" && versionInfo ? versionInfo : undefined}
+                onNavigateVersion={message.role === "user" ? onNavigateVersion : undefined}
               />
               {/* Assistant regenerate navigator — BELOW the assistant bubble */}
               {message.role === "assistant" && versionInfo && (

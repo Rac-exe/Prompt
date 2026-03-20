@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -35,10 +35,14 @@ interface MessageBubbleProps {
   fileContextCount?: number;
   /** User's profile avatar URL (shown on user messages) */
   avatarUrl?: string | null;
+  /** Version info for user messages — shown inline with the edit button */
+  versionInfo?: { current: number; total: number; parentId: string };
+  onNavigateVersion?: (parentId: string, direction: 'prev' | 'next') => void;
 }
 
 export const MessageBubble = ({
   message, onCopy, onSave, isSaved, onFeedback, onEdit, onRegenerate, isGenerating, fileContextCount, avatarUrl,
+  versionInfo, onNavigateVersion,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -211,17 +215,54 @@ export const MessageBubble = ({
               <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
               </div>
-              {/* Action row — visible on hover, hidden while generating */}
-              {!isGenerating && onEdit && (
-                <div className="flex items-center gap-1 opacity-0 group-hover/user:opacity-100 transition-opacity duration-150">
-                  <button
-                    onClick={() => { setIsEditing(true); setEditValue(message.content); }}
-                    className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition-colors"
-                    title="Edit message"
-                  >
-                    <Pencil className="w-3 h-3" />
-                    Edit
-                  </button>
+              {/* Action row — always visible, contains edit button + version navigator */}
+              {!isGenerating && (onEdit || (versionInfo && versionInfo.total > 1)) && (
+                <div className="flex items-center gap-2 justify-end">
+                  {/* Version navigator — shown inline when multiple versions exist */}
+                  {versionInfo && versionInfo.total > 1 && onNavigateVersion && (
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        onClick={() => onNavigateVersion(versionInfo.parentId, 'prev')}
+                        disabled={versionInfo.current <= 1}
+                        className={cn(
+                          "w-5 h-5 rounded flex items-center justify-center transition-colors",
+                          versionInfo.current <= 1
+                            ? "text-muted-foreground/25 cursor-not-allowed"
+                            : "text-muted-foreground/60 hover:text-foreground hover:bg-secondary"
+                        )}
+                        aria-label="Previous version"
+                      >
+                        <ChevronLeft className="w-3 h-3" />
+                      </button>
+                      <span className="text-[10px] text-muted-foreground/50 font-medium tabular-nums min-w-[2rem] text-center select-none">
+                        {versionInfo.current}/{versionInfo.total}
+                      </span>
+                      <button
+                        onClick={() => onNavigateVersion(versionInfo.parentId, 'next')}
+                        disabled={versionInfo.current >= versionInfo.total}
+                        className={cn(
+                          "w-5 h-5 rounded flex items-center justify-center transition-colors",
+                          versionInfo.current >= versionInfo.total
+                            ? "text-muted-foreground/25 cursor-not-allowed"
+                            : "text-muted-foreground/60 hover:text-foreground hover:bg-secondary"
+                        )}
+                        aria-label="Next version"
+                      >
+                        <ChevronRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                  )}
+                  {/* Edit button — always visible */}
+                  {onEdit && (
+                    <button
+                      onClick={() => { setIsEditing(true); setEditValue(message.content); }}
+                      className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition-colors"
+                      title="Edit message"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Edit
+                    </button>
+                  )}
                 </div>
               )}
             </div>
