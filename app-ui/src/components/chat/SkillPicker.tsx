@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Sparkles } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Settings2, Briefcase, MessageSquare, Palette, GraduationCap, FlaskConical, Code2, ImageIcon, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { SkillInfo } from "@/types/electron";
 
@@ -11,12 +9,23 @@ interface SkillPickerProps {
   className?: string;
 }
 
+const SKILL_ICON_MAP: Record<string, React.ElementType> = {
+  automation:    Settings2,
+  business:      Briefcase,
+  communication: MessageSquare,
+  creative:      Palette,
+  educational:   GraduationCap,
+  research:      FlaskConical,
+  technical:     Code2,
+  visual:        ImageIcon,
+};
+
 export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) => {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [filter, setFilter] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [tooltip, setTooltip] = useState<{ text: string; top: number } | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -31,85 +40,90 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
     })();
   }, []);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
-  useEffect(() => { setSelectedIndex(0); }, [filter]);
-
-  const filteredSkills = skills.filter(s =>
-    s.label.toLowerCase().includes(filter.toLowerCase()) ||
-    s.name.toLowerCase().includes(filter.toLowerCase()) ||
-    s.description.toLowerCase().includes(filter.toLowerCase())
-  );
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIndex(i => Math.min(i + 1, filteredSkills.length - 1)); }
+    if (e.key === "ArrowDown") { e.preventDefault(); setSelectedIndex(i => Math.min(i + 1, skills.length - 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setSelectedIndex(i => Math.max(i - 1, 0)); }
-    else if (e.key === "Enter") { e.preventDefault(); if (filteredSkills[selectedIndex]) onSelect(filteredSkills[selectedIndex].name); }
+    else if (e.key === "Enter") { e.preventDefault(); if (skills[selectedIndex]) onSelect(skills[selectedIndex].name); }
     else if (e.key === "Escape") { e.preventDefault(); onClose(); }
   };
 
+  // Calculate tooltip top position relative to the panel so it aligns with the hovered button,
+  // even when the list is scrolled. Must live outside the overflow container to avoid clipping.
+  const showTooltip = (skill: SkillInfo, e: React.MouseEvent<HTMLButtonElement>) => {
+    if (!skill.description || !panelRef.current) return;
+    const btnRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const panelRect = panelRef.current.getBoundingClientRect();
+    setTooltip({
+      text: skill.description,
+      top: btnRect.top - panelRect.top + btnRect.height / 2,
+    });
+  };
+
   return (
+    // `relative` here is the containing block for the tooltip (NOT the scroll div).
+    // No overflow clipping on this element so the tooltip can extend to the right.
     <div
+      ref={panelRef}
       className={cn(
-        "w-80 rounded-lg border bg-popover shadow-lg",
+        "w-[280px] flex flex-col rounded-xl border border-border bg-popover shadow-2xl relative",
         "animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-2",
         !className && "absolute bottom-full left-0 mb-2",
         className
       )}
       onKeyDown={handleKeyDown}
     >
-      {/* Search */}
-      <div className="border-b p-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={inputRef}
-            type="text"
-            placeholder="Search skills..."
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-            className="pl-9 h-9"
-          />
-        </div>
-      </div>
-
-      {/* Scrollable list — fixed height so it scrolls */}
-      <ScrollArea className="h-56">
-        <div className="p-1">
-          {loading ? (
-            <div className="p-4 text-center text-sm text-muted-foreground">Loading skills...</div>
-          ) : filteredSkills.length === 0 ? (
-            <div className="p-4 text-center text-sm text-muted-foreground">No skills found</div>
-          ) : filteredSkills.map((skill, index) => (
+      {/* Scroll container — overflow-x-hidden kills the horizontal scrollbar;
+          overflow-y-auto handles vertical scroll. Tooltip is NOT inside here. */}
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden max-h-[360px] py-1">
+        {loading ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground/60">Loading...</div>
+        ) : skills.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-muted-foreground/60">No skills found</div>
+        ) : skills.map((skill, index) => {
+          const isSelected = selectedIndex === index;
+          const Icon = SKILL_ICON_MAP[skill.name] ?? Sparkles;
+          return (
             <button
               key={skill.name}
               onClick={() => onSelect(skill.name)}
-              onMouseEnter={() => setSelectedIndex(index)}
+              onMouseEnter={(e) => { setSelectedIndex(index); showTooltip(skill, e); }}
+              onMouseLeave={() => setTooltip(null)}
               className={cn(
-                "w-full rounded-md px-3 py-2.5 text-left transition-colors",
-                "hover:bg-accent focus:bg-accent focus:outline-none",
-                selectedIndex === index && "bg-accent"
+                "w-full max-w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors relative",
+                "hover:bg-accent/50 focus:outline-none",
+                isSelected && "bg-accent/40"
               )}
             >
-              <div className="flex items-start gap-2">
-                <Sparkles className="h-4 w-4 mt-0.5 text-emerald-500 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-sm">{skill.label}</div>
-                  <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-                    {skill.description}
-                  </div>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </ScrollArea>
+              {/* Left accent bar */}
+              {isSelected && (
+                <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-emerald" />
+              )}
 
-      {/* Footer */}
-      <div className="border-t px-3 py-2 text-xs text-muted-foreground">
-        <span className="font-medium">↑↓</span> Navigate{" "}
-        <span className="font-medium">Enter</span> Select{" "}
-        <span className="font-medium">Esc</span> Close
+              {/* Icon square */}
+              <div className="w-8 h-8 rounded-lg bg-muted/60 border border-border/50 flex items-center justify-center flex-shrink-0">
+                <Icon className="w-4 h-4 text-emerald" />
+              </div>
+
+              {/* Name only — no description inline */}
+              <span className="font-medium text-[13px] text-foreground truncate">
+                {skill.label}
+              </span>
+            </button>
+          );
+        })}
       </div>
+
+      {/* Tooltip — rendered at panel level, outside the overflow container.
+          Positioned absolute relative to the panel (not the scroll div),
+          so overflow-x-hidden on the scroll div cannot clip it. */}
+      {tooltip && (
+        <div
+          className="absolute left-full ml-2 z-50 pointer-events-none w-[220px] px-3 py-2 rounded-lg shadow-lg bg-[#111] border border-white/10 text-xs text-white/70 leading-relaxed"
+          style={{ top: tooltip.top, transform: "translateY(-50%)" }}
+        >
+          {tooltip.text}
+        </div>
+      )}
     </div>
   );
 };

@@ -8,7 +8,7 @@ declare global {
       // OVERLAY API (for overlay.html)
       // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string }) => void;
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string }) => void;
         save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
         copy: (text: string) => void;
         close: () => void;
@@ -143,10 +143,10 @@ const electronAPI = {
   // ============================================
   // OVERLAY API (clean IPC contract)
   // ============================================
-  overlay: {
-    optimize: (data: { text: string; isRegenerate?: boolean; mode?: string }) => {
-      ipcRenderer.send('overlay:optimize', data);
-    },
+      overlay: {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string }) => {
+          ipcRenderer.send('overlay:optimize', data);
+        },
     save: (data: { title: string; content: string; collectionId?: string }) => {
       return ipcRenderer.invoke('overlay:save', data);
     },

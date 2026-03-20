@@ -563,16 +563,13 @@ class TitleRequest(BaseModel):
 @app.post("/generate-title")
 async def generate_title(request: TitleRequest):
     """
-    Generate a short smart chat title (≤5 words) from the first user message.
+    Generate a short smart chat title (3-5 words) from the first user message.
     Uses the same model as the optimizer (gpt-4o-mini via OpenRouter).
-    Falls back to the first 4 words of the prompt if the LLM call fails.
+    Falls back to "New Chat" if the LLM call fails or prompt is empty.
     """
     prompt_text = request.prompt.strip()
     if not prompt_text:
         return {"title": "New Chat"}
-
-    # Heuristic fallback: first 4 words
-    fallback_title = " ".join(prompt_text.split()[:4])
 
     try:
         import litellm as _litellm
@@ -585,8 +582,10 @@ async def generate_title(request: TitleRequest):
                 {
                     "role": "system",
                     "content": (
-                        "Generate a concise chat title (maximum 5 words). "
-                        "Do not use punctuation or quotes. Return only the title."
+                        "Generate a short title (3-5 words) for a chat based ONLY on the user's request. "
+                        "Never use assistant-style phrases like 'I can help', 'I will', 'Sure', or 'Let me'. "
+                        "Focus on what the user wants, not how you will respond. "
+                        "Do not use punctuation or quotes. Return only the title, nothing else."
                     ),
                 },
                 {"role": "user", "content": prompt_text},
@@ -603,16 +602,16 @@ async def generate_title(request: TitleRequest):
         # Sanitise: strip quotes, punctuation, leading hashes the model might add
         import re as _re
         raw_title = _re.sub(r'^[#"\'\s]+|[#"\'\s]+$', '', raw_title)
-        # Keep only the first 5 words as a hard cap
+        # Hard cap at 5 words
         words = raw_title.split()[:5]
-        title = " ".join(words) if words else fallback_title
+        title = " ".join(words) if words else "New Chat"
 
         print(f"[TitleGen] '{prompt_text[:50]}' -> '{title}'")
         return {"title": title}
 
     except Exception as exc:
         print(f"[TitleGen] LLM failed ({exc.__class__.__name__}: {exc}), using fallback")
-        return {"title": fallback_title}
+        return {"title": "New Chat"}
 
 # ============================================================
 # WHISPER TRANSCRIPTION PIPELINE  v3
