@@ -24,6 +24,10 @@ export default defineConfig(({ mode }) => ({
     outDir: "../electron/renderer/app-ui", // Build directly to Electron
     emptyDir: true, // Clean before build
     rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        overlay: path.resolve(__dirname, "overlay.html"),
+      },
       output: {
         manualChunks: undefined, // Single bundle for Electron
       },

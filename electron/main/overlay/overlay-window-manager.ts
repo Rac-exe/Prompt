@@ -76,7 +76,10 @@ export class OverlayWindowManager {
     // 'screen-saver' is the highest z-order level available on Windows/macOS.
     this.window.setAlwaysOnTop(true, 'screen-saver');
 
-    const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'overlay.html');
+    // After the React/Vite refactor the overlay is built alongside the main
+    // app-ui bundle.  Vite multi-page build places it at:
+    //   electron/renderer/app-ui/overlay.html
+    const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'overlay.html');
     this.window.loadFile(htmlPath);
 
     this.window.on('closed', () => {
