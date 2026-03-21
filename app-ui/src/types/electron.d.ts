@@ -185,6 +185,43 @@ export interface ElectronAPI {
 
   // Stop generation
   stopGeneration: () => void;
+
+  // Overlay (available when running inside the overlay renderer)
+  overlay?: {
+    optimize: (data: {
+      text: string;
+      isRegenerate?: boolean;
+      mode?: string;
+      chatId?: string;
+      attachedFiles?: AttachedFile[];
+      forcedSkill?: string;
+      userGroupId?: string;
+      userVersionIndex?: number;
+      assistantGroupId?: string;
+      assistantVersionIndex?: number;
+    }) => void;
+    save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
+    copy: (text: string) => void;
+    close: () => void;
+    openApp: () => void;
+    insert: (text: string) => Promise<any>;
+    checkAuth: () => Promise<{ isAuthenticated: boolean }>;
+    getCollections: () => Promise<any[]>;
+    createCollection: (name: string, icon?: string) => Promise<any>;
+    getChats: () => Promise<any[]>;
+    saveToChat: (chatId: string, content: string) => Promise<any>;
+    onOpened: (callback: (data: any) => void) => void;
+    onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
+    onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
+    onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
+    onOptimizationError: (callback: (data: { error: string }) => void) => void;
+    onCursorPos: (callback: (data: { x: number; y: number }) => void) => void;
+    getSettings: () => Promise<any>;
+    onSettingsUpdate: (callback: (settings: any) => void) => void;
+    newSession: () => void;
+    stopGeneration: () => void;
+    truncateHistory: (keepCount: number) => void;
+  };
 }
 
 declare global {
