@@ -143,7 +143,8 @@ export class PythonClient extends EventEmitter {
     mode: string = "fast",
     customInstructions: string = "",
     attachedFiles: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }> = [],
-    forcedSkill: string | null = null
+    forcedSkill: string | null = null,
+    previousOutput: string | null = null
   ): Promise<string> {
     await this.ensureConnection();
 
@@ -244,7 +245,7 @@ export class PythonClient extends EventEmitter {
         this.ws.send(JSON.stringify({
           request_id: requestId,
           prompt,
-          skip_cache: skipCache,
+          previous_output: previousOutput || undefined,
           messages,
           mode,
           custom_instructions: customInstructions,

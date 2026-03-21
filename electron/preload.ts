@@ -143,7 +143,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -320,6 +320,7 @@ const electronAPI = {
     versionIndex?: number;
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
+    previousContent?: string;
   }) => {
     ipcRenderer.send('app:regenerate-response', data);
   },

@@ -851,6 +851,7 @@ Your prompt was: "${content}"`;
         versionIndex,
         attachedFiles: userMsg.attachedFiles as any,
         forcedSkill: userMsg.selectedSkill || null,
+        previousContent: originalAssistant?.content || undefined,
       });
     }
 

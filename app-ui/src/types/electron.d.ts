@@ -94,6 +94,7 @@ export interface ElectronAPI {
     versionIndex?: number;
     attachedFiles?: AttachedFile[];
     forcedSkill?: string | null;
+    previousContent?: string;
   }) => void;
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
@@ -199,6 +200,7 @@ export interface ElectronAPI {
       userVersionIndex?: number;
       assistantGroupId?: string;
       assistantVersionIndex?: number;
+      previousOutput?: string;
     }) => void;
     save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
     copy: (text: string) => void;

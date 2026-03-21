@@ -159,7 +159,7 @@ export function useTurns() {
 
   // ── Prepare regeneration of the active assistant version ─────────────────
   const prepareRegenerate = useCallback(
-    (turnIdx: number): { userVer: OverlayMessage; assistGroupId: string; assistVerIdx: number; uIdx: number } | null => {
+    (turnIdx: number): { userVer: OverlayMessage; assistGroupId: string; assistVerIdx: number; uIdx: number; previousAssistantContent: string | null } | null => {
       const turn = turns[turnIdx];
       if (!turn) return null;
 
@@ -170,7 +170,13 @@ export function useTurns() {
       const groupIds = { ...turn.assistantGroupIds };
       if (!groupIds[uIdx]) groupIds[uIdx] = generateGroupId();
       const assistGroupId = groupIds[uIdx];
-      const assistVerIdx = (turn.assistantGroups[uIdx] || []).length;
+      const group = turn.assistantGroups[uIdx] || [];
+      const assistVerIdx = group.length;
+
+      // Collect the content of the currently displayed assistant message (last active version)
+      const activeAssistIdx = turn.assistantActiveIdx[uIdx] ?? (group.length - 1);
+      const lastAssistantMsg = group[activeAssistIdx] ?? group[group.length - 1] ?? null;
+      const previousAssistantContent = lastAssistantMsg ? lastAssistantMsg.content : null;
 
       // Update groupIds in state if newly generated
       if (!turn.assistantGroupIds[uIdx]) {
@@ -185,7 +191,7 @@ export function useTurns() {
       pendingUserVerIdx.current = uIdx;
       pendingIsRegen.current = true;
 
-      return { userVer, assistGroupId, assistVerIdx, uIdx };
+      return { userVer, assistGroupId, assistVerIdx, uIdx, previousAssistantContent };
     },
     [turns],
   );

@@ -164,6 +164,7 @@ def optimize(
     custom_instructions: str = "",
     attached_files: Optional[List[Dict]] = None,
     forced_skill: Optional[str] = None,
+    previous_output: Optional[str] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -173,10 +174,29 @@ def optimize(
     Args:
         attached_files: List of {name, mimeType, base64} dicts for file attachments
         forced_skill: Override auto skill selection with specific skill name
+        previous_output: If provided (regeneration), the LLM is instructed to
+                         produce a distinctly different and better optimization.
     """
     if attached_files is None:
         attached_files = []
-    
+
+    is_regeneration = bool(previous_output and previous_output.strip())
+    # Use a higher temperature for regeneration so outputs are more varied
+    temperature = 0.95 if is_regeneration else 0.7
+
+    # Build the regeneration instruction block appended to the user message
+    regen_instruction = ""
+    if is_regeneration:
+        regen_instruction = (
+            f"\n\n---\n"
+            f"PREVIOUS OPTIMIZED VERSION (already shown to user — do NOT reproduce this):\n"
+            f"{previous_output.strip()}\n\n"
+            f"Generate a DISTINCTLY DIFFERENT optimization of the original request above. "
+            f"Use a different structural approach, angle, or framing. "
+            f"Cover aspects or dimensions the previous version missed or under-emphasized. "
+            f"The new version must be meaningfully different — not a paraphrase or minor reword of the previous one."
+        )
+
     resolved_model, extra = _get_litellm_kwargs(provider, model)
     model_has_vision = supports_vision(resolved_model)
     
@@ -202,6 +222,9 @@ def optimize(
         final_user_input = user_input
         if file_text_context:
             final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{user_input}"
+
+        # Append regeneration instruction when applicable
+        final_user_input = final_user_input + regen_instruction
         
         # Add vision parts if present
         if vision_parts:
@@ -257,6 +280,10 @@ USER REQUEST:
 
 Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant skill techniques, and provide the fully optimized prompt."""
 
+        # Append regeneration instruction when applicable
+        if regen_instruction:
+            user_prompt = user_prompt + regen_instruction
+
         if custom_instructions and custom_instructions.strip():
             system_prompt += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
     
@@ -279,7 +306,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
     if stream:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=1500, temperature=0.7, stream=True,
+            max_tokens=1500, temperature=temperature, stream=True,
             stream_options={"include_usage": True}, **extra,
         )
         def _stream_generator():
@@ -312,7 +339,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
     else:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=1500, temperature=0.7, **extra,
+            max_tokens=1500, temperature=temperature, **extra,
         )
         result = response.choices[0].message.content
         usage = response.usage

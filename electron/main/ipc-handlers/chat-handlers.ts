@@ -623,6 +623,7 @@ export function registerChatHandlers(
         versionIndex?: number;
         attachedFiles?: AttachedFile[];
         forcedSkill?: string | null;
+        previousContent?: string;
     }) => {
         try {
             const chatId = data.chatId;
@@ -661,7 +662,7 @@ export function registerChatHandlers(
                 console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
             }
 
-            // Trigger streaming optimization (regeneration — skip cache for fresh result)
+            // Trigger streaming optimization (regeneration — pass previous content for self-critique)
             const optimizedText = await pythonClient.optimizeStream(
                 data.content,
                 true,
@@ -674,7 +675,8 @@ export function registerChatHandlers(
                 data.mode || 'fast',
                 customInstructions,
                 attachedFiles,
-                data.forcedSkill || null
+                data.forcedSkill || null,
+                data.previousContent || null
             );
 
             // Save optimization record
