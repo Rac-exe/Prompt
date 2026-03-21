@@ -69,6 +69,11 @@ export class OverlayWindowManager {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
+        // Keep renderer active when hidden so the GPU framebuffer stays current.
+        // Without this, Chromium throttles the renderer when the window is hidden,
+        // causing a stale frame to be presented on the next window.show() call —
+        // visible as a brief flicker on transparent frameless windows on Windows.
+        backgroundThrottling: false,
       },
     });
 
