@@ -2372,9 +2372,9 @@
       if (!turn.assistantGroups[uIdx]) {
         turn.assistantGroups[uIdx] = [];
         turn.assistantActiveIdx[uIdx] = 0;
-        // Generate a new assistant group ID for this user version
+        // Only generate a new assistant group ID if one wasn't already pre-assigned
         if (!turn.assistantGroupIds) turn.assistantGroupIds = {};
-        turn.assistantGroupIds[uIdx] = generateGroupId();
+        if (!turn.assistantGroupIds[uIdx]) turn.assistantGroupIds[uIdx] = generateGroupId();
       }
       turn.assistantGroups[uIdx].push(msg);
       turn.assistantActiveIdx[uIdx] = turn.assistantGroups[uIdx].length - 1;

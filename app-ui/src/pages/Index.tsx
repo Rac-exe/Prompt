@@ -602,13 +602,27 @@ const Index = () => {
         const toAdd = newMessages.filter(m => !existingIds.has(m.id));
         if (toAdd.length === 0) return prev;
 
-        // Add each new message to the version tree linearly
+        // Add each new message to the version tree.
+        // If the message has a groupId that matches an existing message,
+        // add it as a sibling (version branch); otherwise add linearly.
         for (const msg of toAdd) {
-          if (!messageTree.has(msg.id)) {
-            const activePath = messageTree.getActivePath();
-            const parentId = activePath.length > 0 ? activePath[activePath.length - 1] : messageTree.ROOT;
-            messageTree.addChild(parentId, msg.id);
+          if (messageTree.has(msg.id)) continue;
+
+          if (msg.groupId) {
+            // Look for an existing message with the same groupId → add as sibling
+            const sibling = [...prev, ...toAdd].find(
+              m => m.id !== msg.id && m.groupId === msg.groupId && messageTree.has(m.id),
+            );
+            if (sibling) {
+              messageTree.addBranch(sibling.id, msg.id);
+              continue;
+            }
           }
+
+          // Default: linear chain extension
+          const activePath = messageTree.getActivePath();
+          const parentId = activePath.length > 0 ? activePath[activePath.length - 1] : messageTree.ROOT;
+          messageTree.addChild(parentId, msg.id);
         }
 
         return [...prev, ...toAdd];
