@@ -13,6 +13,7 @@ import { UserService } from '../database/services/user-service';
 import { localCache } from '../database/local-cache';
 import { networkMonitor } from './network-monitor-singleton';
 import { offlineQueue } from '../database/offline-queue';
+import { uploadAttachment } from './file-upload-service';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -238,10 +239,41 @@ export function registerOverlayHandlers(
               // For regenerations we only save the assistant message (user already exists)
               let userMsg: any = null;
               if (!data.isRegenerate) {
-                userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
-                  groupId: userGroupId,
-                  versionIndex: userVersionIndex,
-                });
+                // Upload file attachments to external storage before writing to DB
+                // (images → Cloudinary, PDFs → Supabase Storage — no base64 in DB)
+                let filesForDb: any[] = [];
+                if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
+                  // Insert user message first to obtain its ID for the storage path
+                  userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
+                    groupId: userGroupId,
+                    versionIndex: userVersionIndex,
+                  });
+                  try {
+                    filesForDb = await Promise.all(
+                      data.attachedFiles.map(f =>
+                        uploadAttachment(f, authState.currentUserId!, targetChatId, userMsg.id)
+                      )
+                    );
+                    // Patch metadata with storage refs (no base64)
+                    const { SupabaseClientManager } = require('../database/supabase-client');
+                    await SupabaseClientManager.getClient()
+                      .from('messages')
+                      .update({ metadata: {
+                        groupId: userGroupId,
+                        versionIndex: userVersionIndex,
+                        attachedFiles: filesForDb,
+                        selectedSkill: data.forcedSkill || undefined,
+                      }})
+                      .eq('id', userMsg.id);
+                  } catch (uploadErr: any) {
+                    console.error('[Overlay] File upload failed (non-fatal):', uploadErr.message);
+                  }
+                } else {
+                  userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
+                    groupId: userGroupId,
+                    versionIndex: userVersionIndex,
+                  });
+                }
               }
               const assistantMsg = await svc.addMessage(
                 targetChatId,
@@ -298,10 +330,37 @@ export function registerOverlayHandlers(
               const olAssistantVersionIndex = data.assistantVersionIndex ?? 0;
 
               if (!data.isRegenerate) {
-                await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
-                  groupId: olUserGroupId,
-                  versionIndex: olUserVersionIndex,
-                });
+                if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
+                  // Insert user message to get its ID, then upload and patch metadata
+                  const olUserMsg = await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
+                    groupId: olUserGroupId,
+                    versionIndex: olUserVersionIndex,
+                  });
+                  try {
+                    const olFilesForDb = await Promise.all(
+                      data.attachedFiles.map(f =>
+                        uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olUserMsg.id)
+                      )
+                    );
+                    const { SupabaseClientManager } = require('../database/supabase-client');
+                    await SupabaseClientManager.getClient()
+                      .from('messages')
+                      .update({ metadata: {
+                        groupId: olUserGroupId,
+                        versionIndex: olUserVersionIndex,
+                        attachedFiles: olFilesForDb,
+                        selectedSkill: data.forcedSkill || undefined,
+                      }})
+                      .eq('id', olUserMsg.id);
+                  } catch (uploadErr: any) {
+                    console.error('[Overlay] File upload failed (non-fatal):', uploadErr.message);
+                  }
+                } else {
+                  await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
+                    groupId: olUserGroupId,
+                    versionIndex: olUserVersionIndex,
+                  });
+                }
               }
               await svc.addMessage(
                 currentOverlayChatId,

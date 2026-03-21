@@ -123,6 +123,12 @@ declare global {
       onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
       onNetworkReconnected: (callback: () => void) => void;
 
+      // Storage API (file attachments)
+      storage: {
+        getSignedUrl: (storagePath: string) => Promise<{ signedUrl?: string; error?: string }>;
+        openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
+      };
+
       // Memory API
       memory: {
         get: () => Promise<{
@@ -494,6 +500,16 @@ const electronAPI = {
       ipcRenderer.invoke('memory:upsert', data),
     delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
       ipcRenderer.invoke('memory:delete', data),
+  },
+
+  // ============================================
+  // STORAGE API (file attachments)
+  // ============================================
+  storage: {
+    getSignedUrl: (storagePath: string) =>
+      ipcRenderer.invoke('storage:get-signed-url', { storagePath }),
+    openPdf: (storagePath: string) =>
+      ipcRenderer.invoke('storage:open-pdf', { storagePath }),
   },
 
   // ============================================

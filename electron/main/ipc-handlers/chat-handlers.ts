@@ -11,6 +11,7 @@ import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { localCache } from '../database/local-cache';
 import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
+import { uploadAttachment } from './file-upload-service';
 
 // ── File attachment types ─────────────────────────────────────────────────────
 export interface AttachedFile {
@@ -465,20 +466,56 @@ export function registerChatHandlers(
                 chat = await chatService.getChat(chatId);
             }
 
-            // Save user message — store full file data (including base64) so PDF/image
-            // preview works even after switching chats or restarting the app.
-            const filesForDb = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }));
+            // ── Upload files to external storage before writing to DB ────────
+            // Images  → Cloudinary (CDN-backed, returns a permanent secure_url)
+            // PDFs    → Supabase Storage (private bucket, accessed via signed URL)
+            //
+            // base64 is kept in `attachedFiles` for the in-session thumbnail
+            // and for the in-memory Python LLM call but is NEVER written to DB.
             const userGroupId = data.groupId || crypto.randomUUID();
             const userVersionIndex = data.versionIndex ?? 0;
+
+            // First insert the user message so we have its ID for the storage path
             const userMessage = await chatService.addMessage(chatId, data.content, 'user', undefined, {
-                attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                attachedFiles: undefined, // will be patched below after upload
                 selectedSkill: data.forcedSkill || undefined,
                 groupId: userGroupId,
                 versionIndex: userVersionIndex,
             });
 
-            // Send immediate confirmation — include full AttachedFile (with base64) for in-session thumbnail
+            // Upload files and build lightweight DB references (no base64)
+            let filesForDb: any[] = [];
+            if (attachedFiles.length > 0 && authState.currentUserId) {
+                try {
+                    filesForDb = await Promise.all(
+                        attachedFiles.map(f =>
+                            uploadAttachment(f, authState.currentUserId!, chatId, userMessage.id)
+                        )
+                    );
+                    // Patch the message metadata with storage refs
+                    const { SupabaseClientManager } = require('../database/supabase-client');
+                    await SupabaseClientManager.getClient()
+                        .from('messages')
+                        .update({ metadata: {
+                            attachedFiles: filesForDb,
+                            selectedSkill: data.forcedSkill || undefined,
+                            groupId: userGroupId,
+                            versionIndex: userVersionIndex,
+                        }})
+                        .eq('id', userMessage.id);
+                } catch (uploadErr: any) {
+                    console.error('[Chat] File upload failed (non-fatal, message still saved):', uploadErr.message);
+                }
+            }
+
+            // Send immediate confirmation — include base64 for in-session thumbnails
+            // and cloudinaryUrl/storagePath for future reloads
             if (appWindowManager) {
+                // Merge base64 (in-memory, for current session) with storage refs (for persistence)
+                const attachedFilesForRenderer = attachedFiles.map((f, i) => ({
+                    ...f,
+                    ...(filesForDb[i] || {}),
+                }));
                 appWindowManager.send('message-sent', {
                     chatId,
                     chat,
@@ -488,7 +525,7 @@ export function registerChatHandlers(
                         role: userMessage.role,
                         content: userMessage.content,
                         createdAt: userMessage.created_at,
-                        attachedFiles: data.attachedFiles || [],
+                        attachedFiles: attachedFilesForRenderer,
                         selectedSkill: data.forcedSkill || null,
                         groupId: userGroupId,
                         versionIndex: userVersionIndex,

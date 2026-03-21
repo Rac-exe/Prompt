@@ -45,16 +45,65 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
   if (!files || files.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-      {files.map((f, i) =>
-        f.mimeType.startsWith('image/') ? (
-          <div key={i} style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
-            <img
-              src={`data:${f.mimeType};base64,${f.base64}`}
-              alt={f.name}
-              style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: '1px solid hsl(var(--emerald)/0.2)', display: 'block' }}
-            />
-          </div>
-        ) : (
+      {files.map((f, i) => {
+        const cloudinaryUrl: string | undefined = (f as any).cloudinaryUrl;
+        const storagePath: string | undefined = (f as any).storagePath;
+
+        if (f.mimeType.startsWith('image/')) {
+          // Prefer Cloudinary URL, fall back to base64 data-URI
+          const src = cloudinaryUrl
+            ? cloudinaryUrl
+            : f.base64 ? `data:${f.mimeType};base64,${f.base64}` : null;
+          if (src) {
+            return (
+              <div key={i} style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
+                <img
+                  src={src}
+                  alt={f.name}
+                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: '1px solid hsl(var(--emerald)/0.2)', display: 'block' }}
+                />
+              </div>
+            );
+          }
+          // Image with no src yet — placeholder chip
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8, background: 'hsl(var(--emerald)/0.06)', border: '1px solid hsl(var(--emerald)/0.15)', maxWidth: 160, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 500, color: 'hsl(var(--foreground))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+            </div>
+          );
+        }
+
+        // PDF — clickable if storagePath available
+        if (storagePath) {
+          return (
+            <div
+              key={i}
+              role="button"
+              tabIndex={0}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8,
+                background: 'hsl(var(--emerald)/0.06)', border: '1px solid hsl(var(--emerald)/0.15)', maxWidth: 160, flexShrink: 0,
+                cursor: 'pointer',
+              }}
+              onClick={async () => {
+                if (window.electronAPI?.storage?.openPdf) {
+                  await window.electronAPI.storage.openPdf(storagePath);
+                }
+              }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click(); }}
+            >
+              <svg style={{ width: 12, height: 12, flexShrink: 0, color: 'hsl(var(--emerald))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span style={{ fontSize: 11, fontWeight: 500, color: 'hsl(var(--foreground))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {f.name}
+              </span>
+            </div>
+          );
+        }
+
+        // PDF or other — static chip
+        return (
           <div
             key={i}
             style={{
@@ -69,8 +118,8 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
               {f.name}
             </span>
           </div>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 };

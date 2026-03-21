@@ -22,8 +22,13 @@ export type UserMemoryMap = {
 export interface AttachedFile {
   name: string;
   mimeType: string;
-  base64: string;
+  /** Present only in-session (not persisted to DB). */
+  base64?: string;
   sizeBytes: number;
+  /** Cloudinary secure_url for images (persisted instead of base64). */
+  cloudinaryUrl?: string;
+  /** Supabase Storage path for PDFs (used to generate signed URLs). */
+  storagePath?: string;
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
@@ -171,6 +176,12 @@ export interface ElectronAPI {
   // Network status
   onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
   onNetworkReconnected: (callback: () => void) => void;
+
+  // Storage (file attachments — Cloudinary/Supabase Storage)
+  storage: {
+    getSignedUrl: (storagePath: string) => Promise<{ signedUrl?: string; error?: string }>;
+    openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
+  };
 
   // Memory
   memory: {

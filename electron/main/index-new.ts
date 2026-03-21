@@ -21,6 +21,7 @@ import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
 import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
+import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -175,6 +176,7 @@ async function initialize() {
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
   registerSkillHandlers();
   registerAvatarHandlers();
+  registerFileUploadHandlers();
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)

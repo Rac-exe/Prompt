@@ -12,8 +12,10 @@ import { cn } from "@/lib/utils";
 export interface PreviewFile {
   name: string;
   mimeType: string;
-  /** base64-encoded content — NO data-URL prefix */
-  base64: string;
+  /** base64-encoded content — NO data-URL prefix. Present for in-session files. */
+  base64?: string;
+  /** Cloudinary secure_url for images persisted to external storage. */
+  cloudinaryUrl?: string;
   sizeBytes?: number;
 }
 
@@ -151,7 +153,8 @@ const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ImageViewerProps {
-  base64: string;
+  base64?: string;
+  cloudinaryUrl?: string;
   mimeType: string;
   name: string;
   zoom: number;
@@ -160,18 +163,23 @@ interface ImageViewerProps {
   setOffset: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
 }
 
-const ImageViewer = ({ base64, mimeType, name, zoom, setZoom, offset, setOffset }: ImageViewerProps) => {
+const ImageViewer = ({ base64, cloudinaryUrl, mimeType, name, zoom, setZoom, offset, setOffset }: ImageViewerProps) => {
   const [loaded, setLoaded] = useState(false);
   const isDragging = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
   const debounce = useDebouncedSetter(30);
 
-  // Create a blob URL instead of inline data URI — much less memory pressure
-  const blobUrl = useMemo(() => base64ToBlobUrl(base64, mimeType), [base64, mimeType]);
-  useEffect(() => () => URL.revokeObjectURL(blobUrl), [blobUrl]);
+  // If Cloudinary URL is available, use it directly — no blob URL needed
+  const blobUrl = useMemo(
+    () => (base64 && !cloudinaryUrl ? base64ToBlobUrl(base64, mimeType) : null),
+    [base64, cloudinaryUrl, mimeType]
+  );
+  useEffect(() => () => { if (blobUrl) URL.revokeObjectURL(blobUrl); }, [blobUrl]);
+
+  const imgSrc = cloudinaryUrl ?? blobUrl ?? '';
 
   // Reset loaded state when src changes
-  useEffect(() => { setLoaded(false); }, [blobUrl]);
+  useEffect(() => { setLoaded(false); }, [imgSrc]);
 
   // Double-click toggles between 1x and 2x
   const handleDoubleClick = (e: React.MouseEvent) => {
@@ -209,7 +217,7 @@ const ImageViewer = ({ base64, mimeType, name, zoom, setZoom, offset, setOffset 
       )}
 
       <img
-        src={blobUrl}
+        src={imgSrc}
         alt={name}
         draggable={false}
         onLoad={() => setLoaded(true)}
@@ -250,7 +258,7 @@ const UnsupportedViewer = ({ file }: { file: PreviewFile }) => (
       <p className="text-white/25 text-xs mt-1">{file.mimeType}</p>
     </div>
     <button
-      onClick={() => downloadFile(file.base64, file.mimeType, file.name)}
+      onClick={() => file.base64 && downloadFile(file.base64, file.mimeType, file.name)}
       className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/8 border border-white/12 text-white text-sm hover:bg-white/12 transition-colors"
     >
       <Download className="w-4 h-4" /> Download
@@ -384,7 +392,10 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
 
           {/* Open in new tab */}
           <button
-            onClick={() => openInNewTab(active.base64, active.mimeType)}
+            onClick={() => {
+              if (active.cloudinaryUrl) { window.open(active.cloudinaryUrl, '_blank'); }
+              else if (active.base64) { openInNewTab(active.base64, active.mimeType); }
+            }}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
             title="Open in new tab"
           >
@@ -392,7 +403,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
           </button>
 
           {/* Download */}
-          <button onClick={() => downloadFile(active.base64, active.mimeType, active.name)}
+          <button onClick={() => active.base64 && downloadFile(active.base64, active.mimeType, active.name)}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors" title="Download">
             <Download className="w-4 h-4" />
           </button>
@@ -416,6 +427,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
           <ImageViewer
             key={active.name}
             base64={active.base64}
+            cloudinaryUrl={active.cloudinaryUrl}
             mimeType={active.mimeType}
             name={active.name}
             zoom={zoom}
@@ -425,7 +437,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
           />
         )}
 
-        {isPdf && (
+        {isPdf && active.base64 && (
           <PdfViewer
             key={active.name + active.base64.slice(0, 16)}
             base64={active.base64}
@@ -469,7 +481,13 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
                   isAct ? "border-white/70 scale-110" : "border-white/15 opacity-50 hover:opacity-80 hover:border-white/35",
                 )}
               >
-                {isImg && <img src={`data:${f.mimeType};base64,${f.base64}`} alt={f.name} className="w-full h-full object-cover" />}
+                {isImg && (f.cloudinaryUrl || f.base64) && (
+                  <img
+                    src={f.cloudinaryUrl ?? `data:${f.mimeType};base64,${f.base64}`}
+                    alt={f.name}
+                    className="w-full h-full object-cover"
+                  />
+                )}
                 {isPdfThumb && (
                   <div className="w-full h-full bg-red-500/10 flex items-center justify-center">
                     <FileText className="w-4 h-4 text-red-400/80" />
