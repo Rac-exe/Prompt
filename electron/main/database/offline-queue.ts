@@ -13,7 +13,8 @@ export type OfflineOpType =
   | 'rename-collection'
   | 'delete-collection'
   | 'rename-chat'
-  | 'delete-chat';
+  | 'delete-chat'
+  | 'send-message';   // text-only chat message queued while offline
 
 export interface QueuedOperation {
   id: string;

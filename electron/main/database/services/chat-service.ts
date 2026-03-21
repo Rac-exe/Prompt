@@ -194,14 +194,16 @@ export class ChatService {
   }
 
   /**
-   * Add a message to a chat
+   * Add a message to a chat.
+   * Pass `id` to use a pre-generated UUID (avoids a separate PATCH after upload).
    */
   async addMessage(
     chatId: string,
     content: string,
     role: 'user' | 'assistant' | 'system',
     optimizationId?: string,
-    metadata?: any
+    metadata?: any,
+    id?: string,
   ): Promise<Message> {
     const { data: userData } = await this.client.auth.getUser();
     if (!userData.user) throw new Error('Not authenticated');
@@ -209,6 +211,7 @@ export class ChatService {
     const { data, error } = await this.client
       .from('messages')
       .insert({
+        ...(id ? { id } : {}),          // use caller-supplied ID when provided
         chat_id: chatId,
         user_id: userData.user.id,
         content,

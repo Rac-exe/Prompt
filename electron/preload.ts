@@ -345,6 +345,16 @@ const electronAPI = {
     ipcRenderer.on('message-send-error', handler);
     return () => ipcRenderer.removeListener('message-send-error', handler);
   },
+  onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('send-message-queued', handler);
+    return () => ipcRenderer.removeListener('send-message-queued', handler);
+  },
+  onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('offline-message-synced', handler);
+    return () => ipcRenderer.removeListener('offline-message-synced', handler);
+  },
   copyToClipboard: (text: string) => {
     ipcRenderer.send('app:copy-to-clipboard', text);
   },

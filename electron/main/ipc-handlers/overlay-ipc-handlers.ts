@@ -14,6 +14,7 @@ import { localCache } from '../database/local-cache';
 import { networkMonitor } from './network-monitor-singleton';
 import { offlineQueue } from '../database/offline-queue';
 import { uploadAttachment } from './file-upload-service';
+import { errorLog } from '../database/error-log';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -133,6 +134,19 @@ export function registerOverlayHandlers(
       return;
     }
 
+    // ── Offline guard ────────────────────────────────────────────────────────
+    if (!networkMonitor.isOnline) {
+      const hasFiles = (data.attachedFiles?.length ?? 0) > 0;
+      if (hasFiles) {
+        overlayManager.send('overlay:optimization-error', {
+          error: 'You are offline. File attachments cannot be sent without a network connection.',
+        });
+        return;
+      }
+      // Text-only: fall through — the Python client will fail with a connection
+      // error which is caught and forwarded to the renderer via optimization-error.
+    }
+
     // Handle session reset if the overlay is closed and opened again
     // For now, we'll just keep a rolling history of the last 10 messages
     if (inMemoryOverlayHistory.length > 20) {
@@ -213,7 +227,7 @@ export function registerOverlayHandlers(
           { model: 'llama3.2', source_context: { app: 'overlay' } }
         ).then(opt => { optimizationId = opt.id; })
         .catch((err: Error) => {
-          console.error('[Overlay] Failed to save optimization record:', err.message);
+          errorLog.append('[Overlay] optimization record save', err);
         });
 
         // 2. Persist messages to DB
@@ -239,41 +253,28 @@ export function registerOverlayHandlers(
               // For regenerations we only save the assistant message (user already exists)
               let userMsg: any = null;
               if (!data.isRegenerate) {
-                // Upload file attachments to external storage before writing to DB
-                // (images → Cloudinary, PDFs → Supabase Storage — no base64 in DB)
+                // Pre-generate ID so files can use it as storage path prefix,
+                // then do a single INSERT with all metadata — no PATCH needed.
+                const preId = crypto.randomUUID();
                 let filesForDb: any[] = [];
                 if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
-                  // Insert user message first to obtain its ID for the storage path
-                  userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
-                    groupId: userGroupId,
-                    versionIndex: userVersionIndex,
-                  });
-                  try {
-                    filesForDb = await Promise.all(
-                      data.attachedFiles.map(f =>
-                        uploadAttachment(f, authState.currentUserId!, targetChatId, userMsg.id)
-                      )
-                    );
-                    // Patch metadata with storage refs (no base64)
-                    const { SupabaseClientManager } = require('../database/supabase-client');
-                    await SupabaseClientManager.getClient()
-                      .from('messages')
-                      .update({ metadata: {
-                        groupId: userGroupId,
-                        versionIndex: userVersionIndex,
-                        attachedFiles: filesForDb,
-                        selectedSkill: data.forcedSkill || undefined,
-                      }})
-                      .eq('id', userMsg.id);
-                  } catch (uploadErr: any) {
-                    console.error('[Overlay] File upload failed (non-fatal):', uploadErr.message);
-                  }
-                } else {
-                  userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
-                    groupId: userGroupId,
-                    versionIndex: userVersionIndex,
+                  const results = await Promise.allSettled(
+                    data.attachedFiles.map(f =>
+                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId)
+                    )
+                  );
+                  filesForDb = results.map((r, i) => {
+                    if (r.status === 'fulfilled') return r.value;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
                 }
+                userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
+                  groupId: userGroupId,
+                  versionIndex: userVersionIndex,
+                  attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                  selectedSkill: data.forcedSkill || undefined,
+                }, preId);
               }
               const assistantMsg = await svc.addMessage(
                 targetChatId,
@@ -331,30 +332,23 @@ export function registerOverlayHandlers(
 
               if (!data.isRegenerate) {
                 if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
-                  // Insert user message to get its ID, then upload and patch metadata
-                  const olUserMsg = await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
+                  const olPreId = crypto.randomUUID();
+                  const olResults = await Promise.allSettled(
+                    data.attachedFiles.map(f =>
+                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId)
+                    )
+                  );
+                  const olFilesForDb = olResults.map((r, i) => {
+                    if (r.status === 'fulfilled') return r.value;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
+                  });
+                  await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
                     groupId: olUserGroupId,
                     versionIndex: olUserVersionIndex,
-                  });
-                  try {
-                    const olFilesForDb = await Promise.all(
-                      data.attachedFiles.map(f =>
-                        uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olUserMsg.id)
-                      )
-                    );
-                    const { SupabaseClientManager } = require('../database/supabase-client');
-                    await SupabaseClientManager.getClient()
-                      .from('messages')
-                      .update({ metadata: {
-                        groupId: olUserGroupId,
-                        versionIndex: olUserVersionIndex,
-                        attachedFiles: olFilesForDb,
-                        selectedSkill: data.forcedSkill || undefined,
-                      }})
-                      .eq('id', olUserMsg.id);
-                  } catch (uploadErr: any) {
-                    console.error('[Overlay] File upload failed (non-fatal):', uploadErr.message);
-                  }
+                    attachedFiles: olFilesForDb,
+                    selectedSkill: data.forcedSkill || undefined,
+                  }, olPreId);
                 } else {
                   await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
                     groupId: olUserGroupId,
@@ -388,7 +382,7 @@ export function registerOverlayHandlers(
               console.log('[Overlay] Saved messages to overlay session chat:', currentOverlayChatId);
             }
           } catch (chatErr) {
-            console.error('[Overlay] Failed to save overlay chat:', chatErr);
+            errorLog.append('[Overlay] DB save', chatErr);
           }
         })();
       }

@@ -477,6 +477,37 @@ const Index = () => {
     }
   }, []);
 
+  // Listen for offline-queued send confirmation
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onSendMessageQueued) return;
+    const cleanup = window.electronAPI.onSendMessageQueued((data) => {
+      console.log('[Index] Message queued for offline send:', data.chatId);
+      setSendError(data.message);
+      setTimeout(() => setSendError(null), 8000);
+    });
+    return cleanup;
+  }, []);
+
+  // Listen for offline-queued messages being synced when back online
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onOfflineMessageSynced) return;
+    const cleanup = window.electronAPI.onOfflineMessageSynced((data) => {
+      console.log('[Index] Offline message synced for chat:', data.chatId);
+      // If the user is viewing the chat that just got synced, append both messages
+      if (selectedChatIdRef.current === data.chatId) {
+        const um = data.userMessage;
+        const am = data.assistantMessage;
+        if (!messageTree.has(um.id)) {
+          messageTree.addChild(null, { id: um.id, role: um.role, content: um.content, createdAt: um.createdAt, groupId: um.groupId, versionIndex: um.versionIndex ?? 0 });
+        }
+        if (!messageTree.has(am.id)) {
+          messageTree.addChild(um.id, { id: am.id, role: am.role, content: am.content, createdAt: am.createdAt, groupId: am.groupId, versionIndex: am.versionIndex ?? 0 });
+        }
+      }
+    });
+    return cleanup;
+  }, [messageTree]);
+
   // Load messages from Supabase when a chat is selected
   // IMPORTANT: deps must NOT include recentChats — the backend sends
   // 'chats-loaded' after every message, which would reload messages
