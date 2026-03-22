@@ -44,6 +44,27 @@ function isWeakMessage(content: string): boolean {
  * Build the prompt string to send to /generate-title.
  * Returns null if the message is too generic — in that case use "New Chat".
  */
+/**
+ * Convert a raw Node.js / network error from the Python service into a
+ * short, user-readable sentence.  Raw messages like
+ * "connect ECONNREFUSED 127.0.0.1:8001" are meaningless to end-users.
+ */
+function humanizeLlmError(err: any): string {
+  const raw: string = (err?.message ?? err?.code ?? String(err)).toLowerCase();
+
+  if (raw.includes('econnrefused') || raw.includes('econnreset') || raw.includes('enotfound')) {
+    return 'The AI service is not reachable. Please restart the application and try again.';
+  }
+  if (raw.includes('etimedout') || raw.includes('timeout')) {
+    return 'The AI service timed out. It may be overloaded — please try again in a moment.';
+  }
+  if (raw.includes('socket hang up') || raw.includes('epipe')) {
+    return 'The connection to the AI service was lost mid-response. Please try again.';
+  }
+  // Fallback — still better than a raw stack-trace fragment
+  return 'The AI service encountered an error. Please try again.';
+}
+
 function buildTitlePrompt(
   content: string,
   attachedFiles: Pick<AttachedFile, 'name' | 'mimeType'>[]
@@ -633,11 +654,12 @@ export function registerChatHandlers(
                 );
             } catch (llmErr: any) {
                 // LLM failed — save a sentinel error-assistant message so the user message
-                // isn't orphaned.  The isError flag lets the UI offer a retry.
+                // isn't orphaned.  The isError flag lets the UI render an error bubble.
+                const friendlyError = humanizeLlmError(llmErr);
                 try {
                     await chatService.addMessage(chatId, '', 'assistant', undefined, {
                         isError: true,
-                        errorMessage: llmErr?.message || 'Optimization failed',
+                        errorMessage: friendlyError,
                         groupId: crypto.randomUUID(),
                         versionIndex: 0,
                     });
@@ -700,11 +722,9 @@ export function registerChatHandlers(
             }
         } catch (error) {
             console.error('[Chat] Failed to send message:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
-                    error: errorMessage,
-                    details: error instanceof Error ? error.stack : undefined
+                    error: humanizeLlmError(error),
                 });
             }
         }
@@ -832,11 +852,9 @@ export function registerChatHandlers(
             }
         } catch (error) {
             console.error('[Chat] Failed to regenerate response:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
-                    error: errorMessage,
-                    details: error instanceof Error ? error.stack : undefined
+                    error: humanizeLlmError(error),
                 });
             }
         }

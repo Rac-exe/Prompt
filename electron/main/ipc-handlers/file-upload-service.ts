@@ -214,20 +214,39 @@ export async function uploadPdfToStorage(
     .from(BUCKET)
     .upload(storagePath, pdfBuffer, {
       contentType: 'application/pdf',
-      // upsert:true is intentional — with content-addressed paths (SHA-256
-      // hash folder) the same file always resolves to the same path, so this
-      // is effectively a no-op for duplicates while preventing "already exists"
-      // errors on retry or re-upload of the same file.
-      upsert: true,
+      // upsert:false is intentional.  Content-addressed paths mean that if
+      // this exact object already exists it has the *same bytes* (same SHA-256
+      // → same path).  We catch the duplicate-key error below and treat it as
+      // a silent success instead of using upsert:true, which would require an
+      // UPDATE RLS policy that the bucket does not define.
+      upsert: false,
     });
 
   if (error) {
+    const statusCode = String((error as any).statusCode ?? '');
+    const msg       = (error.message ?? '').toLowerCase();
+
+    // Supabase Storage returns 23505 (PostgreSQL unique violation) or 409
+    // when the object already exists.  With content-addressed paths this
+    // simply means the file was already uploaded — treat it as success.
+    const isDuplicate =
+      statusCode === '23505' ||
+      statusCode === '409'   ||
+      msg.includes('already exists') ||
+      msg.includes('duplicate');
+
+    if (isDuplicate) {
+      console.log('[FileUpload] ✅ Object already exists at content-addressed path, reusing:', storagePath);
+      dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF already exists — reusing path', { storagePath });
+      return storagePath;
+    }
+
     console.error('[FileUpload] ❌ Supabase Storage upload failed:', error.message);
     // #region agent log
     dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload FAILED', {
       storagePath,
       errorMessage: error.message,
-      errorCode: (error as any).statusCode ?? (error as any).error ?? 'unknown',
+      errorCode: statusCode || (error as any).error || 'unknown',
     });
     // #endregion
     throw new Error(`PDF upload failed: ${error.message}`);

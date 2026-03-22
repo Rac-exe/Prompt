@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -20,6 +20,10 @@ export interface Message {
   groupId?: string;
   /** 0-based index within the group (0 = original, 1 = first edit, …). */
   versionIndex?: number;
+  /** True when the LLM failed and this is a sentinel error message, not real content. */
+  isError?: boolean;
+  /** Human-readable error description stored alongside isError. */
+  errorMessage?: string;
 }
 
 interface MessageBubbleProps {
@@ -349,12 +353,25 @@ export const MessageBubble = ({
               </span>
             </div>
           )}
-          {/* Content */}
+          {/* Content — error state or normal text */}
+          {message.isError ? (
+            <div className="flex items-start gap-2.5 px-4 py-3.5">
+              <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-destructive">Response failed</p>
+                {message.errorMessage && (
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{message.errorMessage}</p>
+                )}
+              </div>
+            </div>
+          ) : (
           <div className="px-4 py-3.5">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
           </div>
+          )}
 
-          {/* Action bar */}
+          {/* Action bar — hidden for error sentinels (nothing to copy/save) */}
+          {!message.isError && (
           <div className="flex items-center gap-0.5 px-3 py-2 border-t border-border/60 bg-surface-elevated/50">
             <Button
               variant="ghost"
@@ -407,6 +424,7 @@ export const MessageBubble = ({
             )}
 
           </div>
+          )}
         </div>
 
         {/* Feedback widget */}

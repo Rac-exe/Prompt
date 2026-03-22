@@ -51,6 +51,17 @@ export class AppWindowManager {
       this.isLoaded = true;
     });
 
+    // Disable Ctrl+R / Ctrl+Shift+R (hard reload) so the user can't
+    // accidentally wipe in-memory state by pressing the browser refresh shortcut.
+    this.window.webContents.on('before-input-event', (_event, input) => {
+      if (
+        input.control &&
+        (input.key === 'r' || input.key === 'R')
+      ) {
+        _event.preventDefault();
+      }
+    });
+
     // CRITICAL: Don't quit app when window closes
     this.window.on('close', () => {
       console.log('[AppWindowManager] Window closing - hiding instead of quitting');

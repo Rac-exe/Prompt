@@ -559,6 +559,10 @@ const Index = () => {
             selectedSkill: msg.metadata?.selectedSkill || undefined,
             groupId: msg.metadata?.groupId || undefined,
             versionIndex: msg.metadata?.versionIndex ?? undefined,
+            // Restore error state so failed LLM responses render as error bubbles
+            // instead of empty assistant messages after a reload.
+            isError: msg.metadata?.isError ?? undefined,
+            errorMessage: msg.metadata?.errorMessage ?? undefined,
           }));
 
           // Preserve base64 data from in-memory messages so file previews

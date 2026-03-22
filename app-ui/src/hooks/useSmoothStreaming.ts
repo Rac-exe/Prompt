@@ -164,6 +164,66 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         };
     }, [onStreamingComplete]);
 
+    // ── Visibility / focus handling ──────────────────────────────────────────
+    // Chromium throttles requestAnimationFrame to ~1 fps when the window loses
+    // focus or the page is hidden.  Without intervention, chunks pile up in
+    // streamBuffer while visualText stalls, so when the user returns the
+    // typewriter animation "restarts" through all the missed content.
+    //
+    // Fix: on any visibility-change event, immediately flush visualText to the
+    // current buffer so the user always sees up-to-date text with no lag.
+    // If the stream already finished while the page was hidden, finalize the
+    // message on the next tick (gives React one render to show the flushed text
+    // before the bubble is committed to the message list).
+    useEffect(() => {
+        const flush = () => {
+            if (!isStreamingRef.current) return;
+
+            const full = streamBuffer.current;
+            // Advance visual pointer to wherever the buffer is right now
+            visualText.current = full;
+            if (full) {
+                setStreamingMessage(prev => ({
+                    id: prev?.id ?? 'streaming-temp',
+                    role: 'assistant',
+                    content: full,
+                    timestamp: prev?.timestamp ?? new Date(),
+                }));
+            }
+        };
+
+        const handleVisibilityChange = () => {
+            if (document.hidden) {
+                // Leaving: flush so the rAF loop has nothing to catch up on
+                flush();
+            } else {
+                // Returning: flush to latest buffer (stream may have advanced
+                // while the page was hidden and rAF was throttled)
+                flush();
+
+                // If the stream finished while we were away, finalize on the
+                // next tick rather than waiting for the throttled rAF.
+                if (pendingFinalMessage.current) {
+                    const myGeneration = generationId.current;
+                    setTimeout(() => {
+                        if (generationId.current !== myGeneration) return;
+                        if (!pendingFinalMessage.current) return;
+                        console.log('[useSmoothStreaming] Finalizing after page became visible.');
+                        onStreamingComplete(pendingFinalMessage.current);
+                        setStreamingMessage(null);
+                        streamBuffer.current = '';
+                        visualText.current = '';
+                        pendingFinalMessage.current = null;
+                        isStreamingRef.current = false;
+                    }, 50);
+                }
+            }
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, [onStreamingComplete]);
+
     return {
         streamingMessage,
         startStreaming,
