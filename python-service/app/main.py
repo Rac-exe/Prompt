@@ -458,14 +458,15 @@ async def optimize_stream(websocket: WebSocket):
             
             request_id = data.get("request_id", str(int(time.time() * 1000)))
             prompt_text = data.get("prompt", "").strip()
-            skip_cache = data.get("skip_cache", False)
+            previous_output = data.get("previous_output", None)  # for regeneration self-critique
             messages = data.get("messages", None)
             mode = data.get("mode", "fast")
             custom_instructions = data.get("custom_instructions", "")
             attached_files = data.get("attached_files", [])
             forced_skill = data.get("forced_skill", None)
-            
-            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'})")
+
+            is_regeneration = bool(previous_output and previous_output.strip())
+            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
             
             # Validate file count
             if len(attached_files) > 5:
@@ -483,12 +484,6 @@ async def optimize_stream(websocket: WebSocket):
                     "message": "Prompt too short (minimum 3 characters)"
                 })
                 continue
-
-            # If skip_cache, append a unique ID so the LLM sees a different prompt
-            if skip_cache:
-                unique_id = str(int(time.time() * 1000000))
-                prompt_text = f"{prompt_text}\n\n[REGENERATE_{unique_id}]"
-                print(f"[OptimizeStream] Regenerate request - added unique ID: {unique_id}")
 
             cc = ChatContext(session_id=request_id)
             if messages and isinstance(messages, list):
@@ -508,7 +503,8 @@ async def optimize_stream(websocket: WebSocket):
                     mode=mode,
                     custom_instructions=custom_instructions,
                     attached_files=attached_files,
-                    forced_skill=forced_skill
+                    forced_skill=forced_skill,
+                    previous_output=previous_output,
                 )
                 
                 accumulated_text = ""
@@ -526,17 +522,11 @@ async def optimize_stream(websocket: WebSocket):
                 
                 cleaned_text = clean_optimized_text(accumulated_text)
                 
-                # Strip the regenerate tag from the original prompt for the response
-                original_prompt = prompt_text
-                if skip_cache and "[REGENERATE_" in original_prompt:
-                    import re
-                    original_prompt = re.sub(r'\n*\[REGENERATE_\d+\]', '', original_prompt).strip()
-                
                 await websocket.send_json({
                     "type": "complete",
                     "request_id": request_id,
                     "optimized": cleaned_text,
-                    "original": original_prompt
+                    "original": prompt_text
                 })
                 
                 print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")

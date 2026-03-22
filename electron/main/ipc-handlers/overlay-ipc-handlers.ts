@@ -13,6 +13,8 @@ import { UserService } from '../database/services/user-service';
 import { localCache } from '../database/local-cache';
 import { networkMonitor } from './network-monitor-singleton';
 import { offlineQueue } from '../database/offline-queue';
+import { uploadAttachment } from './file-upload-service';
+import { errorLog } from '../database/error-log';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -121,7 +123,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -130,6 +132,19 @@ export function registerOverlayHandlers(
     if (!data?.text?.trim()) {
       overlayManager.send('overlay:optimization-error', { error: 'Empty prompt' });
       return;
+    }
+
+    // ── Offline guard ────────────────────────────────────────────────────────
+    if (!networkMonitor.isOnline) {
+      const hasFiles = (data.attachedFiles?.length ?? 0) > 0;
+      if (hasFiles) {
+        overlayManager.send('overlay:optimization-error', {
+          error: 'You are offline. File attachments cannot be sent without a network connection.',
+        });
+        return;
+      }
+      // Text-only: fall through — the Python client will fail with a connection
+      // error which is caught and forwarded to the renderer via optimization-error.
     }
 
     // Handle session reset if the overlay is closed and opened again
@@ -189,7 +204,8 @@ export function registerOverlayHandlers(
         data.mode || 'fast',
         customInstructions,
         data.attachedFiles || [],
-        data.forcedSkill || null
+        data.forcedSkill || null,
+        data.previousOutput || null
       );
 
       // Add the assistant's response to history
@@ -211,7 +227,7 @@ export function registerOverlayHandlers(
           { model: 'llama3.2', source_context: { app: 'overlay' } }
         ).then(opt => { optimizationId = opt.id; })
         .catch((err: Error) => {
-          console.error('[Overlay] Failed to save optimization record:', err.message);
+          errorLog.append('[Overlay] optimization record save', err);
         });
 
         // 2. Persist messages to DB
@@ -237,10 +253,28 @@ export function registerOverlayHandlers(
               // For regenerations we only save the assistant message (user already exists)
               let userMsg: any = null;
               if (!data.isRegenerate) {
+                // Pre-generate ID so files can use it as storage path prefix,
+                // then do a single INSERT with all metadata — no PATCH needed.
+                const preId = crypto.randomUUID();
+                let filesForDb: any[] = [];
+                if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
+                  const results = await Promise.allSettled(
+                    data.attachedFiles.map(f =>
+                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId)
+                    )
+                  );
+                  filesForDb = results.map((r, i) => {
+                    if (r.status === 'fulfilled') return r.value;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
+                  });
+                }
                 userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
                   groupId: userGroupId,
                   versionIndex: userVersionIndex,
-                });
+                  attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                  selectedSkill: data.forcedSkill || undefined,
+                }, preId);
               }
               const assistantMsg = await svc.addMessage(
                 targetChatId,
@@ -297,10 +331,30 @@ export function registerOverlayHandlers(
               const olAssistantVersionIndex = data.assistantVersionIndex ?? 0;
 
               if (!data.isRegenerate) {
-                await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
-                  groupId: olUserGroupId,
-                  versionIndex: olUserVersionIndex,
-                });
+                if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
+                  const olPreId = crypto.randomUUID();
+                  const olResults = await Promise.allSettled(
+                    data.attachedFiles.map(f =>
+                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId)
+                    )
+                  );
+                  const olFilesForDb = olResults.map((r, i) => {
+                    if (r.status === 'fulfilled') return r.value;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
+                  });
+                  await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
+                    groupId: olUserGroupId,
+                    versionIndex: olUserVersionIndex,
+                    attachedFiles: olFilesForDb,
+                    selectedSkill: data.forcedSkill || undefined,
+                  }, olPreId);
+                } else {
+                  await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
+                    groupId: olUserGroupId,
+                    versionIndex: olUserVersionIndex,
+                  });
+                }
               }
               await svc.addMessage(
                 currentOverlayChatId,
@@ -328,7 +382,7 @@ export function registerOverlayHandlers(
               console.log('[Overlay] Saved messages to overlay session chat:', currentOverlayChatId);
             }
           } catch (chatErr) {
-            console.error('[Overlay] Failed to save overlay chat:', chatErr);
+            errorLog.append('[Overlay] DB save', chatErr);
           }
         })();
       }

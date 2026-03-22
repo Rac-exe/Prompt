@@ -11,6 +11,8 @@ import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { localCache } from '../database/local-cache';
 import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
+import { uploadAttachment } from './file-upload-service';
+import { offlineQueue } from '../database/offline-queue';
 
 // ── File attachment types ─────────────────────────────────────────────────────
 export interface AttachedFile {
@@ -42,6 +44,27 @@ function isWeakMessage(content: string): boolean {
  * Build the prompt string to send to /generate-title.
  * Returns null if the message is too generic — in that case use "New Chat".
  */
+/**
+ * Convert a raw Node.js / network error from the Python service into a
+ * short, user-readable sentence.  Raw messages like
+ * "connect ECONNREFUSED 127.0.0.1:8001" are meaningless to end-users.
+ */
+function humanizeLlmError(err: any): string {
+  const raw: string = (err?.message ?? err?.code ?? String(err)).toLowerCase();
+
+  if (raw.includes('econnrefused') || raw.includes('econnreset') || raw.includes('enotfound')) {
+    return 'The AI service is not reachable. Please restart the application and try again.';
+  }
+  if (raw.includes('etimedout') || raw.includes('timeout')) {
+    return 'The AI service timed out. It may be overloaded — please try again in a moment.';
+  }
+  if (raw.includes('socket hang up') || raw.includes('epipe')) {
+    return 'The connection to the AI service was lost mid-response. Please try again.';
+  }
+  // Fallback — still better than a raw stack-trace fragment
+  return 'The AI service encountered an error. Please try again.';
+}
+
 function buildTitlePrompt(
   content: string,
   attachedFiles: Pick<AttachedFile, 'name' | 'mimeType'>[]
@@ -408,6 +431,49 @@ export function registerChatHandlers(
         versionIndex?: number;
     }) => {
         try {
+            // ── Offline guard ─────────────────────────────────────────────────
+            // File uploads require network access. Reject early with a clear error
+            // so the user doesn't lose their message silently.
+            if (!networkMonitor.isOnline) {
+                const hasFiles = (data.attachedFiles?.length ?? 0) > 0;
+                if (hasFiles) {
+                    if (appWindowManager) {
+                        appWindowManager.send('message-send-error', {
+                            error: 'You are offline. File attachments cannot be sent without a network connection.',
+                        });
+                    }
+                    return;
+                }
+
+                // Text-only to an EXISTING chat → queue for retry when back online.
+                if (data.chatId) {
+                    offlineQueue.enqueue('send-message', {
+                        chatId: data.chatId,
+                        content: data.content,
+                        mode: data.mode,
+                        forcedSkill: data.forcedSkill,
+                        groupId: data.groupId,
+                        versionIndex: data.versionIndex,
+                    });
+                    if (appWindowManager) {
+                        appWindowManager.send('send-message-queued', {
+                            chatId: data.chatId,
+                            content: data.content,
+                            message: "You're offline — your message has been queued and will be sent automatically when the connection is restored.",
+                        });
+                    }
+                    return;
+                }
+
+                // New chat while offline — can't create chat without network.
+                if (appWindowManager) {
+                    appWindowManager.send('message-send-error', {
+                        error: "You're offline. New chats can't be created without a network connection.",
+                    });
+                }
+                return;
+            }
+
             // Validate attached files if present
             const attachedFiles = data.attachedFiles || [];
             if (attachedFiles.length > 0) {
@@ -415,7 +481,7 @@ export function registerChatHandlers(
                 if (validationError) {
                     console.error('[Chat] File validation failed:', validationError);
                     if (appWindowManager) {
-                        appWindowManager.send('send-message-error', { error: validationError });
+                        appWindowManager.send('message-send-error', { error: validationError });
                     }
                     return;
                 }
@@ -465,20 +531,56 @@ export function registerChatHandlers(
                 chat = await chatService.getChat(chatId);
             }
 
-            // Save user message — store full file data (including base64) so PDF/image
-            // preview works even after switching chats or restarting the app.
-            const filesForDb = attachedFiles.map(f => ({ name: f.name, mimeType: f.mimeType, base64: f.base64, sizeBytes: f.sizeBytes }));
+            // ── Upload files to external storage before writing to DB ────────
+            // Images  → Cloudinary (CDN-backed, returns a permanent secure_url)
+            // PDFs    → Supabase Storage (private bucket, accessed via signed URL)
+            //
+            // KEY: pre-generate the messageId so we can use it as the storage
+            // path PREFIX *before* the INSERT, eliminating the INSERT→PATCH race.
+            // base64 is never written to DB — only kept in-memory for the Python call.
             const userGroupId = data.groupId || crypto.randomUUID();
             const userVersionIndex = data.versionIndex ?? 0;
-            const userMessage = await chatService.addMessage(chatId, data.content, 'user', undefined, {
-                attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
-                selectedSkill: data.forcedSkill || undefined,
-                groupId: userGroupId,
-                versionIndex: userVersionIndex,
-            });
+            const preGeneratedMessageId = crypto.randomUUID();
 
-            // Send immediate confirmation — include full AttachedFile (with base64) for in-session thumbnail
+            // Upload each file independently — Promise.allSettled means one failure
+            // does NOT discard the refs from files that succeeded.
+            let filesForDb: any[] = [];
+            if (attachedFiles.length > 0 && authState.currentUserId) {
+                const results = await Promise.allSettled(
+                    attachedFiles.map(f =>
+                        uploadAttachment(f, authState.currentUserId!, chatId, preGeneratedMessageId)
+                    )
+                );
+                filesForDb = results.map((r, i) => {
+                    if (r.status === 'fulfilled') return r.value;
+                    // Upload failed for this file — keep name/type/size so the chip
+                    // still renders, but flag it so we don't show a broken URL.
+                    console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
+                });
+            }
+
+            // Single INSERT — all metadata (including file refs) in one shot.
+            // No subsequent PATCH needed → no race condition.
+            const userMessage = await chatService.addMessage(
+                chatId, data.content, 'user', undefined,
+                {
+                    attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                    selectedSkill: data.forcedSkill || undefined,
+                    groupId: userGroupId,
+                    versionIndex: userVersionIndex,
+                },
+                preGeneratedMessageId,
+            );
+
+            // Send immediate confirmation — include base64 for in-session thumbnails
+            // and cloudinaryUrl/storagePath for future reloads
             if (appWindowManager) {
+                // Merge base64 (in-memory, for current session) with storage refs (for persistence)
+                const attachedFilesForRenderer = attachedFiles.map((f, i) => ({
+                    ...f,
+                    ...(filesForDb[i] || {}),
+                }));
                 appWindowManager.send('message-sent', {
                     chatId,
                     chat,
@@ -488,7 +590,7 @@ export function registerChatHandlers(
                         role: userMessage.role,
                         content: userMessage.content,
                         createdAt: userMessage.created_at,
-                        attachedFiles: data.attachedFiles || [],
+                        attachedFiles: attachedFilesForRenderer,
                         selectedSkill: data.forcedSkill || null,
                         groupId: userGroupId,
                         versionIndex: userVersionIndex,
@@ -532,20 +634,38 @@ export function registerChatHandlers(
             }
 
             // Trigger streaming optimization
-            const optimizedText = await pythonClient.optimizeStream(
-                data.content,
-                false,
-                messagesContext.length > 0 ? messagesContext : null,
-                (chunk, accumulated) => {
-                    if (appWindowManager) {
-                        appWindowManager.send('optimization-chunk', { chunk, accumulated });
-                    }
-                },
-                data.mode || 'fast',
-                customInstructions,
-                attachedFiles,
-                data.forcedSkill || null
-            );
+            // Wrap separately so a Python/network failure saves a paired error
+            // assistant message — prevents an orphaned user message in the DB.
+            let optimizedText: string;
+            try {
+                optimizedText = await pythonClient.optimizeStream(
+                    data.content,
+                    false,
+                    messagesContext.length > 0 ? messagesContext : null,
+                    (chunk, accumulated) => {
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chunk, accumulated });
+                        }
+                    },
+                    data.mode || 'fast',
+                    customInstructions,
+                    attachedFiles,
+                    data.forcedSkill || null
+                );
+            } catch (llmErr: any) {
+                // LLM failed — save a sentinel error-assistant message so the user message
+                // isn't orphaned.  The isError flag lets the UI render an error bubble.
+                const friendlyError = humanizeLlmError(llmErr);
+                try {
+                    await chatService.addMessage(chatId, '', 'assistant', undefined, {
+                        isError: true,
+                        errorMessage: friendlyError,
+                        groupId: crypto.randomUUID(),
+                        versionIndex: 0,
+                    });
+                } catch { /* non-critical — best-effort */ }
+                throw llmErr; // re-throw so the outer catch notifies the renderer
+            }
 
             // Save optimization record and trigger background memory analysis
             let optimizationId: string | undefined;
@@ -602,11 +722,9 @@ export function registerChatHandlers(
             }
         } catch (error) {
             console.error('[Chat] Failed to send message:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
-                    error: errorMessage,
-                    details: error instanceof Error ? error.stack : undefined
+                    error: humanizeLlmError(error),
                 });
             }
         }
@@ -623,6 +741,7 @@ export function registerChatHandlers(
         versionIndex?: number;
         attachedFiles?: AttachedFile[];
         forcedSkill?: string | null;
+        previousContent?: string;
     }) => {
         try {
             const chatId = data.chatId;
@@ -661,7 +780,7 @@ export function registerChatHandlers(
                 console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
             }
 
-            // Trigger streaming optimization (regeneration — skip cache for fresh result)
+            // Trigger streaming optimization (regeneration — pass previous content for self-critique)
             const optimizedText = await pythonClient.optimizeStream(
                 data.content,
                 true,
@@ -674,7 +793,8 @@ export function registerChatHandlers(
                 data.mode || 'fast',
                 customInstructions,
                 attachedFiles,
-                data.forcedSkill || null
+                data.forcedSkill || null,
+                data.previousContent || null
             );
 
             // Save optimization record
@@ -732,11 +852,9 @@ export function registerChatHandlers(
             }
         } catch (error) {
             console.error('[Chat] Failed to regenerate response:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
-                    error: errorMessage,
-                    details: error instanceof Error ? error.stack : undefined
+                    error: humanizeLlmError(error),
                 });
             }
         }
@@ -774,4 +892,107 @@ export function registerChatHandlers(
         console.log('[Chat] Stop generation requested');
         pythonClient.abortLatestStream();
     });
+}
+
+// ============================================
+// OFFLINE QUEUE: Drain queued send-message ops
+// ============================================
+// Called by index-new.ts whenever the network comes back online.
+// Processes only `send-message` entries; other types are handled by
+// syncOfflineQueue in prompt-library-handlers.ts.
+export async function syncChatMessageQueue(
+    _appWindowManager: AppWindowManager,
+    _pythonClient: PythonClient,
+): Promise<void> {
+    const pending = offlineQueue.getAll().filter(op => op.type === 'send-message');
+    if (pending.length === 0) return;
+
+    console.log(`[ChatOfflineSync] Processing ${pending.length} queued send-message ops`);
+
+    // Use module-level service singletons (initialized when registerChatHandlers ran)
+    const { chatService: svc, optimizationService: optSvc } = getServices();
+
+    for (const op of pending) {
+        const { chatId, content, mode, forcedSkill, groupId, versionIndex } = op.payload as {
+            chatId: string;
+            content: string;
+            mode?: string;
+            forcedSkill?: string | null;
+            groupId?: string;
+            versionIndex?: number;
+        };
+
+        try {
+            if (!authState.isAuthenticated || !authState.currentUserId) {
+                console.warn('[ChatOfflineSync] Not authenticated — deferring op', op.id);
+                continue;
+            }
+
+            // Save user message
+            const userGroupId = groupId || crypto.randomUUID();
+            const userVersionIndex = versionIndex ?? 0;
+            const userMsg = await svc.addMessage(chatId, content, 'user', undefined, {
+                groupId: userGroupId,
+                versionIndex: userVersionIndex,
+            });
+
+            // Fetch context
+            let messagesContext: Array<{role: string; content: string}> = [];
+            try {
+                const history = await svc.getMessages(chatId);
+                messagesContext = history
+                    .filter(m => m.id !== userMsg.id)
+                    .slice(-10)
+                    .map(m => ({ role: m.role, content: m.content }));
+            } catch { /* non-critical */ }
+
+            // Run optimizer (background sync — no streaming)
+            const optimizedText = await _pythonClient.optimizeStream(
+                content,
+                false,
+                messagesContext.length > 0 ? messagesContext : null,
+                () => { /* no-op chunk callback */ },
+                mode || 'fast',
+                '',
+                [],
+                forcedSkill || null,
+            );
+
+            // Save optimization record
+            let optimizationId: string | undefined;
+            try {
+                const opt = await optSvc.saveOptimization(
+                    content, optimizedText, 'app_window',
+                    { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                );
+                optimizationId = opt.id;
+            } catch { /* non-critical */ }
+
+            // Save assistant message
+            const assistantGroupId = crypto.randomUUID();
+            const assistantMsg = await svc.addMessage(
+                chatId, optimizedText, 'assistant', optimizationId,
+                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+            );
+
+            // Notify the app window so it can append the messages
+            _appWindowManager.send('offline-message-synced', {
+                chatId,
+                userMessage: {
+                    id: userMsg.id, chatId, role: 'user', content,
+                    createdAt: userMsg.created_at, groupId: userGroupId, versionIndex: userVersionIndex,
+                },
+                assistantMessage: {
+                    id: assistantMsg.id, chatId, role: 'assistant', content: optimizedText,
+                    createdAt: assistantMsg.created_at, groupId: assistantGroupId, versionIndex: 0,
+                },
+            });
+
+            offlineQueue.remove(op.id);
+            console.log(`[ChatOfflineSync] ✅ Synced queued message for chat ${chatId}`);
+        } catch (err) {
+            console.warn(`[ChatOfflineSync] Failed to sync op ${op.id} — will retry:`, err);
+            offlineQueue.incrementRetry(op.id);
+        }
+    }
 }

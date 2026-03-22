@@ -21,10 +21,12 @@ import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
 import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
+import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
 import { syncOfflineQueue } from './ipc-handlers/prompt-library-handlers';
+import { syncChatMessageQueue } from './ipc-handlers/chat-handlers';
 import { networkMonitor } from './ipc-handlers/network-monitor-singleton';
 
 // Load environment variables from .env file
@@ -113,7 +115,9 @@ async function initialize() {
       // Reconnected: notify renderer, then drain the offline queue
       appWindowManager.send('network:reconnected', {});
       syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
-        .catch(e => console.error('[Main] Offline sync failed:', e));
+        .catch(e => console.error('[Main] Prompt-library offline sync failed:', e));
+      syncChatMessageQueue(appWindowManager, pythonClient)
+        .catch(e => console.error('[Main] Chat message offline sync failed:', e));
     }
   );
   console.log('[Main] NetworkMonitor started');
@@ -175,6 +179,7 @@ async function initialize() {
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
   registerSkillHandlers();
   registerAvatarHandlers();
+  registerFileUploadHandlers();
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)

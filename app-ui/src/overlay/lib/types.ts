@@ -3,8 +3,13 @@
 export interface AttachedFile {
   name: string;
   mimeType: string;
-  base64: string;
+  /** Present in-session (before DB persistence). Not stored in DB. */
+  base64?: string;
   sizeBytes: number;
+  /** Cloudinary secure_url for images (persisted to DB instead of base64). */
+  cloudinaryUrl?: string;
+  /** Supabase Storage path for PDFs (persisted to DB instead of base64). */
+  storagePath?: string;
 }
 
 export interface OverlayMessage {

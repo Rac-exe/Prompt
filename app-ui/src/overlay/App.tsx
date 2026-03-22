@@ -332,6 +332,7 @@ const OverlayApp: React.FC = () => {
       forcedSkill: result.userVer.skill || undefined,
       assistantGroupId: result.assistGroupId,
       assistantVersionIndex: result.assistVerIdx,
+      previousOutput: result.previousAssistantContent || undefined,
     });
   }, [isOptimizing, prepareRegenerate, currentMode, selectedChatId]);
 

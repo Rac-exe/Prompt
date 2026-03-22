@@ -123,6 +123,12 @@ declare global {
       onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
       onNetworkReconnected: (callback: () => void) => void;
 
+      // Storage API (file attachments)
+      storage: {
+        getSignedUrl: (storagePath: string) => Promise<{ signedUrl?: string; error?: string }>;
+        openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
+      };
+
       // Memory API
       memory: {
         get: () => Promise<{
@@ -143,7 +149,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -320,6 +326,7 @@ const electronAPI = {
     versionIndex?: number;
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
+    previousContent?: string;
   }) => {
     ipcRenderer.send('app:regenerate-response', data);
   },
@@ -337,6 +344,16 @@ const electronAPI = {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-send-error', handler);
     return () => ipcRenderer.removeListener('message-send-error', handler);
+  },
+  onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('send-message-queued', handler);
+    return () => ipcRenderer.removeListener('send-message-queued', handler);
+  },
+  onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('offline-message-synced', handler);
+    return () => ipcRenderer.removeListener('offline-message-synced', handler);
   },
   copyToClipboard: (text: string) => {
     ipcRenderer.send('app:copy-to-clipboard', text);
@@ -493,6 +510,16 @@ const electronAPI = {
       ipcRenderer.invoke('memory:upsert', data),
     delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
       ipcRenderer.invoke('memory:delete', data),
+  },
+
+  // ============================================
+  // STORAGE API (file attachments)
+  // ============================================
+  storage: {
+    getSignedUrl: (storagePath: string) =>
+      ipcRenderer.invoke('storage:get-signed-url', { storagePath }),
+    openPdf: (storagePath: string) =>
+      ipcRenderer.invoke('storage:open-pdf', { storagePath }),
   },
 
   // ============================================

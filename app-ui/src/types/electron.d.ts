@@ -22,8 +22,13 @@ export type UserMemoryMap = {
 export interface AttachedFile {
   name: string;
   mimeType: string;
-  base64: string;
+  /** Present only in-session (not persisted to DB). */
+  base64?: string;
   sizeBytes: number;
+  /** Cloudinary secure_url for images (persisted instead of base64). */
+  cloudinaryUrl?: string;
+  /** Supabase Storage path for PDFs (used to generate signed URLs). */
+  storagePath?: string;
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
@@ -94,10 +99,13 @@ export interface ElectronAPI {
     versionIndex?: number;
     attachedFiles?: AttachedFile[];
     forcedSkill?: string | null;
+    previousContent?: string;
   }) => void;
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
+  onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => (() => void);
+  onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => (() => void);
   deleteChat: (chatId: string) => void;
   onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
   onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
@@ -171,6 +179,12 @@ export interface ElectronAPI {
   onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
   onNetworkReconnected: (callback: () => void) => void;
 
+  // Storage (file attachments — Cloudinary/Supabase Storage)
+  storage: {
+    getSignedUrl: (storagePath: string) => Promise<{ signedUrl?: string; error?: string }>;
+    openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
+  };
+
   // Memory
   memory: {
     get: () => Promise<UserMemoryMap>;
@@ -199,6 +213,7 @@ export interface ElectronAPI {
       userVersionIndex?: number;
       assistantGroupId?: string;
       assistantVersionIndex?: number;
+      previousOutput?: string;
     }) => void;
     save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
     copy: (text: string) => void;

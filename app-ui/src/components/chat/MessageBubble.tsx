@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight } from "lucide-react";
+import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -20,6 +20,10 @@ export interface Message {
   groupId?: string;
   /** 0-based index within the group (0 = original, 1 = first edit, …). */
   versionIndex?: number;
+  /** True when the LLM failed and this is a sentinel error message, not real content. */
+  isError?: boolean;
+  /** Human-readable error description stored alongside isError. */
+  errorMessage?: string;
 }
 
 interface MessageBubbleProps {
@@ -135,13 +139,19 @@ export const MessageBubble = ({
                   {message.attachedFiles.map((file, idx) => {
                     const isImage = file.mimeType.startsWith('image/');
                     const hasBase64 = !!(file as any).base64;
+                    const cloudinaryUrl: string | undefined = (file as any).cloudinaryUrl;
+                    const storagePath: string | undefined = (file as any).storagePath;
 
-                    if (isImage && hasBase64) {
-                      const src = `data:${file.mimeType};base64,${(file as any).base64}`;
+                    // Image: prefer Cloudinary URL, fall back to base64
+                    if (isImage && (cloudinaryUrl || hasBase64)) {
+                      const src = cloudinaryUrl ?? `data:${file.mimeType};base64,${(file as any).base64}`;
+                      const previewEntry: PreviewFile = cloudinaryUrl
+                        ? { name: file.name, mimeType: file.mimeType, cloudinaryUrl, sizeBytes: file.sizeBytes }
+                        : { name: file.name, mimeType: file.mimeType, base64: (file as any).base64 as string, sizeBytes: file.sizeBytes };
                       return (
                         <button
                           key={idx}
-                          onClick={() => setPreviewFile({ name: file.name, mimeType: file.mimeType, base64: (file as any).base64, sizeBytes: file.sizeBytes })}
+                          onClick={() => setPreviewFile(previewEntry)}
                           className="relative group rounded-xl overflow-hidden border border-white/10 shadow cursor-zoom-in focus:outline-none"
                           style={{ width: 80, height: 80 }}
                           title={`${file.name} — click to preview`}
@@ -163,7 +173,7 @@ export const MessageBubble = ({
                       );
                     }
 
-                    // PDF card — ChatGPT style
+                    // PDF: prefer in-session base64 preview
                     if (hasBase64) {
                       return (
                         <button
@@ -185,7 +195,33 @@ export const MessageBubble = ({
                       );
                     }
 
-                    // PDF from DB — no base64, non-interactive
+                    // PDF from DB with storagePath: open via signed URL in system viewer
+                    if (storagePath) {
+                      return (
+                        <button
+                          key={idx}
+                          onClick={async () => {
+                            if (window.electronAPI?.storage?.openPdf) {
+                              await window.electronAPI.storage.openPdf(storagePath);
+                            }
+                          }}
+                          className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border hover:border-border/60 hover:bg-secondary/80 transition-colors max-w-[220px] focus:outline-none group"
+                          title={`${file.name} — click to open`}
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
+                            <FileText className="h-4 w-4 text-red-400" />
+                          </div>
+                          <div className="min-w-0 text-left">
+                            <p className="text-xs font-medium text-foreground truncate max-w-[140px] group-hover:underline">{file.name}</p>
+                            <p className="text-[10px] text-muted-foreground/60 mt-0.5">
+                              {file.sizeBytes ? `${(file.sizeBytes / 1024).toFixed(0)} KB · ` : ""}PDF
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    }
+
+                    // PDF — no refs available, static chip
                     return (
                       <div key={idx} className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border max-w-[220px]">
                         <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
@@ -283,8 +319,14 @@ export const MessageBubble = ({
         onClose={() => setPreviewFile(null)}
         allFiles={
           (message.attachedFiles ?? [])
-            .filter(f => !!(f as any).base64)
-            .map(f => ({ name: f.name, mimeType: f.mimeType, base64: (f as any).base64 as string, sizeBytes: f.sizeBytes }))
+            .filter(f => f.mimeType.startsWith('image/') && (!!(f as any).base64 || !!(f as any).cloudinaryUrl))
+            .map(f => ({
+              name: f.name,
+              mimeType: f.mimeType,
+              base64: (f as any).base64 as string | undefined,
+              cloudinaryUrl: (f as any).cloudinaryUrl as string | undefined,
+              sizeBytes: f.sizeBytes,
+            }))
         }
       />
     </>
@@ -311,12 +353,25 @@ export const MessageBubble = ({
               </span>
             </div>
           )}
-          {/* Content */}
+          {/* Content — error state or normal text */}
+          {message.isError ? (
+            <div className="flex items-start gap-2.5 px-4 py-3.5">
+              <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-destructive">Response failed</p>
+                {message.errorMessage && (
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{message.errorMessage}</p>
+                )}
+              </div>
+            </div>
+          ) : (
           <div className="px-4 py-3.5">
             <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
           </div>
+          )}
 
-          {/* Action bar */}
+          {/* Action bar — hidden for error sentinels (nothing to copy/save) */}
+          {!message.isError && (
           <div className="flex items-center gap-0.5 px-3 py-2 border-t border-border/60 bg-surface-elevated/50">
             <Button
               variant="ghost"
@@ -369,6 +424,7 @@ export const MessageBubble = ({
             )}
 
           </div>
+          )}
         </div>
 
         {/* Feedback widget */}
