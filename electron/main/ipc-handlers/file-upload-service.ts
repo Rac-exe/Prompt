@@ -1,7 +1,18 @@
 import * as https from 'https';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import { ipcMain, shell } from 'electron';
 import { SupabaseClientManager } from '../database/supabase-client';
+
+// #region agent log
+const DEBUG_LOG = 'C:\\prompt\\.cursor\\debug.log';
+function dbgLog(location: string, message: string, data: Record<string, unknown>) {
+  try {
+    const line = JSON.stringify({ location, message, data, timestamp: Date.now(), hypothesisId: 'pdf-upload', runId: 'pdf-debug-1' });
+    fs.appendFileSync(DEBUG_LOG, line + '\n');
+  } catch { /* non-fatal */ }
+}
+// #endregion
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -127,8 +138,43 @@ export function uploadImageToCloudinary(
 // ── Supabase Storage helpers ──────────────────────────────────────────────────
 
 /**
+ * Sanitise a filename so it is safe to use as an S3/Supabase Storage object key
+ * segment.  Only alphanumerics, dashes, underscores and dots are kept; everything
+ * else (spaces, brackets, parentheses, percent signs, etc.) is collapsed to a
+ * single underscore.  The extension is preserved.  The result is capped at 120
+ * characters so the full storage path stays well inside Supabase's 1 024-byte
+ * key limit.
+ */
+function sanitizeStorageFilename(filename: string): string {
+  const lastDot = filename.lastIndexOf('.');
+  const base = lastDot > 0 ? filename.slice(0, lastDot) : filename;
+  const ext  = lastDot > 0 ? filename.slice(lastDot)    : '';
+
+  const safeBase = base
+    .replace(/[^a-zA-Z0-9\-_.]/g, '_')   // replace every unsafe char with _
+    .replace(/_+/g, '_')                   // collapse consecutive underscores
+    .replace(/^[_\-.]+|[_\-.]+$/g, '')    // strip leading / trailing punctuation
+    .slice(0, 110)                         // cap base length
+    || 'file';                             // fallback if nothing survives
+
+  // Keep only safe chars in the extension (e.g. ".pdf")
+  const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
+
+  return safeBase + safeExt;
+}
+
+/**
  * Upload a PDF Buffer to Supabase Storage.
- * Path pattern: {userId}/{chatId}/{messageId}/{filename}
+ *
+ * Path pattern: {userId}/attachments/{sha256_16}/{sanitized_filename}
+ *
+ * Using a SHA-256 content hash as the folder means:
+ *  • Filenames with special characters (brackets, spaces, etc.) never cause
+ *    "Invalid key" errors — the hash is always hex-safe.
+ *  • Uploading the same file twice (same bytes) resolves to the same path, so
+ *    with upsert:true it is a no-op — zero wasted storage at scale.
+ *  • RLS still works because userId is still the first path segment.
+ *
  * Returns the storagePath (not a URL) on success.
  */
 export async function uploadPdfToStorage(
@@ -140,25 +186,57 @@ export async function uploadPdfToStorage(
 ): Promise<string> {
   const client = SupabaseClientManager.getClient();
 
-  // Sanitise filename — remove path traversal characters
-  const safeName = filename.replace(/[/\\]/g, '_').replace(/\.\./g, '_');
-  const storagePath = `${userId}/${chatId}/${messageId}/${safeName}`;
+  // Content hash — first 16 hex chars (64 bits) is plenty for deduplication
+  const contentHash = crypto
+    .createHash('sha256')
+    .update(pdfBuffer)
+    .digest('hex')
+    .slice(0, 16);
+
+  const safeName    = sanitizeStorageFilename(filename);
+  const storagePath = `${userId}/attachments/${contentHash}/${safeName}`;
 
   console.log(`[FileUpload] Uploading PDF to Supabase Storage: ${storagePath}`);
+
+  // #region agent log
+  dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload attempt', {
+    originalFilename: filename,
+    safeName,
+    storagePath,
+    bufferBytes: pdfBuffer.length,
+    userId,
+    chatId,
+    messageId,
+  });
+  // #endregion
 
   const { error } = await client.storage
     .from(BUCKET)
     .upload(storagePath, pdfBuffer, {
       contentType: 'application/pdf',
-      upsert: false,
+      // upsert:true is intentional — with content-addressed paths (SHA-256
+      // hash folder) the same file always resolves to the same path, so this
+      // is effectively a no-op for duplicates while preventing "already exists"
+      // errors on retry or re-upload of the same file.
+      upsert: true,
     });
 
   if (error) {
     console.error('[FileUpload] ❌ Supabase Storage upload failed:', error.message);
+    // #region agent log
+    dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload FAILED', {
+      storagePath,
+      errorMessage: error.message,
+      errorCode: (error as any).statusCode ?? (error as any).error ?? 'unknown',
+    });
+    // #endregion
     throw new Error(`PDF upload failed: ${error.message}`);
   }
 
   console.log('[FileUpload] ✅ Supabase Storage upload success:', storagePath);
+  // #region agent log
+  dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload SUCCESS', { storagePath });
+  // #endregion
   return storagePath;
 }
 
