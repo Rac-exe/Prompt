@@ -4,51 +4,97 @@
    Uses the same CSS custom-properties as design-system.css.
    =================================================================== */
 
-/* ---------- design-system variables (inline copy) ---------- */
+/* ---------- design-system variables — kept in sync with app-ui/src/index.css ---------- */
 :root {
-  --background: 23 100% 96%;
-  --foreground: 217 33% 17%;
-  --card: 20 100% 98%;
-  --card-foreground: 217 33% 17%;
-  --popover: 20 100% 98%;
+  /* Base canvas — warm peach (#FFF4ED) */
+  --background:         23 100% 96%;
+  --foreground:         217 33% 17%;
+
+  /* Cards */
+  --card:               20 100% 98%;
+  --card-foreground:    217 33% 17%;
+
+  --popover:            20 100% 98%;
   --popover-foreground: 217 33% 17%;
-  --primary: 217 91% 60%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 20 60% 95%;
+
+  /* Primary — brand blue */
+  --primary:            217 91% 60%;
+  --primary-foreground: 0   0% 100%;
+
+  /* Secondary — soft peach */
+  --secondary:          20 60% 95%;
   --secondary-foreground: 215 20% 35%;
-  --muted: 20 50% 94%;
-  --muted-foreground: 215 20% 65%;
-  --accent: 214 95% 93%;
-  --accent-foreground: 217 91% 60%;
-  --destructive: 0 68% 50%;
+
+  /* Muted */
+  --muted:              20 50% 94%;
+  --muted-foreground:   215 20% 38%;
+
+  /* Accent */
+  --accent:             214 95% 93%;
+  --accent-foreground:  217 91% 60%;
+
+  --destructive:        0 68% 50%;
   --destructive-foreground: 0 0% 100%;
-  --border: 18 58% 88%;
-  --input: 18 58% 88%;
-  --ring: 217 91% 60%;
-  --emerald: 160 84% 39%;
+
+  /* Borders */
+  --border:             18 58% 88%;
+  --input:              21 52% 81%;
+  --ring:               217 91% 60%;
+
+  --radius: 0.625rem;
+
+  /* Custom surface tokens */
+  --surface:            20 100% 97%;
+  --surface-hover:      19 100% 94%;
+  --surface-elevated:   20 100% 98%;
+
+  /* Brand accent (blue, NOT green) */
+  --emerald:            217 91% 60%;
+  --emerald-soft:       221 83% 53%;
+  --emerald-muted:      214 95% 93%;
 }
 
 .dark {
-  --background: 222 47% 8%;
-  --foreground: 210 40% 96%;
-  --card: 220 40% 11%;
-  --card-foreground: 210 40% 96%;
-  --popover: 220 40% 11%;
-  --popover-foreground: 210 40% 96%;
-  --primary: 217 91% 60%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 220 30% 14%;
-  --secondary-foreground: 210 20% 78%;
-  --muted: 220 25% 15%;
-  --muted-foreground: 215 20% 55%;
-  --accent: 220 25% 15%;
-  --accent-foreground: 210 40% 96%;
-  --destructive: 0 72% 51%;
+  /* Near-black background, electric-blue accent — matches app dark mode */
+  --background:         220  8%  5%;
+  --foreground:         210 20% 93%;
+
+  --card:               220 10% 10%;
+  --card-foreground:    210 20% 93%;
+
+  --popover:            220 10% 10%;
+  --popover-foreground: 210 20% 93%;
+
+  --primary:            217 91% 60%;
+  --primary-foreground: 0   0% 100%;
+
+  --secondary:          220 10%  9%;
+  --secondary-foreground: 210 20% 93%;
+
+  --muted:              220 10% 11%;
+  --muted-foreground:   215 16% 58%;
+
+  --accent:             220 10% 13%;
+  --accent-foreground:  210 20% 93%;
+
+  --destructive:        0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 220 20% 18%;
-  --input: 220 20% 18%;
-  --ring: 217 91% 60%;
-  --emerald: 160 84% 39%;
+
+  --border:             220 10% 14%;
+  --input:              220 10% 14%;
+  --ring:               217 91% 60%;
+
+  --radius: 0.625rem;
+
+  /* Custom surface tokens */
+  --surface:            220 10%  8%;
+  --surface-hover:      220 10% 10%;
+  --surface-elevated:   220 10% 12%;
+
+  /* Brand accent (blue, NOT green) */
+  --emerald:            217 91% 60%;
+  --emerald-soft:       217 78% 72%;
+  --emerald-muted:      217 30% 15%;
 }
 
 /* ---------- reset ---------- */
