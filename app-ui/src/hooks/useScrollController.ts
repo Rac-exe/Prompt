@@ -81,12 +81,16 @@ export function useScrollController(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Fix 4: Recalculate isAtBottom after content changes (stale ref fix) ───
+  // ── Fix 4: Recalculate isAtBottom after committed message changes ─────────
+  // NOTE: intentionally excludes streamingTrigger — updating isAtBottom on
+  // every streaming chunk races with Fix 7's setTimeout and wrongly marks the
+  // user as "not at bottom" before Fix 7 can scroll them there.
   useEffect(() => {
     requestAnimationFrame(() => {
       isAtBottomRef.current = checkIfAtBottom();
     });
-  }, [messageCount, streamingTrigger, checkIfAtBottom]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messageCount, checkIfAtBottom]);
 
   // ── Fix 1: New message OR streaming starts → conditional scroll ────────────
   useEffect(() => {
@@ -109,12 +113,10 @@ export function useScrollController(
     if (!isStreaming || !isAtBottomRef.current) return;
 
     const id = setTimeout(() => {
-      if (isAtBottomRef.current) {
-        containerRef.current?.scrollTo({
-          top: containerRef.current.scrollHeight,
-          behavior: 'auto',
-        });
-      }
+      containerRef.current?.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: 'auto',
+      });
     }, 100);
 
     return () => clearTimeout(id);
