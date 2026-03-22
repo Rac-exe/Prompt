@@ -118,6 +118,7 @@ export const ChatView = ({
     if (!input.trim() || isGenerating || !isOnline) return;
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
+    setAttachedFiles([]);
     setShowSlashPicker(false);
   };
 

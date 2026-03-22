@@ -63,6 +63,15 @@ export const MessageBubble = ({
     ta.style.height = ta.scrollHeight + "px";
   }, [editValue, isEditing]);
 
+  // Move cursor to end of text when edit mode opens
+  useEffect(() => {
+    if (!isEditing) return;
+    const ta = editTextareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+  }, [isEditing]);
+
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
     setCopied(true);
@@ -96,7 +105,6 @@ export const MessageBubble = ({
             <div className="flex flex-col gap-2">
               <textarea
                 ref={editTextareaRef}
-                autoFocus
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={handleEditKeyDown}
