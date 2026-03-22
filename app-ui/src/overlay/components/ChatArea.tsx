@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
+import { useScrollController } from '../../hooks/useScrollController';
 
 // ── Inline sub-components (small, tightly coupled to overlay) ────────────────
 
@@ -446,19 +447,20 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
 }) => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
-  const scrollAnchorRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll when content changes
-  useEffect(() => {
-    if (chatAreaRef.current) {
-      chatAreaRef.current.scrollTop = chatAreaRef.current.scrollHeight;
-    }
-  }, [turns, streamingContent, isLoading]);
+  const { handleScroll, scrollToBottom, showScrollButton } = useScrollController(
+    chatAreaRef,
+    {
+      isStreaming: streamingTurnIdx >= 0,
+      messageCount: turns.length,
+      streamingTrigger: streamingContent,
+    },
+  );
 
   const isEmpty = turns.length === 0;
 
   return (
-    <div ref={chatAreaRef} className="chat-area">
+    <div ref={chatAreaRef} className="chat-area" onScroll={handleScroll} style={{ position: 'relative' }}>
       {/* Empty state */}
       {isEmpty && (
         <div className="empty-state">
@@ -512,8 +514,35 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       {/* Loading indicator */}
       {isLoading && <LoadingDots />}
 
-      {/* Scroll anchor */}
-      <div ref={scrollAnchorRef} />
+      {/* Scroll to bottom button */}
+      {showScrollButton && (
+        <button
+          onClick={scrollToBottom}
+          aria-label="Scroll to bottom"
+          style={{
+            position: 'sticky',
+            bottom: 8,
+            alignSelf: 'center',
+            width: 32,
+            height: 32,
+            borderRadius: '50%',
+            border: '1px solid hsl(var(--border))',
+            background: 'hsl(var(--background) / 0.9)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 10,
+            transition: 'opacity 0.15s',
+          }}
+        >
+          <svg style={{ width: 14, height: 14, color: 'hsl(var(--foreground))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 };

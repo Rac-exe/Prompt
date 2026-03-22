@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn, Loader2, Brain } from "lucide-react";
+import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn, Loader2, Brain, ArrowDown } from "lucide-react";
+import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
 import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
@@ -65,11 +66,6 @@ export const ChatView = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const plusButtonRef = useRef<HTMLButtonElement>(null);
-  // true = keep auto-scrolling to bottom; set to false the instant the user
-  // wheels/touches upward; reset to true when a new message is sent.
-  const shouldAutoScroll = useRef(true);
-  // true when the current generation came from an edit/retry (not a new message)
-  const isEditRetryRef = useRef(false);
 
   // ── Auto-resize textarea ────────────────────────────────────
   const autoResize = useCallback(() => {
@@ -81,71 +77,15 @@ export const ChatView = ({
 
   useEffect(() => { autoResize(); }, [input, autoResize]);
 
-  // ── Scroll helper ────────────────────────────────────────────
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior });
-  }, []);
-
-  // ── Detect user-initiated scroll intent ─────────────────────
-  // wheel / touch events are ONLY fired by the user, never by scrollTo().
-  // This is the only reliable way to distinguish user scroll from programmatic.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) {
-        // Scrolling up → stop auto-scroll
-        shouldAutoScroll.current = false;
-      } else {
-        // Scrolling down — re-enable only when near the bottom
-        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distanceFromBottom < 80) shouldAutoScroll.current = true;
-      }
-    };
-
-    // Touch: track swipe direction
-    let touchStartY = 0;
-    const onTouchStart = (e: TouchEvent) => { touchStartY = e.touches[0].clientY; };
-    const onTouchMove = (e: TouchEvent) => {
-      const dy = e.touches[0].clientY - touchStartY;
-      if (dy > 0) {
-        // Swiping down = scrolling up
-        shouldAutoScroll.current = false;
-      } else {
-        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distanceFromBottom < 80) shouldAutoScroll.current = true;
-      }
-    };
-
-    el.addEventListener("wheel", onWheel, { passive: true });
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: true });
-    return () => {
-      el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-    };
-  }, []);
-
-  // ── Auto-scroll on new committed messages ───────────────────
-  useEffect(() => {
-    if (shouldAutoScroll.current) scrollToBottom("smooth");
-  }, [messages, scrollToBottom]);
-
-  // ── Force scroll to bottom when user sends a NEW message ────
-  // Skipped for edit/retry so the user can still see earlier context.
-  useEffect(() => {
-    if (isGenerating) {
-      if (!isEditRetryRef.current) {
-        shouldAutoScroll.current = true;
-        scrollToBottom("smooth");
-      }
-      isEditRetryRef.current = false; // reset after consuming
-    }
-  }, [isGenerating, scrollToBottom]);
+  // ── Scroll controller (single source of truth) ──────────────
+  const { handleScroll, scrollToBottom, showScrollButton } = useScrollController(
+    scrollRef,
+    {
+      isStreaming: !!streamingMessage,
+      messageCount: messages.length,
+      streamingTrigger: streamingMessage?.content,
+    },
+  );
 
   // ── Transcription IPC listeners ─────────────────────────────
   useEffect(() => {
@@ -179,8 +119,6 @@ export const ChatView = ({
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
     setShowSlashPicker(false);
-    shouldAutoScroll.current = true;
-    isEditRetryRef.current = false;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -641,10 +579,11 @@ export const ChatView = ({
   // ── Conversation state ──────────────────────────────────────
   return (
     <div className="flex-1 flex flex-col h-full bg-background">
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 relative">
         <div
           ref={scrollRef}
           className="h-full overflow-y-auto scrollbar-none"
+          onScroll={handleScroll}
         >
           <div className="max-w-4xl mx-auto py-8 px-6 space-y-6">
             {messages.map((message, idx) => {
@@ -672,7 +611,6 @@ export const ChatView = ({
                 onFeedback={onFeedback}
                 isSaved={savedPromptIds.includes(message.id)}
                 onEdit={message.role === "user" ? (id, content) => {
-                  isEditRetryRef.current = true;
                   onEditMessage?.(id, content);
                 } : undefined}
                 onRegenerate={message.role === "assistant" ? onRegenerateMessage : undefined}
@@ -707,12 +645,7 @@ export const ChatView = ({
             )}
 
             {streamingMessage && (
-              <div ref={(el) => {
-                // Scroll the streaming bubble into view, but ONLY if the user hasn't scrolled up
-                if (el && shouldAutoScroll.current) {
-                  el.scrollIntoView({ behavior: "instant", block: "end" });
-                }
-              }}>
+              <div>
                 <MessageBubble
                   key={streamingMessage.id}
                   message={streamingMessage}
@@ -726,6 +659,22 @@ export const ChatView = ({
             )}
           </div>
         </div>
+
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom()}
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 w-8 h-8 rounded-full
+                       bg-background/90 backdrop-blur border border-border shadow-md
+                       flex items-center justify-center
+                       text-muted-foreground hover:text-foreground hover:bg-secondary
+                       transition-all duration-150"
+            aria-label="Scroll to bottom"
+          >
+            <ArrowDown className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Docked input */}
