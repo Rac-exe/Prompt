@@ -998,7 +998,7 @@ textarea { min-height: 40px; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 12px 0;
+  padding: 0 2px 8px;
 }
 
 .file-chip-img {

@@ -267,6 +267,9 @@ const OverlayApp: React.FC = () => {
       assistantGroupId,
       assistantVersionIndex: 0,
     });
+
+    // Clear attached files after sending
+    setAttachedFiles([]);
   }, [isOptimizing, attachedFiles, selectedSkill, selectedSkillLabel, addUserMessage, currentMode, selectedChatId]);
 
   // ── Stop generation ──

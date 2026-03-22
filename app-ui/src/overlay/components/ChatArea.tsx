@@ -41,7 +41,7 @@ const VersionNav: React.FC<{
   );
 };
 
-/** File attachment chips (read-only display inside a user bubble) */
+/** File attachment chips displayed above a user bubble */
 const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
   if (!files || files.length === 0) return null;
   return (
@@ -196,8 +196,8 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
       {/* Display mode */}
       {!editing && (
         <div>
+          <FilesDisplay files={msg.attachedFiles} />
           <div className="message-bubble user-bubble">
-            <FilesDisplay files={msg.attachedFiles} />
             <SkillTag skill={msg.skill} skillLabel={msg.skillLabel} />
             <div className="message-text">{msg.content}</div>
           </div>

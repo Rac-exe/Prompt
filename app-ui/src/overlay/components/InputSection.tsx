@@ -487,9 +487,9 @@ const InputSection: React.FC<InputSectionProps> = ({
         onChange={handleFileChange}
       />
 
-      <div className="chat-input-box">
-        <AttachmentsRow files={attachedFiles} onRemove={onRemoveFile} />
+      <AttachmentsRow files={attachedFiles} onRemove={onRemoveFile} />
 
+      <div className="chat-input-box">
         <textarea
           ref={inputRef as React.RefObject<HTMLTextAreaElement>}
           rows={2}
