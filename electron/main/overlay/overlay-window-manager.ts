@@ -28,6 +28,8 @@ import { forceFocusWindow } from '../utils/native-bridge';
  */
 export class OverlayWindowManager {
   private window: BrowserWindow | null = null;
+  private isLoaded = false;
+  private shouldShowOnReady = false;
 
   /**
    * Pre-create the window (hidden) so the first open is instant.
@@ -65,6 +67,7 @@ export class OverlayWindowManager {
       show: false,
       focusable: true,
       hasShadow: false,
+      backgroundColor: '#00000000',
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -84,19 +87,51 @@ export class OverlayWindowManager {
     // After the React/Vite refactor the overlay is built alongside the main
     // app-ui bundle.  Vite multi-page build places it at:
     //   electron/renderer/app-ui/overlay.html
+
+    // Renderer-driven readiness: the React app sends 'overlay:ready' after it
+    // has mounted and painted its first frame.  This is more reliable than
+    // Electron's 'ready-to-show' which fires before CSS/React are fully applied
+    // on transparent windows.
+    this.isLoaded = false;
+    this.shouldShowOnReady = false;
+
+    // Listen for renderer signal (registered once per window via webContents.ipc
+    // so it auto-cleans on destroy and can't leak across window instances).
+    this.window.webContents.ipc.once('overlay:ready', () => {
+      this.isLoaded = true;
+      if (this.shouldShowOnReady) {
+        this.shouldShowOnReady = false;
+        this.showAndFocus();
+      }
+    });
+
+    // Safety fallback: if the renderer signal fails (e.g. preload error),
+    // show after did-finish-load + a short delay so we never get stuck hidden.
+    this.window.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        if (!this.isLoaded && this.window && !this.window.isDestroyed() && !this.window.isVisible()) {
+          console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback show');
+          this.isLoaded = true;
+          if (this.shouldShowOnReady) {
+            this.shouldShowOnReady = false;
+            this.showAndFocus();
+          }
+        }
+      }, 200);
+    });
+
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'overlay.html');
     this.window.loadFile(htmlPath);
 
     this.window.on('closed', () => {
       this.window = null;
+      this.isLoaded = false;
+      this.shouldShowOnReady = false;
     });
 
     return this.window;
   }
 
-  /**
-   * Open the overlay and send current auth state.
-   */
   /**
    * Open the overlay and send current auth state.
    *
@@ -115,6 +150,13 @@ export class OverlayWindowManager {
         this.send('overlay:opened', openedPayload);
       });
     } else {
+      // Guard: already visible — just re-focus, don't re-show (prevents flicker / focus jump)
+      if (this.window.isVisible()) {
+        this.send('overlay:opened', openedPayload);
+        this.focusWindow();
+        return;
+      }
+
       // Subsequent opens: send immediately since content is already loaded
       this.send('overlay:opened', openedPayload);
     }
@@ -122,19 +164,43 @@ export class OverlayWindowManager {
     // Position near cursor (like Raycast / Cursor inline assistant)
     this.positionNearCursor();
 
-    // Step 1: Make the window visible first so it has a valid HWND in the Z-order.
-    this.window!.show();
+    if (this.isLoaded) {
+      // Content is ready — show immediately
+      this.showAndFocus();
+    } else {
+      // Window still loading from createWindow() — defer to overlay:ready callback
+      this.shouldShowOnReady = true;
+    }
+  }
 
-    // Step 2: Win32-level focus steal.
-    // forceFocusWindow() calls AllowSetForegroundWindow + AttachThreadInput +
-    // SetForegroundWindow synchronously in the Rust thread — this works even when
-    // the target app currently holds the foreground lock (which Electron's
-    // async focus() call often cannot break during fast typing).
-    const overlayHwnd = this.window!.getNativeWindowHandle().readBigInt64LE(0);
+  /**
+   * Show the window and steal focus via Win32 APIs.
+   * This is the ONLY place show() is called.
+   *
+   * By the time this runs, the renderer has already confirmed that React is
+   * mounted and the first frame is painted (via the overlay:ready IPC signal),
+   * so the window can be shown immediately without flicker.
+   */
+  private showAndFocus() {
+    if (!this.window || this.window.isDestroyed()) return;
+    this.window.show();
+    this.focusWindow();
+  }
+
+  /**
+   * Win32-level focus steal.
+   * forceFocusWindow() calls AllowSetForegroundWindow + AttachThreadInput +
+   * SetForegroundWindow synchronously in the Rust thread — this works even when
+   * the target app currently holds the foreground lock (which Electron's
+   * async focus() call often cannot break during fast typing).
+   */
+  private focusWindow() {
+    if (!this.window || this.window.isDestroyed()) return;
+    const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
     const focused = forceFocusWindow(Number(overlayHwnd));
     if (!focused) {
       // AttachThreadInput fallback failed — try Electron's own focus as last resort.
-      this.window!.focus();
+      this.window.focus();
     }
   }
 

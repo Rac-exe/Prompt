@@ -8,3 +8,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <OverlayApp />
   </React.StrictMode>,
 );
+
+// Signal to main process that the React UI is mounted and painted.
+// Wait one animation frame after React's commit so the browser has
+// actually flushed pixels to the compositor before we allow show().
+requestAnimationFrame(() => {
+  window.electronAPI?.overlay?.notifyReady?.();
+});
