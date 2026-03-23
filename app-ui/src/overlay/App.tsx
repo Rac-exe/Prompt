@@ -267,6 +267,9 @@ const OverlayApp: React.FC = () => {
       assistantGroupId,
       assistantVersionIndex: 0,
     });
+
+    // Clear attached files after sending
+    setAttachedFiles([]);
   }, [isOptimizing, attachedFiles, selectedSkill, selectedSkillLabel, addUserMessage, currentMode, selectedChatId]);
 
   // ── Stop generation ──
@@ -394,7 +397,7 @@ const OverlayApp: React.FC = () => {
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
   return (
-    <div id="panel" className="panel-enter">
+    <div id="panel">
       <div className="panel-glow-wrapper" ref={glowWrapperRef}>
         <div className="overlay-panel">
           <Header onClose={handleClose} onNewSession={handleNewSession} />

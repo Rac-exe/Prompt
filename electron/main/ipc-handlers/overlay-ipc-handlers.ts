@@ -15,6 +15,7 @@ import { networkMonitor } from './network-monitor-singleton';
 import { offlineQueue } from '../database/offline-queue';
 import { uploadAttachment } from './file-upload-service';
 import { errorLog } from '../database/error-log';
+import { buildTitlePrompt } from './chat-handlers';
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -318,11 +319,34 @@ export function registerOverlayHandlers(
             } else {
               // ── No-context path: use/create the overlay session chat ──
               if (!currentOverlayChatId) {
+                // Use first 4 words as a placeholder while smart title generates
                 const words = data.text.trim().split(/\s+/).slice(0, 4);
-                const title = words.join(' ') || 'Overlay Optimization';
-                const chat = await svc.createChat(title);
+                const placeholderTitle = words.join(' ') || 'Overlay Optimization';
+                const chat = await svc.createChat(placeholderTitle);
                 currentOverlayChatId = chat.id;
                 console.log('[Overlay] Created new chat for overlay session:', currentOverlayChatId);
+
+                // Fire-and-forget: generate a smart AI title in the background
+                const titlePrompt = buildTitlePrompt(data.text, data.attachedFiles || []);
+                if (titlePrompt) {
+                  const chatIdForTitle = currentOverlayChatId;
+                  (async () => {
+                    try {
+                      const smartTitle = await pythonClient.generateTitle(titlePrompt);
+                      if (smartTitle && smartTitle !== placeholderTitle) {
+                        await svc.updateChatTitle(chatIdForTitle, smartTitle);
+                        // Push the rename to the main app sidebar immediately
+                        appWindowManager.send('chat-renamed', {
+                          chatId: chatIdForTitle,
+                          title: smartTitle,
+                        });
+                        console.log(`[Overlay] Smart title generated: "${smartTitle}"`);
+                      }
+                    } catch (err) {
+                      console.warn('[Overlay] Smart title generation failed (non-critical):', err);
+                    }
+                  })();
+                }
               }
 
               const olUserGroupId = data.userGroupId || crypto.randomUUID();

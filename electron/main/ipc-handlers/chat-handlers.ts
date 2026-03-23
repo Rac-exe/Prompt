@@ -33,7 +33,7 @@ const WEAK_PATTERNS = [
   /^(do\s+(this|it|that))/i,
 ];
 
-function isWeakMessage(content: string): boolean {
+export function isWeakMessage(content: string): boolean {
   const trimmed = content.trim();
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
   if (wordCount <= 2) return true;
@@ -65,7 +65,7 @@ function humanizeLlmError(err: any): string {
   return 'The AI service encountered an error. Please try again.';
 }
 
-function buildTitlePrompt(
+export function buildTitlePrompt(
   content: string,
   attachedFiles: Pick<AttachedFile, 'name' | 'mimeType'>[]
 ): string | null {

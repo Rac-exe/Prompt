@@ -29,6 +29,7 @@ declare global {
         newSession: () => void;
         stopGeneration: () => void;
         truncateHistory: (keepCount: number) => void;
+        notifyReady: () => void;
       };
 
       // ============================================
@@ -214,6 +215,9 @@ const electronAPI = {
     },
     truncateHistory: (keepCount: number) => {
       ipcRenderer.send('overlay:truncate-history', { keepCount });
+    },
+    notifyReady: () => {
+      ipcRenderer.send('overlay:ready');
     },
   },
 
