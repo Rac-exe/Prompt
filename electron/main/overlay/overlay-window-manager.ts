@@ -8,8 +8,13 @@ import { forceFocusWindow } from '../utils/native-bridge';
  * Manages a single overlay BrowserWindow for quick prompt optimization.
  *
  * Lifecycle:
- *   - Pre-created (hidden) at app startup for instant first open
- *   - Shown/hidden via toggle (Ctrl+5, tray, @prompt trigger)
+ *   - Pre-created at app startup
+ *   - One-time compositor pre-heat: shown off-screen (invisible to user)
+ *     so the DWM alpha surface is fully initialized before first open
+ *   - Open  = move on-screen + focus  (NO window.show() call)
+ *   - Close = park off-screen + blur  (NO window.hide() call)
+ *   - This eliminates the DWM hide/show animation artifact that causes
+ *     a faded "ghost" first-frame on transparent frameless windows
  *   - Independent of main app window
  *   - Persists while app runs in background
  *
@@ -26,13 +31,29 @@ import { forceFocusWindow } from '../utils/native-bridge';
  *   3. Main verifies auth → PromptLibraryService.savePrompt → returns result
  *   4. Renderer shows success/error feedback
  */
+
+/** Off-screen coordinates used to "park" the window invisibly. */
+const OFFSCREEN_X = -9999;
+const OFFSCREEN_Y = -9999;
+
 export class OverlayWindowManager {
   private window: BrowserWindow | null = null;
+
+  /** true after the renderer has confirmed readiness AND the compositor
+   *  pre-heat is complete.  Only then may the overlay be opened. */
   private isLoaded = false;
+
+  /** true when the user triggered open() before isLoaded became true.
+   *  showAndFocus() will be called automatically once loading completes. */
   private shouldShowOnReady = false;
 
+  /** true when the overlay is logically "open" (visible on-screen to the user).
+   *  We track this ourselves because the window is never actually hidden — it
+   *  is always "shown" (parked off-screen) after the one-time pre-heat. */
+  private isOpen = false;
+
   /**
-   * Pre-create the window (hidden) so the first open is instant.
+   * Pre-create the window so the first open is instant.
    * Call this during app initialization.
    */
   preload() {
@@ -42,7 +63,8 @@ export class OverlayWindowManager {
   }
 
   /**
-   * Create the overlay BrowserWindow (hidden).
+   * Create the overlay BrowserWindow (initially hidden, will be pre-heated
+   * off-screen once the renderer signals readiness).
    */
   private createWindow(): BrowserWindow {
     const display = screen.getPrimaryDisplay();
@@ -72,10 +94,9 @@ export class OverlayWindowManager {
         nodeIntegration: false,
         contextIsolation: true,
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
-        // Keep renderer active when hidden so the GPU framebuffer stays current.
-        // Without this, Chromium throttles the renderer when the window is hidden,
-        // causing a stale frame to be presented on the next window.show() call —
-        // visible as a brief flicker on transparent frameless windows on Windows.
+        // Keep renderer active when parked off-screen so the GPU framebuffer
+        // stays current.  Without this, Chromium throttles the renderer and
+        // the next on-screen move would show a stale frame.
         backgroundThrottling: false,
       },
     });
@@ -84,38 +105,30 @@ export class OverlayWindowManager {
     // 'screen-saver' is the highest z-order level available on Windows/macOS.
     this.window.setAlwaysOnTop(true, 'screen-saver');
 
-    // After the React/Vite refactor the overlay is built alongside the main
-    // app-ui bundle.  Vite multi-page build places it at:
-    //   electron/renderer/app-ui/overlay.html
-
-    // Renderer-driven readiness: the React app sends 'overlay:ready' after it
-    // has mounted and painted its first frame.  This is more reliable than
-    // Electron's 'ready-to-show' which fires before CSS/React are fully applied
-    // on transparent windows.
+    // ── Renderer-driven readiness ──────────────────────────────────────────
+    // The React app sends 'overlay:ready' after it has mounted and painted
+    // its first frame.  We then pre-heat the DWM compositor by showing the
+    // window off-screen (invisible to the user).  After that, open/close is
+    // purely positional — no show()/hide() calls — eliminating the DWM
+    // transition animation that causes a faded first-frame on transparent
+    // windows.
     this.isLoaded = false;
     this.shouldShowOnReady = false;
+    this.isOpen = false;
 
-    // Listen for renderer signal (registered once per window via webContents.ipc
-    // so it auto-cleans on destroy and can't leak across window instances).
+    // Listen for renderer signal (registered once per window via
+    // webContents.ipc so it auto-cleans on destroy).
     this.window.webContents.ipc.once('overlay:ready', () => {
-      this.isLoaded = true;
-      if (this.shouldShowOnReady) {
-        this.shouldShowOnReady = false;
-        this.showAndFocus();
-      }
+      this.preheatCompositor();
     });
 
-    // Safety fallback: if the renderer signal fails (e.g. preload error),
-    // show after did-finish-load + a short delay so we never get stuck hidden.
+    // Safety fallback: if the renderer signal never arrives (e.g. preload
+    // error), pre-heat after did-finish-load + a short delay.
     this.window.webContents.once('did-finish-load', () => {
       setTimeout(() => {
-        if (!this.isLoaded && this.window && !this.window.isDestroyed() && !this.window.isVisible()) {
-          console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback show');
-          this.isLoaded = true;
-          if (this.shouldShowOnReady) {
-            this.shouldShowOnReady = false;
-            this.showAndFocus();
-          }
+        if (!this.isLoaded && this.window && !this.window.isDestroyed()) {
+          console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback pre-heat');
+          this.preheatCompositor();
         }
       }, 200);
     });
@@ -127,10 +140,68 @@ export class OverlayWindowManager {
       this.window = null;
       this.isLoaded = false;
       this.shouldShowOnReady = false;
+      this.isOpen = false;
     });
 
     return this.window;
   }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // COMPOSITOR PRE-HEAT
+  // ════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * One-time DWM compositor initialization.
+   *
+   * Shows the window off-screen via `showInactive()` so that Windows DWM
+   * creates and stabilizes the alpha compositor surface.  After this point
+   * the window is never hidden again — open/close is purely positional,
+   * which eliminates the DWM show/hide transition animation that causes
+   * a faded "ghost" first-frame on transparent frameless windows.
+   *
+   * Flow:
+   *   1. Force a fresh render (`invalidate`)
+   *   2. Park the window off-screen
+   *   3. `showInactive()` — DWM starts compositing (user cannot see it)
+   *   4. Wait two full animation frames for the alpha surface to stabilize
+   *   5. Mark as loaded — future opens just move the window on-screen
+   */
+  private async preheatCompositor() {
+    if (this.isLoaded) return; // Already done (e.g. by fallback timer)
+    if (!this.window || this.window.isDestroyed()) return;
+
+    // Force a fresh render so the framebuffer is up-to-date
+    this.window.webContents.invalidate();
+
+    // Park off-screen and show without stealing focus
+    this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
+    this.window.showInactive();
+
+    // Wait two full compositor frames for the alpha surface to stabilize
+    try {
+      await this.window.webContents.executeJavaScript(
+        'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
+      );
+    } catch {
+      // Renderer unresponsive — proceed anyway
+    }
+
+    // Guard: window may have been destroyed during the await
+    if (!this.window || this.window.isDestroyed()) return;
+
+    this.isLoaded = true;
+    console.log('[OverlayWindowManager] Compositor pre-heated — overlay ready');
+
+    // If the user already triggered open() before we finished, show now
+    if (this.shouldShowOnReady) {
+      this.shouldShowOnReady = false;
+      this.showAndFocus();
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // OPEN / CLOSE
+  // ════════════════════════════════════════════════════════════════════════════
 
   /**
    * Open the overlay and send current auth state.
@@ -150,8 +221,8 @@ export class OverlayWindowManager {
         this.send('overlay:opened', openedPayload);
       });
     } else {
-      // Guard: already visible — just re-focus, don't re-show (prevents flicker / focus jump)
-      if (this.window.isVisible()) {
+      // Guard: already open — just re-focus, don't re-show
+      if (this.isOpen) {
         this.send('overlay:opened', openedPayload);
         this.focusWindow();
         return;
@@ -165,25 +236,28 @@ export class OverlayWindowManager {
     this.positionNearCursor();
 
     if (this.isLoaded) {
-      // Content is ready — show immediately
+      // Compositor pre-heated — just focus (window is already "shown")
       this.showAndFocus();
     } else {
-      // Window still loading from createWindow() — defer to overlay:ready callback
+      // Window still loading / pre-heating — defer to preheatCompositor callback
       this.shouldShowOnReady = true;
     }
   }
 
   /**
-   * Show the window and steal focus via Win32 APIs.
-   * This is the ONLY place show() is called.
+   * Make the overlay visible to the user and steal focus.
    *
-   * By the time this runs, the renderer has already confirmed that React is
-   * mounted and the first frame is painted (via the overlay:ready IPC signal),
-   * so the window can be shown immediately without flicker.
+   * After the one-time compositor pre-heat, the window is permanently
+   * "shown" (parked off-screen when closed).  `positionNearCursor()` has
+   * already moved it to the correct screen position, so all we need to
+   * do here is set the open flag and focus.
+   *
+   * No `window.show()` call — the window is already shown.
+   * This is the key to eliminating the DWM transition flicker.
    */
   private showAndFocus() {
     if (!this.window || this.window.isDestroyed()) return;
-    this.window.show();
+    this.isOpen = true;
     this.focusWindow();
   }
 
@@ -243,11 +317,17 @@ export class OverlayWindowManager {
   }
 
   /**
-   * Hide the overlay (keep window alive for fast re-open).
+   * Close the overlay (park off-screen, keep window alive and composited).
+   *
+   * Instead of `window.hide()` (which would remove the window from the DWM
+   * compositor pipeline and cause a flicker on the next show), we park the
+   * window off-screen and blur it so the previous app regains focus.
    */
   close() {
     if (this.window && !this.window.isDestroyed()) {
-      this.window.hide();
+      this.isOpen = false;
+      this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
+      this.window.blur();
     }
   }
 
@@ -255,7 +335,7 @@ export class OverlayWindowManager {
    * Toggle overlay visibility.
    */
   toggle(isAuthenticated: boolean) {
-    if (this.window && !this.window.isDestroyed() && this.window.isVisible()) {
+    if (this.isOpen) {
       this.close();
     } else {
       this.open(isAuthenticated);
@@ -286,10 +366,10 @@ export class OverlayWindowManager {
   }
 
   /**
-   * Check if overlay is currently visible.
+   * Check if overlay is currently visible to the user.
    */
   isVisible(): boolean {
-    return this.window !== null && !this.window.isDestroyed() && this.window.isVisible();
+    return this.isOpen && this.window !== null && !this.window.isDestroyed();
   }
 
   /**
@@ -300,5 +380,6 @@ export class OverlayWindowManager {
       this.window.destroy();
     }
     this.window = null;
+    this.isOpen = false;
   }
 }
