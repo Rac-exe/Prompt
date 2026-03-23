@@ -49,7 +49,7 @@ function startKeystrokeDetection() {
 
   startHook((anchor: TriggerAnchor) => {
     console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
-    overlayManager.open(authState.isAuthenticated);
+    overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
   });
 
   console.log('[Main] Native keyboard hook started');

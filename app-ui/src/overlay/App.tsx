@@ -42,6 +42,7 @@ const OverlayApp: React.FC = () => {
   // ── Auth & connection state ──────────────────────────────────────────────
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [triggeredByHook, setTriggeredByHook] = useState(false);
 
   // ── Optimization state ───────────────────────────────────────────────────
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -121,6 +122,7 @@ const OverlayApp: React.FC = () => {
     api.overlay?.onOpened?.((data: any) => {
       const auth = !!data.isAuthenticated;
       setIsAuthenticated(auth);
+      setTriggeredByHook(!!data.triggeredByHook);
       if (auth) {
         // Handle prefill
         if (data.prefill?.text && inputRef.current) {
@@ -415,6 +417,7 @@ const OverlayApp: React.FC = () => {
                 errorMessage={errorMessage}
                 streamingTurnIdx={streamingTurnIdxRef.current}
                 streamingContent={streamingContent}
+                showReplace={triggeredByHook}
                 onEditCommit={handleEditCommit}
                 onCopy={handleCopy}
                 onReplace={handleReplace}
