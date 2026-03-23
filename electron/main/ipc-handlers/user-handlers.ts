@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { UserService } from '../database/services/user-service';
 import { MemoryService, MemoryType, MemorySource } from '../database/services/memory-service';
+import { SettingsService } from '../database/services/settings-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
 import { localCache } from '../database/local-cache';
@@ -8,15 +9,17 @@ import { localCache } from '../database/local-cache';
 // Lazy load services
 let userService: UserService | null = null;
 let memoryService: MemoryService | null = null;
+let settingsService: SettingsService | null = null;
 
 function getService() {
     if (!userService) userService = new UserService();
     if (!memoryService) memoryService = new MemoryService();
-    return { userService, memoryService };
+    if (!settingsService) settingsService = new SettingsService();
+    return { userService, memoryService, settingsService };
 }
 
 export function registerUserHandlers(appWindowManager: AppWindowManager) {
-    const { userService: service, memoryService: memory } = getService();
+    const { userService: service, memoryService: memory, settingsService: settings } = getService();
 
     // ============================================
     // USER PROFILE & PREFERENCES IPC HANDLERS
@@ -168,6 +171,43 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             return { success: true };
         } catch (error) {
             console.error('[Memory] Failed to delete memory entry:', error);
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return { success: false, error: msg };
+        }
+    });
+
+    // ============================================
+    // MEMORY TOGGLE HANDLERS
+    // ============================================
+
+    // Get the memory_enabled toggle state
+    ipcMain.handle('memory:get-enabled', async () => {
+        try {
+            if (!authState.isAuthenticated) return true; // Default on
+            const profile = await service.getUserProfile();
+            if (!profile) return true;
+            const userSettings = await settings.getUserSettings(profile.id);
+            return userSettings?.memory_enabled !== false; // Default true
+        } catch (error) {
+            console.error('[Memory] Failed to get memory enabled state:', error);
+            return true; // Fail-open
+        }
+    });
+
+    // Set the memory_enabled toggle state
+    ipcMain.handle('memory:set-enabled', async (
+        _event,
+        enabled: boolean,
+    ) => {
+        try {
+            if (!authState.isAuthenticated) throw new Error('Not authenticated');
+            const profile = await service.getUserProfile();
+            if (!profile) throw new Error('No profile found');
+            await settings.upsertUserSettings(profile.id, { memory_enabled: enabled });
+            console.log(`[Memory] Toggle set to ${enabled ? 'ON' : 'OFF'}`);
+            return { success: true };
+        } catch (error) {
+            console.error('[Memory] Failed to set memory enabled state:', error);
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return { success: false, error: msg };
         }

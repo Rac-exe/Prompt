@@ -10,6 +10,7 @@ export interface MemoryEntry {
   confidence: number;
   memory_type: MemoryType;
   updated_at: string;
+  observation_count?: number;
 }
 
 export type UserMemoryMap = {
@@ -190,6 +191,9 @@ export interface ElectronAPI {
     get: () => Promise<UserMemoryMap>;
     upsert: (data: { memoryType: MemoryType; key: string; value: string; source?: MemorySource; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
     delete: (data: { memoryType: MemoryType; key: string }) => Promise<{ success: boolean; error?: string }>;
+    getEnabled: () => Promise<boolean>;
+    setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+    onUpdated: (callback: (memory: UserMemoryMap) => void) => (() => void);
   };
 
   // Skills

@@ -133,12 +133,15 @@ declare global {
       // Memory API
       memory: {
         get: () => Promise<{
-          user: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
-          behavioral: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
-          context: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string }>;
+          user: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string; observation_count?: number }>;
+          behavioral: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string; observation_count?: number }>;
+          context: Record<string, { key: string; value: string; source: string; confidence: number; memory_type: string; updated_at: string; observation_count?: number }>;
         }>;
         upsert: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string; value: string; source?: 'inferred' | 'explicit'; confidence?: number }) => Promise<{ success: boolean; error?: string }>;
         delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) => Promise<{ success: boolean; error?: string }>;
+        getEnabled: () => Promise<boolean>;
+        setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+        onUpdated: (callback: (memory: any) => void) => (() => void);
       };
     };
   }
@@ -514,6 +517,13 @@ const electronAPI = {
       ipcRenderer.invoke('memory:upsert', data),
     delete: (data: { memoryType: 'user' | 'behavioral' | 'context'; key: string }) =>
       ipcRenderer.invoke('memory:delete', data),
+    getEnabled: () => ipcRenderer.invoke('memory:get-enabled'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('memory:set-enabled', enabled),
+    onUpdated: (callback: (memory: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('memory:updated', handler);
+      return () => ipcRenderer.removeListener('memory:updated', handler);
+    },
   },
 
   // ============================================

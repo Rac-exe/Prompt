@@ -15,6 +15,8 @@ import { networkMonitor } from './network-monitor-singleton';
 import { offlineQueue } from '../database/offline-queue';
 import { uploadAttachment } from './file-upload-service';
 import { errorLog } from '../database/error-log';
+import { MemoryService } from '../database/services/memory-service';
+import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { buildTitlePrompt } from './chat-handlers';
 
 // ============================================
@@ -66,6 +68,26 @@ let userService: UserService | null = null;
 function getUserService(): UserService {
   if (!userService) userService = new UserService();
   return userService;
+}
+
+let memoryService: MemoryService | null = null;
+function getMemoryService(): MemoryService {
+  if (!memoryService) memoryService = new MemoryService();
+  return memoryService;
+}
+
+let memoryAnalyzer: MemoryAnalyzer | null = null;
+function getMemoryAnalyzer(pythonClient: PythonClient, appWindowManager: AppWindowManager): MemoryAnalyzer {
+  if (!memoryAnalyzer) {
+    memoryAnalyzer = new MemoryAnalyzer(
+      pythonClient,
+      getMemoryService(),
+      getSettingsService(),
+      getUserService(),
+      appWindowManager,
+    );
+  }
+  return memoryAnalyzer;
 }
 
 // Simple in-memory history for the overlay session so the user can refine prompts
@@ -170,6 +192,18 @@ export function registerOverlayHandlers(
         }
       }
 
+      // Append user memory context (guarded by toggle, non-blocking, silent failure)
+      if (authState.isAuthenticated) {
+        try {
+          const analyzer = getMemoryAnalyzer(pythonClient, appWindowManager);
+          const memEnabled = await analyzer.isMemoryEnabled();
+          if (memEnabled) {
+            const memCtx = await getMemoryService().buildMemoryContext();
+            if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+          }
+        } catch { /* non-critical */ }
+      }
+
       // ── Build history context ──────────────────────────────────────
       // Priority: if a chatId is attached, use that chat's real messages
       // as context (up to last 8). Otherwise fall back to in-memory overlay
@@ -230,6 +264,19 @@ export function registerOverlayHandlers(
         .catch((err: Error) => {
           errorLog.append('[Overlay] optimization record save', err);
         });
+
+        // 1b. Trigger background memory analysis (fire-and-forget, non-critical)
+        if (authState.currentUserId) {
+          const analyzer = getMemoryAnalyzer(pythonClient, appWindowManager);
+          analyzer.onNewOptimization(
+            authState.currentUserId,
+            data.text,
+            optimizedText,
+            data.forcedSkill || null,
+          ).catch((e: unknown) =>
+            console.warn('[Overlay] Memory analyzer error (non-critical):', e)
+          );
+        }
 
         // 2. Persist messages to DB
         // ── KEY RULE ──────────────────────────────────────────────────

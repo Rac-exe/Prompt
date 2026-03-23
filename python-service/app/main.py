@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import sys
 
 # Force UTF-8 stdout/stderr so emoji and non-ASCII chars don't crash the server
@@ -11,6 +11,7 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
+import json
 import time
 import re
 import whisper
@@ -614,6 +615,146 @@ async def generate_title(request: TitleRequest):
     except Exception as exc:
         print(f"[TitleGen] LLM failed ({exc.__class__.__name__}: {exc}), using fallback")
         return {"title": "New Chat"}
+
+
+# ============================================================
+# MEMORY FACT EXTRACTION
+# ============================================================
+
+class MemoryFact(BaseModel):
+    category: str    # 'user' | 'behavioral' | 'context'
+    key: str         # short label, e.g. "role", "preferred_tone"
+    value: str       # the fact, e.g. "Senior Backend Engineer"
+    confidence: float  # 0.0 – 1.0
+
+
+class ExtractMemoryRequest(BaseModel):
+    raw_prompt: str
+    optimized_text: str
+    skill: Optional[str] = None
+
+
+class ExtractMemoryResponse(BaseModel):
+    facts: List[MemoryFact]
+
+
+MEMORY_EXTRACTION_SYSTEM_PROMPT = """You are a silent profiling engine. Given a user's raw prompt and the optimized version, extract factual observations about the user.
+
+Return a JSON array of facts. Each fact must have:
+- "category": one of "user" (identity, role, domain), "behavioral" (writing style, preferences), or "context" (recurring topics/tools)
+- "key": a short snake_case label (e.g. "role", "primary_language", "preferred_tone", "domain")
+- "value": a concise factual statement
+- "confidence": 0.0 to 1.0 (how certain you are)
+
+Rules:
+- Only extract facts you are reasonably confident about (>= 0.5)
+- Do NOT invent facts — only observe what is clearly present in the prompt
+- Do NOT extract generic observations (e.g. "uses AI" is useless)
+- Prefer specific, actionable facts (e.g. "works with React and TypeScript" over "is a developer")
+- Return an empty array [] if nothing meaningful can be inferred
+- Return ONLY the JSON array, no markdown, no explanation
+
+Example output:
+[
+  {"category": "user", "key": "role", "value": "Full-stack developer", "confidence": 0.8},
+  {"category": "context", "key": "primary_framework", "value": "React with TypeScript", "confidence": 0.9},
+  {"category": "behavioral", "key": "preferred_tone", "value": "Technical and concise", "confidence": 0.6}
+]"""
+
+
+@app.post("/extract-memory-facts", response_model=ExtractMemoryResponse)
+async def extract_memory_facts(request: ExtractMemoryRequest):
+    """
+    Extract user facts from a raw prompt + optimized output.
+    Uses a cheap/fast model (same as optimizer) for minimal cost.
+    Called fire-and-forget from Electron after each optimization.
+    """
+    raw = request.raw_prompt.strip()
+    optimized = request.optimized_text.strip()
+
+    if not raw or len(raw) < 10:
+        return ExtractMemoryResponse(facts=[])
+
+    try:
+        import litellm as _litellm
+
+        model = os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini")
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+
+        user_content = f"Raw prompt:\n{raw}\n\nOptimized version:\n{optimized}"
+        if request.skill:
+            user_content += f"\n\nDetected skill: {request.skill}"
+
+        kwargs: dict = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": MEMORY_EXTRACTION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            "max_tokens": 300,
+            "temperature": 0.1,
+        }
+        if api_key and "openrouter" in model.lower():
+            kwargs["api_key"] = api_key
+
+        t0 = time.time()
+        response = _litellm.completion(**kwargs)
+        latency_ms = int((time.time() - t0) * 1000)
+
+        raw_text = response.choices[0].message.content.strip()
+
+        # Log usage
+        if response.usage:
+            from pipeline_v2.usage_logger import log_usage as _log_usage
+            _log_usage(
+                call_type="memory_extraction",
+                model=model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                latency_ms=latency_ms,
+            )
+
+        # Parse JSON response
+        # Strip markdown code fences if present
+        cleaned = raw_text
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r'^```\w*\n?', '', cleaned)
+            cleaned = re.sub(r'\n?```$', '', cleaned)
+        cleaned = cleaned.strip()
+
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, list):
+            print(f"[MemoryExtract] Expected array, got {type(parsed)}")
+            return ExtractMemoryResponse(facts=[])
+
+        valid_categories = {"user", "behavioral", "context"}
+        facts = []
+        for item in parsed:
+            cat = item.get("category", "")
+            if cat not in valid_categories:
+                continue
+            key = item.get("key", "").strip()
+            value = item.get("value", "").strip()
+            conf = float(item.get("confidence", 0.5))
+            if key and value and 0.0 <= conf <= 1.0:
+                facts.append(MemoryFact(
+                    category=cat,
+                    key=key,
+                    value=value,
+                    confidence=min(conf, 0.95),  # cap inferred confidence below explicit (1.0)
+                ))
+
+        print(f"[MemoryExtract] Extracted {len(facts)} facts in {latency_ms}ms")
+        return ExtractMemoryResponse(facts=facts)
+
+    except json.JSONDecodeError as je:
+        print(f"[MemoryExtract] JSON parse error: {je}")
+        return ExtractMemoryResponse(facts=[])
+    except Exception as exc:
+        print(f"[MemoryExtract] Error: {exc.__class__.__name__}: {exc}")
+        return ExtractMemoryResponse(facts=[])
+
 
 # ============================================================
 # WHISPER TRANSCRIPTION PIPELINE  v3

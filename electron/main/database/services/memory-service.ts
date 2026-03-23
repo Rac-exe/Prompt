@@ -15,6 +15,7 @@ export interface MemoryEntry {
   value: string;
   confidence: number;
   source: MemorySource;
+  observation_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -80,11 +81,84 @@ export class MemoryService {
           value,
           source,
           confidence,
+          observation_count: 1, // Reset to 1 for explicit entries
         },
         { onConflict: 'user_id,memory_type,key' },
       );
 
     if (error) throw error;
+  }
+
+  /**
+   * Check if an explicit (user-set) entry exists for a given (memoryType, key).
+   * Used by the analyzer to skip overwriting user-defined facts with inferred ones.
+   */
+  async hasExplicitEntry(memoryType: MemoryType, key: string): Promise<boolean> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) return false;
+
+    const { data, error } = await this.client
+      .from('user_memory')
+      .select('id')
+      .eq('user_id', userData.user.id)
+      .eq('memory_type', memoryType)
+      .eq('key', key)
+      .eq('source', 'explicit')
+      .maybeSingle();
+
+    if (error) return false;
+    return !!data;
+  }
+
+  /**
+   * Upsert an inferred memory entry, incrementing the observation_count
+   * if it already exists. Skips if an explicit entry exists (explicit priority).
+   * Returns true if the upsert was performed.
+   */
+  async upsertInferredEntry(
+    memoryType: MemoryType,
+    key: string,
+    value: string,
+    confidence = 0.7,
+  ): Promise<boolean> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    // Check explicit priority
+    const isExplicit = await this.hasExplicitEntry(memoryType, key);
+    if (isExplicit) {
+      console.log(`[MemoryService] Skipping inferred upsert for "${key}" — explicit entry exists`);
+      return false;
+    }
+
+    // Check if entry already exists (to increment observation_count)
+    const { data: existing } = await this.client
+      .from('user_memory')
+      .select('id, observation_count')
+      .eq('user_id', userData.user.id)
+      .eq('memory_type', memoryType)
+      .eq('key', key)
+      .maybeSingle();
+
+    const newCount = existing ? (existing.observation_count || 1) + 1 : 1;
+
+    const { error } = await this.client
+      .from('user_memory')
+      .upsert(
+        {
+          user_id: userData.user.id,
+          memory_type: memoryType,
+          key,
+          value,
+          source: 'inferred' as MemorySource,
+          confidence,
+          observation_count: newCount,
+        },
+        { onConflict: 'user_id,memory_type,key' },
+      );
+
+    if (error) throw error;
+    return true;
   }
 
   /**

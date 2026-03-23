@@ -140,13 +140,15 @@ let settingsService: SettingsService | null = null;
 let memoryService: MemoryService | null = null;
 let memoryAnalyzer: MemoryAnalyzer | null = null;
 
-function getServices() {
+function getServices(pythonClient?: PythonClient, appWindowManager?: AppWindowManager) {
     if (!chatService) chatService = new ChatService();
     if (!optimizationService) optimizationService = new OptimizationService();
     if (!userService) userService = new UserService();
     if (!settingsService) settingsService = new SettingsService();
     if (!memoryService) memoryService = new MemoryService();
-    if (!memoryAnalyzer) memoryAnalyzer = new MemoryAnalyzer();
+    if (!memoryAnalyzer && pythonClient) {
+        memoryAnalyzer = new MemoryAnalyzer(pythonClient, memoryService, settingsService, userService, appWindowManager);
+    }
     return { chatService, optimizationService, userService, settingsService, memoryService, memoryAnalyzer };
 }
 
@@ -167,7 +169,7 @@ export function registerChatHandlers(
     appWindowManager: AppWindowManager,
     pythonClient: PythonClient
 ) {
-    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer } = getServices();
+    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer } = getServices(pythonClient, appWindowManager);
 
     // ============================================
     // APP WINDOW: Optimize prompt request
@@ -200,11 +202,14 @@ export function registerChatHandlers(
                     console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
                 }
             }
-            // Append user memory context (non-blocking, silent failure)
-            if (authState.isAuthenticated && memory) {
+            // Append user memory context (guarded by toggle, non-blocking, silent failure)
+            if (authState.isAuthenticated && memory && analyzer) {
                 try {
-                    const memCtx = await memory.buildMemoryContext();
-                    if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                    const memEnabled = await analyzer.isMemoryEnabled();
+                    if (memEnabled) {
+                        const memCtx = await memory.buildMemoryContext();
+                        if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                    }
                 } catch { /* non-critical */ }
             }
 
@@ -240,6 +245,18 @@ export function registerChatHandlers(
                         originalText: promptText,
                         optimizedText,
                     };
+
+                    // Trigger background memory analysis (fire-and-forget, non-critical)
+                    if (analyzer && authState.currentUserId) {
+                        analyzer.onNewOptimization(
+                            authState.currentUserId,
+                            promptText,
+                            optimizedText,
+                            null,
+                        ).catch((e: unknown) =>
+                            console.warn('[Chat] Memory analyzer error (non-critical):', e)
+                        );
+                    }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization to DB:', dbError);
                 }
@@ -610,11 +627,14 @@ export function registerChatHandlers(
                     console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
                 }
             }
-            // Append user memory context (non-blocking, silent failure)
-            if (authState.isAuthenticated && memory) {
+            // Append user memory context (guarded by toggle, non-blocking, silent failure)
+            if (authState.isAuthenticated && memory && analyzer) {
                 try {
-                    const memCtx = await memory.buildMemoryContext();
-                    if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                    const memEnabled = await analyzer.isMemoryEnabled();
+                    if (memEnabled) {
+                        const memCtx = await memory.buildMemoryContext();
+                        if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                    }
                 } catch { /* non-critical */ }
             }
 
@@ -680,7 +700,12 @@ export function registerChatHandlers(
                     optimizationId = optimization.id;
                     // Trigger background memory analysis (fire-and-forget, non-critical)
                     if (analyzer && authState.currentUserId) {
-                        analyzer.onNewOptimization(authState.currentUserId).catch((e: unknown) =>
+                        analyzer.onNewOptimization(
+                            authState.currentUserId,
+                            data.content,
+                            optimizedText,
+                            data.forcedSkill || null,
+                        ).catch((e: unknown) =>
                             console.warn('[Memory] Analyzer error (non-critical):', e)
                         );
                     }
@@ -760,10 +785,13 @@ export function registerChatHandlers(
                     console.warn('[Chat] Failed to fetch custom instructions:', settingsErr);
                 }
             }
-            if (authState.isAuthenticated && memory) {
+            if (authState.isAuthenticated && memory && analyzer) {
                 try {
-                    const memCtx = await memory.buildMemoryContext();
-                    if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                    const memEnabled = await analyzer.isMemoryEnabled();
+                    if (memEnabled) {
+                        const memCtx = await memory.buildMemoryContext();
+                        if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+                    }
                 } catch { /* non-critical */ }
             }
 
@@ -809,7 +837,12 @@ export function registerChatHandlers(
                     );
                     optimizationId = optimization.id;
                     if (analyzer && authState.currentUserId) {
-                        analyzer.onNewOptimization(authState.currentUserId).catch((e: unknown) =>
+                        analyzer.onNewOptimization(
+                            authState.currentUserId,
+                            data.content,
+                            optimizedText,
+                            data.forcedSkill || null,
+                        ).catch((e: unknown) =>
                             console.warn('[Memory] Analyzer error (non-critical):', e)
                         );
                     }
