@@ -176,6 +176,9 @@ export interface ElectronAPI {
     close: () => void;
   };
 
+  // Rate Limit
+  getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
+
   // Network status
   onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
   onNetworkReconnected: (callback: () => void) => void;

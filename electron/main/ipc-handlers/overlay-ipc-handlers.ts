@@ -17,6 +17,7 @@ import { uploadAttachment } from './file-upload-service';
 import { errorLog } from '../database/error-log';
 import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
+import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
 
 // ============================================
@@ -102,6 +103,12 @@ function getChatService(): ChatService {
   return chatService;
 }
 
+let rateLimitService: RateLimitService | null = null;
+function getRateLimitService(): RateLimitService {
+  if (!rateLimitService) rateLimitService = new RateLimitService();
+  return rateLimitService;
+}
+
 /** Clear overlay conversation history and reset chat session (called on "New Session"). */
 function clearOverlayHistory() {
   inMemoryOverlayHistory.length = 0;
@@ -168,6 +175,23 @@ export function registerOverlayHandlers(
       }
       // Text-only: fall through — the Python client will fail with a connection
       // error which is caught and forwarded to the renderer via optimization-error.
+    }
+
+    // ── Rate limit guard ──────────────────────────────────────────────────
+    if (authState.currentUserId) {
+      try {
+        const rl = getRateLimitService().checkRateLimit(authState.currentUserId);
+        const result = await rl;
+        if (!result.allowed) {
+          console.warn(`[Overlay] Rate limit exceeded for user ${authState.currentUserId} (${result.limit - result.remaining}/${result.limit})`);
+          overlayManager.send('overlay:optimization-error', {
+            error: `Daily message limit reached (${result.limit}/${result.limit}). Your limit resets at midnight UTC.`,
+          });
+          return;
+        }
+      } catch (rlErr) {
+        console.warn('[Overlay] Rate limit check failed (allowing message):', rlErr);
+      }
     }
 
     // Handle session reset if the overlay is closed and opened again
@@ -245,6 +269,11 @@ export function registerOverlayHandlers(
 
       // Add the assistant's response to history
       inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
+
+      // Invalidate rate-limit cache so the next check reflects the new message
+      if (authState.currentUserId) {
+        getRateLimitService().invalidateCache(authState.currentUserId);
+      }
 
       overlayManager.send('overlay:optimization-complete', {
         original: data.text,

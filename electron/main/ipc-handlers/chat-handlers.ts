@@ -13,6 +13,7 @@ import { localCache } from '../database/local-cache';
 import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
+import { RateLimitService } from '../database/services/rate-limit-service';
 
 // ── File attachment types ─────────────────────────────────────────────────────
 export interface AttachedFile {
@@ -139,6 +140,7 @@ let userService: UserService | null = null;
 let settingsService: SettingsService | null = null;
 let memoryService: MemoryService | null = null;
 let memoryAnalyzer: MemoryAnalyzer | null = null;
+let rateLimitService: RateLimitService | null = null;
 
 function getServices(pythonClient?: PythonClient, appWindowManager?: AppWindowManager) {
     if (!chatService) chatService = new ChatService();
@@ -146,10 +148,11 @@ function getServices(pythonClient?: PythonClient, appWindowManager?: AppWindowMa
     if (!userService) userService = new UserService();
     if (!settingsService) settingsService = new SettingsService();
     if (!memoryService) memoryService = new MemoryService();
+    if (!rateLimitService) rateLimitService = new RateLimitService();
     if (!memoryAnalyzer && pythonClient) {
         memoryAnalyzer = new MemoryAnalyzer(pythonClient, memoryService, settingsService, userService, appWindowManager);
     }
-    return { chatService, optimizationService, userService, settingsService, memoryService, memoryAnalyzer };
+    return { chatService, optimizationService, userService, settingsService, memoryService, memoryAnalyzer, rateLimitService };
 }
 
 // Module-level state for optimization context
@@ -169,7 +172,7 @@ export function registerChatHandlers(
     appWindowManager: AppWindowManager,
     pythonClient: PythonClient
 ) {
-    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer } = getServices(pythonClient, appWindowManager);
+    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer, rateLimitService } = getServices(pythonClient, appWindowManager);
 
     // ============================================
     // APP WINDOW: Optimize prompt request
@@ -491,6 +494,25 @@ export function registerChatHandlers(
                 return;
             }
 
+            // ── Rate limit guard ──────────────────────────────────────────────
+            if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
+                try {
+                    const rl = await rateLimitService.checkRateLimit(authState.currentUserId);
+                    if (!rl.allowed) {
+                        console.warn(`[Chat] Rate limit exceeded for user ${authState.currentUserId} (${rl.limit - rl.remaining}/${rl.limit})`);
+                        if (appWindowManager) {
+                            appWindowManager.send('message-send-error', {
+                                error: `Daily message limit reached (${rl.limit}/${rl.limit}). Your limit resets at midnight UTC.`,
+                            });
+                        }
+                        return;
+                    }
+                } catch (rlErr) {
+                    // Fail-open: if rate-limit check itself errors, allow the message
+                    console.warn('[Chat] Rate limit check failed (allowing message):', rlErr);
+                }
+            }
+
             // Validate attached files if present
             const attachedFiles = data.attachedFiles || [];
             if (attachedFiles.length > 0) {
@@ -740,6 +762,11 @@ export function registerChatHandlers(
                 });
             }
 
+            // Invalidate rate-limit cache so the next check reflects the new message
+            if (authState.currentUserId && rateLimitService) {
+                rateLimitService.invalidateCache(authState.currentUserId);
+            }
+
             // Reload chats list to update timestamps
             const chats = await chatService.getChats();
             if (appWindowManager) {
@@ -769,6 +796,24 @@ export function registerChatHandlers(
         previousContent?: string;
     }) => {
         try {
+            // ── Rate limit guard ──────────────────────────────────────────────
+            if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
+                try {
+                    const rl = await rateLimitService.checkRateLimit(authState.currentUserId);
+                    if (!rl.allowed) {
+                        console.warn(`[Chat] Rate limit exceeded for regeneration (${rl.limit - rl.remaining}/${rl.limit})`);
+                        if (appWindowManager) {
+                            appWindowManager.send('message-send-error', {
+                                error: `Daily message limit reached (${rl.limit}/${rl.limit}). Your limit resets at midnight UTC.`,
+                            });
+                        }
+                        return;
+                    }
+                } catch (rlErr) {
+                    console.warn('[Chat] Rate limit check failed (allowing regeneration):', rlErr);
+                }
+            }
+
             const chatId = data.chatId;
             const attachedFiles = data.attachedFiles || [];
 
@@ -878,6 +923,11 @@ export function registerChatHandlers(
                 });
             }
 
+            // Invalidate rate-limit cache after regeneration
+            if (authState.currentUserId && rateLimitService) {
+                rateLimitService.invalidateCache(authState.currentUserId);
+            }
+
             // Reload chats list to update timestamps
             const chats = await chatService.getChats();
             if (appWindowManager) {
@@ -924,6 +974,21 @@ export function registerChatHandlers(
     ipcMain.on('app:stop-generation', () => {
         console.log('[Chat] Stop generation requested');
         pythonClient.abortLatestStream();
+    });
+
+    // ============================================
+    // APP WINDOW: Get rate limit status
+    // ============================================
+    ipcMain.handle('app:get-rate-limit-status', async () => {
+        if (!authState.isAuthenticated || !authState.currentUserId || !rateLimitService) {
+            return { allowed: true, remaining: Infinity, limit: Infinity, role: 'unknown' };
+        }
+        try {
+            return await rateLimitService.checkRateLimit(authState.currentUserId);
+        } catch (err) {
+            console.warn('[Chat] Rate limit status query failed:', err);
+            return { allowed: true, remaining: Infinity, limit: Infinity, role: 'unknown' };
+        }
     });
 }
 

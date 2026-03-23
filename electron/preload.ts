@@ -130,6 +130,9 @@ declare global {
         openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
       };
 
+      // Rate Limit API
+      getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
+
       // Memory API
       memory: {
         get: () => Promise<{
@@ -506,6 +509,13 @@ const electronAPI = {
   },
   onNetworkReconnected: (callback: () => void) => {
     ipcRenderer.on('network:reconnected', () => callback());
+  },
+
+  // ============================================
+  // RATE LIMIT API
+  // ============================================
+  getRateLimitStatus: () => {
+    return ipcRenderer.invoke('app:get-rate-limit-status');
   },
 
   // ============================================
