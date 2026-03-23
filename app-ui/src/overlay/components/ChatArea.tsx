@@ -250,12 +250,13 @@ interface AssistantMessageProps {
   msg: OverlayMessage;
   turnIdx: number;
   isOptimizing: boolean;
+  showReplace: boolean;
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
 }
 
-const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOptimizing, onCopy, onReplace, onRegenerate }) => {
+const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [replaceState, setReplaceState] = useState<'idle' | 'replacing' | 'replaced' | 'clipboard' | 'error'>('idle');
 
@@ -302,20 +303,22 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
             </>
           )}
         </button>
-        {/* Replace */}
-        <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
-          {replaceState === 'replacing' ? (
-            <>
-              <svg style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24" className="animate-spin"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path style={{ opacity: 0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-              {' '}Replacing…
-            </>
-          ) : (
-            <>
-              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-              {' '}Replace
-            </>
-          )}
-        </button>
+        {/* Replace — only shown when overlay was opened via @prompt trigger */}
+        {showReplace && (
+          <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
+            {replaceState === 'replacing' ? (
+              <>
+                <svg style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24" className="animate-spin"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path style={{ opacity: 0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                {' '}Replacing…
+              </>
+            ) : (
+              <>
+                <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                {' '}Replace
+              </>
+            )}
+          </button>
+        )}
         {/* Regenerate */}
         <button className="btn-msg-action" onClick={() => onRegenerate(turnIdx)} disabled={isOptimizing}>
           <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
@@ -357,6 +360,7 @@ interface TurnItemProps {
   isOptimizing: boolean;
   isStreamingHere: boolean;
   streamingContent: string;
+  showReplace: boolean;
   onEditCommit: (turnIdx: number, newContent: string) => void;
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
@@ -366,7 +370,7 @@ interface TurnItemProps {
 }
 
 const TurnItem: React.FC<TurnItemProps> = ({
-  turn, turnIdx, isOptimizing, isStreamingHere, streamingContent,
+  turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
 }) => {
   const uIdx = turn.userActiveIdx;
@@ -403,6 +407,7 @@ const TurnItem: React.FC<TurnItemProps> = ({
             msg={aMsg}
             turnIdx={turnIdx}
             isOptimizing={isOptimizing}
+            showReplace={showReplace}
             onCopy={onCopy}
             onReplace={onReplace}
             onRegenerate={onRegenerate}
@@ -434,6 +439,7 @@ interface ChatAreaProps {
   errorMessage: string | null;
   streamingTurnIdx: number;
   streamingContent: string;
+  showReplace: boolean;
   onEditCommit: (turnIdx: number, newContent: string) => void;
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
@@ -443,7 +449,7 @@ interface ChatAreaProps {
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
-  turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent,
+  turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
 }) => {
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -495,6 +501,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           isOptimizing={isOptimizing}
           isStreamingHere={streamingTurnIdx === i}
           streamingContent={streamingTurnIdx === i ? streamingContent : ''}
+          showReplace={showReplace}
           onEditCommit={onEditCommit}
           onCopy={onCopy}
           onReplace={onReplace}

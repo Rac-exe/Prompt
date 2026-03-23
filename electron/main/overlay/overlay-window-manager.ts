@@ -206,12 +206,13 @@ export class OverlayWindowManager {
   /**
    * Open the overlay and send current auth state.
    *
-   * @param isAuthenticated - Current auth state to send to renderer.
-   * @param anchorHwnd      - Optional: HWND of the window that triggered the open.
-   * @param prefill         - Optional: pre-fill the input with text + attach a chat context.
+   * @param isAuthenticated  - Current auth state to send to renderer.
+   * @param anchorHwnd       - Optional: HWND of the window that triggered the open.
+   * @param prefill          - Optional: pre-fill the input with text + attach a chat context.
+   * @param triggeredByHook  - True when opened via @prompt keyboard hook (enables Replace button).
    */
-  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }) {
-    const openedPayload = { isAuthenticated, prefill: prefill || null };
+  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }, triggeredByHook?: boolean) {
+    const openedPayload = { isAuthenticated, prefill: prefill || null, triggeredByHook: !!triggeredByHook };
 
     if (!this.window || this.window.isDestroyed()) {
       this.createWindow();
