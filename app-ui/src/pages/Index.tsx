@@ -15,6 +15,7 @@ import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
 import { useMessageTree } from "@/hooks/useMessageTree";
+import { useChatUIState } from "@/hooks/useChatUIState";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 import { useAuth } from "@/context/AuthContext";
 
@@ -53,6 +54,19 @@ const Index = () => {
   const selectedChatIdRef = useRef<string | null>(null);
   useEffect(() => { selectedChatIdRef.current = selectedChatId; }, [selectedChatId]);
   const [recentChats, setRecentChats] = useState<any[]>([]);
+
+  // Per-chat UI state (input, mode, skill, files)
+  const {
+    input,
+    setInput,
+    mode,
+    setMode,
+    selectedSkill,
+    setSelectedSkill,
+    attachedFiles,
+    setAttachedFiles,
+    deleteChatState,
+  } = useChatUIState(selectedChatId);
 
   // Shared library token (set when opening a share link)
   const [sharedLibraryToken, setSharedLibraryToken] = useState<string | null>(null);
@@ -704,6 +718,7 @@ const Index = () => {
 
   const handleDeleteChat = useCallback((chatId: string) => {
     console.log('[Index] Deleting chat:', chatId);
+    deleteChatState(chatId);
     if (isElectron && window.electronAPI?.deleteChat) {
       window.electronAPI.deleteChat(chatId);
     } else {
@@ -720,7 +735,7 @@ const Index = () => {
         description: "Chat has been permanently removed.",
       });
     }
-  }, [selectedChatId]);
+  }, [selectedChatId, deleteChatState]);
 
   // Chat handlers
   const handleNewChat = () => {
@@ -1257,6 +1272,15 @@ Your prompt was: "${content}"`;
                 window.electronAPI.loadMessages(selectedChatId);
               }
             }}
+            // Per-chat UI state
+            input={input}
+            setInput={setInput}
+            mode={mode}
+            setMode={setMode}
+            attachedFiles={attachedFiles}
+            setAttachedFiles={setAttachedFiles}
+            selectedSkill={selectedSkill}
+            setSelectedSkill={setSelectedSkill}
           />
         );
     }

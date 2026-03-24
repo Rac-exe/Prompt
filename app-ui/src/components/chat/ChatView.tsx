@@ -41,6 +41,15 @@ interface ChatViewProps {
   avatarUrl?: string | null;
   versionInfoMap?: Map<string, VersionInfo>;
   onNavigateVersion?: (parentId: string, direction: 'prev' | 'next') => void;
+  // Per-chat UI state (managed by parent)
+  input: string;
+  setInput: (value: string) => void;
+  mode: "fast" | "thinking";
+  setMode: (value: "fast" | "thinking") => void;
+  attachedFiles: AttachedFile[];
+  setAttachedFiles: (files: AttachedFile[]) => void;
+  selectedSkill: string | null;
+  setSelectedSkill: (skill: string | null) => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -52,13 +61,11 @@ export const ChatView = ({
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
+  // Per-chat UI state
+  input, setInput, mode, setMode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
 }: ChatViewProps) => {
-  const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"fast" | "thinking">("fast");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
-  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   // File preview modal — null = closed

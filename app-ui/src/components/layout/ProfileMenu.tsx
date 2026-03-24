@@ -41,7 +41,6 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }:
           {!collapsed && (
             <div className="flex-1 min-w-0 text-left animate-fade-in">
               <p className="text-[13px] font-medium text-foreground truncate leading-none">{userName}</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate leading-none">Free plan</p>
             </div>
           )}
         </button>
@@ -68,10 +67,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }:
               <p className="text-xs text-muted-foreground truncate mt-0.5">{userEmail}</p>
             </div>
           </div>
-          <div className="inline-flex items-center gap-1.5 mt-1.5 px-1.5 py-0.5 rounded-full bg-emerald-muted">
-            <div className="w-1 h-1 rounded-full bg-emerald" />
-            <span className="text-[10px] font-semibold text-emerald tracking-wide uppercase">Free Plan</span>
-          </div>
+
         </DropdownMenuLabel>
 
         <DropdownMenuSeparator className="bg-border my-1" />

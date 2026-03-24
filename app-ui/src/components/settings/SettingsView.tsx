@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, CreditCard, Palette, Moon, Sun, Check, Sparkles, Camera, Brain } from "lucide-react";
+import { User, Palette, Moon, Sun, Check, Sparkles, Camera, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -129,13 +129,6 @@ export const SettingsView = () => {
               Profile
             </TabsTrigger>
             <TabsTrigger
-              value="billing"
-              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
-              <CreditCard className="w-3.5 h-3.5 mr-1.5 opacity-70" />
-              Billing
-            </TabsTrigger>
-            <TabsTrigger
               value="customize"
               className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
             >
@@ -182,10 +175,6 @@ export const SettingsView = () => {
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-foreground">{userName}</p>
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">{userEmail}</p>
-                      <div className="inline-flex items-center gap-1.5 mt-2 px-2 py-0.5 rounded-full bg-emerald-muted">
-                        <div className="w-1 h-1 rounded-full bg-emerald" />
-                        <span className="text-[10px] font-semibold text-emerald tracking-wide uppercase">Free Plan</span>
-                      </div>
                     </div>
 
                     <Button
@@ -255,74 +244,6 @@ export const SettingsView = () => {
                   </Button>
                 </Row>
               </Section>
-            </div>
-          </ScrollArea>
-        </TabsContent>
-
-        {/* ── Billing tab ── */}
-        <TabsContent value="billing" className="flex-1 mt-0 overflow-hidden">
-          <ScrollArea className="h-full">
-            <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
-              <Section title="Current Plan">
-                <Row>
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Free</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Limited daily prompt generations</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-muted text-emerald text-[10px] font-semibold uppercase tracking-wide">
-                      <span className="w-1 h-1 rounded-full bg-emerald" />
-                      Active
-                    </span>
-                    <Button
-                      size="sm"
-                      className="h-8 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm"
-                    >
-                      Upgrade to Pro
-                    </Button>
-                  </div>
-                </Row>
-              </Section>
-
-              <div className="bg-surface border border-emerald/25 rounded-xl p-5 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald/4 rounded-full translate-x-12 -translate-y-12 pointer-events-none" />
-                <div className="relative">
-                  <div className="flex items-start justify-between mb-4">
-                    <div>
-                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald/10 text-emerald text-[10px] font-bold uppercase tracking-wider mb-2">
-                        <Sparkles className="w-2.5 h-2.5" />
-                        Pro Plan
-                      </div>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-3xl font-bold text-foreground">$9.99</span>
-                        <span className="text-sm text-muted-foreground">/ month</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">Cancel anytime</p>
-                    </div>
-                  </div>
-                  <div className="space-y-2.5 mb-5">
-                    {[
-                      { label: "Unlimited Prompts", desc: "Generate as many as you need" },
-                      { label: "Premium AI Models", desc: "Claude, GPT-4, Gemini & more" },
-                      { label: "Save & Organize", desc: "Unlimited library collections" },
-                      { label: "Priority Support", desc: "Get help when you need it" },
-                    ].map((feature) => (
-                      <div key={feature.label} className="flex items-start gap-2.5">
-                        <div className="w-4 h-4 rounded-full bg-emerald/15 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Check className="w-2.5 h-2.5 text-emerald" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground leading-none">{feature.label}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{feature.desc}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <Button className="w-full h-9 bg-emerald hover:bg-emerald/90 text-white font-semibold text-sm glow-emerald-sm">
-                    Upgrade Now
-                  </Button>
-                </div>
-              </div>
             </div>
           </ScrollArea>
         </TabsContent>
