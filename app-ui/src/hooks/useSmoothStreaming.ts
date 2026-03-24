@@ -48,6 +48,23 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
     }, []);
 
     /**
+     * Hard-reset: immediately kills all streaming state without calling
+     * onStreamingComplete.  Used when the user switches chats mid-stream —
+     * the in-flight response belongs to the *old* chat and must not leak
+     * into the new one.
+     */
+    const resetStreaming = useCallback(() => {
+        console.log('[useSmoothStreaming] Reset — clearing all state');
+        generationId.current += 1; // Invalidate any running animation loop
+        isStreamingRef.current = false;
+        streamBuffer.current = '';
+        visualText.current = '';
+        pendingFinalMessage.current = null;
+        startTimestamp.current = 0;
+        setStreamingMessage(null);
+    }, []);
+
+    /**
      * Called when the user clicks Stop.
      * Skips the typewriter delay and immediately shows whatever has been
      * buffered so far. Does NOT call onStreamingComplete — the normal
@@ -230,6 +247,7 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         handleChunk,
         handleFinalMessage,
         stopStreaming,
+        resetStreaming,
         isStreaming: isStreamingRef.current
     };
 };
