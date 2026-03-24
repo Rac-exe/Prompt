@@ -1,6 +1,7 @@
-import { useState, useEffect, ReactNode, useCallback } from 'react';
+import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
+import { OnboardingPage } from './OnboardingPage';
 import { AuthContext, CompleteUserData } from '@/context/AuthContext';
 import { useToast } from "@/hooks/use-toast";
 
@@ -8,13 +9,19 @@ interface AuthWrapperProps {
   children: ReactNode;
 }
 
-type AuthView = 'loading' | 'login' | 'signup' | 'app';
+type AuthView = 'loading' | 'login' | 'signup' | 'onboarding' | 'app';
+
+const ONBOARDING_KEY_PREFIX = 'onboarding-completed-';
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
   const [authView, setAuthView] = useState<AuthView>('loading');
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
   const { toast } = useToast();
+
+  // Track the view that was active when auth fires so we know if user just signed up
+  const authViewRef = useRef<AuthView>('loading');
+  authViewRef.current = authView;
 
   const handleSignOut = useCallback(() => {
     if (window.electronAPI?.signOut) {
@@ -54,8 +61,18 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       } else if (data.isAuthenticated && data.user) {
         // user data from backend matches CompleteUserData structure
         setUser(data.user);
-        setAuthView('app');
         setError(null);
+
+        // Only show onboarding if the user JUST signed up (authView was 'signup')
+        const cameFromSignup = authViewRef.current === 'signup';
+
+        if (cameFromSignup) {
+          // Fresh signup → show onboarding
+          setAuthView('onboarding');
+        } else {
+          // Returning user (login / app re-launch) → go straight to app
+          setAuthView('app');
+        }
       } else {
         setAuthView('login');
         setUser(null);
@@ -116,6 +133,22 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
             // Don't set authView here - let the auth state change event handle it
           }}
           error={error}
+        />
+      );
+    }
+
+    if (authView === 'onboarding') {
+      return (
+        <OnboardingPage
+          userName={user?.profile?.name?.split(' ')[0]}
+          onComplete={() => {
+            // Mark onboarding as completed for this user
+            const userId = user?.profile?.id;
+            if (userId) {
+              localStorage.setItem(`${ONBOARDING_KEY_PREFIX}${userId}`, 'true');
+            }
+            setAuthView('app');
+          }}
         />
       );
     }
