@@ -117,6 +117,9 @@ declare global {
         close: () => void;
       };
 
+      // Open URL in default system browser
+      openExternal: (url: string) => void;
+
       // Common API
       send: (channel: string, data: any) => void;
 
@@ -493,6 +496,8 @@ const electronAPI = {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
   },
+
+  openExternal: (url: string) => ipcRenderer.send('shell:openExternal', url),
 
   // ============================================
   // COMMON API
