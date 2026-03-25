@@ -325,7 +325,7 @@ class OptimizeRequest(BaseModel):
 class OptimizeResponse(BaseModel):
     optimized: str
     original: str
-    model: str = "llama3.2"
+    model: str = ""
     latency_ms: Optional[float] = None
 
 # Simple in-memory cache (LRU would be better for production)
@@ -384,6 +384,7 @@ async def optimize_prompt(request: OptimizeRequest):
         return OptimizeResponse(
             optimized=prompt_cache[prompt_text],
             original=request.prompt.strip(),  # Return original without unique ID
+            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
             latency_ms=latency
         )
 
@@ -433,6 +434,7 @@ async def optimize_prompt(request: OptimizeRequest):
         return OptimizeResponse(
             optimized=optimized,
             original=request.prompt.strip(),
+            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
             latency_ms=latency
         )
 
