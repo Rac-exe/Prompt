@@ -222,7 +222,7 @@ export const Sidebar = ({
     <>
       <div
         className={cn(
-          "h-full flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out",
+          "h-full flex flex-col bg-sidebar border-r border-sidebar-border transition-[width,padding] duration-300 ease-in-out",
           collapsed ? "w-[60px]" : "w-[240px]"
         )}
       >
