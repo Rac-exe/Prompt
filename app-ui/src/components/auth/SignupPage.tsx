@@ -3,7 +3,7 @@ import { Logo } from "@/components/ui/Logo";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { Zap, ArrowRight, Loader2, Minus, Square, X } from 'lucide-react';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
@@ -69,7 +69,19 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* ── Window title bar ── */}
+      <div
+        className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus className="w-3.5 h-3.5" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square className="w-3 h-3" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      </div>
+      <div className="flex flex-1">
       {/* Left decorative panel */}
       <div className="hidden lg:flex lg:w-[42%] bg-sidebar flex-col justify-between p-12 border-r border-sidebar-border relative overflow-hidden">
         <div
@@ -234,6 +246,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
             Sign in instead
           </Button>
         </div>
+      </div>
       </div>
     </div>
   );

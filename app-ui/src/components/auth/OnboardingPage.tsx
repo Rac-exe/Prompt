@@ -3,6 +3,7 @@ import { Logo } from "@/components/ui/Logo";
 import {
   Zap, Sparkles, MessageSquare, Library, Mic,
   AtSign, Brain, ChevronRight, MousePointerClick, ArrowRight,
+  Minus, Square, X,
 } from 'lucide-react';
 
 /* ─────────────────────────────────────────────────────────────
@@ -392,8 +393,41 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
         }}
       />
 
+      {/* ── Window title bar (draggable) ── */}
+      <div
+        className="absolute top-0 left-0 right-0 h-9 z-30 flex items-center justify-end select-none"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        <div
+          className="flex items-center h-full"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <button
+            onClick={() => window.electronAPI?.windowControls?.minimize()}
+            aria-label="Minimise"
+            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => window.electronAPI?.windowControls?.maximize()}
+            aria-label="Maximise"
+            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+          >
+            <Square className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => window.electronAPI?.windowControls?.close()}
+            aria-label="Close"
+            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
       {/* ── Top progress bar ── */}
-      <div className="absolute top-0 left-0 right-0 h-[2px] bg-border/30 z-20">
+      <div className="absolute top-9 left-0 right-0 h-[2px] bg-border/30 z-20">
         <div
           className="h-full bg-emerald transition-none rounded-r-full"
           style={{ width: `${overallProgress * 100}%` }}
@@ -401,7 +435,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
       </div>
 
       {/* ── Top bar ── */}
-      <div className="relative z-10 flex items-center justify-between px-8 pt-6 pb-4">
+      <div className="relative z-10 flex items-center justify-between px-8 pt-14 pb-4">
         <div className="flex items-center gap-3">
           <Logo size="w-8 h-8" />
           <span className="font-bold text-foreground text-sm tracking-tight">Prmpt</span>
