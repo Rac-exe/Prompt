@@ -176,6 +176,9 @@ export interface ElectronAPI {
     close: () => void;
   };
 
+  // Open URL in default system browser
+  openExternal: (url: string) => void;
+
   // Rate Limit
   getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
 
