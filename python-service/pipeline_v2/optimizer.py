@@ -24,6 +24,7 @@ from .skills import load_selected_skills, load_skill_file
 from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 from .document_parser import parse_files
+from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
 
 litellm.set_verbose = False
 
@@ -43,8 +44,8 @@ SUMMARIZE_THRESHOLD = 3000   # compact CC when token count exceeds this
 CC_KEEP_RECENT    = 4        # recent messages to keep after compaction
 CC_FALLBACK_MSGS  = 6        # messages to use if summarizer fails
 
-# Dedicated cheap/fast model for summarization (separate from the main optimizer)
-SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "claude-haiku-4-5-20251001")
+
+
 
 
 # ── Model capabilities ───────────────────────────────────────────────────────
@@ -82,12 +83,10 @@ def supports_vision(model: str) -> bool:
 def _get_litellm_kwargs(provider: str, model: str) -> Tuple[str, dict]:
     """Return (resolved_model, extra_kwargs) for litellm."""
     if provider == "openrouter" or model.startswith("openrouter/"):
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
+        if not OPENROUTER_API_KEY:
             print("ERROR: OPENROUTER_API_KEY not set in .env")
             sys.exit(1)
-        # We leave the openrouter prefix if it's there, LiteLLM handles it gracefully
-        return model, {"api_key": api_key}
+        return model, {"api_key": OPENROUTER_API_KEY}
     return model, {}
 
 
@@ -115,7 +114,7 @@ def _extract_optimized_prompt(raw: str) -> str:
 def summarize_context(cc: ChatContext, provider: str) -> str:
     """
     LLM 1: Compress full chat context into a compact summary.
-    Always uses the cheap haiku model regardless of what model the optimizer uses.
+    Uses SUMMARIZER_MODEL (cheap/fast) regardless of what the optimizer uses.
     """
     system_prompt = _load_system_prompt("system_prompt_summarizer.md")
     resolved_model, extra = _get_litellm_kwargs(provider, SUMMARIZER_MODEL)
@@ -253,7 +252,7 @@ def optimize(
     
         # Context management: compact if CC exceeds token budget
         if cc.token_estimate() > SUMMARIZE_THRESHOLD:
-            print("[Optimizer] Compacting context (haiku summarizer)...")
+            print(f"[Optimizer] Compacting context ({SUMMARIZER_MODEL})...")
             try:
                 summary_text = summarize_context(cc, provider)
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)

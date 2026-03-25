@@ -26,7 +26,6 @@ from faster_whisper import WhisperModel
 import threading
 import queue
 import asyncio
-import os
 import torch
 
 app = FastAPI()
@@ -35,6 +34,9 @@ app = FastAPI()
 print("[Startup] Loading pipeline_v2 modules...")
 from pipeline_v2.context import ChatContext
 from pipeline_v2.optimizer import optimize as pipeline_optimize
+from pipeline_v2.config import (
+    OPTIMIZER_MODEL, SUMMARIZER_MODEL, TITLE_MODEL, MEMORY_MODEL, OPENROUTER_API_KEY,
+)
 import uuid
 print("[Startup] pipeline_v2 loaded")
 
@@ -44,26 +46,16 @@ async def startup_event():
     try:
         print("[Startup] Warming up OpenRouter connection...")
         import litellm
-        import os
-        model = os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini")
-        
-        # We do a direct ping to litellm instead of pipeline_optimize
-        # so this doesn't pollute the local usage logs or chat history
-        # We set max_tokens=1 so it uses effectively 0 compute/cost
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        
-        # Prepare kwargs
-        kwargs = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
-        if api_key and ("openrouter" in model.lower() or provider_check(model)):
-            kwargs["api_key"] = api_key
-            
+
+        kwargs = {"model": OPTIMIZER_MODEL, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+        if OPENROUTER_API_KEY and "openrouter" in OPTIMIZER_MODEL.lower():
+            kwargs["api_key"] = OPENROUTER_API_KEY
+
         litellm.completion(**kwargs)
         print("[Startup] OpenRouter connection warmed up")
     except Exception as e:
         print(f"[Startup] WARNING: Warmup failed (this is harmless if no internet): {e}")
 
-def provider_check(model: str) -> bool:
-    return "openrouter" in model.lower()
 
 # ============================================
 # SKILL MANAGER - DISABLED (using simple system prompt instead)
@@ -384,7 +376,7 @@ async def optimize_prompt(request: OptimizeRequest):
         return OptimizeResponse(
             optimized=prompt_cache[prompt_text],
             original=request.prompt.strip(),  # Return original without unique ID
-            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
+            model=OPTIMIZER_MODEL,
             latency_ms=latency
         )
 
@@ -409,7 +401,7 @@ async def optimize_prompt(request: OptimizeRequest):
         optimized_raw = pipeline_optimize(
             user_input=clean_prompt,
             cc=cc,
-            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
+            model=OPTIMIZER_MODEL,
             provider="auto",
             stream=False,
             mode=mode,
@@ -434,7 +426,7 @@ async def optimize_prompt(request: OptimizeRequest):
         return OptimizeResponse(
             optimized=optimized,
             original=request.prompt.strip(),
-            model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
+            model=OPTIMIZER_MODEL,
             latency_ms=latency
         )
 
@@ -500,7 +492,7 @@ async def optimize_stream(websocket: WebSocket):
                 stream_gen = pipeline_optimize(
                     user_input=prompt_text,
                     cc=cc,
-                    model=os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini"),
+                    model=OPTIMIZER_MODEL,
                     provider="auto",
                     stream=True,
                     mode=mode,
@@ -569,7 +561,7 @@ class TitleRequest(BaseModel):
 async def generate_title(request: TitleRequest):
     """
     Generate a short smart chat title (3-5 words) from the first user message.
-    Uses the same model as the optimizer (gpt-4o-mini via OpenRouter).
+    Uses TITLE_MODEL (defaults to SUMMARIZER_MODEL — cheap & fast).
     Falls back to "New Chat" if the LLM call fails or prompt is empty.
     """
     prompt_text = request.prompt.strip()
@@ -578,8 +570,7 @@ async def generate_title(request: TitleRequest):
 
     try:
         import litellm as _litellm
-        model = os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini")
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        model = TITLE_MODEL
 
         kwargs: dict = {
             "model": model,
@@ -598,13 +589,12 @@ async def generate_title(request: TitleRequest):
             "max_tokens": 20,
             "temperature": 0.3,
         }
-        if api_key and ("openrouter" in model.lower()):
-            kwargs["api_key"] = api_key
+        if OPENROUTER_API_KEY and ("openrouter" in model.lower()):
+            kwargs["api_key"] = OPENROUTER_API_KEY
 
         response = _litellm.completion(**kwargs)
         raw_title = response.choices[0].message.content.strip()
 
-        # Sanitise: strip quotes, punctuation, leading hashes the model might add
         import re as _re
         raw_title = _re.sub(r'^[#"\'\s]+|[#"\'\s]+$', '', raw_title)
         # Hard cap at 5 words
@@ -680,8 +670,7 @@ async def extract_memory_facts(request: ExtractMemoryRequest):
     try:
         import litellm as _litellm
 
-        model = os.environ.get("OPTIMIZER_MODEL", "openrouter/openai/gpt-4o-mini")
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        model = MEMORY_MODEL
 
         user_content = f"Raw prompt:\n{raw}\n\nOptimized version:\n{optimized}"
         if request.skill:
@@ -696,8 +685,8 @@ async def extract_memory_facts(request: ExtractMemoryRequest):
             "max_tokens": 300,
             "temperature": 0.1,
         }
-        if api_key and "openrouter" in model.lower():
-            kwargs["api_key"] = api_key
+        if OPENROUTER_API_KEY and "openrouter" in model.lower():
+            kwargs["api_key"] = OPENROUTER_API_KEY
 
         t0 = time.time()
         response = _litellm.completion(**kwargs)
