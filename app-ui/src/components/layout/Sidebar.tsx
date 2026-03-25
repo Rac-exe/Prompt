@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Logo } from "@/components/ui/Logo";
 import {
   Zap, Plus, Library, MessageSquare,
   PanelLeftClose, PanelLeftOpen,
@@ -221,7 +222,7 @@ export const Sidebar = ({
     <>
       <div
         className={cn(
-          "h-full flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 ease-in-out",
+          "h-full flex flex-col bg-sidebar border-r border-sidebar-border transition-[width,padding] duration-300 ease-in-out",
           collapsed ? "w-[60px]" : "w-[240px]"
         )}
       >
@@ -234,12 +235,10 @@ export const Sidebar = ({
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
           <div className={cn("flex items-center gap-2.5 min-w-0", collapsed && "justify-center")}>
-            <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center flex-shrink-0 shadow-sm shadow-emerald/30">
-              <Zap className="w-4 h-4 text-white" />
-            </div>
+            <Logo size="w-8 h-8" />
             {!collapsed && (
               <div className="min-w-0 animate-fade-in">
-                <p className="text-[13px] font-bold text-foreground leading-none tracking-tight">Prompt Weaver</p>
+                <p className="text-[13px] font-bold text-foreground leading-none tracking-tight">Prmpt</p>
                 <p className="label-xs mt-0.5">Studio</p>
               </div>
             )}
@@ -352,7 +351,7 @@ export const Sidebar = ({
         <div className={cn("flex-shrink-0 border-t border-sidebar-border", collapsed ? "p-1.5" : "p-2")}>
           <ProfileMenu
             onSettingsClick={() => onViewChange("settings")}
-            onHelpClick={() => window.open("https://docs.promptweaver.app", "_blank")}
+            onHelpClick={() => window.electronAPI?.openExternal("https://tryprmpt.vercel.app/")}
             collapsed={collapsed}
           />
         </div>

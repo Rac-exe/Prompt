@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Brain, Trash2, Plus, Edit2, Check, X, User, Activity, BookOpen, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { Brain, Trash2, Plus, Edit2, Check, X, User, Activity, BookOpen, ChevronDown, ChevronRight, Loader2, Eye } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import type { MemoryEntry, MemoryType, UserMemoryMap } from '@/types/electron';
@@ -39,21 +39,29 @@ const SECTION_META: Record<MemoryType, { label: string; icon: React.FC<{ classNa
   },
 };
 
-function ConfidenceBadge({ confidence, source }: { confidence: number; source: string }) {
+function ConfidenceBadge({ confidence, source, observationCount }: { confidence: number; source: string; observationCount?: number }) {
   if (source === 'explicit') {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo/15 text-indigo-400 font-medium">
-        ✏️ You set this
+        You set this
       </span>
     );
   }
   const pct = Math.round(confidence * 100);
   return (
-    <span className={cn(
-      'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium',
-      confidence >= 0.7 ? 'bg-emerald/15 text-emerald-400' : 'bg-amber/15 text-amber-400',
-    )}>
-      {pct}% confident
+    <span className="inline-flex items-center gap-1.5">
+      <span className={cn(
+        'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium',
+        confidence >= 0.7 ? 'bg-emerald/15 text-emerald-400' : 'bg-amber/15 text-amber-400',
+      )}>
+        {pct}% confident
+      </span>
+      {observationCount && observationCount > 1 && (
+        <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground font-medium" title={`Observed ${observationCount} times`}>
+          <Eye className="w-2.5 h-2.5" />
+          {observationCount}
+        </span>
+      )}
     </span>
   );
 }
@@ -85,7 +93,7 @@ function MemoryRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <span className="text-xs font-medium text-muted-foreground truncate max-w-[180px]">{entry.key}</span>
-          <ConfidenceBadge confidence={entry.confidence} source={entry.source} />
+          <ConfidenceBadge confidence={entry.confidence} source={entry.source} observationCount={entry.observation_count} />
         </div>
         {editing ? (
           <div className="flex items-center gap-2 mt-1">
@@ -220,12 +228,41 @@ function MemorySection({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Toggle Switch Component
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ToggleSwitch({ checked, onChange, disabled }: { checked: boolean; onChange: (val: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+        checked ? 'bg-primary' : 'bg-secondary',
+        disabled && 'opacity-50 cursor-not-allowed',
+      )}
+    >
+      <span
+        className={cn(
+          'inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform duration-200 shadow-sm',
+          checked ? 'translate-x-[18px]' : 'translate-x-[3px]',
+        )}
+      />
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main MemoryView
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function MemoryView() {
   const [memory, setMemory] = useState<UserMemoryMap>({ user: {}, behavioral: {}, context: {} });
   const [loading, setLoading] = useState(true);
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [togglingMemory, setTogglingMemory] = useState(false);
 
   const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
@@ -233,8 +270,12 @@ export function MemoryView() {
     if (!isElectron) { setLoading(false); return; }
     setLoading(true);
     try {
-      const result = await window.electronAPI.memory.get();
+      const [result, enabled] = await Promise.all([
+        window.electronAPI.memory.get(),
+        window.electronAPI.memory.getEnabled(),
+      ]);
       setMemory(result);
+      setMemoryEnabled(enabled);
     } catch {
       toast({ title: 'Failed to load memory', variant: 'destructive' });
     } finally {
@@ -243,6 +284,38 @@ export function MemoryView() {
   }, [isElectron]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Listen for live memory updates from the analyzer
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI.memory.onUpdated) return;
+    const cleanup = window.electronAPI.memory.onUpdated((updatedMemory: UserMemoryMap) => {
+      setMemory(updatedMemory);
+    });
+    return cleanup;
+  }, [isElectron]);
+
+  const handleToggleMemory = useCallback(async (enabled: boolean) => {
+    if (!isElectron) return;
+    setTogglingMemory(true);
+    try {
+      const result = await window.electronAPI.memory.setEnabled(enabled);
+      if (result.success) {
+        setMemoryEnabled(enabled);
+        toast({
+          title: enabled ? 'Memory learning enabled' : 'Memory learning paused',
+          description: enabled
+            ? 'The app will learn from your usage to personalize optimization.'
+            : 'Automatic learning paused. You can still add facts manually.',
+        });
+      } else {
+        toast({ title: 'Failed to update setting', description: result.error, variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Failed to update setting', variant: 'destructive' });
+    } finally {
+      setTogglingMemory(false);
+    }
+  }, [isElectron]);
 
   const handleDelete = useCallback(async (memoryType: MemoryType, key: string) => {
     if (!isElectron) return;
@@ -284,7 +357,7 @@ export function MemoryView() {
         ...prev,
         [memoryType]: {
           ...prev[memoryType],
-          [key]: { key, value, source: 'explicit', confidence: 1.0, memory_type: memoryType, updated_at: now },
+          [key]: { key, value, source: 'explicit', confidence: 1.0, memory_type: memoryType, updated_at: now, observation_count: 1 },
         },
       }));
       toast({ title: 'Memory saved' });
@@ -302,13 +375,30 @@ export function MemoryView() {
         <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
           <Brain className="w-5 h-5 text-primary" />
         </div>
-        <div>
+        <div className="flex-1">
           <h2 className="text-lg font-semibold">App Memory</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             The app learns from your usage to personalize prompt optimization.{' '}
             <span className="text-foreground/70">{totalFacts} {totalFacts === 1 ? 'fact' : 'facts'} stored.</span>
           </p>
         </div>
+      </div>
+
+      {/* Memory Toggle */}
+      <div className="flex items-center justify-between px-4 py-3 border border-border/40 rounded-xl bg-secondary/10">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium">Learn from my usage</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {memoryEnabled
+              ? 'The app automatically learns facts from your prompts to improve optimization.'
+              : 'Automatic learning is paused. You can still add facts manually.'}
+          </p>
+        </div>
+        <ToggleSwitch
+          checked={memoryEnabled}
+          onChange={handleToggleMemory}
+          disabled={togglingMemory}
+        />
       </div>
 
       {loading ? (
@@ -332,8 +422,8 @@ export function MemoryView() {
       )}
 
       <p className="text-[11px] text-muted-foreground/50 leading-relaxed">
-        You have full control. Edit or delete any fact at any time. Inferred facts are learned from your
-        optimization history and may update automatically.
+        You have full control. Edit or delete any fact at any time. Facts you set manually always take priority
+        over inferred ones. Inferred facts update automatically when learning is enabled.
       </p>
     </div>
   );

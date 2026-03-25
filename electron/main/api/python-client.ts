@@ -328,6 +328,31 @@ export class PythonClient extends EventEmitter {
   }
 
   /**
+   * Extract memory facts from a raw prompt + optimized text.
+   * Calls /extract-memory-facts on the Python service.
+   * Returns extracted facts, or an empty array on failure.
+   * Used fire-and-forget after each optimization — non-blocking.
+   */
+  async extractMemoryFacts(
+    rawPrompt: string,
+    optimizedText: string,
+    skill: string | null = null
+  ): Promise<Array<{ category: string; key: string; value: string; confidence: number }>> {
+    try {
+      const response = await this.client.post('/extract-memory-facts', {
+        raw_prompt: rawPrompt,
+        optimized_text: optimizedText,
+        skill: skill || undefined,
+      }, { timeout: 15000 });
+      const facts = response.data?.facts;
+      return Array.isArray(facts) ? facts : [];
+    } catch (error) {
+      console.warn('[PythonClient] extractMemoryFacts failed (non-critical):', error);
+      return [];
+    }
+  }
+
+  /**
    * Generate a short smart title for a new chat from the first user message.
    * Calls /generate-title on the Python service (GPT-4o-mini via OpenRouter).
    * Returns the generated title, or "New Chat" as a fallback.

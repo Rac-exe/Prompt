@@ -15,6 +15,9 @@ import { networkMonitor } from './network-monitor-singleton';
 import { offlineQueue } from '../database/offline-queue';
 import { uploadAttachment } from './file-upload-service';
 import { errorLog } from '../database/error-log';
+import { MemoryService } from '../database/services/memory-service';
+import { MemoryAnalyzer } from '../database/services/memory-analyzer';
+import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
 
 // ============================================
@@ -68,6 +71,26 @@ function getUserService(): UserService {
   return userService;
 }
 
+let memoryService: MemoryService | null = null;
+function getMemoryService(): MemoryService {
+  if (!memoryService) memoryService = new MemoryService();
+  return memoryService;
+}
+
+let memoryAnalyzer: MemoryAnalyzer | null = null;
+function getMemoryAnalyzer(pythonClient: PythonClient, appWindowManager: AppWindowManager): MemoryAnalyzer {
+  if (!memoryAnalyzer) {
+    memoryAnalyzer = new MemoryAnalyzer(
+      pythonClient,
+      getMemoryService(),
+      getSettingsService(),
+      getUserService(),
+      appWindowManager,
+    );
+  }
+  return memoryAnalyzer;
+}
+
 // Simple in-memory history for the overlay session so the user can refine prompts
 const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
 
@@ -78,6 +101,12 @@ let chatService: ChatService | null = null;
 function getChatService(): ChatService {
   if (!chatService) chatService = new ChatService();
   return chatService;
+}
+
+let rateLimitService: RateLimitService | null = null;
+function getRateLimitService(): RateLimitService {
+  if (!rateLimitService) rateLimitService = new RateLimitService();
+  return rateLimitService;
 }
 
 /** Clear overlay conversation history and reset chat session (called on "New Session"). */
@@ -148,6 +177,23 @@ export function registerOverlayHandlers(
       // error which is caught and forwarded to the renderer via optimization-error.
     }
 
+    // ── Rate limit guard ──────────────────────────────────────────────────
+    if (authState.currentUserId) {
+      try {
+        const rl = getRateLimitService().checkRateLimit(authState.currentUserId);
+        const result = await rl;
+        if (!result.allowed) {
+          console.warn(`[Overlay] Rate limit exceeded for user ${authState.currentUserId} (${result.limit - result.remaining}/${result.limit})`);
+          overlayManager.send('overlay:optimization-error', {
+            error: `Daily message limit reached (${result.limit}/${result.limit}). Your limit resets at midnight UTC.`,
+          });
+          return;
+        }
+      } catch (rlErr) {
+        console.warn('[Overlay] Rate limit check failed (allowing message):', rlErr);
+      }
+    }
+
     // Handle session reset if the overlay is closed and opened again
     // For now, we'll just keep a rolling history of the last 10 messages
     if (inMemoryOverlayHistory.length > 20) {
@@ -168,6 +214,18 @@ export function registerOverlayHandlers(
         } catch (settingsErr) {
           console.warn('[Overlay] Failed to fetch custom instructions:', settingsErr);
         }
+      }
+
+      // Append user memory context (guarded by toggle, non-blocking, silent failure)
+      if (authState.isAuthenticated) {
+        try {
+          const analyzer = getMemoryAnalyzer(pythonClient, appWindowManager);
+          const memEnabled = await analyzer.isMemoryEnabled();
+          if (memEnabled) {
+            const memCtx = await getMemoryService().buildMemoryContext();
+            if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
+          }
+        } catch { /* non-critical */ }
       }
 
       // ── Build history context ──────────────────────────────────────
@@ -212,6 +270,11 @@ export function registerOverlayHandlers(
       // Add the assistant's response to history
       inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
 
+      // Invalidate rate-limit cache so the next check reflects the new message
+      if (authState.currentUserId) {
+        getRateLimitService().invalidateCache(authState.currentUserId);
+      }
+
       overlayManager.send('overlay:optimization-complete', {
         original: data.text,
         optimized: optimizedText,
@@ -230,6 +293,19 @@ export function registerOverlayHandlers(
         .catch((err: Error) => {
           errorLog.append('[Overlay] optimization record save', err);
         });
+
+        // 1b. Trigger background memory analysis (fire-and-forget, non-critical)
+        if (authState.currentUserId) {
+          const analyzer = getMemoryAnalyzer(pythonClient, appWindowManager);
+          analyzer.onNewOptimization(
+            authState.currentUserId,
+            data.text,
+            optimizedText,
+            data.forcedSkill || null,
+          ).catch((e: unknown) =>
+            console.warn('[Overlay] Memory analyzer error (non-critical):', e)
+          );
+        }
 
         // 2. Persist messages to DB
         // ── KEY RULE ──────────────────────────────────────────────────

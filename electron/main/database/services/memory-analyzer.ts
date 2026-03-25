@@ -1,179 +1,150 @@
-import { SupabaseClientManager } from '../supabase-client';
-import { MemoryService } from './memory-service';
+import { MemoryService, MemoryType } from './memory-service';
+import { SettingsService } from './settings-service';
+import { UserService } from './user-service';
+import { PythonClient } from '../../api/python-client';
+import { AppWindowManager } from '../../windows/app-window-manager';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Domain keyword maps
-// ─────────────────────────────────────────────────────────────────────────────
-
-const DOMAIN_KEYWORDS: Record<string, string[]> = {
-  'Backend Development': ['python', 'fastapi', 'django', 'flask', 'node', 'express', 'rest api', 'api', 'backend', 'server', 'database', 'sql', 'postgres', 'mongodb'],
-  'Frontend Development': ['react', 'vue', 'angular', 'html', 'css', 'javascript', 'typescript', 'ui', 'frontend', 'component', 'tailwind', 'next.js', 'vite'],
-  'Machine Learning': ['machine learning', 'ml', 'ai', 'neural network', 'deep learning', 'model', 'training', 'dataset', 'classification', 'regression', 'llm', 'gpt'],
-  'Data Engineering': ['pandas', 'spark', 'etl', 'pipeline', 'data', 'csv', 'json', 'bigquery', 'airflow', 'kafka'],
-  'DevOps': ['docker', 'kubernetes', 'ci/cd', 'deploy', 'terraform', 'helm', 'aws', 'gcp', 'azure', 'cloud', 'infra'],
-  'Mobile Development': ['react native', 'flutter', 'swift', 'kotlin', 'android', 'ios', 'mobile', 'app'],
-  'Content & Marketing': ['blog', 'post', 'email', 'newsletter', 'marketing', 'copy', 'seo', 'social media'],
-  'Design': ['figma', 'design', 'ui/ux', 'wireframe', 'prototype', 'branding', 'color', 'typography'],
-};
-
-const STYLE_PATTERNS: Record<string, RegExp[]> = {
-  concise: [/\bconcise\b/i, /\bshort\b/i, /\bbrief\b/i, /\btl;dr\b/i],
-  'step-by-step': [/\bstep.by.step\b/i, /\bsteps\b/i, /\bsequential\b/i, /\bnumbered\b/i],
-  technical: [/\btechnical\b/i, /\bdetailed\b/i, /\bin.depth\b/i, /\bcomprehensive\b/i],
-  examples: [/\bexample\b/i, /\bsample\b/i, /\bdemonstrate\b/i, /\bshow me\b/i],
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Weighted scoring config
+// LLM-Powered Memory Analyzer
 //
-// Scoring uses exponential recency decay.
-// Each prompt at index `i` (0 = most recent) gets weight = e^(-DECAY * i).
-//
-// At DECAY = 0.06 with 50 prompts:
-//   - Index 0 (most recent):  weight 1.00
-//   - Index 10:               weight 0.55
-//   - Index 25:               weight 0.22
-//   - Index 49 (oldest):      weight 0.05
-//
-// Effect: after ~20 prompts in a new domain, it overtakes a stale old domain
-// even if the old one had months of history. Self-correcting by design.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const DECAY_RATE = 0.06;
-
-// A domain is included only if its WEIGHTED score clears MIN_WEIGHTED_SCORE.
-// Raw hit threshold equivalent (at weight 1.0): roughly 2-3 recent keyword hits.
-const MIN_WEIGHTED_SCORE = 1.5;
-
-// Normalize against this total to produce a 0-1 confidence value.
-// Represents a "strong signal" (e.g., 25 weighted keyword hits = full confidence).
-const CONFIDENCE_NORMALIZER = 25;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Analyzer
+// Replaces the old keyword-based analyzer with LLM fact extraction.
+// After each optimization, sends the raw prompt + output to
+// POST /extract-memory-facts on the Python service and upserts
+// the returned facts into user_memory (respecting explicit priority).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class MemoryAnalyzer {
-  private client = SupabaseClientManager.getClient();
-  private memoryService = new MemoryService();
-  private optimizationsSinceLastRun = 0;
-  private readonly runEveryN = 5;
+  private memoryService: MemoryService;
+  private settingsService: SettingsService;
+  private userService: UserService;
+  private pythonClient: PythonClient;
+  private appWindowManager: AppWindowManager | null;
 
-  /**
-   * Call this after each successful optimization. Runs the full analysis
-   * every `runEveryN` calls so we don't hammer Supabase on every message.
-   */
-  async onNewOptimization(userId: string): Promise<void> {
-    this.optimizationsSinceLastRun += 1;
-    if (this.optimizationsSinceLastRun < this.runEveryN) return;
-    this.optimizationsSinceLastRun = 0;
-    await this.analyze(userId);
+  // Throttle: only run extraction every N optimizations to avoid
+  // hammering the LLM endpoint on rapid-fire usage.
+  private optimizationsSinceLastRun = 0;
+  private readonly runEveryN = 3;
+
+  constructor(
+    pythonClient: PythonClient,
+    memoryService?: MemoryService,
+    settingsService?: SettingsService,
+    userService?: UserService,
+    appWindowManager?: AppWindowManager | null,
+  ) {
+    this.pythonClient = pythonClient;
+    this.memoryService = memoryService ?? new MemoryService();
+    this.settingsService = settingsService ?? new SettingsService();
+    this.userService = userService ?? new UserService();
+    this.appWindowManager = appWindowManager ?? null;
   }
 
   /**
-   * Analyze recent optimizations using recency-weighted scoring.
+   * Call this after each successful optimization.
+   * Runs LLM fact extraction every `runEveryN` calls.
    *
-   * Each prompt at position i (0 = most recent) gets weight = e^(-DECAY * i).
-   * This means recent prompts dominate — so if a user shifts domain, the new
-   * domain rises in score within ~15-20 new optimizations, and the stale old
-   * domain naturally drops below the threshold and disappears.
-   *
-   * Supports multi-domain: all domains that cross MIN_WEIGHTED_SCORE are kept,
-   * ranked by weighted score (primary domain first).
+   * @param userId     Current user ID (for validation)
+   * @param rawPrompt  The user's original prompt text
+   * @param optimizedText  The optimizer's output
+   * @param skill      The detected/forced skill (or null)
    */
-  async analyze(userId: string): Promise<void> {
+  async onNewOptimization(
+    userId: string,
+    rawPrompt: string,
+    optimizedText: string,
+    skill: string | null = null,
+  ): Promise<void> {
+    this.optimizationsSinceLastRun += 1;
+    if (this.optimizationsSinceLastRun < this.runEveryN) return;
+    this.optimizationsSinceLastRun = 0;
+
     try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user || userData.user.id !== userId) return;
-
-      // Fetch last 50 optimizations, ordered most-recent first (index 0 = newest)
-      const { data, error } = await this.client
-        .from('prompt_optimizations')
-        .select('original_text, metadata, created_at')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (error || !data || data.length === 0) return;
-
-      const totalPrompts = data.length;
-
-      // ── Recency-weighted domain scoring ────────────────────────────────
-      //
-      // For each prompt (index i, 0 = newest), compute its recency weight.
-      // Then for each domain, accumulate weighted keyword hits per prompt.
-      // This gives us a weighted score that naturally reflects recent behavior.
-      //
-      const domainWeightedScores: Record<string, number> = {};
-
-      for (let i = 0; i < totalPrompts; i++) {
-        const promptText = (data[i] as { original_text: string }).original_text.toLowerCase();
-        const weight = Math.exp(-DECAY_RATE * i);
-
-        for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
-          const hits = keywords.reduce((acc, kw) => acc + (promptText.split(kw).length - 1), 0);
-          if (hits > 0) {
-            domainWeightedScores[domain] = (domainWeightedScores[domain] ?? 0) + hits * weight;
-          }
-        }
-      }
-
-      // ── Multi-domain selection ──────────────────────────────────────────
-      //
-      // Keep all domains that cross the minimum weighted score threshold.
-      // Sort by weighted score so primary domain appears first.
-      //
-      const qualifiedDomains = Object.entries(domainWeightedScores)
-        .filter(([, score]) => score >= MIN_WEIGHTED_SCORE)
-        .sort(([, a], [, b]) => b - a);
-
-      if (qualifiedDomains.length > 0) {
-        const detectedDomains = qualifiedDomains.map(([domain]) => domain).join(', ');
-        // Confidence based on top scorer, normalized and capped at 1.0
-        const topScore = qualifiedDomains[0][1];
-        const confidence = Math.min(1.0, topScore / CONFIDENCE_NORMALIZER);
-        await this.memoryService.upsertMemoryEntry('behavioral', 'domains', detectedDomains, 'inferred', confidence);
-        console.log(
-          `[MemoryAnalyzer] ✅ Domains for user ${userId}: ${detectedDomains} ` +
-          `(top score: ${topScore.toFixed(2)}, confidence: ${(confidence * 100).toFixed(0)}%, ${totalPrompts} prompts analyzed)`,
-        );
-      } else {
-        console.log(`[MemoryAnalyzer] ℹ️ No qualifying domains found for user ${userId} (${totalPrompts} prompts analyzed)`);
-      }
-
-      // ── Style detection (also recency-weighted) ─────────────────────────
-      const styleWeightedScores: Record<string, number> = {};
-      for (let i = 0; i < totalPrompts; i++) {
-        const promptText = (data[i] as { original_text: string }).original_text.toLowerCase();
-        const weight = Math.exp(-DECAY_RATE * i);
-        for (const [style, patterns] of Object.entries(STYLE_PATTERNS)) {
-          const hits = patterns.reduce((acc, re) => acc + (promptText.match(re) ?? []).length, 0);
-          if (hits > 0) {
-            styleWeightedScores[style] = (styleWeightedScores[style] ?? 0) + hits * weight;
-          }
-        }
-      }
-      const qualifiedStyles = Object.entries(styleWeightedScores)
-        .filter(([, score]) => score >= 1.0)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 2)
-        .map(([style]) => style);
-
-      if (qualifiedStyles.length > 0) {
-        await this.memoryService.upsertMemoryEntry('behavioral', 'preferred_style', qualifiedStyles.join(', '), 'inferred', 0.7);
-      }
-
-      // ── Optimization count context ──────────────────────────────────────
-      await this.memoryService.upsertMemoryEntry(
-        'context',
-        'total_optimizations_analyzed',
-        String(totalPrompts),
-        'inferred',
-        1.0,
-      );
+      await this.extractAndUpsert(userId, rawPrompt, optimizedText, skill);
     } catch (err) {
-      // Non-critical: log and continue
-      console.warn('[MemoryAnalyzer] Analysis failed (non-critical):', err);
+      // Non-critical: log and continue — never block the main flow
+      console.warn('[MemoryAnalyzer] Extraction failed (non-critical):', err);
+    }
+  }
+
+  /**
+   * Core extraction logic:
+   * 1. Check if memory_enabled toggle is ON
+   * 2. Call Python service to extract facts via LLM
+   * 3. Upsert facts into user_memory (respecting explicit priority)
+   * 4. Push updated memory to the app window for live UI refresh
+   */
+  private async extractAndUpsert(
+    userId: string,
+    rawPrompt: string,
+    optimizedText: string,
+    skill: string | null,
+  ): Promise<void> {
+    // ── 1. Check toggle ─────────────────────────────────────────────────
+    const isEnabled = await this.isMemoryEnabled();
+    if (!isEnabled) {
+      console.log('[MemoryAnalyzer] Memory disabled by user — skipping extraction');
+      return;
+    }
+
+    // ── 2. Extract facts via LLM ────────────────────────────────────────
+    const facts = await this.pythonClient.extractMemoryFacts(rawPrompt, optimizedText, skill);
+    if (!facts || facts.length === 0) {
+      console.log('[MemoryAnalyzer] No facts extracted');
+      return;
+    }
+
+    console.log(`[MemoryAnalyzer] Extracted ${facts.length} facts — upserting...`);
+
+    // ── 3. Upsert into user_memory ──────────────────────────────────────
+    let upsertedCount = 0;
+    for (const fact of facts) {
+      const category = fact.category as MemoryType;
+      if (!['user', 'behavioral', 'context'].includes(category)) continue;
+
+      try {
+        const didUpsert = await this.memoryService.upsertInferredEntry(
+          category,
+          fact.key,
+          fact.value,
+          fact.confidence,
+        );
+        if (didUpsert) upsertedCount++;
+      } catch (upsertErr) {
+        console.warn(`[MemoryAnalyzer] Failed to upsert fact "${fact.key}":`, upsertErr);
+      }
+    }
+
+    if (upsertedCount === 0) {
+      console.log('[MemoryAnalyzer] All facts skipped (explicit priority or duplicates)');
+      return;
+    }
+
+    console.log(`[MemoryAnalyzer] Upserted ${upsertedCount}/${facts.length} facts for user ${userId}`);
+
+    // ── 4. Push to UI ───────────────────────────────────────────────────
+    if (this.appWindowManager) {
+      try {
+        const updatedMemory = await this.memoryService.getMemory();
+        this.appWindowManager.send('memory:updated', updatedMemory);
+      } catch {
+        // Non-critical: UI will refresh on next manual load
+      }
+    }
+  }
+
+  /**
+   * Check if the memory toggle is enabled for the current user.
+   * Returns true by default if settings can't be read (graceful degradation).
+   */
+  async isMemoryEnabled(): Promise<boolean> {
+    try {
+      const profile = await this.userService.getUserProfile();
+      if (!profile) return true; // Default on if we can't determine
+      const settings = await this.settingsService.getUserSettings(profile.id);
+      // Default to true if memory_enabled is not set (old DB rows)
+      return settings?.memory_enabled !== false;
+    } catch {
+      return true; // Fail-open: don't block memory if settings fetch fails
     }
   }
 }

@@ -1,4 +1,4 @@
-import { BrowserWindow, app } from 'electron';
+import { BrowserWindow, app, nativeImage } from 'electron';
 import * as path from 'path';
 
 /**
@@ -26,6 +26,9 @@ export class AppWindowManager {
   private createWindowHidden() {
     this.isLoaded = false;
 
+    const iconPath = path.join(app.getAppPath(), 'electron', 'resources', 'icon.png');
+    const icon = nativeImage.createFromPath(iconPath);
+
     this.window = new BrowserWindow({
       width: 1400,
       height: 900,
@@ -35,6 +38,7 @@ export class AppWindowManager {
       frame: false,          // removes native title bar + menu bar entirely
       autoHideMenuBar: true, // belt-and-suspenders: also hides the menu bar
       backgroundColor: '#0d1117',
+      icon,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,

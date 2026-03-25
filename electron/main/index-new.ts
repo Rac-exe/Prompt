@@ -1,4 +1,4 @@
-import { app, globalShortcut, ipcMain } from 'electron';
+import { app, globalShortcut, ipcMain, shell } from 'electron';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
@@ -49,7 +49,7 @@ function startKeystrokeDetection() {
 
   startHook((anchor: TriggerAnchor) => {
     console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
-    overlayManager.open(authState.isAuthenticated);
+    overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
   });
 
   console.log('[Main] Native keyboard hook started');
@@ -184,6 +184,10 @@ async function initialize() {
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)
   // ============================================
+  ipcMain.on('shell:openExternal', (_event, url: string) => {
+    shell.openExternal(url);
+  });
+
   ipcMain.on('window:minimize', () => {
     const win = appWindowManager.getWindow();
     if (win && !win.isDestroyed()) win.minimize();
@@ -376,6 +380,11 @@ if (!gotTheLock) {
   // ============================================
   // APP LIFECYCLE
   // ============================================
+  app.setName('Prmpt');
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('Prmpt');
+  }
+
   app.whenReady().then(async () => {
     // Handle protocol URL passed on startup (Windows/Linux first-launch)
     const startUrl = process.argv.find((arg) => arg.startsWith('promptweaver://'));

@@ -6,6 +6,7 @@ export interface UserSettings {
     font_size: 'small' | 'medium' | 'large';
     font_family: 'inter' | 'mono' | 'serif';
     prompt_instructions: string;
+    memory_enabled: boolean;
     created_at?: string;
     updated_at?: string;
 }
@@ -15,6 +16,7 @@ export const DEFAULT_SETTINGS: Omit<UserSettings, 'user_id' | 'created_at' | 'up
     font_size: 'medium',
     font_family: 'inter',
     prompt_instructions: '',
+    memory_enabled: true,
 };
 
 /**

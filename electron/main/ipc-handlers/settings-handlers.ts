@@ -20,6 +20,12 @@ export function registerSettingsHandlers(overlayManager: OverlayWindowManager) {
     // SETTINGS IPC HANDLERS
     // ============================================
 
+    // Direct theme relay — renderer sends this immediately on toggle so the
+    // overlay updates in sync with the main window, without waiting for the DB.
+    ipcMain.on('overlay:settings-update', (_event, settings) => {
+        overlayManager.send('overlay:settings-update', settings);
+    });
+
     // Load user settings
     ipcMain.handle('settings:load', async () => {
         try {
@@ -54,11 +60,12 @@ export function registerSettingsHandlers(overlayManager: OverlayWindowManager) {
                 throw new Error('User must be authenticated to save settings');
             }
 
+            // Broadcast immediately — don't wait for the DB write so the overlay
+            // theme change is instant and in sync with the main window.
+            overlayManager.send('overlay:settings-update', settings);
+
             const saved = await service.upsertUserSettings(authState.currentUserId, settings);
             console.log('[Settings] ✅ Settings saved for user:', authState.currentUserId);
-
-            // Broadcast new settings to the overlay so it can update its UI instantly
-            overlayManager.send('overlay:settings-update', settings);
 
             return saved;
         } catch (error) {

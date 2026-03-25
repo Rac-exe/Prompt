@@ -17,8 +17,8 @@
   --popover:            20 100% 98%;
   --popover-foreground: 217 33% 17%;
 
-  /* Primary — brand blue */
-  --primary:            217 91% 60%;
+  /* Primary — dark accent matching dark-logo */
+  --primary:            220 10% 15%;
   --primary-foreground: 0   0% 100%;
 
   /* Secondary — soft peach */
@@ -29,9 +29,9 @@
   --muted:              20 50% 94%;
   --muted-foreground:   215 20% 38%;
 
-  /* Accent */
-  --accent:             214 95% 93%;
-  --accent-foreground:  217 91% 60%;
+  /* Accent — dark tone matching dark-logo vibe */
+  --accent:             20 30% 92%;
+  --accent-foreground:  220 10% 15%;
 
   --destructive:        0 68% 50%;
   --destructive-foreground: 0 0% 100%;
@@ -39,7 +39,7 @@
   /* Borders */
   --border:             18 58% 88%;
   --input:              21 52% 81%;
-  --ring:               217 91% 60%;
+  --ring:               220 10% 15%;
 
   --radius: 0.625rem;
 
@@ -48,10 +48,10 @@
   --surface-hover:      19 100% 94%;
   --surface-elevated:   20 100% 98%;
 
-  /* Brand accent (blue, NOT green) */
-  --emerald:            217 91% 60%;
-  --emerald-soft:       221 83% 53%;
-  --emerald-muted:      214 95% 93%;
+  /* Dark accent mapped to emerald tokens — matches dark-logo vibe */
+  --emerald:            220 10% 15%;
+  --emerald-soft:       220 8% 25%;
+  --emerald-muted:      20 30% 92%;
 }
 
 .dark {

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { AttachedFile, SkillInfo } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON, MAX_ATTACHED_FILES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../lib/constants';
-import { fileToBase64 } from '../lib/utils';
+import { fileToBase64, resizeImageIfNeeded } from '../lib/utils';
 
 // ── Mode Dropdown ────────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ const ModeDropdown: React.FC<ModeDropdownProps> = ({ currentMode, open, anchorRe
         {currentMode === 'fast' && <span className="mode-check">✓</span>}
       </button>
       <button className={`mode-dropdown-item${currentMode === 'thinking' ? ' selected' : ''}`} type="button" onClick={() => onSelect('thinking')}>
-        <svg className="mode-icon" fill="none" stroke="#3b82f6" viewBox="0 0 24 24">
+        <svg className="mode-icon" fill="none" stroke="hsl(var(--emerald))" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
@@ -386,12 +386,26 @@ const InputSection: React.FC<InputSectionProps> = ({
     for (let i = 0; i < Math.min(fileList.length, remaining); i++) {
       const file = fileList[i];
       if (!ALLOWED_MIME_TYPES.includes(file.type)) continue;
-      if (file.size > MAX_FILE_SIZE) continue;
+      // PDFs: hard size cap, no resize possible
+      if (file.type === 'application/pdf') {
+        if (file.size > MAX_FILE_SIZE) {
+          console.warn('[Overlay] PDF too large (max 32 MB):', file.name);
+          continue;
+        }
+        try {
+          const base64 = await fileToBase64(file);
+          newFiles.push({ name: file.name, mimeType: file.type, base64, sizeBytes: file.size });
+        } catch {
+          console.warn('[Overlay] Failed to read PDF:', file.name);
+        }
+        continue;
+      }
+      // Images: auto-resize if above 4.5 MB
       try {
-        const base64 = await fileToBase64(file);
-        newFiles.push({ name: file.name, mimeType: file.type, base64, sizeBytes: file.size });
+        const { base64, sizeBytes } = await resizeImageIfNeeded(file);
+        newFiles.push({ name: file.name, mimeType: 'image/jpeg', base64, sizeBytes });
       } catch {
-        console.warn('[Overlay] Failed to read file:', file.name);
+        console.warn('[Overlay] Failed to process image:', file.name);
       }
     }
     if (newFiles.length > 0) onAttachFiles(newFiles);

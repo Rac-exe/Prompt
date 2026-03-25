@@ -15,6 +15,7 @@ import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
 import { useMessageTree } from "@/hooks/useMessageTree";
+import { useChatUIState } from "@/hooks/useChatUIState";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 import { useAuth } from "@/context/AuthContext";
 
@@ -53,6 +54,19 @@ const Index = () => {
   const selectedChatIdRef = useRef<string | null>(null);
   useEffect(() => { selectedChatIdRef.current = selectedChatId; }, [selectedChatId]);
   const [recentChats, setRecentChats] = useState<any[]>([]);
+
+  // Per-chat UI state (input, mode, skill, files)
+  const {
+    input,
+    setInput,
+    mode,
+    setMode,
+    selectedSkill,
+    setSelectedSkill,
+    attachedFiles,
+    setAttachedFiles,
+    deleteChatState,
+  } = useChatUIState(selectedChatId);
 
   // Shared library token (set when opening a share link)
   const [sharedLibraryToken, setSharedLibraryToken] = useState<string | null>(null);
@@ -305,7 +319,7 @@ const Index = () => {
     sendingRef.current = false;
   }, [messageTree.getActivePath, messageTree.addChild, messageTree.has, messageTree.ROOT, messageTree.replaceId]);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete
   });
 
@@ -317,6 +331,24 @@ const Index = () => {
     window.electronAPI?.stopGeneration?.();
     stopStreaming(); // skip typewriter delay, show partial text immediately
   }, [stopStreaming]);
+
+  /**
+   * Detach the UI from an in-flight generation WITHOUT stopping the backend.
+   * The backend keeps streaming → saves messages to DB as usual.
+   * When the user later navigates back to that chat, loadMessages will
+   * pull the completed conversation from the DB.
+   */
+  const detachFromActiveGeneration = useCallback(() => {
+    if (!isGeneratingRef.current) return;
+    console.log('[Index] Detaching from active generation (chat switch — backend continues)');
+    resetStreaming();
+    setIsGenerating(false);
+    setStreamedMessageId(null);
+    editInProgressRef.current = false;
+    sendingRef.current = false;
+    pendingPlaceholderId.current = null;
+    pendingRegenPlaceholderId.current = null;
+  }, [resetStreaming]);
 
   // Build display messages from the tree's active path.
   // Only messages on the currently-active branch are shown.
@@ -344,8 +376,16 @@ const Index = () => {
       const handleMessageSent = (data: { chatId: string; chat: any; userMessage: any }) => {
         console.log('[Index] Message sent to Supabase:', data);
 
+        // Ignore responses for a chat the user has already navigated away from.
+        // For *new* chats selectedChatIdRef is null — accept those.
+        const currentId = selectedChatIdRef.current;
+        if (currentId !== null && currentId !== data.chatId) {
+          console.log('[Index] Ignoring onMessageSent for non-current chat', data.chatId);
+          return;
+        }
+
         // Update selected chat ID if this was a new chat
-        if (!selectedChatId) {
+        if (!currentId) {
           setSelectedChatId(data.chatId);
           setCurrentChatTitle(data.chat.title);
         }
@@ -425,6 +465,12 @@ const Index = () => {
   useEffect(() => {
     if (isElectron && window.electronAPI?.onMessageReceived) {
       const handleMessageReceived = (data: { chatId: string; message: any }) => {
+        // Ignore responses for a chat the user has already navigated away from.
+        if (selectedChatIdRef.current !== null && data.chatId !== selectedChatIdRef.current) {
+          console.log('[Index] Ignoring onMessageReceived for non-current chat', data.chatId);
+          return;
+        }
+
         console.log('[Index] Assistant message received from DB (Final)');
 
         const assistantMessage: Message = {
@@ -704,6 +750,7 @@ const Index = () => {
 
   const handleDeleteChat = useCallback((chatId: string) => {
     console.log('[Index] Deleting chat:', chatId);
+    deleteChatState(chatId);
     if (isElectron && window.electronAPI?.deleteChat) {
       window.electronAPI.deleteChat(chatId);
     } else {
@@ -720,11 +767,19 @@ const Index = () => {
         description: "Chat has been permanently removed.",
       });
     }
-  }, [selectedChatId]);
+  }, [selectedChatId, deleteChatState]);
+
+  // ── Chat selection (abort any in-flight stream first) ────────
+  const handleSelectChat = useCallback((chatId: string) => {
+    if (chatId === selectedChatIdRef.current) return;
+    detachFromActiveGeneration();
+    setSelectedChatId(chatId);
+  }, [detachFromActiveGeneration]);
 
   // Chat handlers
   const handleNewChat = () => {
     console.log('[Index] Starting new chat');
+    detachFromActiveGeneration();
     // Clear current chat selection and messages
     setMessages([]);
     messageTree.init([]);
@@ -1122,6 +1177,7 @@ Your prompt was: "${content}"`;
   const handleSelectHistoryItem = (id: string) => {
     const session = chatSessions.find((s) => s.id === id);
     if (session) {
+      detachFromActiveGeneration();
       // Restore the conversation
       setMessages(session.messages);
       messageTree.init(session.messages);
@@ -1257,6 +1313,15 @@ Your prompt was: "${content}"`;
                 window.electronAPI.loadMessages(selectedChatId);
               }
             }}
+            // Per-chat UI state
+            input={input}
+            setInput={setInput}
+            mode={mode}
+            setMode={setMode}
+            attachedFiles={attachedFiles}
+            setAttachedFiles={setAttachedFiles}
+            selectedSkill={selectedSkill}
+            setSelectedSkill={setSelectedSkill}
           />
         );
     }
@@ -1270,7 +1335,7 @@ Your prompt was: "${content}"`;
             currentView={currentView}
             onViewChange={setCurrentView}
             recentChats={recentChats}
-            onSelectChat={setSelectedChatId}
+            onSelectChat={handleSelectChat}
             selectedChatId={selectedChatId}
             onNewChat={handleNewChat}
             onRenameChat={handleRenameChat}

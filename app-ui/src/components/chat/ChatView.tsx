@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn, Loader2, Brain, ArrowDown } from "lucide-react";
+import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
@@ -41,6 +42,15 @@ interface ChatViewProps {
   avatarUrl?: string | null;
   versionInfoMap?: Map<string, VersionInfo>;
   onNavigateVersion?: (parentId: string, direction: 'prev' | 'next') => void;
+  // Per-chat UI state (managed by parent)
+  input: string;
+  setInput: (value: string) => void;
+  mode: "fast" | "thinking";
+  setMode: (value: "fast" | "thinking") => void;
+  attachedFiles: AttachedFile[];
+  setAttachedFiles: (files: AttachedFile[]) => void;
+  selectedSkill: string | null;
+  setSelectedSkill: (skill: string | null) => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -52,13 +62,11 @@ export const ChatView = ({
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
+  // Per-chat UI state
+  input, setInput, mode, setMode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
 }: ChatViewProps) => {
-  const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"fast" | "thinking">("fast");
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
-  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   // File preview modal — null = closed
@@ -389,12 +397,12 @@ export const ChatView = ({
                     mode === "thinking" && "bg-secondary"
                   )}
                 >
-                  <Brain className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                  <Brain className="w-4 h-4 text-emerald mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">Thinking</p>
                     <p className="text-xs text-muted-foreground">Think longer for complex tasks</p>
                   </div>
-                  {mode === "thinking" && <span className="ml-auto text-blue-500 mt-0.5">✓</span>}
+                  {mode === "thinking" && <span className="ml-auto text-emerald mt-0.5">✓</span>}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -546,14 +554,7 @@ export const ChatView = ({
           <div className="w-full max-w-4xl mx-auto flex flex-col items-center gap-10">
             {/* Hero */}
             <div className="flex flex-col items-center gap-5 text-center">
-              <div className="relative inline-flex items-center justify-center">
-                <div className="w-16 h-16 rounded-2xl bg-emerald/10 flex items-center justify-center border border-emerald/20">
-                  <Sparkles className="w-7 h-7 text-emerald" />
-                </div>
-                <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-background border border-border flex items-center justify-center">
-                  <Zap className="w-2.5 h-2.5 text-emerald" />
-                </div>
-              </div>
+              <Logo size="w-20 h-20" />
               <div className="space-y-2">
                 <h2 className="text-[28px] font-bold text-gradient-primary tracking-tight leading-none">
                   Prompt Optimization Studio

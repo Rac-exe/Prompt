@@ -13,7 +13,10 @@ interface PlusMenuProps {
 }
 
 const ALLOWED_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
-const MAX_FILE_SIZE = 10_000_000;
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_FILE_SIZE = 32_000_000;  // 32 MB hard cap (PDF limit per Claude)
+const MAX_IMAGE_SIZE = 4_500_000;  // images above this are auto-resized
+const MAX_IMAGE_DIMENSION = 1920;  // max px on longest side after resize
 const MAX_FILES = 5;
 
 export const PlusMenu = ({
@@ -73,12 +76,29 @@ export const PlusMenu = ({
     const attached: AttachedFile[] = [];
     for (let i = 0; i < Math.min(files.length, MAX_FILES); i++) {
       const file = files[i];
-      if (!ALLOWED_TYPES.includes(file.type)) { setFileError(`"${file.name}" is not a supported type`); continue; }
-      if (file.size > MAX_FILE_SIZE) { setFileError(`"${file.name}" exceeds 10 MB`); continue; }
-      try {
-        const base64 = await fileToBase64(file);
-        attached.push({ name: file.name, mimeType: file.type, base64, sizeBytes: file.size });
-      } catch { setFileError(`Failed to read "${file.name}"`); }
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        setFileError(`"${file.name}" is not a supported type`);
+        continue;
+      }
+      // PDFs: hard size cap, no resize possible
+      if (file.type === 'application/pdf') {
+        if (file.size > MAX_FILE_SIZE) {
+          setFileError(`"${file.name}" is too large (max 32 MB for PDFs)`);
+          continue;
+        }
+        try {
+          const base64 = await fileToBase64(file);
+          attached.push({ name: file.name, mimeType: file.type, base64, sizeBytes: file.size });
+        } catch { setFileError(`Failed to read "${file.name}"`); }
+        continue;
+      }
+      // Images: auto-resize if above limit
+      if (IMAGE_TYPES.includes(file.type)) {
+        try {
+          const { base64, sizeBytes } = await resizeImageIfNeeded(file);
+          attached.push({ name: file.name, mimeType: 'image/jpeg', base64, sizeBytes });
+        } catch { setFileError(`Failed to process "${file.name}"`); }
+      }
     }
 
     if (attached.length > 0) { onFilesSelected(attached); onClose(); }
@@ -152,5 +172,46 @@ function fileToBase64(file: File): Promise<string> {
     reader.onload = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+
+function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number }> {
+  return new Promise((resolve, reject) => {
+    // If small enough, just base64-encode as-is
+    if (file.size <= MAX_IMAGE_SIZE) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        resolve({ base64, sizeBytes: file.size });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    // Oversized: draw onto a canvas and re-encode as JPEG
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
+        const ratio = Math.min(MAX_IMAGE_DIMENSION / width, MAX_IMAGE_DIMENSION / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('Canvas not available')); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const base64 = dataUrl.split(',')[1];
+      const sizeBytes = Math.round(base64.length * 0.75); // approximate decoded size
+      resolve({ base64, sizeBytes });
+    };
+    img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Failed to load image')); };
+    img.src = objectUrl;
   });
 }

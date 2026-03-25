@@ -1,6 +1,8 @@
-import { useState, useEffect, ReactNode, useCallback } from 'react';
+import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { Logo } from "@/components/ui/Logo";
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
+import { OnboardingPage } from './OnboardingPage';
 import { AuthContext, CompleteUserData } from '@/context/AuthContext';
 import { useToast } from "@/hooks/use-toast";
 
@@ -8,13 +10,19 @@ interface AuthWrapperProps {
   children: ReactNode;
 }
 
-type AuthView = 'loading' | 'login' | 'signup' | 'app';
+type AuthView = 'loading' | 'login' | 'signup' | 'onboarding' | 'app';
+
+const ONBOARDING_KEY_PREFIX = 'onboarding-completed-';
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
   const [authView, setAuthView] = useState<AuthView>('loading');
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
   const { toast } = useToast();
+
+  // Track the view that was active when auth fires so we know if user just signed up
+  const authViewRef = useRef<AuthView>('loading');
+  authViewRef.current = authView;
 
   const handleSignOut = useCallback(() => {
     if (window.electronAPI?.signOut) {
@@ -54,8 +62,18 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       } else if (data.isAuthenticated && data.user) {
         // user data from backend matches CompleteUserData structure
         setUser(data.user);
-        setAuthView('app');
         setError(null);
+
+        // Only show onboarding if the user JUST signed up (authView was 'signup')
+        const cameFromSignup = authViewRef.current === 'signup';
+
+        if (cameFromSignup) {
+          // Fresh signup → show onboarding
+          setAuthView('onboarding');
+        } else {
+          // Returning user (login / app re-launch) → go straight to app
+          setAuthView('app');
+        }
       } else {
         setAuthView('login');
         setUser(null);
@@ -82,10 +100,10 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const renderContent = () => {
     if (authView === 'loading') {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-5">
+            <Logo size="w-16 h-16" />
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald"></div>
           </div>
         </div>
       );
@@ -116,6 +134,22 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
             // Don't set authView here - let the auth state change event handle it
           }}
           error={error}
+        />
+      );
+    }
+
+    if (authView === 'onboarding') {
+      return (
+        <OnboardingPage
+          userName={user?.profile?.name?.split(' ')[0]}
+          onComplete={() => {
+            // Mark onboarding as completed for this user
+            const userId = user?.profile?.id;
+            if (userId) {
+              localStorage.setItem(`${ONBOARDING_KEY_PREFIX}${userId}`, 'true');
+            }
+            setAuthView('app');
+          }}
         />
       );
     }

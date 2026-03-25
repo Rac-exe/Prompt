@@ -44,9 +44,8 @@ A powerful desktop application that optimizes your AI prompts in real-time, back
 
 1. **Node.js** v18+
 2. **Python** v3.10+
-3. **Ollama** (for local LLM) — or configure a cloud provider in `.env`
-4. **LLM Model** — `llama3.2` recommended: `ollama pull llama3.2`
-5. **Supabase** project (for auth, chat history, library, memory)
+3. **OpenRouter API key** — [openrouter.ai/keys](https://openrouter.ai/keys)
+4. **Supabase** project (for auth, chat history, library, memory)
 
 ---
 

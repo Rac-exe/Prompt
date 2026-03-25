@@ -1,4 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import darkLogo from "@/assets/logos/dark-logo-svg.svg";
+import lightLogo from "@/assets/logos/light-logo-svg.svg";
+import { useIsDark } from "@/hooks/useIsDark";
 import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
 import { useScrollController } from '../../hooks/useScrollController';
 
@@ -250,12 +253,13 @@ interface AssistantMessageProps {
   msg: OverlayMessage;
   turnIdx: number;
   isOptimizing: boolean;
+  showReplace: boolean;
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
 }
 
-const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOptimizing, onCopy, onReplace, onRegenerate }) => {
+const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [replaceState, setReplaceState] = useState<'idle' | 'replacing' | 'replaced' | 'clipboard' | 'error'>('idle');
 
@@ -302,20 +306,22 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
             </>
           )}
         </button>
-        {/* Replace */}
-        <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
-          {replaceState === 'replacing' ? (
-            <>
-              <svg style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24" className="animate-spin"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path style={{ opacity: 0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
-              {' '}Replacing…
-            </>
-          ) : (
-            <>
-              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-              {' '}Replace
-            </>
-          )}
-        </button>
+        {/* Replace — only shown when overlay was opened via @prompt trigger */}
+        {showReplace && (
+          <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
+            {replaceState === 'replacing' ? (
+              <>
+                <svg style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24" className="animate-spin"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path style={{ opacity: 0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                {' '}Replacing…
+              </>
+            ) : (
+              <>
+                <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                {' '}Replace
+              </>
+            )}
+          </button>
+        )}
         {/* Regenerate */}
         <button className="btn-msg-action" onClick={() => onRegenerate(turnIdx)} disabled={isOptimizing}>
           <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
@@ -357,6 +363,7 @@ interface TurnItemProps {
   isOptimizing: boolean;
   isStreamingHere: boolean;
   streamingContent: string;
+  showReplace: boolean;
   onEditCommit: (turnIdx: number, newContent: string) => void;
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
@@ -366,7 +373,7 @@ interface TurnItemProps {
 }
 
 const TurnItem: React.FC<TurnItemProps> = ({
-  turn, turnIdx, isOptimizing, isStreamingHere, streamingContent,
+  turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
 }) => {
   const uIdx = turn.userActiveIdx;
@@ -403,6 +410,7 @@ const TurnItem: React.FC<TurnItemProps> = ({
             msg={aMsg}
             turnIdx={turnIdx}
             isOptimizing={isOptimizing}
+            showReplace={showReplace}
             onCopy={onCopy}
             onReplace={onReplace}
             onRegenerate={onRegenerate}
@@ -434,6 +442,7 @@ interface ChatAreaProps {
   errorMessage: string | null;
   streamingTurnIdx: number;
   streamingContent: string;
+  showReplace: boolean;
   onEditCommit: (turnIdx: number, newContent: string) => void;
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
@@ -443,9 +452,10 @@ interface ChatAreaProps {
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
-  turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent,
+  turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
 }) => {
+  const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   const { handleScroll, scrollToBottom, showScrollButton } = useScrollController(
@@ -464,19 +474,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       {/* Empty state */}
       {isEmpty && (
         <div className="empty-state">
-          <div
-            style={{
-              width: 44, height: 44, borderRadius: 14,
-              background: 'linear-gradient(135deg, hsl(var(--emerald) / 0.12), hsl(217 91% 50% / 0.12))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <svg style={{ width: 20, height: 20, color: 'hsl(var(--emerald))' }} fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-            </svg>
-          </div>
+          <img
+            src={isDark ? lightLogo : darkLogo}
+            alt="Prmpt"
+            style={{ width: 52, height: 52, objectFit: 'contain' }}
+          />
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'hsl(var(--foreground))', marginBottom: 4, letterSpacing: '-0.01em' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'hsl(var(--emerald))', marginBottom: 4, letterSpacing: '-0.01em' }}>
               Prompt Optimizer
             </div>
             <div style={{ fontSize: 12, color: 'hsl(var(--muted-foreground))', lineHeight: 1.5 }}>
@@ -495,6 +499,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           isOptimizing={isOptimizing}
           isStreamingHere={streamingTurnIdx === i}
           streamingContent={streamingTurnIdx === i ? streamingContent : ''}
+          showReplace={showReplace}
           onEditCommit={onEditCommit}
           onCopy={onCopy}
           onReplace={onReplace}
