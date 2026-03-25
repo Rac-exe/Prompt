@@ -1,4 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import darkLogo from "@/assets/logos/dark-logo-svg.svg";
+import lightLogo from "@/assets/logos/light-logo-svg.svg";
+import { useIsDark } from "@/hooks/useIsDark";
 import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
 import { useScrollController } from '../../hooks/useScrollController';
 
@@ -452,6 +455,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
 }) => {
+  const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
 
   const { handleScroll, scrollToBottom, showScrollButton } = useScrollController(
@@ -470,19 +474,13 @@ const ChatArea: React.FC<ChatAreaProps> = ({
       {/* Empty state */}
       {isEmpty && (
         <div className="empty-state">
-          <div
-            style={{
-              width: 44, height: 44, borderRadius: 14,
-              background: 'linear-gradient(135deg, hsl(var(--emerald) / 0.12), hsl(217 91% 50% / 0.12))',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <svg style={{ width: 20, height: 20, color: 'hsl(var(--emerald))' }} fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-            </svg>
-          </div>
+          <img
+            src={isDark ? lightLogo : darkLogo}
+            alt="Prmpt"
+            style={{ width: 52, height: 52, objectFit: 'contain' }}
+          />
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'hsl(var(--foreground))', marginBottom: 4, letterSpacing: '-0.01em' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'hsl(var(--emerald))', marginBottom: 4, letterSpacing: '-0.01em' }}>
               Prompt Optimizer
             </div>
             <div style={{ fontSize: 12, color: 'hsl(var(--muted-foreground))', lineHeight: 1.5 }}>

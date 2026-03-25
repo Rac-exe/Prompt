@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Logo } from "@/components/ui/Logo";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -75,10 +76,8 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
 
         {/* Brand */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald flex items-center justify-center shadow-lg shadow-emerald/30">
-            <Zap className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-bold text-foreground text-lg tracking-tight">Prompt Weaver</span>
+          <Logo size="w-9 h-9" />
+          <span className="font-bold text-foreground text-lg tracking-tight">Prmpt</span>
         </div>
 
         {/* Hero content */}
@@ -121,10 +120,8 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
         <div className="w-full max-w-[380px] space-y-8 animate-fade-in">
           {/* Mobile brand */}
           <div className="flex items-center gap-3 lg:hidden">
-            <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center">
-              <Zap className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-bold text-foreground">Prompt Weaver</span>
+            <Logo size="w-8 h-8" />
+            <span className="font-bold text-foreground">Prmpt</span>
           </div>
 
           {/* Heading */}

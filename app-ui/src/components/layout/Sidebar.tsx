@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Logo } from "@/components/ui/Logo";
 import {
   Zap, Plus, Library, MessageSquare,
   PanelLeftClose, PanelLeftOpen,
@@ -234,12 +235,10 @@ export const Sidebar = ({
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
           <div className={cn("flex items-center gap-2.5 min-w-0", collapsed && "justify-center")}>
-            <div className="w-8 h-8 rounded-lg bg-emerald flex items-center justify-center flex-shrink-0 shadow-sm shadow-emerald/30">
-              <Zap className="w-4 h-4 text-white" />
-            </div>
+            <Logo size="w-8 h-8" />
             {!collapsed && (
               <div className="min-w-0 animate-fade-in">
-                <p className="text-[13px] font-bold text-foreground leading-none tracking-tight">Prompt Weaver</p>
+                <p className="text-[13px] font-bold text-foreground leading-none tracking-tight">Prmpt</p>
                 <p className="label-xs mt-0.5">Studio</p>
               </div>
             )}

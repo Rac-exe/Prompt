@@ -13,7 +13,7 @@
   :root {
     /* ─── Light Mode ──────────────────────────────────────────────
        Warm peach light theme — soft, premium, easy on the eyes.
-       No pure white anywhere. Blue brand accent preserved.
+       No pure white anywhere. Dark accent matching the dark-logo.
        Peach canvas (#FFF4ED) with warm layered surfaces.
     ──────────────────────────────────────────────────────────────── */
 
@@ -28,8 +28,8 @@
     --popover:            20 100% 98%;
     --popover-foreground: 217 33% 17%;
 
-    /* Primary — brand blue (#3B82F6) */
-    --primary:            217 91% 60%;
+    /* Primary — dark accent matching dark-logo circle */
+    --primary:            220 10% 15%;
     --primary-foreground: 0   0% 100%;
 
     /* Secondary — soft peach for pills / chips */
@@ -40,9 +40,9 @@
     --muted:              20 50% 94%;
     --muted-foreground:   215 20% 38%;
 
-    /* Accent — active / selected items (#DBEAFE bg + #3B82F6 text) */
-    --accent:             214 95% 93%;
-    --accent-foreground:  217 91% 60%;
+    /* Accent — active / selected items (warm peach, 20% more visible) */
+    --accent:             20 35% 87%;
+    --accent-foreground:  220 10% 15%;
 
     --destructive:        0 68% 50%;
     --destructive-foreground: 0 0% 100%;
@@ -50,7 +50,7 @@
     /* Borders — warm peach subtle (#F2D9CE) and medium (#E8C8B7) */
     --border:             18 58% 88%;
     --input:              21 52% 81%;
-    --ring:               217 91% 60%;
+    --ring:               220 10% 15%;
 
     --radius: 0.625rem;
 
@@ -60,20 +60,20 @@
     --surface-hover:      19 100% 94%;
     --surface-elevated:   20 100% 98%;
 
-    /* Blue accent mapped to emerald tokens for component compat */
-    --emerald:            217 91% 60%;
-    --emerald-soft:       221 83% 53%;
-    --emerald-muted:      214 95% 93%;
+    /* Dark accent mapped to emerald tokens — matches dark-logo vibe */
+    --emerald:            220 10% 15%;
+    --emerald-soft:       220 8% 25%;
+    --emerald-muted:      20 30% 92%;
 
     /* ── Sidebar — deeper peach surface (#FFEDE3) ── */
     --sidebar-background:         21 100% 95%;
     --sidebar-foreground:         215 20% 35%;
-    --sidebar-primary:            217 91% 60%;
+    --sidebar-primary:            220 10% 15%;
     --sidebar-primary-foreground: 0   0% 100%;
-    --sidebar-accent:             214 95% 93%;
-    --sidebar-accent-foreground:  217 91% 60%;
+    --sidebar-accent:             20 35% 87%;
+    --sidebar-accent-foreground:  220 10% 15%;
     --sidebar-border:             18 58% 88%;
-    --sidebar-ring:               217 91% 60%;
+    --sidebar-ring:               220 10% 15%;
   }
 
   .dark {
@@ -100,8 +100,8 @@
     --muted:              220 10% 11%;
     --muted-foreground:   215 16% 58%;
 
-    --accent:             220 10% 13%;
-    --accent-foreground:  210 20% 93%;
+    --accent:             217 50% 12%;
+    --accent-foreground:  210 40% 95%;
 
     --destructive:        0 72% 51%;
     --destructive-foreground: 0 0% 100%;
@@ -120,13 +120,13 @@
     --emerald-soft:       217 78% 72%;
     --emerald-muted:      217 30% 15%;
 
-    /* Sidebar — Dark */
+    /* Sidebar — Dark — blue-tinted hover to match light-logo */
     --sidebar-background:         220 10%  4%;
     --sidebar-foreground:         215 16% 55%;
     --sidebar-primary:            217 91% 60%;
     --sidebar-primary-foreground: 0   0% 100%;
-    --sidebar-accent:             220 10%  9%;
-    --sidebar-accent-foreground:  210 20% 93%;
+    --sidebar-accent:             217 50% 12%;
+    --sidebar-accent-foreground:  210 40% 95%;
     --sidebar-border:             220 10% 10%;
     --sidebar-ring:               217 91% 60%;
   }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Logo } from "@/components/ui/Logo";
 import {
   Zap, Sparkles, MessageSquare, Library, Mic,
   AtSign, Brain, ChevronRight, MousePointerClick, ArrowRight,
@@ -112,7 +113,7 @@ function FeatureVisual({ type }: { type: string }) {
                 <div className="w-5 h-5 rounded-md bg-amber-500/15 flex items-center justify-center">
                   <Zap className="w-3 h-3 text-amber-400" />
                 </div>
-                <span className="text-[11px] font-semibold text-foreground/80">Prompt Weaver</span>
+                <span className="text-[11px] font-semibold text-foreground/80">Prmpt</span>
                 <span className="ml-auto text-[8px] text-muted-foreground/30 font-mono bg-secondary/60 px-1.5 py-0.5 rounded">@prompt</span>
               </div>
               <div className="rounded-lg border border-border/20 bg-surface/40 p-2.5">
@@ -402,10 +403,8 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
       {/* ── Top bar ── */}
       <div className="relative z-10 flex items-center justify-between px-8 pt-6 pb-4">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-emerald flex items-center justify-center shadow-lg shadow-emerald/30">
-            <Zap className="w-4 h-4 text-white" />
-          </div>
-          <span className="font-bold text-foreground text-sm tracking-tight">Prompt Weaver</span>
+          <Logo size="w-8 h-8" />
+          <span className="font-bold text-foreground text-sm tracking-tight">Prmpt</span>
         </div>
         <button
           onClick={onComplete}

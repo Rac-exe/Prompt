@@ -1,11 +1,16 @@
 import React from 'react';
+import darkLogo from "@/assets/logos/dark-logo-svg.svg";
+import lightLogo from "@/assets/logos/light-logo-svg.svg";
+import { useIsDark } from "@/hooks/useIsDark";
 
 interface HeaderProps {
   onClose: () => void;
   onNewSession: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onClose, onNewSession }) => (
+const Header: React.FC<HeaderProps> = ({ onClose, onNewSession }) => {
+  const isDark = useIsDark();
+  return (
   <div
     style={{
       WebkitAppRegion: 'drag' as any,
@@ -17,23 +22,12 @@ const Header: React.FC<HeaderProps> = ({ onClose, onNewSession }) => (
     }}
   >
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      {/* Logo */}
-      <div
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 10,
-          background: 'linear-gradient(135deg, hsl(var(--emerald)), hsl(217 91% 50%))',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 0 14px hsl(var(--emerald) / 0.3)',
-        }}
-      >
-        <svg style={{ width: 14, height: 14, color: 'white' }} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-        </svg>
-      </div>
+      {/* Theme-aware logo — single img, JS-driven */}
+      <img
+        src={isDark ? lightLogo : darkLogo}
+        alt="Prmpt"
+        style={{ width: 28, height: 28, objectFit: 'contain', flexShrink: 0 }}
+      />
       <div>
         <span style={{ fontSize: 13, fontWeight: 700, color: 'hsl(var(--foreground))', letterSpacing: '-0.01em' }}>
           Prmpt
@@ -75,6 +69,7 @@ const Header: React.FC<HeaderProps> = ({ onClose, onNewSession }) => (
       </button>
     </div>
   </div>
-);
+  );
+};
 
 export default React.memo(Header);

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { Logo } from "@/components/ui/Logo";
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
 import { OnboardingPage } from './OnboardingPage';
@@ -99,10 +100,10 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const renderContent = () => {
     if (authView === 'loading') {
       return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <div className="flex flex-col items-center gap-5">
+            <Logo size="w-16 h-16" />
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald"></div>
           </div>
         </div>
       );

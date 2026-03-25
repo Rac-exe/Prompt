@@ -37,7 +37,7 @@ const ModeDropdown: React.FC<ModeDropdownProps> = ({ currentMode, open, anchorRe
         {currentMode === 'fast' && <span className="mode-check">✓</span>}
       </button>
       <button className={`mode-dropdown-item${currentMode === 'thinking' ? ' selected' : ''}`} type="button" onClick={() => onSelect('thinking')}>
-        <svg className="mode-icon" fill="none" stroke="#3b82f6" viewBox="0 0 24 24">
+        <svg className="mode-icon" fill="none" stroke="hsl(var(--emerald))" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
