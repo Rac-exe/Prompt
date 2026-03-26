@@ -1,24 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { Settings2, Briefcase, MessageSquare, Palette, GraduationCap, FlaskConical, Code2, ImageIcon, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SKILL_ICON_MAP } from "@/lib/skillIcons";
 import type { SkillInfo } from "@/types/electron";
+
+export { SKILL_ICON_MAP } from "@/lib/skillIcons";
 
 interface SkillPickerProps {
   onSelect: (skillName: string) => void;
   onClose: () => void;
   className?: string;
 }
-
-export const SKILL_ICON_MAP: Record<string, React.ElementType> = {
-  automation:    Settings2,
-  business:      Briefcase,
-  communication: MessageSquare,
-  creative:      Palette,
-  educational:   GraduationCap,
-  research:      FlaskConical,
-  technical:     Code2,
-  visual:        ImageIcon,
-};
 
 export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) => {
   const [skills, setSkills] = useState<SkillInfo[]>([]);

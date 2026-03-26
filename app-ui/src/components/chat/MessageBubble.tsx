@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
+import { SKILL_ICON_MAP } from "@/lib/skillIcons";
 import { FeedbackWidget } from "./FeedbackWidget";
 import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
 import type { AttachedFile } from "@/types/electron";
@@ -248,13 +250,16 @@ export const MessageBubble = ({
               )}
 
               
-              {/* Selected skill pill */}
-              {message.selectedSkill && (
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
-                  <Sparkles className="h-3 w-3 text-emerald" />
-                  <span className="text-emerald font-medium capitalize">{message.selectedSkill}</span>
-                </div>
-              )}
+              {/* Selected skill pill — same icon as composer / skill picker */}
+              {message.selectedSkill && (() => {
+                const SkillIcon = SKILL_ICON_MAP[message.selectedSkill] ?? Sparkles;
+                return (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
+                    <SkillIcon className="h-3 w-3 text-emerald" />
+                    <span className="text-emerald font-medium capitalize">{message.selectedSkill}</span>
+                  </div>
+                );
+              })()}
               
               <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
@@ -344,9 +349,9 @@ export const MessageBubble = ({
   /* ── Assistant message ─────────────────────────────────── */
   return (
     <div className="flex gap-3 animate-slide-up">
-      {/* Avatar */}
-      <div className="w-7 h-7 rounded-lg bg-emerald/15 border border-emerald/25 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <Sparkles className="w-3.5 h-3.5 text-emerald" />
+      {/* Avatar — theme-aware app logo (light UI → dark mark, dark UI → light mark) */}
+      <div className="w-7 h-7 rounded-lg bg-emerald/15 border border-emerald/25 flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden p-0.5">
+        <Logo size="w-[22px] h-[22px]" className="min-w-0 min-h-0" />
       </div>
 
       {/* Bubble */}
