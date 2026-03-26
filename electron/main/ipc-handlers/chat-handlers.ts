@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import crypto from 'crypto';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
@@ -190,6 +191,7 @@ export function registerChatHandlers(
     // APP WINDOW: Optimize prompt request
     // ============================================
     ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
             let chatHistory: Array<{ role: string; content: string }> | null = null;
@@ -472,6 +474,8 @@ export function registerChatHandlers(
         groupId?: string;
         versionIndex?: number;
     }) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
+        Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'fast', skill: data.forcedSkill || 'none' } }, async () => {
         try {
             // ── Offline guard ─────────────────────────────────────────────────
             // File uploads require network access. Reject early with a clear error
@@ -530,8 +534,8 @@ export function registerChatHandlers(
                         return;
                     }
                 } catch (rlErr) {
-                    // Fail-open: if rate-limit check itself errors, allow the message
                     console.warn('[Chat] Rate limit check failed (allowing message):', rlErr);
+                    Sentry.captureMessage('Rate limit fail-open', 'warning');
                 }
             }
 
@@ -703,6 +707,7 @@ export function registerChatHandlers(
             activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
             let modelsUsed: ModelsUsed | undefined;
+            Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming started', level: 'info', data: { chatId, mode: data.mode } });
             try {
                 const result = await pythonClient.optimizeStream(
                     data.content,
@@ -721,6 +726,7 @@ export function registerChatHandlers(
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
+                Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming completed', level: 'info', data: { chatId } });
             } catch (llmErr: any) {
                 activeGenerations.delete(chatId!);
                 const friendlyError = humanizeLlmError(llmErr);
@@ -806,6 +812,7 @@ export function registerChatHandlers(
                 });
             }
         }
+        });
     });
 
     // ============================================
@@ -821,6 +828,7 @@ export function registerChatHandlers(
         forcedSkill?: string | null;
         previousContent?: string;
     }) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
         try {
             // ── Rate limit guard ──────────────────────────────────────────────
             if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {

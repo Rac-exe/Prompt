@@ -11,6 +11,25 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
+import os
+import sentry_sdk
+
+def _scrub_prompts(event, hint):
+    if event.get("extra"):
+        for key in list(event["extra"].keys()):
+            if any(w in key.lower() for w in ("prompt", "content", "message")):
+                event["extra"][key] = "[REDACTED]"
+    return event
+
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
+    release="prmpt-python@2.0.0",
+    environment="development",
+    traces_sample_rate=1.0,
+    send_default_pii=False,
+    before_send=_scrub_prompts,
+)
+
 import json
 import time
 import re

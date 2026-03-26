@@ -133,6 +133,9 @@ declare global {
         openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
       };
 
+      // Sentry user sync
+      onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => void;
+
       // Rate Limit API
       getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
 
@@ -515,6 +518,14 @@ const electronAPI = {
   },
   onNetworkReconnected: (callback: () => void) => {
     ipcRenderer.on('network:reconnected', () => callback());
+  },
+
+  // ============================================
+  // SENTRY USER SYNC
+  // ============================================
+  onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => {
+    ipcRenderer.removeAllListeners('sentry:set-user');
+    ipcRenderer.on('sentry:set-user', (_event, user) => callback(user));
   },
 
   // ============================================

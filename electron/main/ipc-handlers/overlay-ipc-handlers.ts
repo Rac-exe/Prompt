@@ -1,4 +1,5 @@
 import { ipcMain, clipboard, screen } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import * as crypto from 'crypto';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import { PythonClient, ModelsUsed } from '../api/python-client';
@@ -162,6 +163,7 @@ export function registerOverlayHandlers(
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
   ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimize requested', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, isRegenerate: data.isRegenerate } });
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -199,6 +201,7 @@ export function registerOverlayHandlers(
         }
       } catch (rlErr) {
         console.warn('[Overlay] Rate limit check failed (allowing message):', rlErr);
+        Sentry.captureMessage('Rate limit fail-open', 'warning');
       }
     }
 
@@ -283,6 +286,7 @@ export function registerOverlayHandlers(
         getRateLimitService().invalidateCache(authState.currentUserId);
       }
 
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization complete', level: 'info' });
       overlayManager.send('overlay:optimization-complete', {
         original: data.text,
         optimized: optimizedText,
@@ -495,6 +499,7 @@ export function registerOverlayHandlers(
         })();
       }
     } catch (error) {
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization error', level: 'error' });
       const message = error instanceof Error ? error.message : 'Optimization failed';
       overlayManager.send('overlay:optimization-error', { error: message });
     }
@@ -696,23 +701,22 @@ export function registerOverlayHandlers(
   //
   // Fallback: if native bridge is unavailable, write to clipboard instead.
   ipcMain.handle('overlay:insert', (_event, data: { text: string }) => {
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Replace triggered', level: 'info' });
     if (!data?.text) {
       return { success: false, error: 'No text provided' };
     }
 
-    // Close overlay BEFORE calling replaceAtLastAnchor so it doesn't stay on top
-    // of the window we are about to inject into.
     overlayManager.close();
 
     if (isNativeBridgeAvailable()) {
       const success = replaceAtLastAnchor(data.text);
       if (!success) {
         console.warn('[Overlay] replaceAtLastAnchor failed — window may have lost focus or been closed');
+        Sentry.captureMessage('Replace failed', 'warning');
       }
       return { success };
     }
 
-    // Fallback for when native module is not built.
     clipboard.writeText(data.text);
     console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
     return { success: false, fallback: 'clipboard' };

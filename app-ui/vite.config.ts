@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -14,7 +15,18 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [
+    react(),
+    mode === "development" && componentTagger(),
+    mode === "production" &&
+      sentryVitePlugin({
+        org: process.env.SENTRY_ORG || "prmpt",
+        project: process.env.SENTRY_PROJECT || "prmpt-desktop",
+        authToken: process.env.SENTRY_AUTH_TOKEN,
+        release: { name: "prmpt@2.0.0" },
+        sourcemaps: { filesToDeleteAfterUpload: ["../electron/renderer/app-ui/**/*.map"] },
+      }),
+  ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -23,6 +35,7 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: "../electron/renderer/app-ui", // Build directly to Electron
     emptyDir: true, // Clean before build
+    sourcemap: true,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),

@@ -1,3 +1,25 @@
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+import * as Sentry from '@sentry/electron/main';
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  release: 'prmpt@2.0.0',
+  environment: process.env.NODE_ENV === 'development' ? 'development' : 'production',
+  tracesSampleRate: 1.0,
+  beforeSend(event) {
+    if (event.extra) {
+      for (const key of Object.keys(event.extra)) {
+        if (/prompt|content|message|text/i.test(key)) {
+          event.extra[key] = '[REDACTED]';
+        }
+      }
+    }
+    return event;
+  },
+});
+
 import { app, globalShortcut, ipcMain, shell } from 'electron';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
@@ -11,7 +33,6 @@ import { UserService } from './database/services/user-service';
 import { AuthService } from './database/services/auth-service';
 import { SettingsService } from './database/services/settings-service';
 import { PromptLibraryService } from './database/services/prompt-library-service';
-import * as dotenv from 'dotenv';
 import { authState } from './utils/auth-state';
 import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
@@ -28,9 +49,6 @@ import './ipc-handlers/prompt-library-handlers';
 import { syncOfflineQueue } from './ipc-handlers/prompt-library-handlers';
 import { syncChatMessageQueue } from './ipc-handlers/chat-handlers';
 import { networkMonitor } from './ipc-handlers/network-monitor-singleton';
-
-// Load environment variables from .env file
-dotenv.config();
 let appWindowManager: AppWindowManager;
 let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
@@ -49,6 +67,7 @@ function startKeystrokeDetection() {
 
   startHook((anchor: TriggerAnchor) => {
     console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
+    Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
     overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
   });
 
@@ -130,6 +149,7 @@ async function initialize() {
   // TRANSCRIPTION IPC HANDLERS
   // ============================================
   ipcMain.on('transcription:start', async (event, sessionId: string) => {
+    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription started', level: 'info', data: { sessionId } });
     try {
       console.log('[Main] Starting transcription session:', sessionId);
 
@@ -154,6 +174,7 @@ async function initialize() {
         },
       );
     } catch (error) {
+      Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error', level: 'error' });
       console.error('[Main] Failed to start transcription:', error);
       overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
       appWindowManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
@@ -161,6 +182,7 @@ async function initialize() {
   });
 
   ipcMain.on('transcription:stop', async () => {
+    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription stopped', level: 'info' });
     try {
       console.log('[Main] Stopping transcription');
       await transcriptionClient.stopTranscription();
@@ -257,6 +279,9 @@ async function initialize() {
   // ============================================
   startKeystrokeDetection();
 
+  Sentry.setTag('native_bridge', isNativeBridgeAvailable() ? 'loaded' : 'stub');
+  Sentry.setTag('platform', process.platform);
+
   // ============================================
   // GLOBAL HOTKEY: Ctrl+5 to toggle overlay
   // ============================================
@@ -289,6 +314,8 @@ async function initialize() {
   console.log('[Main] - Press Ctrl+5 to toggle overlay');
   console.log('[Main] - Click tray icon to open app window');
   console.log('[Main] ========================================');
+
+  Sentry.addBreadcrumb({ category: 'lifecycle', message: 'App startup complete', level: 'info' });
 }
 
 async function shutdown() {

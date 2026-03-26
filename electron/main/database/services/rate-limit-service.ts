@@ -1,4 +1,5 @@
 import { app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import { SupabaseClientManager } from '../supabase-client';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,7 +183,7 @@ export class RateLimitService {
             return count ?? 0;
         } catch (err) {
             console.error('[RateLimitService] Unexpected error counting messages:', err);
-            // Fail-open
+            Sentry.captureMessage('Rate limit fail-open', 'warning');
             return 0;
         }
     }

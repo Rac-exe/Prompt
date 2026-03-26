@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import { AuthService } from '../database/services/auth-service';
 import { UserService } from '../database/services/user-service';
 import { ChatService } from '../database/services/chat-service';
@@ -125,6 +126,9 @@ async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUs
             };
         }
 
+        Sentry.setUser({ id: user.id, email: user.email });
+        appWindowManager.send('sentry:set-user', { id: user.id, email: user.email });
+
         // 1. Send Auth State
         console.log('[Auth] 📤 Sending authenticated state to renderer');
         appWindowManager.send('auth:state-changed', {
@@ -226,12 +230,14 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
     // Sign In
     ipcMain.on('auth:sign-in', async (event, data: { email: string; password: string }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Login attempt', level: 'info' });
         try {
             console.log('[Auth] Sign in request for:', data.email);
 
             const { session, error } = await authService!.signIn(data);
 
             if (error || !session) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'Login failed', level: 'warning' });
                 console.error('[Auth] Sign in failed:', error?.message);
                 appWindowManager.send('auth:state-changed', {
                     isAuthenticated: false,
@@ -241,6 +247,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 return;
             }
 
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Login successful', level: 'info' });
             console.log('[Auth] ✅ Sign in successful');
             await handleSuccessfulAuth(appWindowManager);
         } catch (error) {
@@ -255,12 +262,15 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
     // Sign Out
     ipcMain.on('auth:sign-out', async () => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Sign out', level: 'info' });
         try {
             console.log('[Auth] Sign out request');
             await authService!.signOut();
 
             authState.isAuthenticated = false;
             authState.currentUserId = null;
+            Sentry.setUser(null);
+            appWindowManager.send('sentry:set-user', null);
 
             console.log('[Auth] ✅ User signed out');
 
@@ -281,6 +291,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
             authState.isAuthenticated = false;
             authState.currentUserId = null;
+            Sentry.setUser(null);
+            appWindowManager.send('sentry:set-user', null);
 
             console.log('[Auth] ✅ User signed out');
 
