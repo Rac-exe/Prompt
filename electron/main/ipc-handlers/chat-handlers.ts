@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
-import { PythonClient } from '../api/python-client';
+import { PythonClient, ModelsUsed } from '../api/python-client';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
@@ -14,6 +14,15 @@ import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
 import { RateLimitService } from '../database/services/rate-limit-service';
+
+// ── Model metadata helper ─────────────────────────────────────────────────────
+function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
+    return {
+        model: models?.optimizer ?? 'unknown',
+        ...(models?.summarizer && { summarizer_model: models.summarizer }),
+        ...(models?.used_vision && { used_vision: true }),
+    };
+}
 
 // ── File attachment types ─────────────────────────────────────────────────────
 export interface AttachedFile {
@@ -222,8 +231,9 @@ export function registerChatHandlers(
             // Use streaming optimization
             if (chatId) activeGenerations.set(chatId, { accumulated: '' });
             let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
             try {
-                optimizedText = await pythonClient.optimizeStream(
+                const result = await pythonClient.optimizeStream(
                     promptText,
                     isRegenerate,
                     chatHistory,
@@ -236,6 +246,8 @@ export function registerChatHandlers(
                     mode,
                     customInstructions
                 );
+                optimizedText = result.text;
+                modelsUsed = result.models;
             } finally {
                 if (chatId) activeGenerations.delete(chatId);
             }
@@ -248,7 +260,7 @@ export function registerChatHandlers(
                         optimizedText,
                         'app_window',
                         {
-                            model: 'llama3.2',
+                            ...buildModelMeta(modelsUsed),
                             source_context: { app: 'app_window' },
                         }
                     );
@@ -690,8 +702,9 @@ export function registerChatHandlers(
             // assistant message — prevents an orphaned user message in the DB.
             activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
             try {
-                optimizedText = await pythonClient.optimizeStream(
+                const result = await pythonClient.optimizeStream(
                     data.content,
                     false,
                     messagesContext.length > 0 ? messagesContext : null,
@@ -706,10 +719,10 @@ export function registerChatHandlers(
                     attachedFiles,
                     data.forcedSkill || null
                 );
+                optimizedText = result.text;
+                modelsUsed = result.models;
             } catch (llmErr: any) {
                 activeGenerations.delete(chatId!);
-                // LLM failed — save a sentinel error-assistant message so the user message
-                // isn't orphaned.  The isError flag lets the UI render an error bubble.
                 const friendlyError = humanizeLlmError(llmErr);
                 try {
                     await chatService.addMessage(chatId, '', 'assistant', undefined, {
@@ -719,7 +732,7 @@ export function registerChatHandlers(
                         versionIndex: 0,
                     });
                 } catch { /* non-critical — best-effort */ }
-                throw llmErr; // re-throw so the outer catch notifies the renderer
+                throw llmErr;
             }
             activeGenerations.delete(chatId!);
 
@@ -731,10 +744,9 @@ export function registerChatHandlers(
                         data.content,
                         optimizedText,
                         'app_window',
-                        { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                        { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
                     );
                     optimizationId = optimization.id;
-                    // Trigger background memory analysis (fire-and-forget, non-critical)
                     if (analyzer && authState.currentUserId) {
                         analyzer.onNewOptimization(
                             authState.currentUserId,
@@ -757,7 +769,7 @@ export function registerChatHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
             );
 
             // Send assistant message to renderer
@@ -870,8 +882,9 @@ export function registerChatHandlers(
             // Trigger streaming optimization (regeneration — pass previous content for self-critique)
             activeGenerations.set(chatId, { accumulated: '' });
             let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
             try {
-                optimizedText = await pythonClient.optimizeStream(
+                const result = await pythonClient.optimizeStream(
                     data.content,
                     true,
                     messagesContext.length > 0 ? messagesContext : null,
@@ -887,6 +900,8 @@ export function registerChatHandlers(
                     data.forcedSkill || null,
                     data.previousContent || null
                 );
+                optimizedText = result.text;
+                modelsUsed = result.models;
             } finally {
                 activeGenerations.delete(chatId);
             }
@@ -899,7 +914,7 @@ export function registerChatHandlers(
                         data.content,
                         optimizedText,
                         'app_window',
-                        { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                        { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
                     );
                     optimizationId = optimization.id;
                     if (analyzer && authState.currentUserId) {
@@ -925,7 +940,7 @@ export function registerChatHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
             );
 
             // Send assistant message to renderer
@@ -1077,7 +1092,7 @@ export async function syncChatMessageQueue(
             } catch { /* non-critical */ }
 
             // Run optimizer (background sync — no streaming)
-            const optimizedText = await _pythonClient.optimizeStream(
+            const { text: optimizedText, models: modelsUsed } = await _pythonClient.optimizeStream(
                 content,
                 false,
                 messagesContext.length > 0 ? messagesContext : null,
@@ -1093,7 +1108,7 @@ export async function syncChatMessageQueue(
             try {
                 const opt = await optSvc.saveOptimization(
                     content, optimizedText, 'app_window',
-                    { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                    { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
                 );
                 optimizationId = opt.id;
             } catch { /* non-critical */ }
@@ -1102,7 +1117,7 @@ export async function syncChatMessageQueue(
             const assistantGroupId = crypto.randomUUID();
             const assistantMsg = await svc.addMessage(
                 chatId, optimizedText, 'assistant', optimizationId,
-                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
             );
 
             // Notify the app window so it can append the messages

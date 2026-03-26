@@ -397,6 +397,7 @@ async def optimize_prompt(request: OptimizeRequest):
         mode = getattr(request, 'mode', 'fast')
         custom_instructions = getattr(request, 'custom_instructions', '')
         
+        models_info = {}
         # Call pipeline
         optimized_raw = pipeline_optimize(
             user_input=clean_prompt,
@@ -405,7 +406,8 @@ async def optimize_prompt(request: OptimizeRequest):
             provider="auto",
             stream=False,
             mode=mode,
-            custom_instructions=custom_instructions
+            custom_instructions=custom_instructions,
+            models_info=models_info,
         )
         
         optimized = clean_optimized_text(optimized_raw)
@@ -488,6 +490,7 @@ async def optimize_stream(websocket: WebSocket):
                     cc.add(role_str, content_str)
             
             try:
+                models_info = {}
                 # Call pipeline configured for streaming, returning a generator
                 stream_gen = pipeline_optimize(
                     user_input=prompt_text,
@@ -500,6 +503,7 @@ async def optimize_stream(websocket: WebSocket):
                     attached_files=attached_files,
                     forced_skill=forced_skill,
                     previous_output=previous_output,
+                    models_info=models_info,
                 )
                 
                 accumulated_text = ""
@@ -521,7 +525,8 @@ async def optimize_stream(websocket: WebSocket):
                     "type": "complete",
                     "request_id": request_id,
                     "optimized": cleaned_text,
-                    "original": prompt_text
+                    "original": prompt_text,
+                    "models_used": models_info,
                 })
                 
                 print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")

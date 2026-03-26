@@ -1,7 +1,7 @@
 import { ipcMain, clipboard, screen } from 'electron';
 import * as crypto from 'crypto';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
-import { PythonClient } from '../api/python-client';
+import { PythonClient, ModelsUsed } from '../api/python-client';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
 import { OptimizationService } from '../database/services/optimization-service';
@@ -19,6 +19,14 @@ import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
+
+function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
+    return {
+        model: models?.optimizer ?? 'unknown',
+        ...(models?.summarizer && { summarizer_model: models.summarizer }),
+        ...(models?.used_vision && { used_vision: true }),
+    };
+}
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -253,7 +261,7 @@ export function registerOverlayHandlers(
       // Add the user's new message to in-memory history (used when no chatId)
       inMemoryOverlayHistory.push({ role: 'user', content: data.text });
 
-      const optimizedText = await pythonClient.optimizeStream(
+      const { text: optimizedText, models: modelsUsed } = await pythonClient.optimizeStream(
         data.text,
         !!data.isRegenerate,
         historyContext,
@@ -288,7 +296,7 @@ export function registerOverlayHandlers(
           data.text,
           optimizedText,
           'overlay',
-          { model: 'llama3.2', source_context: { app: 'overlay' } }
+          { ...buildModelMeta(modelsUsed), source_context: { app: 'overlay' } }
         ).then(opt => { optimizationId = opt.id; })
         .catch((err: Error) => {
           errorLog.append('[Overlay] optimization record save', err);
@@ -358,7 +366,7 @@ export function registerOverlayHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
               );
 
               // Update cache
@@ -461,7 +469,7 @@ export function registerOverlayHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex }
+                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex }
               );
 
               if (authState.currentUserId) {
@@ -745,7 +753,7 @@ export function registerOverlayHandlers(
       data.content,
       'assistant',
       undefined,
-      { model: 'llama3.2', optimized: true, source_app: 'overlay', message_type: 'optimized_prompt' }
+      { model: 'unknown', optimized: true, source_app: 'overlay', message_type: 'optimized_prompt' }
     );
 
     console.log('[Overlay] Saved optimized prompt to chat:', data.chatId, 'msgId:', msg.id);

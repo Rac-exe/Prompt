@@ -2,12 +2,23 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 import { EventEmitter } from "events";
 const WebSocket = require('ws');
 
+export interface ModelsUsed {
+  optimizer: string;
+  summarizer?: string;
+  used_vision?: boolean;
+}
+
+interface OptimizeResult {
+  text: string;
+  models?: ModelsUsed;
+}
+
 interface StreamRequest {
-  resolve: (value: string) => void;
+  resolve: (value: OptimizeResult) => void;
   reject: (reason?: any) => void;
   onChunk: (chunk: string, accumulated: string) => void;
-  accumulated?: string; // Track accumulated text for fallback scenarios
-  aborted?: boolean;    // Flag to suppress further chunk/complete processing
+  accumulated?: string;
+  aborted?: boolean;
 }
 
 export class PythonClient extends EventEmitter {
@@ -86,8 +97,7 @@ export class PythonClient extends EventEmitter {
             if (message.type === 'chunk') {
               request.onChunk(message.content, message.accumulated);
             } else if (message.type === 'complete') {
-              // console.log('[PythonClient] Received completion signal');
-              request.resolve(message.optimized);
+              request.resolve({ text: message.optimized, models: message.models_used });
               this.activeRequests.delete(requestId);
             } else if (message.type === 'error') {
               console.error('[PythonClient] Received error signal:', message.message);
@@ -118,9 +128,8 @@ export class PythonClient extends EventEmitter {
         // Otherwise they hang forever if the server disconnects
         for (const [requestId, request] of this.activeRequests.entries()) {
           if (request.accumulated && request.accumulated.length > 0) {
-            // If we have some data, treat as success
             console.warn(`[PythonClient] Request ${requestId} socket closed but has data, resolving along with warning.`);
-            request.resolve(request.accumulated);
+            request.resolve({ text: request.accumulated, models: undefined });
           } else {
             request.reject(new Error('WebSocket connection closed unexpectedly'));
           }
@@ -145,16 +154,15 @@ export class PythonClient extends EventEmitter {
     attachedFiles: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }> = [],
     forcedSkill: string | null = null,
     previousOutput: string | null = null
-  ): Promise<string> {
+  ): Promise<OptimizeResult> {
     await this.ensureConnection();
 
     const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     this.latestRequestId = requestId;
 
-    // Track accumulated text for fallback
     let accumulatedText = "";
 
-    return new Promise((resolve, reject) => {
+    return new Promise<OptimizeResult>((resolve, reject) => {
       // Wrapper for onChunk to track accumulation locally
       const wrappedOnChunk = (chunk: string, acc: string) => {
         accumulatedText = acc;
@@ -177,8 +185,7 @@ export class PythonClient extends EventEmitter {
           this.activeRequests.delete(requestId);
 
           if (req && req.accumulated && req.accumulated.length > 0) {
-            // Resolve with what we have
-            resolve(req.accumulated);
+            resolve({ text: req.accumulated, models: undefined });
           } else {
             reject(new Error('Optimization request timed out'));
           }
@@ -202,11 +209,10 @@ export class PythonClient extends EventEmitter {
             clearTimeout(timeoutId);
 
             if (req && req.accumulated && req.accumulated.length > 0) {
-              resolve(req.accumulated);
+              resolve({ text: req.accumulated, models: undefined });
             } else {
-              // Silence before any data - this shouldn't happen
               console.warn(`[PythonClient] Request ${requestId} timed out with no data received`);
-              resolve("");
+              resolve({ text: "", models: undefined });
             }
           }
         }, 3500);
@@ -292,7 +298,7 @@ export class PythonClient extends EventEmitter {
       }
     } catch (_) { /* ignore */ }
 
-    req.resolve(partial);
+    req.resolve({ text: partial, models: undefined });
   }
 
   // Legacy method for non-streaming requests (retaining for backward compatibility)
