@@ -369,12 +369,12 @@ if (!gotTheLock) {
   function handleDeepLink(url: string): void {
     try {
       const parsed = new URL(url);
-      // hostname = "share", pathname = "/<token>"
+
+      // ── Share deep link: promptweaver://share/<token> ──────────────────────
       if (parsed.hostname === 'share') {
         const token = parsed.pathname.replace(/^\//, '');
         if (token && appWindowManager) {
           appWindowManager.show();
-          // Navigate the renderer to the share page via a hash route change
           const win = appWindowManager.getWindow();
           if (win && !win.isDestroyed()) {
             win.webContents.executeJavaScript(

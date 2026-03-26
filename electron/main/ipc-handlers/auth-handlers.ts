@@ -1,4 +1,5 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
+import * as http from 'http';
 import * as Sentry from '@sentry/electron/main';
 import { AuthService } from '../database/services/auth-service';
 import { UserService } from '../database/services/user-service';
@@ -61,7 +62,7 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
 /**
  * Handle successful authentication (updates state, loads data)
  */
-async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
+export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
     const { authService, userService, chatService, promptLibraryService } = getServices();
 
     try {
@@ -302,6 +303,127 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             });
         } catch (error) {
             console.error('[Auth] Error signing out:', error);
+        }
+    });
+
+    // OAuth Sign In (Google / GitHub) — localhost HTTP callback server
+    // Avoids Windows custom-protocol deep-link issues in development and production.
+    ipcMain.handle('auth:oauth-sign-in', async (_event, { provider }: { provider: 'google' | 'github' }) => {
+        const OAUTH_PORT = 54321;
+        const redirectTo = `http://127.0.0.1:${OAUTH_PORT}/auth/callback`;
+
+        try {
+            await new Promise<void>((resolve, reject) => {
+                // ── Timeout: auto-close server after 10 minutes ──────────────
+                let serverClosed = false;
+                const closeServer = () => {
+                    if (!serverClosed) {
+                        serverClosed = true;
+                        server.close();
+                    }
+                };
+                const timeout = setTimeout(() => {
+                    closeServer();
+                    reject(new Error('OAuth sign-in timed out'));
+                }, 10 * 60 * 1000);
+
+                // ── Temporary HTTP server to receive the OAuth code ──────────
+                const server = http.createServer(async (req, res) => {
+                    try {
+                        const reqUrl = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`);
+                        if (reqUrl.pathname !== '/auth/callback') {
+                            res.writeHead(404); res.end(); return;
+                        }
+
+                        const code  = reqUrl.searchParams.get('code');
+                        const oauthError = reqUrl.searchParams.get('error');
+
+                        // Respond with a friendly HTML page before doing async work
+                        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                        if (code) {
+                            res.end(`<!DOCTYPE html><html><head><title>Signed in — Prmpt</title>
+                              <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
+                              .card{text-align:center;padding:40px;max-width:360px}.icon{font-size:48px;margin-bottom:16px}.title{font-size:22px;font-weight:600;margin-bottom:8px}
+                              .sub{color:#888;font-size:14px}</style></head>
+                              <body><div class="card"><div class="icon">✅</div>
+                              <div class="title">Sign in successful!</div>
+                              <div class="sub">You can close this tab and return to Prmpt.</div>
+                              </div><script>setTimeout(()=>window.close(),2500)</script></body></html>`);
+                        } else {
+                            res.end(`<!DOCTYPE html><html><head><title>Sign in failed — Prmpt</title>
+                              <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
+                              .card{text-align:center;padding:40px;max-width:360px}.icon{font-size:48px;margin-bottom:16px}.title{font-size:22px;font-weight:600;margin-bottom:8px}
+                              .sub{color:#888;font-size:14px}</style></head>
+                              <body><div class="card"><div class="icon">❌</div>
+                              <div class="title">Sign in failed</div>
+                              <div class="sub">${oauthError || 'No authorization code received.'}</div>
+                              </div></body></html>`);
+                        }
+
+                        clearTimeout(timeout);
+                        closeServer();
+
+                        if (code) {
+                            const { session, error: sessionError } = await authService!.exchangeCodeForSession(code);
+                            if (sessionError || !session) {
+                                console.error('[Auth] OAuth code exchange failed:', sessionError?.message);
+                                appWindowManager.send('auth:state-changed', {
+                                    isAuthenticated: false, user: null,
+                                    error: sessionError?.message || 'OAuth sign-in failed',
+                                });
+                                return;
+                            }
+                            console.log(`[Auth] ✅ OAuth sign-in successful (${provider})`);
+                            appWindowManager.show();
+                            await handleSuccessfulAuth(appWindowManager, session.user);
+                        } else if (oauthError) {
+                            appWindowManager.send('auth:state-changed', {
+                                isAuthenticated: false, user: null,
+                                error: `OAuth error: ${oauthError}`,
+                            });
+                        }
+                    } catch (err) {
+                        console.error('[Auth] OAuth callback handler error:', err);
+                        res.writeHead(500); res.end();
+                        clearTimeout(timeout);
+                        closeServer();
+                    }
+                });
+
+                server.on('error', (err: NodeJS.ErrnoException) => {
+                    clearTimeout(timeout);
+                    if (err.code === 'EADDRINUSE') {
+                        reject(new Error(`Port ${OAUTH_PORT} is already in use. Please close any other app using it and try again.`));
+                    } else {
+                        reject(err);
+                    }
+                });
+
+                // Start listening, then open the browser
+                server.listen(OAUTH_PORT, '127.0.0.1', async () => {
+                    try {
+                        const { url, error } = await authService!.signInWithOAuth(provider, redirectTo);
+                        if (error || !url) {
+                            closeServer();
+                            clearTimeout(timeout);
+                            reject(new Error(error?.message || 'Failed to generate OAuth URL'));
+                            return;
+                        }
+                        await shell.openExternal(url);
+                        console.log(`[Auth] ✅ OAuth flow started for ${provider} — waiting for callback on port ${OAUTH_PORT}`);
+                        resolve(); // Resolve as soon as the browser is opened
+                    } catch (err) {
+                        closeServer();
+                        clearTimeout(timeout);
+                        reject(err);
+                    }
+                });
+            });
+
+            return { success: true };
+        } catch (err: any) {
+            console.error('[Auth] OAuth sign-in failed:', err.message);
+            return { error: err.message || 'OAuth sign-in failed' };
         }
     });
 

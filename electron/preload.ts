@@ -75,6 +75,7 @@ declare global {
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
       signIn: (data: { email: string; password: string }) => void;
+      signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
       updateProfile: (updates: any) => void;
@@ -408,6 +409,9 @@ const electronAPI = {
   },
   signIn: (data: { email: string; password: string }) => {
     ipcRenderer.send('auth:sign-in', data);
+  },
+  signInWithOAuth: (provider: 'google' | 'github') => {
+    return ipcRenderer.invoke('auth:oauth-sign-in', { provider });
   },
   checkAuth: () => {
     ipcRenderer.send('auth:check');
