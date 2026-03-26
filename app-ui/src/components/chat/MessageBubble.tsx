@@ -350,8 +350,8 @@ export const MessageBubble = ({
   return (
     <div className="flex gap-3 animate-slide-up">
       {/* Avatar — theme-aware app logo (light UI → dark mark, dark UI → light mark) */}
-      <div className="w-7 h-7 rounded-lg bg-emerald/15 border border-emerald/25 flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden p-0.5">
-        <Logo size="w-[22px] h-[22px]" className="min-w-0 min-h-0" />
+      <div className="w-7 h-7 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Logo size="w-7 h-7" />
       </div>
 
       {/* Bubble */}
