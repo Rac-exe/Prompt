@@ -162,6 +162,9 @@ let currentOptimization: {
     optimizedText: string;
 } | null = null;
 
+// Track in-flight generations so the renderer can resume streaming after a chat switch.
+const activeGenerations = new Map<string, { accumulated: string }>();
+
 /**
  * Register chat & app window IPC handlers.
  *
@@ -217,18 +220,25 @@ export function registerChatHandlers(
             }
 
             // Use streaming optimization
-            const optimizedText = await pythonClient.optimizeStream(
-                promptText,
-                isRegenerate,
-                chatHistory,
-                (chunk, accumulated) => {
-                    if (appWindowManager) {
-                        appWindowManager.send('optimization-chunk', { chunk, accumulated });
-                    }
-                },
-                mode,
-                customInstructions
-            );
+            if (chatId) activeGenerations.set(chatId, { accumulated: '' });
+            let optimizedText: string;
+            try {
+                optimizedText = await pythonClient.optimizeStream(
+                    promptText,
+                    isRegenerate,
+                    chatHistory,
+                    (chunk, accumulated) => {
+                        if (chatId) activeGenerations.set(chatId, { accumulated });
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated });
+                        }
+                    },
+                    mode,
+                    customInstructions
+                );
+            } finally {
+                if (chatId) activeGenerations.delete(chatId);
+            }
 
             // Save optimization to database
             if (authState.isAuthenticated) {
@@ -678,6 +688,7 @@ export function registerChatHandlers(
             // Trigger streaming optimization
             // Wrap separately so a Python/network failure saves a paired error
             // assistant message — prevents an orphaned user message in the DB.
+            activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
             try {
                 optimizedText = await pythonClient.optimizeStream(
@@ -685,8 +696,9 @@ export function registerChatHandlers(
                     false,
                     messagesContext.length > 0 ? messagesContext : null,
                     (chunk, accumulated) => {
+                        activeGenerations.set(chatId!, { accumulated });
                         if (appWindowManager) {
-                            appWindowManager.send('optimization-chunk', { chunk, accumulated });
+                            appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
                         }
                     },
                     data.mode || 'fast',
@@ -695,6 +707,7 @@ export function registerChatHandlers(
                     data.forcedSkill || null
                 );
             } catch (llmErr: any) {
+                activeGenerations.delete(chatId!);
                 // LLM failed — save a sentinel error-assistant message so the user message
                 // isn't orphaned.  The isError flag lets the UI render an error bubble.
                 const friendlyError = humanizeLlmError(llmErr);
@@ -708,6 +721,7 @@ export function registerChatHandlers(
                 } catch { /* non-critical — best-effort */ }
                 throw llmErr; // re-throw so the outer catch notifies the renderer
             }
+            activeGenerations.delete(chatId!);
 
             // Save optimization record and trigger background memory analysis
             let optimizationId: string | undefined;
@@ -854,21 +868,28 @@ export function registerChatHandlers(
             }
 
             // Trigger streaming optimization (regeneration — pass previous content for self-critique)
-            const optimizedText = await pythonClient.optimizeStream(
-                data.content,
-                true,
-                messagesContext.length > 0 ? messagesContext : null,
-                (chunk, accumulated) => {
-                    if (appWindowManager) {
-                        appWindowManager.send('optimization-chunk', { chunk, accumulated });
-                    }
-                },
-                data.mode || 'fast',
-                customInstructions,
-                attachedFiles,
-                data.forcedSkill || null,
-                data.previousContent || null
-            );
+            activeGenerations.set(chatId, { accumulated: '' });
+            let optimizedText: string;
+            try {
+                optimizedText = await pythonClient.optimizeStream(
+                    data.content,
+                    true,
+                    messagesContext.length > 0 ? messagesContext : null,
+                    (chunk, accumulated) => {
+                        activeGenerations.set(chatId, { accumulated });
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
+                        }
+                    },
+                    data.mode || 'fast',
+                    customInstructions,
+                    attachedFiles,
+                    data.forcedSkill || null,
+                    data.previousContent || null
+                );
+            } finally {
+                activeGenerations.delete(chatId);
+            }
 
             // Save optimization record
             let optimizationId: string | undefined;
@@ -974,6 +995,17 @@ export function registerChatHandlers(
     ipcMain.on('app:stop-generation', () => {
         console.log('[Chat] Stop generation requested');
         pythonClient.abortLatestStream();
+        activeGenerations.clear();
+    });
+
+    // ============================================
+    // APP WINDOW: Check if a chat has an active generation (for stream resumption)
+    // ============================================
+    ipcMain.handle('app:get-generation-status', (_event, chatId: string) => {
+        const gen = activeGenerations.get(chatId);
+        return gen
+            ? { isActive: true, accumulated: gen.accumulated }
+            : { isActive: false, accumulated: '' };
     });
 
     // ============================================

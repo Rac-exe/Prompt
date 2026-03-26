@@ -377,6 +377,7 @@ const electronAPI = {
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
   },
+  getGenerationStatus: (chatId: string) => ipcRenderer.invoke('app:get-generation-status', chatId),
   signOut: () => {
     ipcRenderer.send('app:sign-out');
   },
@@ -385,7 +386,7 @@ const electronAPI = {
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
     ipcRenderer.on('optimization-complete', (_event, data) => callback(data));
   },
-  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
+  onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('optimization-chunk', handler);
     return () => ipcRenderer.removeListener('optimization-chunk', handler);

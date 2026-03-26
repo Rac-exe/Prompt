@@ -116,7 +116,7 @@ export interface ElectronAPI {
 
   // Optimization
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
-  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
+  onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string }) => void) => (() => void);
   onOptimizationError: (callback: (data: { error: string }) => void) => void;
 
   // Prompt Library
@@ -168,6 +168,7 @@ export interface ElectronAPI {
   saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
   send: (channel: string, data: any) => void;
   stopGeneration: () => void;
+  getGenerationStatus: (chatId: string) => Promise<{ isActive: boolean; accumulated: string }>;
 
   // Window controls
   windowControls: {

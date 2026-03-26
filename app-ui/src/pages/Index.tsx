@@ -319,7 +319,7 @@ const Index = () => {
     sendingRef.current = false;
   }, [messageTree.getActivePath, messageTree.addChild, messageTree.has, messageTree.ROOT, messageTree.replaceId]);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, resumeStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete
   });
 
@@ -443,7 +443,10 @@ const Index = () => {
   // Listen for streaming chunks (real-time text updates)
   useEffect(() => {
     if (isElectron && window.electronAPI?.onOptimizationChunk) {
-      const handleOptimizationChunk = (data: { chunk: string; accumulated: string }) => {
+      const handleOptimizationChunk = (data: { chatId: string | null; chunk: string; accumulated: string }) => {
+        // Only process chunks for the currently selected chat
+        if (data.chatId && data.chatId !== selectedChatIdRef.current) return;
+
         handleChunk(data.chunk, data.accumulated);
 
         // Record TTFT (Time To First Token)
@@ -482,26 +485,33 @@ const Index = () => {
           versionIndex: data.message.versionIndex ?? undefined,
         };
 
-        // Track this ID to hide it from main history while streaming
-        setStreamedMessageId(assistantMessage.id);
+        if (isGeneratingRef.current) {
+          // Normal path: streaming is active, animate the final message
+          setStreamedMessageId(assistantMessage.id);
+          handleFinalMessage(assistantMessage);
 
-        // Pass to hook for silent finalization
-        handleFinalMessage(assistantMessage);
-
-        // Record Total Time
-        setGenerationStats(prev => {
-          if (generationStartTime.current > 0) {
-            const total = Math.round(performance.now() - generationStartTime.current);
-            return { ...prev, total };
-          }
-          return prev;
-        });
+          // Record Total Time
+          setGenerationStats(prev => {
+            if (generationStartTime.current > 0) {
+              const total = Math.round(performance.now() - generationStartTime.current);
+              return { ...prev, total };
+            }
+            return prev;
+          });
+        } else {
+          // Generation completed but UI wasn't streaming (e.g., user returned
+          // from another chat and the generation finished in the gap before
+          // getGenerationStatus could resume it). Directly commit the message
+          // so it doesn't get silently dropped.
+          console.log('[Index] Directly committing assistant message (streaming was not active)');
+          handleStreamingComplete(assistantMessage);
+        }
       };
 
       const cleanup = window.electronAPI.onMessageReceived(handleMessageReceived);
       return cleanup;
     }
-  }, [handleFinalMessage]);
+  }, [handleFinalMessage, handleStreamingComplete]);
 
   // Listen for message send errors
   useEffect(() => {
@@ -573,6 +583,21 @@ const Index = () => {
       if (chat) {
         setCurrentChatTitle(chat.title);
       }
+
+      // Check if this chat has an active generation in the main process.
+      // If so, resume streaming so the user sees the partial output and
+      // the typewriter animation continues from where it left off.
+      if (window.electronAPI.getGenerationStatus) {
+        const resumeChatId = selectedChatId;
+        window.electronAPI.getGenerationStatus(resumeChatId).then(status => {
+          if (status.isActive && selectedChatIdRef.current === resumeChatId) {
+            console.log('[Index] Resuming active generation for chat:', resumeChatId);
+            setIsGenerating(true);
+            generationStartTime.current = performance.now();
+            resumeStreaming(status.accumulated);
+          }
+        });
+      }
     }
   }, [selectedChatId]); // ← only selectedChatId — NOT recentChats
 
@@ -637,9 +662,13 @@ const Index = () => {
 
           // (Re-)initialise the version tree as a linear chain —
           // but ONLY if we're not in the middle of an edit/retry cycle
-          // or an active generation, otherwise we'd flatten the branches
-          // and cause duplicates.
-          if (!editInProgressRef.current && !isGeneratingRef.current && !sendingRef.current) {
+          // or an active send, otherwise we'd flatten the branches
+          // and cause duplicates. Note: isGeneratingRef is intentionally
+          // NOT checked here — when resuming a generation after switching
+          // back to this chat, the tree MUST be re-initialized from the
+          // loaded messages so displayMessages renders correctly.
+          // sendingRef already guards the fresh-send-in-same-chat case.
+          if (!editInProgressRef.current && !sendingRef.current) {
             messageTree.init(formattedMessages);
           }
         }
