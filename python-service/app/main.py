@@ -14,9 +14,10 @@ if hasattr(sys.stderr, 'reconfigure'):
 import os
 import logging
 import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
 
-# Configure structured logging — sentry-sdk's LoggingIntegration captures WARNING+ as events,
-# INFO as breadcrumbs. All logs also print to stdout for local dev visibility.
+# Configure structured logging — INFO goes to stdout; WARNING+ become Sentry breadcrumbs;
+# ERROR+ become Sentry events via LoggingIntegration.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
@@ -27,17 +28,23 @@ logger = logging.getLogger("prmpt")
 def _scrub_prompts(event, hint):
     if event.get("extra"):
         for key in list(event["extra"].keys()):
-            if any(w in key.lower() for w in ("prompt", "content", "message")):
+            if any(w in key.lower() for w in ("prompt", "content", "message", "text")):
                 event["extra"][key] = "[REDACTED]"
     return event
+
+_is_dev = os.environ.get("APP_ENV", "development") == "development"
 
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
     release="prmpt-python@0.1.0",
     environment=os.environ.get("APP_ENV", "development"),
-    traces_sample_rate=1.0,
+    traces_sample_rate=1.0 if _is_dev else 0.2,
     send_default_pii=False,
     before_send=_scrub_prompts,
+    integrations=[
+        # Explicitly configure LoggingIntegration: INFO → breadcrumbs, ERROR → Sentry events.
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+    ],
 )
 
 import json
@@ -490,9 +497,41 @@ async def optimize_stream(websocket: WebSocket):
             custom_instructions = data.get("custom_instructions", "")
             attached_files = data.get("attached_files", [])
             forced_skill = data.get("forced_skill", None)
+            sentry_trace = data.get("sentry_trace")
+            baggage = data.get("baggage", "")
 
             is_regeneration = bool(previous_output and previous_output.strip())
             print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
+
+            # Continue distributed trace from Electron so Python spans are linked.
+            if sentry_trace:
+                incoming = {"sentry-trace": sentry_trace}
+                if baggage:
+                    incoming["baggage"] = baggage
+                transaction = sentry_sdk.continue_trace(
+                    incoming,
+                    op="ai.optimization",
+                    name=f"ws.optimize/{mode}",
+                )
+                sentry_sdk.get_current_scope().set_transaction_name(f"ws.optimize/{mode}")
+            else:
+                transaction = sentry_sdk.start_transaction(
+                    op="ai.optimization",
+                    name=f"ws.optimize/{mode}",
+                )
+
+            sentry_sdk.add_breadcrumb(
+                category="optimize",
+                message="optimize_stream request received",
+                level="info",
+                data={
+                    "request_id": request_id,
+                    "mode": mode,
+                    "skill": forced_skill or "auto",
+                    "is_regeneration": is_regeneration,
+                    "file_count": len(attached_files),
+                },
+            )
             
             # Validate file count
             if len(attached_files) > 5:
@@ -518,7 +557,8 @@ async def optimize_stream(websocket: WebSocket):
                     content_str = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
                     cc.add(role_str, content_str)
             
-            try:
+            with transaction:
+              try:
                 models_info = {}
                 # Call pipeline configured for streaming, returning a generator
                 stream_gen = pipeline_optimize(
@@ -558,10 +598,17 @@ async def optimize_stream(websocket: WebSocket):
                     "models_used": models_info,
                 })
                 
+                sentry_sdk.add_breadcrumb(
+                    category="optimize",
+                    message="optimize_stream complete",
+                    level="info",
+                    data={"request_id": request_id, "chunk_count": chunk_count, "mode": mode},
+                )
                 print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")
                 
-            except Exception as e:
+              except Exception as e:
                 logger.error(f"OptimizeStream.request_error request_id={request_id} error={e}")
+                sentry_sdk.capture_exception(e)
                 print(f"[OptimizeStream] ✗ Error processing request {request_id}: {e}")
                 import traceback
                 traceback.print_exc()

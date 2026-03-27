@@ -54,6 +54,7 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
         return true;
     } catch (error) {
         console.error('[Auth] Error checking session:', error);
+        Sentry.captureException(error);
         authState.isAuthenticated = false;
         authState.currentUserId = null;
         return false;
@@ -178,6 +179,7 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
         console.log('[Auth] ✅ User authenticated and data loaded');
     } catch (error) {
         console.error('[Auth] Error handling successful auth:', error);
+        Sentry.captureException(error);
     }
 }
 
@@ -224,6 +226,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             await handleSuccessfulAuth(appWindowManager);
         } catch (error) {
             console.error('[Auth] Unexpected sign up error:', error);
+            Sentry.captureException(error);
             appWindowManager.send('auth:state-changed', {
                 isAuthenticated: false,
                 user: null,
@@ -259,6 +262,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             await handleSuccessfulAuth(appWindowManager);
         } catch (error) {
             console.error('[Auth] Unexpected sign in error:', error);
+            Sentry.captureException(error);
             appWindowManager.send('auth:state-changed', {
                 isAuthenticated: false,
                 user: null,
@@ -289,6 +293,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             });
         } catch (error) {
             console.error('[Auth] Error signing out:', error);
+            Sentry.captureException(error);
         }
     });
 
@@ -314,6 +319,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             });
         } catch (error) {
             console.error('[Auth] Error signing out:', error);
+            Sentry.captureException(error);
         }
     });
 
@@ -403,6 +409,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                     } catch (err) {
                         logger.error(logger.fmt`auth.oauth_callback_error provider=${provider}`);
                         console.error('[Auth] OAuth callback handler error:', err);
+                        Sentry.captureException(err);
                         res.writeHead(500); res.end();
                         clearTimeout(timeout);
                         closeServer();
@@ -410,6 +417,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 });
 
                 server.on('error', (err: NodeJS.ErrnoException) => {
+                    Sentry.captureException(err);
                     clearTimeout(timeout);
                     reject(err);
                 });
@@ -440,6 +448,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             return { success: true };
         } catch (err: any) {
             console.error('[Auth] OAuth sign-in failed:', err.message);
+            Sentry.captureException(err);
             return { error: err.message || 'OAuth sign-in failed' };
         }
     });
@@ -472,6 +481,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             await handleSuccessfulAuth(appWindowManager, session.user);
         } catch (error) {
             console.error('[Auth] Error checking auth:', error);
+            Sentry.captureException(error);
             appWindowManager.send('auth:state-changed', {
                 isAuthenticated: false,
                 user: null,

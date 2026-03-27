@@ -7,13 +7,24 @@ Sentry.init({
   environment: import.meta.env.DEV ? 'development' : 'production',
   integrations: [
     Sentry.browserTracingIntegration(),
-    Sentry.replayIntegration({ maskAllText: true }),
+    Sentry.replayIntegration({ maskAllText: true, blockAllMedia: false }),
     Sentry.consoleLoggingIntegration(),
   ],
-  tracesSampleRate: 1.0,
+  tracesSampleRate: import.meta.env.DEV ? 1.0 : 0.2,
+  replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 1.0,
   initialScope: { tags: { window: 'overlay' } },
   _experiments: { enableLogs: true },
+  beforeSend(event) {
+    if (event.extra) {
+      for (const key of Object.keys(event.extra)) {
+        if (/prompt|content|message|text/i.test(key)) {
+          event.extra[key] = '[REDACTED]';
+        }
+      }
+    }
+    return event;
+  },
 });
 
 import React from 'react';

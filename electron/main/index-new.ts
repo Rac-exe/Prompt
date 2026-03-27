@@ -8,7 +8,7 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   release: 'prmpt@0.1.0',
   environment: process.env.NODE_ENV === 'development' ? 'development' : 'production',
-  tracesSampleRate: 1.0,
+  tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.2,
   _experiments: { enableLogs: true },
   beforeSend(event) {
     if (event.extra) {
@@ -351,6 +351,9 @@ async function shutdown() {
   if (systemTray) {
     systemTray.destroy();
   }
+
+  // Flush buffered Sentry events before the process exits so nothing is dropped.
+  await Sentry.flush(2000);
 
   console.log('[Main] Shutdown complete');
 }

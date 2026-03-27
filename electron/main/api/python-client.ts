@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import * as Sentry from '@sentry/electron/main';
-import { logger } from '@sentry/core';
+import { logger, getActiveSpan, spanToTraceHeader, getDynamicSamplingContextFromSpan, dynamicSamplingContextToSentryBaggageHeader } from '@sentry/core';
 import { EventEmitter } from "events";
 const WebSocket = require('ws');
 
@@ -252,6 +252,18 @@ export class PythonClient extends EventEmitter {
       // Instead, we trust the map logic. The timeout checks map existence.
 
       try {
+        // Propagate the active Sentry trace so Python can link its spans to this Electron trace.
+        let sentryTrace: string | undefined;
+        let baggage: string | undefined;
+        try {
+          const activeSpan = getActiveSpan();
+          if (activeSpan) {
+            sentryTrace = spanToTraceHeader(activeSpan);
+            const dsc = getDynamicSamplingContextFromSpan(activeSpan);
+            baggage = dynamicSamplingContextToSentryBaggageHeader(dsc);
+          }
+        } catch (_) { /* non-fatal if trace API unavailable */ }
+
         this.ws.send(JSON.stringify({
           request_id: requestId,
           prompt,
@@ -260,7 +272,9 @@ export class PythonClient extends EventEmitter {
           mode,
           custom_instructions: customInstructions,
           attached_files: attachedFiles,
-          forced_skill: forcedSkill
+          forced_skill: forcedSkill,
+          sentry_trace: sentryTrace,
+          baggage,
         }));
       } catch (error) {
         clearTimeout(timeoutId);
