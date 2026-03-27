@@ -3,6 +3,7 @@ import darkLogo from "@/assets/logos/dark-logo-svg.svg";
 import lightLogo from "@/assets/logos/light-logo-svg.svg";
 import { useIsDark } from "@/hooks/useIsDark";
 import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
+import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON } from '../lib/constants';
 import { useScrollController } from '../../hooks/useScrollController';
 
 // ── Inline sub-components (small, tightly coupled to overlay) ────────────────
@@ -128,9 +129,10 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
   );
 };
 
-/** Skill tag shown inside a user bubble */
+/** Skill tag shown inside a user bubble — same SVG paths as input skill pill */
 const SkillTag: React.FC<{ skill?: string | null; skillLabel?: string | null }> = ({ skill, skillLabel }) => {
   if (!skill) return null;
+  const iconPath = SKILL_ICON_SVGS[skill] || DEFAULT_SKILL_ICON;
   return (
     <div
       style={{
@@ -139,11 +141,29 @@ const SkillTag: React.FC<{ skill?: string | null; skillLabel?: string | null }> 
         fontSize: 10, fontWeight: 600, color: 'hsl(var(--emerald))', letterSpacing: '0.02em',
       }}
     >
-      <svg style={{ width: 9, height: 9, flexShrink: 0 }} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-      </svg>
+      <svg
+        style={{ width: 9, height: 9, flexShrink: 0, color: 'hsl(var(--emerald))' }}
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        dangerouslySetInnerHTML={{ __html: iconPath }}
+      />
       {skillLabel || skill}
     </div>
+  );
+};
+
+/** Inline label icon: dark logo on light theme, light logo on dark theme (matches main app Logo) */
+const AssistantBrandMark: React.FC<{ size: number }> = ({ size }) => {
+  const isDark = useIsDark();
+  return (
+    <img
+      src={isDark ? lightLogo : darkLogo}
+      alt=""
+      width={size}
+      height={size}
+      style={{ objectFit: 'contain', display: 'block' }}
+    />
   );
 };
 
@@ -280,9 +300,7 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
   return (
     <div className="chat-message">
       <div className="message-label">
-        <svg style={{ width: 10, height: 10, color: 'hsl(var(--emerald))' }} fill="currentColor" viewBox="0 0 24 24">
-          <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-        </svg>
+        <AssistantBrandMark size={10} />
         {' '}Optimized Prompt
       </div>
       <div className="message-bubble assistant-bubble">
@@ -344,9 +362,7 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
 const StreamingMessage: React.FC<{ content: string }> = ({ content }) => (
   <div className="chat-message">
     <div className="message-label">
-      <svg style={{ width: 10, height: 10, color: 'hsl(var(--emerald))' }} fill="currentColor" viewBox="0 0 24 24">
-        <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-      </svg>
+      <AssistantBrandMark size={10} />
       {' '}Optimized Prompt
     </div>
     <div className="message-bubble assistant-bubble">

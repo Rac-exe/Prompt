@@ -236,7 +236,7 @@ export type RequireAtLeastOne<T, Keys extends keyof T = keyof T> = Pick<T, Exclu
 
 export const DEFAULT_UI_SETTINGS: UISettings = {
   theme: 'dark',
-  default_model: 'llama3.2',
+  default_model: 'auto',
   shortcuts: {
     overlay_toggle: 'Ctrl+5',
   },

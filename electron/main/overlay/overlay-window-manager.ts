@@ -211,8 +211,8 @@ export class OverlayWindowManager {
    * @param prefill          - Optional: pre-fill the input with text + attach a chat context.
    * @param triggeredByHook  - True when opened via @prompt keyboard hook (enables Replace button).
    */
-  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }, triggeredByHook?: boolean) {
-    const openedPayload = { isAuthenticated, prefill: prefill || null, triggeredByHook: !!triggeredByHook };
+  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }, triggeredByHook?: boolean, sentryUser?: { id: string; email: string } | null) {
+    const openedPayload = { isAuthenticated, prefill: prefill || null, triggeredByHook: !!triggeredByHook, sentryUser: sentryUser ?? null };
 
     if (!this.window || this.window.isDestroyed()) {
       this.createWindow();
@@ -335,11 +335,11 @@ export class OverlayWindowManager {
   /**
    * Toggle overlay visibility.
    */
-  toggle(isAuthenticated: boolean) {
+  toggle(isAuthenticated: boolean, sentryUser?: { id: string; email: string } | null) {
     if (this.isOpen) {
       this.close();
     } else {
-      this.open(isAuthenticated);
+      this.open(isAuthenticated, undefined, undefined, undefined, sentryUser);
     }
   }
 

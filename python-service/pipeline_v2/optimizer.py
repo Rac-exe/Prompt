@@ -164,6 +164,7 @@ def optimize(
     attached_files: Optional[List[Dict]] = None,
     forced_skill: Optional[str] = None,
     previous_output: Optional[str] = None,
+    models_info: Optional[Dict] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -198,6 +199,9 @@ def optimize(
 
     resolved_model, extra = _get_litellm_kwargs(provider, model)
     model_has_vision = supports_vision(resolved_model)
+
+    if models_info is not None:
+        models_info["optimizer"] = resolved_model
     
     # Parse attached files
     file_text_context, vision_parts = parse_files(attached_files, model_has_vision)
@@ -227,7 +231,8 @@ def optimize(
         
         # Add vision parts if present
         if vision_parts:
-            # For vision models, create a multipart message
+            if models_info is not None:
+                models_info["used_vision"] = True
             user_message_parts = [{"type": "text", "text": final_user_input}]
             user_message_parts.extend(vision_parts)
             messages.append({"role": "user", "content": user_message_parts})
@@ -256,6 +261,8 @@ def optimize(
             try:
                 summary_text = summarize_context(cc, provider)
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
+                if models_info is not None:
+                    models_info["summarizer"] = SUMMARIZER_MODEL
                 from .context import save_chat_context as _save
                 _save(cc)
             except Exception as exc:
@@ -293,6 +300,8 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
         
         # Add vision parts if present (for thinking mode)
         if vision_parts:
+            if models_info is not None:
+                models_info["used_vision"] = True
             user_message_parts = [{"type": "text", "text": user_prompt}]
             user_message_parts.extend(vision_parts)
             messages.append({"role": "user", "content": user_message_parts})

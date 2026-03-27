@@ -3,6 +3,32 @@
 // Electron API type declarations
 interface Window {
   electronAPI?: {
+    // Overlay window API (only present in overlay.html context)
+    overlay?: {
+      optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => void;
+      save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
+      copy: (text: string) => void;
+      close: () => void;
+      openApp: () => void;
+      insert: (text: string) => Promise<{ success: boolean; fallback?: string }>;
+      checkAuth: () => Promise<{ isAuthenticated: boolean }>;
+      getCollections: () => Promise<any>;
+      createCollection: (name: string, icon?: string) => Promise<any>;
+      getChats: () => Promise<Array<{ id: string; title: string }>>;
+      saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
+      onOpened: (callback: (data: any) => void) => void;
+      onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
+      onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
+      onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
+      onOptimizationError: (callback: (data: { error: string }) => void) => void;
+      getSettings: () => Promise<any>;
+      onSettingsUpdate: (callback: (settings: any) => void) => void;
+      newSession: () => void;
+      stopGeneration: () => void;
+      truncateHistory: (keepCount: number) => void;
+      notifyReady: () => void;
+    };
+
     // Auth
     signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
     signIn: (data: { email: string; password: string }) => void;
@@ -64,6 +90,9 @@ interface Window {
       onStatus: (callback: (status: string) => void) => void;
       onError: (callback: (error: string) => void) => void;
     };
+
+    // Sentry user sync (called from main process on login/logout)
+    onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => void;
 
     // Utility
     copyToClipboard: (text: string) => void;

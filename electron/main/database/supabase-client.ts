@@ -21,6 +21,7 @@ export class SupabaseClientManager {
         persistSession: true,
         autoRefreshToken: true,
         storage: this.storageAdapter as any, // Custom storage for Electron
+        flowType: 'pkce', // PKCE sends ?code= query param; implicit flow uses #hash (unusable by HTTP server)
       },
     });
     

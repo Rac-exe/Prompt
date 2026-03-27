@@ -75,6 +75,7 @@ declare global {
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
       signIn: (data: { email: string; password: string }) => void;
+      signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
       updateProfile: (updates: any) => void;
@@ -132,6 +133,9 @@ declare global {
         getSignedUrl: (storagePath: string) => Promise<{ signedUrl?: string; error?: string }>;
         openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
       };
+
+      // Sentry user sync
+      onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => void;
 
       // Rate Limit API
       getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
@@ -377,6 +381,7 @@ const electronAPI = {
   stopGeneration: () => {
     ipcRenderer.send('app:stop-generation');
   },
+  getGenerationStatus: (chatId: string) => ipcRenderer.invoke('app:get-generation-status', chatId),
   signOut: () => {
     ipcRenderer.send('app:sign-out');
   },
@@ -385,7 +390,7 @@ const electronAPI = {
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
     ipcRenderer.on('optimization-complete', (_event, data) => callback(data));
   },
-  onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
+  onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('optimization-chunk', handler);
     return () => ipcRenderer.removeListener('optimization-chunk', handler);
@@ -404,6 +409,9 @@ const electronAPI = {
   },
   signIn: (data: { email: string; password: string }) => {
     ipcRenderer.send('auth:sign-in', data);
+  },
+  signInWithOAuth: (provider: 'google' | 'github') => {
+    return ipcRenderer.invoke('auth:oauth-sign-in', { provider });
   },
   checkAuth: () => {
     ipcRenderer.send('auth:check');
@@ -514,6 +522,14 @@ const electronAPI = {
   },
   onNetworkReconnected: (callback: () => void) => {
     ipcRenderer.on('network:reconnected', () => callback());
+  },
+
+  // ============================================
+  // SENTRY USER SYNC
+  // ============================================
+  onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => {
+    ipcRenderer.removeAllListeners('sentry:set-user');
+    ipcRenderer.on('sentry:set-user', (_event, user) => callback(user));
   },
 
   // ============================================

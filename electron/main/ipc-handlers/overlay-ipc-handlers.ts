@@ -1,7 +1,9 @@
 import { ipcMain, clipboard, screen } from 'electron';
+import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 import * as crypto from 'crypto';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
-import { PythonClient } from '../api/python-client';
+import { PythonClient, ModelsUsed } from '../api/python-client';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
 import { OptimizationService } from '../database/services/optimization-service';
@@ -19,6 +21,14 @@ import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
+
+function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
+    return {
+        model: models?.optimizer ?? 'unknown',
+        ...(models?.summarizer && { summarizer_model: models.summarizer }),
+        ...(models?.used_vision && { used_vision: true }),
+    };
+}
 
 // ============================================
 // OVERLAY IPC HANDLERS
@@ -154,6 +164,8 @@ export function registerOverlayHandlers(
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
   ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimize requested', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, isRegenerate: data.isRegenerate } });
+    logger.info(logger.fmt`overlay.optimize_requested mode=${data.mode ?? 'fast'} skill=${data.forcedSkill ?? 'none'} isRegenerate=${String(!!data.isRegenerate)}`);
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -191,6 +203,8 @@ export function registerOverlayHandlers(
         }
       } catch (rlErr) {
         console.warn('[Overlay] Rate limit check failed (allowing message):', rlErr);
+        Sentry.captureMessage('Rate limit fail-open', 'warning');
+        logger.warn('overlay.rate_limit_check_failed — allowing through');
       }
     }
 
@@ -253,7 +267,7 @@ export function registerOverlayHandlers(
       // Add the user's new message to in-memory history (used when no chatId)
       inMemoryOverlayHistory.push({ role: 'user', content: data.text });
 
-      const optimizedText = await pythonClient.optimizeStream(
+      const { text: optimizedText, models: modelsUsed } = await pythonClient.optimizeStream(
         data.text,
         !!data.isRegenerate,
         historyContext,
@@ -275,6 +289,8 @@ export function registerOverlayHandlers(
         getRateLimitService().invalidateCache(authState.currentUserId);
       }
 
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization complete', level: 'info' });
+      logger.info('overlay.optimize_complete');
       overlayManager.send('overlay:optimization-complete', {
         original: data.text,
         optimized: optimizedText,
@@ -288,7 +304,7 @@ export function registerOverlayHandlers(
           data.text,
           optimizedText,
           'overlay',
-          { model: 'llama3.2', source_context: { app: 'overlay' } }
+          { ...buildModelMeta(modelsUsed), source_context: { app: 'overlay' } }
         ).then(opt => { optimizationId = opt.id; })
         .catch((err: Error) => {
           errorLog.append('[Overlay] optimization record save', err);
@@ -358,7 +374,7 @@ export function registerOverlayHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
               );
 
               // Update cache
@@ -461,7 +477,7 @@ export function registerOverlayHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex }
+                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex }
               );
 
               if (authState.currentUserId) {
@@ -487,7 +503,9 @@ export function registerOverlayHandlers(
         })();
       }
     } catch (error) {
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization error', level: 'error' });
       const message = error instanceof Error ? error.message : 'Optimization failed';
+      logger.error(logger.fmt`overlay.optimize_error error=${message}`);
       overlayManager.send('overlay:optimization-error', { error: message });
     }
   });
@@ -688,23 +706,24 @@ export function registerOverlayHandlers(
   //
   // Fallback: if native bridge is unavailable, write to clipboard instead.
   ipcMain.handle('overlay:insert', (_event, data: { text: string }) => {
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Replace triggered', level: 'info' });
+    logger.info('overlay.replace_triggered');
     if (!data?.text) {
       return { success: false, error: 'No text provided' };
     }
 
-    // Close overlay BEFORE calling replaceAtLastAnchor so it doesn't stay on top
-    // of the window we are about to inject into.
     overlayManager.close();
 
     if (isNativeBridgeAvailable()) {
       const success = replaceAtLastAnchor(data.text);
       if (!success) {
         console.warn('[Overlay] replaceAtLastAnchor failed — window may have lost focus or been closed');
+        Sentry.captureMessage('Replace failed', 'warning');
+        logger.warn('overlay.replace_failed — native bridge lost focus or closed');
       }
       return { success };
     }
 
-    // Fallback for when native module is not built.
     clipboard.writeText(data.text);
     console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
     return { success: false, fallback: 'clipboard' };
@@ -745,7 +764,7 @@ export function registerOverlayHandlers(
       data.content,
       'assistant',
       undefined,
-      { model: 'llama3.2', optimized: true, source_app: 'overlay', message_type: 'optimized_prompt' }
+      { model: 'unknown', optimized: true, source_app: 'overlay', message_type: 'optimized_prompt' }
     );
 
     console.log('[Overlay] Saved optimized prompt to chat:', data.chatId, 'msgId:', msg.id);

@@ -277,6 +277,62 @@ export class AuthService {
   }
 
   /**
+   * Initiate OAuth sign-in with Google or GitHub (PKCE flow)
+   * Returns the provider URL to open in the system browser.
+   */
+  async signInWithOAuth(
+    provider: 'google' | 'github',
+    redirectTo: string = 'http://127.0.0.1:54321/auth/callback',
+  ): Promise<{ url: string | null; error: AuthError | null }> {
+    try {
+      const { data, error } = await this.client.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true, // We handle the browser open ourselves
+        },
+      });
+
+      if (error) {
+        console.error(`[AuthService] OAuth sign-in error (${provider}):`, error);
+        return { url: null, error };
+      }
+
+      console.log(`[AuthService] ✅ OAuth URL generated for ${provider}`);
+      return { url: data.url, error: null };
+    } catch (error) {
+      console.error('[AuthService] Unexpected OAuth sign-in error:', error);
+      return {
+        url: null,
+        error: new Error(error instanceof Error ? error.message : 'OAuth sign-in failed') as AuthError,
+      };
+    }
+  }
+
+  /**
+   * Exchange an OAuth authorization code for a Supabase session (PKCE step 2)
+   */
+  async exchangeCodeForSession(code: string): Promise<{ session: Session | null; error: AuthError | null }> {
+    try {
+      const { data, error } = await this.client.auth.exchangeCodeForSession(code);
+
+      if (error) {
+        console.error('[AuthService] Exchange code for session error:', error);
+        return { session: null, error };
+      }
+
+      console.log('[AuthService] ✅ Authorization code exchanged for session');
+      return { session: data.session, error: null };
+    } catch (error) {
+      console.error('[AuthService] Unexpected exchange code error:', error);
+      return {
+        session: null,
+        error: new Error(error instanceof Error ? error.message : 'Code exchange failed') as AuthError,
+      };
+    }
+  }
+
+  /**
    * Send password reset email
    */
   async resetPasswordForEmail(email: string): Promise<{ error: AuthError | null }> {

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import * as Sentry from '@sentry/react';
 import Header from './components/Header';
 import AuthGate from './components/AuthGate';
 import OfflineBanner from './components/OfflineBanner';
@@ -399,6 +400,14 @@ const OverlayApp: React.FC = () => {
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
   return (
+    <Sentry.ErrorBoundary
+      fallback={({ error, resetError }) => (
+        <div style={{ padding: 20, textAlign: 'center', fontFamily: 'Inter, sans-serif', color: '#ccc' }}>
+          <p>Something went wrong</p>
+          <button onClick={resetError} style={{ marginTop: 8, cursor: 'pointer' }}>Try Again</button>
+        </div>
+      )}
+    >
     <div id="panel">
       <div className="panel-glow-wrapper" ref={glowWrapperRef}>
         <div className="overlay-panel">
@@ -469,6 +478,7 @@ const OverlayApp: React.FC = () => {
         />
       </div>
     </div>
+    </Sentry.ErrorBoundary>
   );
 };
 

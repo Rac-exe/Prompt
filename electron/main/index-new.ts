@@ -1,3 +1,27 @@
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  release: 'prmpt@0.1.0',
+  environment: process.env.NODE_ENV === 'development' ? 'development' : 'production',
+  tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.2,
+  _experiments: { enableLogs: true },
+  beforeSend(event) {
+    if (event.extra) {
+      for (const key of Object.keys(event.extra)) {
+        if (/prompt|content|message|text/i.test(key)) {
+          event.extra[key] = '[REDACTED]';
+        }
+      }
+    }
+    return event;
+  },
+});
+
 import { app, globalShortcut, ipcMain, shell } from 'electron';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
@@ -11,7 +35,6 @@ import { UserService } from './database/services/user-service';
 import { AuthService } from './database/services/auth-service';
 import { SettingsService } from './database/services/settings-service';
 import { PromptLibraryService } from './database/services/prompt-library-service';
-import * as dotenv from 'dotenv';
 import { authState } from './utils/auth-state';
 import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/auth-handlers';
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
@@ -28,9 +51,6 @@ import './ipc-handlers/prompt-library-handlers';
 import { syncOfflineQueue } from './ipc-handlers/prompt-library-handlers';
 import { syncChatMessageQueue } from './ipc-handlers/chat-handlers';
 import { networkMonitor } from './ipc-handlers/network-monitor-singleton';
-
-// Load environment variables from .env file
-dotenv.config();
 let appWindowManager: AppWindowManager;
 let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
@@ -49,7 +69,9 @@ function startKeystrokeDetection() {
 
   startHook((anchor: TriggerAnchor) => {
     console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
-    overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
+    Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
+    overlayManager.open(authState.isAuthenticated, undefined, undefined, true,
+      authState.currentUserId ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' } : null);
   });
 
   console.log('[Main] Native keyboard hook started');
@@ -63,7 +85,10 @@ function stopKeystrokeDetection() {
 // OVERLAY CONTROL
 // ============================================
 function toggleOverlay() {
-  overlayManager.toggle(authState.isAuthenticated);
+  const sentryUser = authState.currentUserId
+    ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' }
+    : null;
+  overlayManager.toggle(authState.isAuthenticated, sentryUser);
 }
 
 // ============================================
@@ -130,6 +155,8 @@ async function initialize() {
   // TRANSCRIPTION IPC HANDLERS
   // ============================================
   ipcMain.on('transcription:start', async (event, sessionId: string) => {
+    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription started', level: 'info', data: { sessionId } });
+    logger.info(logger.fmt`transcription.started sessionId=${sessionId}`);
     try {
       console.log('[Main] Starting transcription session:', sessionId);
 
@@ -154,6 +181,8 @@ async function initialize() {
         },
       );
     } catch (error) {
+      Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error', level: 'error' });
+      logger.error(logger.fmt`transcription.error ${error instanceof Error ? error.message : String(error)}`);
       console.error('[Main] Failed to start transcription:', error);
       overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
       appWindowManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
@@ -161,6 +190,8 @@ async function initialize() {
   });
 
   ipcMain.on('transcription:stop', async () => {
+    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription stopped', level: 'info' });
+    logger.info('transcription.stopped');
     try {
       console.log('[Main] Stopping transcription');
       await transcriptionClient.stopTranscription();
@@ -224,6 +255,8 @@ async function initialize() {
       if (event === 'SIGNED_IN' && session) {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
+        authState.currentUserEmail = session.user.email ?? null;
+        Sentry.setUser({ id: session.user.id, email: session.user.email });
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
         // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT
@@ -257,6 +290,9 @@ async function initialize() {
   // ============================================
   startKeystrokeDetection();
 
+  Sentry.setTag('native_bridge', isNativeBridgeAvailable() ? 'loaded' : 'stub');
+  Sentry.setTag('platform', process.platform);
+
   // ============================================
   // GLOBAL HOTKEY: Ctrl+5 to toggle overlay
   // ============================================
@@ -289,6 +325,9 @@ async function initialize() {
   console.log('[Main] - Press Ctrl+5 to toggle overlay');
   console.log('[Main] - Click tray icon to open app window');
   console.log('[Main] ========================================');
+
+  Sentry.addBreadcrumb({ category: 'lifecycle', message: 'App startup complete', level: 'info' });
+  logger.info(logger.fmt`app.startup_complete platform=${process.platform} nativeBridge=${isNativeBridgeAvailable() ? 'loaded' : 'stub'}`);
 }
 
 async function shutdown() {
@@ -312,6 +351,9 @@ async function shutdown() {
   if (systemTray) {
     systemTray.destroy();
   }
+
+  // Flush buffered Sentry events before the process exits so nothing is dropped.
+  await Sentry.flush(2000);
 
   console.log('[Main] Shutdown complete');
 }
@@ -342,12 +384,12 @@ if (!gotTheLock) {
   function handleDeepLink(url: string): void {
     try {
       const parsed = new URL(url);
-      // hostname = "share", pathname = "/<token>"
+
+      // ── Share deep link: promptweaver://share/<token> ──────────────────────
       if (parsed.hostname === 'share') {
         const token = parsed.pathname.replace(/^\//, '');
         if (token && appWindowManager) {
           appWindowManager.show();
-          // Navigate the renderer to the share page via a hash route change
           const win = appWindowManager.getWindow();
           if (win && !win.isDestroyed()) {
             win.webContents.executeJavaScript(

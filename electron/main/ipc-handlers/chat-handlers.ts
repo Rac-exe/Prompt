@@ -1,9 +1,11 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 import crypto from 'crypto';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
-import { PythonClient } from '../api/python-client';
+import { PythonClient, ModelsUsed } from '../api/python-client';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
@@ -14,6 +16,15 @@ import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
 import { RateLimitService } from '../database/services/rate-limit-service';
+
+// ── Model metadata helper ─────────────────────────────────────────────────────
+function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
+    return {
+        model: models?.optimizer ?? 'unknown',
+        ...(models?.summarizer && { summarizer_model: models.summarizer }),
+        ...(models?.used_vision && { used_vision: true }),
+    };
+}
 
 // ── File attachment types ─────────────────────────────────────────────────────
 export interface AttachedFile {
@@ -162,6 +173,9 @@ let currentOptimization: {
     optimizedText: string;
 } | null = null;
 
+// Track in-flight generations so the renderer can resume streaming after a chat switch.
+const activeGenerations = new Map<string, { accumulated: string }>();
+
 /**
  * Register chat & app window IPC handlers.
  *
@@ -178,6 +192,7 @@ export function registerChatHandlers(
     // APP WINDOW: Optimize prompt request
     // ============================================
     ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
             let chatHistory: Array<{ role: string; content: string }> | null = null;
@@ -217,18 +232,28 @@ export function registerChatHandlers(
             }
 
             // Use streaming optimization
-            const optimizedText = await pythonClient.optimizeStream(
-                promptText,
-                isRegenerate,
-                chatHistory,
-                (chunk, accumulated) => {
-                    if (appWindowManager) {
-                        appWindowManager.send('optimization-chunk', { chunk, accumulated });
-                    }
-                },
-                mode,
-                customInstructions
-            );
+            if (chatId) activeGenerations.set(chatId, { accumulated: '' });
+            let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
+            try {
+                const result = await pythonClient.optimizeStream(
+                    promptText,
+                    isRegenerate,
+                    chatHistory,
+                    (chunk, accumulated) => {
+                        if (chatId) activeGenerations.set(chatId, { accumulated });
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated });
+                        }
+                    },
+                    mode,
+                    customInstructions
+                );
+                optimizedText = result.text;
+                modelsUsed = result.models;
+            } finally {
+                if (chatId) activeGenerations.delete(chatId);
+            }
 
             // Save optimization to database
             if (authState.isAuthenticated) {
@@ -238,7 +263,7 @@ export function registerChatHandlers(
                         optimizedText,
                         'app_window',
                         {
-                            model: 'llama3.2',
+                            ...buildModelMeta(modelsUsed),
                             source_context: { app: 'app_window' },
                         }
                     );
@@ -450,6 +475,9 @@ export function registerChatHandlers(
         groupId?: string;
         versionIndex?: number;
     }) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
+        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'fast'} skill=${data.forcedSkill ?? 'none'}`);
+        await Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'fast', skill: data.forcedSkill || 'none' } }, async () => {
         try {
             // ── Offline guard ─────────────────────────────────────────────────
             // File uploads require network access. Reject early with a clear error
@@ -508,8 +536,9 @@ export function registerChatHandlers(
                         return;
                     }
                 } catch (rlErr) {
-                    // Fail-open: if rate-limit check itself errors, allow the message
                     console.warn('[Chat] Rate limit check failed (allowing message):', rlErr);
+                    Sentry.captureMessage('Rate limit fail-open', 'warning');
+                    logger.warn('chat.rate_limit_check_failed — allowing message through');
                 }
             }
 
@@ -678,15 +707,20 @@ export function registerChatHandlers(
             // Trigger streaming optimization
             // Wrap separately so a Python/network failure saves a paired error
             // assistant message — prevents an orphaned user message in the DB.
+            activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
+            Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming started', level: 'info', data: { chatId, mode: data.mode } });
+            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'fast'}`);
             try {
-                optimizedText = await pythonClient.optimizeStream(
+                const result = await pythonClient.optimizeStream(
                     data.content,
                     false,
                     messagesContext.length > 0 ? messagesContext : null,
                     (chunk, accumulated) => {
+                        activeGenerations.set(chatId!, { accumulated });
                         if (appWindowManager) {
-                            appWindowManager.send('optimization-chunk', { chunk, accumulated });
+                            appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
                         }
                     },
                     data.mode || 'fast',
@@ -694,9 +728,12 @@ export function registerChatHandlers(
                     attachedFiles,
                     data.forcedSkill || null
                 );
+                optimizedText = result.text;
+                modelsUsed = result.models;
+                Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming completed', level: 'info', data: { chatId } });
+                logger.info(logger.fmt`chat.streaming_complete chatId=${chatId ?? ''}`);
             } catch (llmErr: any) {
-                // LLM failed — save a sentinel error-assistant message so the user message
-                // isn't orphaned.  The isError flag lets the UI render an error bubble.
+                activeGenerations.delete(chatId!);
                 const friendlyError = humanizeLlmError(llmErr);
                 try {
                     await chatService.addMessage(chatId, '', 'assistant', undefined, {
@@ -706,8 +743,9 @@ export function registerChatHandlers(
                         versionIndex: 0,
                     });
                 } catch { /* non-critical — best-effort */ }
-                throw llmErr; // re-throw so the outer catch notifies the renderer
+                throw llmErr;
             }
+            activeGenerations.delete(chatId!);
 
             // Save optimization record and trigger background memory analysis
             let optimizationId: string | undefined;
@@ -717,10 +755,9 @@ export function registerChatHandlers(
                         data.content,
                         optimizedText,
                         'app_window',
-                        { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                        { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
                     );
                     optimizationId = optimization.id;
-                    // Trigger background memory analysis (fire-and-forget, non-critical)
                     if (analyzer && authState.currentUserId) {
                         analyzer.onNewOptimization(
                             authState.currentUserId,
@@ -743,7 +780,7 @@ export function registerChatHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
             );
 
             // Send assistant message to renderer
@@ -780,6 +817,7 @@ export function registerChatHandlers(
                 });
             }
         }
+        });
     });
 
     // ============================================
@@ -795,6 +833,8 @@ export function registerChatHandlers(
         forcedSkill?: string | null;
         previousContent?: string;
     }) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
+        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'fast'}`);
         try {
             // ── Rate limit guard ──────────────────────────────────────────────
             if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
@@ -811,6 +851,8 @@ export function registerChatHandlers(
                     }
                 } catch (rlErr) {
                     console.warn('[Chat] Rate limit check failed (allowing regeneration):', rlErr);
+                    Sentry.captureMessage('Rate limit fail-open', 'warning');
+                    logger.warn('chat.regenerate_rate_limit_check_failed — allowing through');
                 }
             }
 
@@ -854,21 +896,31 @@ export function registerChatHandlers(
             }
 
             // Trigger streaming optimization (regeneration — pass previous content for self-critique)
-            const optimizedText = await pythonClient.optimizeStream(
-                data.content,
-                true,
-                messagesContext.length > 0 ? messagesContext : null,
-                (chunk, accumulated) => {
-                    if (appWindowManager) {
-                        appWindowManager.send('optimization-chunk', { chunk, accumulated });
-                    }
-                },
-                data.mode || 'fast',
-                customInstructions,
-                attachedFiles,
-                data.forcedSkill || null,
-                data.previousContent || null
-            );
+            activeGenerations.set(chatId, { accumulated: '' });
+            let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
+            try {
+                const result = await pythonClient.optimizeStream(
+                    data.content,
+                    true,
+                    messagesContext.length > 0 ? messagesContext : null,
+                    (chunk, accumulated) => {
+                        activeGenerations.set(chatId, { accumulated });
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
+                        }
+                    },
+                    data.mode || 'fast',
+                    customInstructions,
+                    attachedFiles,
+                    data.forcedSkill || null,
+                    data.previousContent || null
+                );
+                optimizedText = result.text;
+                modelsUsed = result.models;
+            } finally {
+                activeGenerations.delete(chatId);
+            }
 
             // Save optimization record
             let optimizationId: string | undefined;
@@ -878,7 +930,7 @@ export function registerChatHandlers(
                         data.content,
                         optimizedText,
                         'app_window',
-                        { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                        { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
                     );
                     optimizationId = optimization.id;
                     if (analyzer && authState.currentUserId) {
@@ -904,7 +956,7 @@ export function registerChatHandlers(
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
             );
 
             // Send assistant message to renderer
@@ -974,6 +1026,17 @@ export function registerChatHandlers(
     ipcMain.on('app:stop-generation', () => {
         console.log('[Chat] Stop generation requested');
         pythonClient.abortLatestStream();
+        activeGenerations.clear();
+    });
+
+    // ============================================
+    // APP WINDOW: Check if a chat has an active generation (for stream resumption)
+    // ============================================
+    ipcMain.handle('app:get-generation-status', (_event, chatId: string) => {
+        const gen = activeGenerations.get(chatId);
+        return gen
+            ? { isActive: true, accumulated: gen.accumulated }
+            : { isActive: false, accumulated: '' };
     });
 
     // ============================================
@@ -1045,7 +1108,7 @@ export async function syncChatMessageQueue(
             } catch { /* non-critical */ }
 
             // Run optimizer (background sync — no streaming)
-            const optimizedText = await _pythonClient.optimizeStream(
+            const { text: optimizedText, models: modelsUsed } = await _pythonClient.optimizeStream(
                 content,
                 false,
                 messagesContext.length > 0 ? messagesContext : null,
@@ -1061,7 +1124,7 @@ export async function syncChatMessageQueue(
             try {
                 const opt = await optSvc.saveOptimization(
                     content, optimizedText, 'app_window',
-                    { model: 'llama3.2', source_context: { app: 'app_window', chat_id: chatId } }
+                    { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
                 );
                 optimizationId = opt.id;
             } catch { /* non-critical */ }
@@ -1070,7 +1133,7 @@ export async function syncChatMessageQueue(
             const assistantGroupId = crypto.randomUUID();
             const assistantMsg = await svc.addMessage(
                 chatId, optimizedText, 'assistant', optimizationId,
-                { model: 'llama3.2', optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
             );
 
             // Notify the app window so it can append the messages

@@ -1,4 +1,2 @@
-# Compiled Rust output — never commit the .node binary.
-# The binary is built locally via `npm run native:build`.
-*.node
+# Rust build artifacts
 target/

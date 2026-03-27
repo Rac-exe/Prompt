@@ -1,6 +1,6 @@
 {
   "name": "prompt-optimizer",
-  "version": "2.0.0",
+  "version": "0.1.0",
   "description": "Global desktop app for AI prompt optimization with Supabase",
   "main": "dist/main/index-new.js",
   "scripts": {
@@ -38,6 +38,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@sentry/electron": "^7.10.0",
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",

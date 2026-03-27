@@ -34,6 +34,32 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
         setStreamingMessage(null);
     }, []);
 
+    /**
+     * Resume streaming with pre-existing accumulated text.
+     * Unlike startStreaming, this skips the 1-second startup delay and shows
+     * the accumulated content immediately, then continues the typewriter
+     * animation for any new chunks that arrive.
+     */
+    const resumeStreaming = useCallback((initialAccumulated: string) => {
+        streamBuffer.current = initialAccumulated;
+        visualText.current = initialAccumulated;
+        pendingFinalMessage.current = null;
+        isStreamingRef.current = true;
+        generationId.current += 1;
+        startTimestamp.current = 0;
+
+        if (initialAccumulated) {
+            setStreamingMessage({
+                id: 'streaming-temp',
+                role: 'assistant',
+                content: initialAccumulated,
+                timestamp: new Date(),
+            });
+        } else {
+            setStreamingMessage(null);
+        }
+    }, []);
+
     const handleChunk = useCallback((chunk: string, accumulated: string) => {
         // Update the buffer with the latest truth from the backend
         streamBuffer.current = accumulated;
@@ -244,6 +270,7 @@ export const useSmoothStreaming = ({ onStreamingComplete }: UseSmoothStreamingPr
     return {
         streamingMessage,
         startStreaming,
+        resumeStreaming,
         handleChunk,
         handleFinalMessage,
         stopStreaming,
