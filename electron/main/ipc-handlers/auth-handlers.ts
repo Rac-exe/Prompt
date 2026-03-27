@@ -307,11 +307,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     });
 
     // OAuth Sign In (Google / GitHub) — localhost HTTP callback server
-    // Avoids Windows custom-protocol deep-link issues in development and production.
+    // Uses port 0 so the OS assigns a free port — no fixed-port conflicts ever.
     ipcMain.handle('auth:oauth-sign-in', async (_event, { provider }: { provider: 'google' | 'github' }) => {
-        const OAUTH_PORT = 54321;
-        const redirectTo = `http://127.0.0.1:${OAUTH_PORT}/auth/callback`;
-
         try {
             await new Promise<void>((resolve, reject) => {
                 // ── Timeout: auto-close server after 10 minutes ──────────────
@@ -329,8 +326,10 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
                 // ── Temporary HTTP server to receive the OAuth code ──────────
                 const server = http.createServer(async (req, res) => {
+                    // Determine the actual port the OS assigned
+                    const actualPort = (server.address() as { port: number } | null)?.port ?? 0;
                     try {
-                        const reqUrl = new URL(req.url!, `http://127.0.0.1:${OAUTH_PORT}`);
+                        const reqUrl = new URL(req.url!, `http://127.0.0.1:${actualPort}`);
                         if (reqUrl.pathname !== '/auth/callback') {
                             res.writeHead(404); res.end(); return;
                         }
@@ -392,15 +391,13 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
                 server.on('error', (err: NodeJS.ErrnoException) => {
                     clearTimeout(timeout);
-                    if (err.code === 'EADDRINUSE') {
-                        reject(new Error(`Port ${OAUTH_PORT} is already in use. Please close any other app using it and try again.`));
-                    } else {
-                        reject(err);
-                    }
+                    reject(err);
                 });
 
-                // Start listening, then open the browser
-                server.listen(OAUTH_PORT, '127.0.0.1', async () => {
+                // Bind to port 0 → OS picks any free port
+                server.listen(0, '127.0.0.1', async () => {
+                    const actualPort = (server.address() as { port: number }).port;
+                    const redirectTo = `http://127.0.0.1:${actualPort}/auth/callback`;
                     try {
                         const { url, error } = await authService!.signInWithOAuth(provider, redirectTo);
                         if (error || !url) {
@@ -410,7 +407,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                             return;
                         }
                         await shell.openExternal(url);
-                        console.log(`[Auth] ✅ OAuth flow started for ${provider} — waiting for callback on port ${OAUTH_PORT}`);
+                        console.log(`[Auth] ✅ OAuth flow started for ${provider} — callback on port ${actualPort}`);
                         resolve(); // Resolve as soon as the browser is opened
                     } catch (err) {
                         closeServer();
