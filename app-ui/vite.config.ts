@@ -23,7 +23,7 @@ export default defineConfig(({ mode }) => ({
         org: process.env.SENTRY_ORG || "prmpt",
         project: process.env.SENTRY_PROJECT || "prmpt-desktop",
         authToken: process.env.SENTRY_AUTH_TOKEN,
-        release: { name: "prmpt@2.0.0" },
+        release: { name: "prmpt@0.1.0" },
         sourcemaps: { filesToDeleteAfterUpload: ["../electron/renderer/app-ui/**/*.map"] },
       }),
   ].filter(Boolean),

@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 import crypto from 'crypto';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
@@ -475,6 +476,7 @@ export function registerChatHandlers(
         versionIndex?: number;
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
+        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'fast'} skill=${data.forcedSkill ?? 'none'}`);
         Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'fast', skill: data.forcedSkill || 'none' } }, async () => {
         try {
             // ── Offline guard ─────────────────────────────────────────────────
@@ -536,6 +538,7 @@ export function registerChatHandlers(
                 } catch (rlErr) {
                     console.warn('[Chat] Rate limit check failed (allowing message):', rlErr);
                     Sentry.captureMessage('Rate limit fail-open', 'warning');
+                    logger.warn('chat.rate_limit_check_failed — allowing message through');
                 }
             }
 
@@ -708,6 +711,7 @@ export function registerChatHandlers(
             let optimizedText: string;
             let modelsUsed: ModelsUsed | undefined;
             Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming started', level: 'info', data: { chatId, mode: data.mode } });
+            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'fast'}`);
             try {
                 const result = await pythonClient.optimizeStream(
                     data.content,
@@ -727,6 +731,7 @@ export function registerChatHandlers(
                 optimizedText = result.text;
                 modelsUsed = result.models;
                 Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming completed', level: 'info', data: { chatId } });
+                logger.info(logger.fmt`chat.streaming_complete chatId=${chatId ?? ''}`);
             } catch (llmErr: any) {
                 activeGenerations.delete(chatId!);
                 const friendlyError = humanizeLlmError(llmErr);
@@ -829,6 +834,7 @@ export function registerChatHandlers(
         previousContent?: string;
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
+        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'fast'}`);
         try {
             // ── Rate limit guard ──────────────────────────────────────────────
             if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {

@@ -12,7 +12,17 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 import os
+import logging
 import sentry_sdk
+
+# Configure structured logging — sentry-sdk's LoggingIntegration captures WARNING+ as events,
+# INFO as breadcrumbs. All logs also print to stdout for local dev visibility.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    stream=sys.stdout,
+)
+logger = logging.getLogger("prmpt")
 
 def _scrub_prompts(event, hint):
     if event.get("extra"):
@@ -23,7 +33,7 @@ def _scrub_prompts(event, hint):
 
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
-    release="prmpt-python@2.0.0",
+    release="prmpt-python@0.1.0",
     environment="development",
     traces_sample_rate=1.0,
     send_default_pii=False,
@@ -551,6 +561,7 @@ async def optimize_stream(websocket: WebSocket):
                 print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")
                 
             except Exception as e:
+                logger.error(f"OptimizeStream.request_error request_id={request_id} error={e}")
                 print(f"[OptimizeStream] ✗ Error processing request {request_id}: {e}")
                 import traceback
                 traceback.print_exc()
@@ -561,8 +572,10 @@ async def optimize_stream(websocket: WebSocket):
                 })
                 
     except WebSocketDisconnect:
+        logger.info("OptimizeStream.client_disconnected")
         print("[OptimizeStream] Client disconnected")
     except Exception as e:
+        logger.error(f"OptimizeStream.fatal_error error={e}")
         print(f"[OptimizeStream] ✗ Fatal connection error: {e}")
     finally:
         pass # Connection closed
@@ -629,6 +642,7 @@ async def generate_title(request: TitleRequest):
         return {"title": title}
 
     except Exception as exc:
+        logger.warning(f"TitleGen.llm_failed error={exc.__class__.__name__}: {exc}")
         print(f"[TitleGen] LLM failed ({exc.__class__.__name__}: {exc}), using fallback")
         return {"title": "New Chat"}
 
@@ -764,9 +778,11 @@ async def extract_memory_facts(request: ExtractMemoryRequest):
         return ExtractMemoryResponse(facts=facts)
 
     except json.JSONDecodeError as je:
+        logger.warning(f"MemoryExtract.json_parse_error error={je}")
         print(f"[MemoryExtract] JSON parse error: {je}")
         return ExtractMemoryResponse(facts=[])
     except Exception as exc:
+        logger.error(f"MemoryExtract.error error={exc.__class__.__name__}: {exc}")
         print(f"[MemoryExtract] Error: {exc.__class__.__name__}: {exc}")
         return ExtractMemoryResponse(facts=[])
 
@@ -1424,6 +1440,7 @@ active_sessions: dict[str, TranscriptionSession] = {}
 async def websocket_transcribe(websocket: WebSocket):
     """WebSocket endpoint for continuous transcription."""
     await websocket.accept()
+    logger.info("WebSocket.transcription_connected")
     print("[WebSocket] Client connected")
     session_id = None
     event_loop = asyncio.get_event_loop()
@@ -1435,6 +1452,7 @@ async def websocket_transcribe(websocket: WebSocket):
 
             if data["action"] == "start":
                 session_id = data.get("session_id", f"session_{int(time.time())}")
+                logger.info(f"WebSocket.transcription_start session_id={session_id}")
                 print(f"[WebSocket] Starting transcription session: {session_id}")
                 session = TranscriptionSession(websocket, event_loop)
                 active_sessions[session_id] = session
@@ -1472,12 +1490,14 @@ async def websocket_transcribe(websocket: WebSocket):
                     print(f"[WebSocket] WARNING: Stop requested but no active session found: {session_id}")
 
     except WebSocketDisconnect:
+        logger.info(f"WebSocket.transcription_disconnected session_id={session_id}")
         print(f"[WebSocket] Client disconnected (session: {session_id})")
         if session_id and session_id in active_sessions:
             session = active_sessions[session_id]
             session.stop_recording()
             del active_sessions[session_id]
     except Exception as e:
+        logger.error(f"WebSocket.transcription_error session_id={session_id} error={e}")
         print(f"[WebSocket] Error in websocket handler: {e}")
         import traceback
         traceback.print_exc()

@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
 import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 import { EventEmitter } from "events";
 const WebSocket = require('ws');
 
@@ -204,6 +205,7 @@ export class PythonClient extends EventEmitter {
           if (this.activeRequests.has(requestId)) {
             console.log(`[PythonClient] Request ${requestId} silence detected (3.5s), auto-resolving`);
             Sentry.captureMessage('Stream silence timeout', 'warning');
+            logger.warn(logger.fmt`stream.silence_timeout requestId=${requestId}`);
             const req = this.activeRequests.get(requestId);
             this.activeRequests.delete(requestId);
 

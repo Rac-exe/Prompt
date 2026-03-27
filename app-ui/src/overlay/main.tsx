@@ -1,17 +1,19 @@
 import * as Sentry from '@sentry/react';
+const { logger } = Sentry;
 
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN,
-  release: 'prmpt@2.0.0',
+  release: 'prmpt@0.1.0',
   environment: import.meta.env.DEV ? 'development' : 'production',
   integrations: [
     Sentry.browserTracingIntegration(),
     Sentry.replayIntegration({ maskAllText: true }),
-    Sentry.captureConsoleIntegration({ levels: ['error', 'warn'] }),
+    Sentry.consoleLoggingIntegration(),
   ],
   tracesSampleRate: 1.0,
   replaysOnErrorSampleRate: 1.0,
   initialScope: { tags: { window: 'overlay' } },
+  _experiments: { enableLogs: true },
 });
 
 import React from 'react';
@@ -28,6 +30,17 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <OverlayApp />
   </React.StrictMode>,
 );
+
+// Set Sentry user identity each time the overlay opens (payload includes sentryUser).
+// This is reliable because overlay:opened is always sent after the renderer is ready.
+window.electronAPI?.overlay?.onOpened?.((data: any) => {
+  if (data?.sentryUser?.id) {
+    Sentry.setUser({ id: data.sentryUser.id, email: data.sentryUser.email });
+    logger.info(logger.fmt`overlay.opened userId=${data.sentryUser.id} authenticated=${String(!!data.isAuthenticated)}`);
+  } else {
+    logger.info(logger.fmt`overlay.opened authenticated=${String(!!data?.isAuthenticated)}`);
+  }
+});
 
 // Signal to main process that the React UI is mounted and painted.
 // Wait one animation frame after React's commit so the browser has

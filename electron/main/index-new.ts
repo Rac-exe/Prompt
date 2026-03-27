@@ -2,12 +2,14 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
-  release: 'prmpt@2.0.0',
+  release: 'prmpt@0.1.0',
   environment: process.env.NODE_ENV === 'development' ? 'development' : 'production',
   tracesSampleRate: 1.0,
+  _experiments: { enableLogs: true },
   beforeSend(event) {
     if (event.extra) {
       for (const key of Object.keys(event.extra)) {
@@ -68,7 +70,8 @@ function startKeystrokeDetection() {
   startHook((anchor: TriggerAnchor) => {
     console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
     Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
-    overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
+    overlayManager.open(authState.isAuthenticated, undefined, undefined, true,
+      authState.currentUserId ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' } : null);
   });
 
   console.log('[Main] Native keyboard hook started');
@@ -82,7 +85,10 @@ function stopKeystrokeDetection() {
 // OVERLAY CONTROL
 // ============================================
 function toggleOverlay() {
-  overlayManager.toggle(authState.isAuthenticated);
+  const sentryUser = authState.currentUserId
+    ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' }
+    : null;
+  overlayManager.toggle(authState.isAuthenticated, sentryUser);
 }
 
 // ============================================
@@ -150,6 +156,7 @@ async function initialize() {
   // ============================================
   ipcMain.on('transcription:start', async (event, sessionId: string) => {
     Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription started', level: 'info', data: { sessionId } });
+    logger.info(logger.fmt`transcription.started sessionId=${sessionId}`);
     try {
       console.log('[Main] Starting transcription session:', sessionId);
 
@@ -175,6 +182,7 @@ async function initialize() {
       );
     } catch (error) {
       Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error', level: 'error' });
+      logger.error(logger.fmt`transcription.error ${error instanceof Error ? error.message : String(error)}`);
       console.error('[Main] Failed to start transcription:', error);
       overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
       appWindowManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
@@ -183,6 +191,7 @@ async function initialize() {
 
   ipcMain.on('transcription:stop', async () => {
     Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription stopped', level: 'info' });
+    logger.info('transcription.stopped');
     try {
       console.log('[Main] Stopping transcription');
       await transcriptionClient.stopTranscription();
@@ -316,6 +325,7 @@ async function initialize() {
   console.log('[Main] ========================================');
 
   Sentry.addBreadcrumb({ category: 'lifecycle', message: 'App startup complete', level: 'info' });
+  logger.info(logger.fmt`app.startup_complete platform=${process.platform} nativeBridge=${isNativeBridgeAvailable() ? 'loaded' : 'stub'}`);
 }
 
 async function shutdown() {
