@@ -351,7 +351,7 @@ export const Sidebar = ({
         <div className={cn("flex-shrink-0 border-t border-sidebar-border", collapsed ? "p-1.5" : "p-2")}>
           <ProfileMenu
             onSettingsClick={() => onViewChange("settings")}
-            onHelpClick={() => window.electronAPI?.openExternal("https://tryprmpt.vercel.app/")}
+            onHelpClick={() => window.electronAPI?.openExternal("https://tryprmpt.vercel.app/help")}
             collapsed={collapsed}
           />
         </div>
