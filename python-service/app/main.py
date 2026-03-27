@@ -34,7 +34,7 @@ def _scrub_prompts(event, hint):
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
     release="prmpt-python@0.1.0",
-    environment="development",
+    environment=os.environ.get("APP_ENV", "development"),
     traces_sample_rate=1.0,
     send_default_pii=False,
     before_send=_scrub_prompts,

@@ -851,6 +851,8 @@ export function registerChatHandlers(
                     }
                 } catch (rlErr) {
                     console.warn('[Chat] Rate limit check failed (allowing regeneration):', rlErr);
+                    Sentry.captureMessage('Rate limit fail-open', 'warning');
+                    logger.warn('chat.regenerate_rate_limit_check_failed — allowing through');
                 }
             }
 

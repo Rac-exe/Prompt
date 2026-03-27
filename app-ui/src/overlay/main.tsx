@@ -38,6 +38,8 @@ window.electronAPI?.overlay?.onOpened?.((data: any) => {
     Sentry.setUser({ id: data.sentryUser.id, email: data.sentryUser.email });
     logger.info(logger.fmt`overlay.opened userId=${data.sentryUser.id} authenticated=${String(!!data.isAuthenticated)}`);
   } else {
+    // Clear stale user if overlay opens unauthenticated
+    Sentry.setUser(null);
     logger.info(logger.fmt`overlay.opened authenticated=${String(!!data?.isAuthenticated)}`);
   }
 });

@@ -255,6 +255,8 @@ async function initialize() {
       if (event === 'SIGNED_IN' && session) {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
+        authState.currentUserEmail = session.user.email ?? null;
+        Sentry.setUser({ id: session.user.id, email: session.user.email });
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
         // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT

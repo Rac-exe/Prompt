@@ -294,6 +294,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
     // App Window: Sign Out (Legacy/System Tray)
     ipcMain.on('app:sign-out', async () => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Sign out', level: 'info' });
+        logger.info('auth.logout via app:sign-out');
         try {
             console.log('[Auth] Sign out request (app:sign-out)');
             await authService!.signOut();
@@ -318,6 +320,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     // OAuth Sign In (Google / GitHub) — localhost HTTP callback server
     // Uses port 0 so the OS assigns a free port — no fixed-port conflicts ever.
     ipcMain.handle('auth:oauth-sign-in', async (_event, { provider }: { provider: 'google' | 'github' }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: `OAuth started: ${provider}`, level: 'info' });
+        logger.info(logger.fmt`auth.oauth_started provider=${provider}`);
         try {
             await new Promise<void>((resolve, reject) => {
                 // ── Timeout: auto-close server after 10 minutes ──────────────
@@ -374,6 +378,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                         if (code) {
                             const { session, error: sessionError } = await authService!.exchangeCodeForSession(code);
                             if (sessionError || !session) {
+                                logger.warn(logger.fmt`auth.oauth_exchange_failed provider=${provider} error=${sessionError?.message ?? 'unknown'}`);
+                                Sentry.addBreadcrumb({ category: 'auth', message: `OAuth exchange failed: ${provider}`, level: 'warning' });
                                 console.error('[Auth] OAuth code exchange failed:', sessionError?.message);
                                 appWindowManager.send('auth:state-changed', {
                                     isAuthenticated: false, user: null,
@@ -381,16 +387,21 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                                 });
                                 return;
                             }
+                            logger.info(logger.fmt`auth.oauth_success provider=${provider} userId=${session.user.id}`);
+                            Sentry.addBreadcrumb({ category: 'auth', message: `OAuth success: ${provider}`, level: 'info' });
                             console.log(`[Auth] ✅ OAuth sign-in successful (${provider})`);
                             appWindowManager.show();
                             await handleSuccessfulAuth(appWindowManager, session.user);
                         } else if (oauthError) {
+                            logger.warn(logger.fmt`auth.oauth_error provider=${provider} error=${oauthError}`);
+                            Sentry.addBreadcrumb({ category: 'auth', message: `OAuth error: ${provider}`, level: 'warning' });
                             appWindowManager.send('auth:state-changed', {
                                 isAuthenticated: false, user: null,
                                 error: `OAuth error: ${oauthError}`,
                             });
                         }
                     } catch (err) {
+                        logger.error(logger.fmt`auth.oauth_callback_error provider=${provider}`);
                         console.error('[Auth] OAuth callback handler error:', err);
                         res.writeHead(500); res.end();
                         clearTimeout(timeout);
