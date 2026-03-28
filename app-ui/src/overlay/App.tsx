@@ -120,41 +120,37 @@ const OverlayApp: React.FC = () => {
     api.overlay?.onCursorPos?.(({ x, y }: { x: number; y: number }) => updateGlow(x, y));
 
     // ── Overlay opened ──
-    api.overlay?.onOpened?.((data: any) => {
+    const cleanupOpened = api.overlay?.onOpened?.((data: any) => {
       const auth = !!data.isAuthenticated;
       setIsAuthenticated(auth);
       setTriggeredByHook(!!data.triggeredByHook);
       if (auth) {
-        // Handle prefill
         if (data.prefill?.text && inputRef.current) {
           inputRef.current.value = data.prefill.text;
-          // trigger a React state update via native input event
           inputRef.current.dispatchEvent(new Event('input', { bubbles: true }));
         }
         if (data.prefill?.chatId) {
           setSelectedChatId(data.prefill.chatId);
           setSelectedChatName(data.prefill.chatName || 'Chat');
         }
-        // Sync settings
         api.overlay?.getSettings?.().then(applySettings).catch(() => {});
-        // Focus input
         requestAnimationFrame(() => setTimeout(() => inputRef.current?.focus(), 80));
       }
     });
 
     // ── Auth state changes ──
-    api.overlay?.onAuthState?.((data: { isAuthenticated: boolean }) => {
+    const cleanupAuthState = api.overlay?.onAuthState?.((data: { isAuthenticated: boolean }) => {
       setIsAuthenticated(data.isAuthenticated);
     });
 
     // ── Streaming chunks ──
-    api.overlay?.onOptimizationChunk?.((data: { chunk: string; accumulated: string }) => {
+    const cleanupChunk = api.overlay?.onOptimizationChunk?.((data: { chunk: string; accumulated: string }) => {
       setIsLoading(false);
       setStreamingContent(data.accumulated);
     });
 
     // ── Optimization complete ──
-    api.overlay?.onOptimizationComplete?.((data: { original: string; optimized: string }) => {
+    const cleanupComplete = api.overlay?.onOptimizationComplete?.((data: { original: string; optimized: string }) => {
       setIsOptimizing(false);
       setIsLoading(false);
       const optimized = data.optimized || '';
@@ -165,7 +161,7 @@ const OverlayApp: React.FC = () => {
     });
 
     // ── Optimization error ──
-    api.overlay?.onOptimizationError?.((data: { error: string }) => {
+    const cleanupError = api.overlay?.onOptimizationError?.((data: { error: string }) => {
       setIsOptimizing(false);
       setIsLoading(false);
       setStreamingContent('');
@@ -179,7 +175,7 @@ const OverlayApp: React.FC = () => {
     api.onNetworkReconnected?.(() => setIsOnline(true));
 
     // ── Settings updates ──
-    api.overlay?.onSettingsUpdate?.(applySettings);
+    const cleanupSettings = api.overlay?.onSettingsUpdate?.(applySettings);
 
     // ── Initial settings load ──
     api.overlay?.getSettings?.().then(applySettings).catch(() => {});
@@ -188,6 +184,17 @@ const OverlayApp: React.FC = () => {
     if (api.skills?.list) {
       api.skills.list().then((s: SkillInfo[]) => setSkills(s || [])).catch(() => {});
     }
+
+    // Remove all IPC listeners when the component unmounts (or in dev StrictMode
+    // remount cycles) so they don't accumulate and fire multiple times.
+    return () => {
+      cleanupOpened?.();
+      cleanupAuthState?.();
+      cleanupChunk?.();
+      cleanupComplete?.();
+      cleanupError?.();
+      cleanupSettings?.();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
