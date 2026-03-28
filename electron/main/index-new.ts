@@ -4,9 +4,11 @@ dotenv.config();
 import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 
+const appVersion = require('../../package.json').version;
+
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
-  release: 'prmpt@0.1.0',
+  release: `prmpt@${appVersion}`,
   environment: process.env.NODE_ENV === 'development' ? 'development' : 'production',
   tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.2,
   _experiments: { enableLogs: true },
@@ -28,6 +30,7 @@ Sentry.init({
     }
     if (event.exception?.values) {
       for (const ex of event.exception.values) {
+        if (ex.value && PII_RE.test(ex.value)) ex.value = '[REDACTED]';
         for (const frame of ex.stacktrace?.frames ?? []) {
           if (frame.vars) {
             for (const key of Object.keys(frame.vars)) {
@@ -108,6 +111,7 @@ function toggleOverlay() {
   const sentryUser = authState.currentUserId
     ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' }
     : null;
+  Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay toggled', level: 'info', data: { isAuthenticated: authState.isAuthenticated } });
   overlayManager.toggle(authState.isAuthenticated, sentryUser);
 }
 
@@ -124,6 +128,8 @@ async function initialize() {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     console.error('[Main] ERROR: Supabase credentials not found!');
     console.error('[Main] Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables');
+    Sentry.captureMessage('App failed to start: SUPABASE_URL or SUPABASE_ANON_KEY missing', 'fatal');
+    await Sentry.flush(2000);
     return;
   }
 
@@ -152,6 +158,7 @@ async function initialize() {
     }
   } catch (error) {
     console.warn('[Main] Could not connect to Python service');
+    Sentry.captureException(error, { level: 'warning', tags: { component: 'python-init' } });
   }
 
   // Background health-check loop — detects Python crashes mid-session
@@ -164,18 +171,23 @@ async function initialize() {
         appWindowManager.send('python:unavailable', {});
         overlayManager.send('python:unavailable', {});
         console.warn('[Main] Python service became unavailable');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service became unavailable', level: 'warning' });
+        Sentry.captureMessage('Python service became unavailable', 'warning');
       } else if (healthy && !pythonHealthy) {
         pythonHealthy = true;
         appWindowManager.send('python:recovered', {});
         overlayManager.send('python:recovered', {});
         console.log('[Main] Python service recovered');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service recovered', level: 'info' });
       }
-    } catch {
+    } catch (healthErr) {
       if (pythonHealthy) {
         pythonHealthy = false;
         appWindowManager.send('python:unavailable', {});
         overlayManager.send('python:unavailable', {});
         console.warn('[Main] Python health check failed');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python health check failed', level: 'warning' });
+        Sentry.captureMessage('Python health check failed', 'warning');
       }
     }
   }, HEALTH_CHECK_INTERVAL_MS);
@@ -188,9 +200,15 @@ async function initialize() {
       // Reconnected: notify renderer, then drain the offline queue
       appWindowManager.send('network:reconnected', {});
       syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
-        .catch(e => console.error('[Main] Prompt-library offline sync failed:', e));
+        .catch(e => {
+          console.error('[Main] Prompt-library offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-prompt-library' } });
+        });
       syncChatMessageQueue(appWindowManager, pythonClient)
-        .catch(e => console.error('[Main] Chat message offline sync failed:', e));
+        .catch(e => {
+          console.error('[Main] Chat message offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-chat' } });
+        });
     }
   );
   console.log('[Main] NetworkMonitor started');
@@ -307,7 +325,7 @@ async function initialize() {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
         authState.currentUserEmail = session.user.email ?? null;
-        Sentry.setUser({ id: session.user.id, email: session.user.email });
+        Sentry.setUser({ id: session.user.id });
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
         // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT
@@ -320,6 +338,9 @@ async function initialize() {
 
         authState.isAuthenticated = false;
         authState.currentUserId = null;
+        authState.currentUserEmail = null;
+        Sentry.setUser(null);
+        if (appWindowManager) appWindowManager.send('sentry:set-user', null);
 
         if (appWindowManager) {
           appWindowManager.send('auth:state-changed', {
@@ -334,6 +355,7 @@ async function initialize() {
     });
   } catch (error) {
     console.error('[Main] Auth initialization error:', error);
+    Sentry.captureException(error, { tags: { component: 'auth-init' } });
   }
 
   // ============================================
@@ -355,6 +377,7 @@ async function initialize() {
     console.log('[Main] Global hotkey registered: Ctrl+5');
   } else {
     console.error('[Main] Failed to register global hotkey');
+    Sentry.captureMessage('Global hotkey Ctrl+5 registration failed', 'warning');
   }
 
   // ============================================
@@ -451,6 +474,7 @@ if (!gotTheLock) {
       }
     } catch (err) {
       console.error('[Main] Failed to handle deep link:', url, err);
+      Sentry.captureException(err, { tags: { component: 'deep-link' }, extra: { url } });
     }
   }
 

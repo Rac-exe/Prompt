@@ -372,7 +372,9 @@ export function registerOverlayHandlers(
                   );
                   filesForDb = results.map((r, i) => {
                     if (r.status === 'fulfilled') return r.value;
-                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    const reason = (r as PromiseRejectedResult).reason;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, reason?.message);
+                    Sentry.captureException(reason, { tags: { component: 'file-upload', context: 'overlay-context-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
                 }
@@ -470,7 +472,9 @@ export function registerOverlayHandlers(
                   );
                   const olFilesForDb = olResults.map((r, i) => {
                     if (r.status === 'fulfilled') return r.value;
-                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    const olReason = (r as PromiseRejectedResult).reason;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, olReason?.message);
+                    Sentry.captureException(olReason, { tags: { component: 'file-upload', context: 'overlay-session-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
                   await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
@@ -513,6 +517,7 @@ export function registerOverlayHandlers(
             }
           } catch (chatErr) {
             errorLog.append('[Overlay] DB save', chatErr);
+            Sentry.captureException(chatErr, { tags: { component: 'overlay-db-save' } });
           }
         })();
       }

@@ -634,7 +634,9 @@ export function registerChatHandlers(
                     if (r.status === 'fulfilled') return r.value;
                     // Upload failed for this file — keep name/type/size so the chip
                     // still renders, but flag it so we don't show a broken URL.
-                    console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    const uploadErr = (r as PromiseRejectedResult).reason;
+                    console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
+                    Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
                     return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
                 });
             }
@@ -1167,6 +1169,7 @@ export async function syncChatMessageQueue(
             console.log(`[ChatOfflineSync] ✅ Synced queued message for chat ${chatId}`);
         } catch (err) {
             console.warn(`[ChatOfflineSync] Failed to sync op ${op.id} — will retry:`, err);
+            Sentry.captureException(err, { tags: { component: 'offline-sync-chat' }, extra: { opId: op.id } });
             offlineQueue.incrementRetry(op.id);
         }
     }

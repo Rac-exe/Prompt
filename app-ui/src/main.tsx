@@ -34,6 +34,7 @@ Sentry.init({
     }
     if (event.exception?.values) {
       for (const ex of event.exception.values) {
+        if (ex.value && PII_RE.test(ex.value)) ex.value = '[REDACTED]';
         for (const frame of ex.stacktrace?.frames ?? []) {
           if (frame.vars) {
             for (const key of Object.keys(frame.vars)) {
@@ -53,17 +54,16 @@ import "./index.css";
 
 // Push from main process when user logs in/out (best-effort, may fire before renderer is ready)
 window.electronAPI?.onSentryUser?.((user) => {
-  Sentry.setUser(user ? { id: user.id, email: user.email } : null);
+  Sentry.setUser(user ? { id: user.id } : null);
 });
 
 // Reliable fallback: auth:state-changed fires after the renderer calls auth:check,
 // guaranteeing the listener is registered before the event arrives.
 window.electronAPI?.onAuthStateChange?.((data) => {
-  if (data.isAuthenticated && data.user) {
+    if (data.isAuthenticated && data.user) {
     const id = data.user.id ?? data.user.profile?.id;
-    const email = data.user.email ?? data.user.profile?.email;
     if (id) {
-      Sentry.setUser({ id, email });
+      Sentry.setUser({ id });
       logger.info(logger.fmt`renderer.authenticated userId=${id}`);
     }
   } else {

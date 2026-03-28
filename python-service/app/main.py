@@ -49,6 +49,8 @@ def _scrub_prompts(event, hint):
                 req_data[key] = "[REDACTED]"
 
     for exc in event.get("exception", {}).get("values", []):
+        if _is_pii(exc.get("value", "")):
+            exc["value"] = "[REDACTED]"
         for frame in exc.get("stacktrace", {}).get("frames", []):
             if frame.get("vars"):
                 for key in list(frame["vars"].keys()):
@@ -59,10 +61,21 @@ def _scrub_prompts(event, hint):
 
 _is_dev = os.environ.get("APP_ENV", "development") == "development"
 
+_sentry_dsn = os.environ.get("SENTRY_PYTHON_DSN", "")
+_app_env = os.environ.get("APP_ENV", "development")
+_app_version = os.environ.get("APP_VERSION", "0.0.0-dev")
+
+if not _sentry_dsn:
+    logger.warning("[Sentry] SENTRY_PYTHON_DSN is not set — error tracking is disabled")
+if _app_env == "development" and not _is_dev:
+    logger.warning("[Sentry] APP_ENV is unset or 'development' but appears to be a production build — set APP_ENV=production")
+if _app_version == "0.0.0-dev":
+    logger.warning("[Sentry] APP_VERSION is not set — Sentry release will report as 0.0.0-dev")
+
 sentry_sdk.init(
-    dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
-    release=f"prmpt-python@{os.environ.get('APP_VERSION', '0.0.0-dev')}",
-    environment=os.environ.get("APP_ENV", "development"),
+    dsn=_sentry_dsn,
+    release=f"prmpt-python@{_app_version}",
+    environment=_app_env,
     traces_sample_rate=1.0 if _is_dev else 0.2,
     send_default_pii=False,
     before_send=_scrub_prompts,
@@ -741,7 +754,7 @@ async def generate_title(request: TitleRequest):
         return {"title": title}
 
     except Exception as exc:
-        logger.warning(f"TitleGen.llm_failed error={exc.__class__.__name__}: {exc}")
+        logger.error(f"TitleGen.llm_failed error={exc.__class__.__name__}: {exc}")
         print(f"[TitleGen] LLM failed ({exc.__class__.__name__}: {exc}), using fallback")
         return {"title": "New Chat"}
 
