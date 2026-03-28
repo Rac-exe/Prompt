@@ -83,10 +83,12 @@ def supports_vision(model: str) -> bool:
 def _get_litellm_kwargs(provider: str, model: str) -> Tuple[str, dict]:
     """Return (resolved_model, extra_kwargs) for litellm."""
     if provider == "openrouter" or model.startswith("openrouter/"):
-        if not OPENROUTER_API_KEY:
-            print("ERROR: OPENROUTER_API_KEY not set in .env")
-            sys.exit(1)
-        return model, {"api_key": OPENROUTER_API_KEY}
+        key = os.environ.get("OPENROUTER_API_KEY", "") or OPENROUTER_API_KEY
+        if not key:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY is not set. Add it to your .env file."
+            )
+        return model, {"api_key": key}
     return model, {}
 
 

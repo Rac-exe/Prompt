@@ -1,9 +1,15 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
-from app.auth import require_auth, require_ws_auth
 import sys
+import os
+from pathlib import Path
+
+# Load .env from the project root BEFORE any pipeline imports so that
+# os.environ is populated when config.py reads OPENROUTER_API_KEY etc.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_path = Path(__file__).parent.parent.parent / ".env"
+    _load_dotenv(dotenv_path=_env_path, override=False)
+except ImportError:
+    pass  # python-dotenv not installed; rely on system env vars
 
 # Force UTF-8 stdout/stderr so emoji and non-ASCII chars don't crash the server
 # on Windows where the default console encoding is cp1252.
@@ -12,7 +18,11 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-import os
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional, List
+from app.auth import require_auth, require_ws_auth
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
