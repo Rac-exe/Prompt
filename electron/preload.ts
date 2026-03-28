@@ -627,6 +627,15 @@ const electronAPI = {
   },
 
   // ============================================
+  // DEEP LINK NAVIGATION
+  // ============================================
+  onNavigateToShare: (callback: (token: string) => void): (() => void) => {
+    const handler = (_event: any, token: string) => callback(token);
+    ipcRenderer.on('navigate-to-share', handler);
+    return () => ipcRenderer.removeListener('navigate-to-share', handler);
+  },
+
+  // ============================================
   // PYTHON SERVICE STATUS
   // ============================================
   onPythonUnavailable: (callback: () => void) => {

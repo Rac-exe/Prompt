@@ -212,6 +212,9 @@ export interface ElectronAPI {
   // Stop generation
   stopGeneration: () => void;
 
+  // Deep link navigation
+  onNavigateToShare: (callback: (token: string) => void) => (() => void);
+
   // Overlay (available when running inside the overlay renderer)
   overlay?: {
     optimize: (data: {

@@ -493,13 +493,11 @@ if (!gotTheLock) {
       // ── Share deep link: promptweaver://share/<token> ──────────────────────
       if (parsed.hostname === 'share') {
         const token = parsed.pathname.replace(/^\//, '');
-        if (token && appWindowManager) {
+        if (token && /^[a-zA-Z0-9_-]+$/.test(token) && appWindowManager) {
           appWindowManager.show();
           const win = appWindowManager.getWindow();
           if (win && !win.isDestroyed()) {
-            win.webContents.executeJavaScript(
-              `window.location.hash = '/share/${token}';`
-            ).catch(() => {});
+            win.webContents.send('navigate-to-share', token);
           }
         }
       }

@@ -1,9 +1,10 @@
+import { useEffect } from 'react';
 import * as Sentry from '@sentry/react';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { AuthWrapper } from "@/components/auth/AuthWrapper";
 import Index from "./pages/Index";
 import SharePage from "./pages/SharePage";
@@ -11,6 +12,17 @@ import SharePromptPage from "./pages/SharePromptPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+
+function DeepLinkListener() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    const cleanup = window.electronAPI?.onNavigateToShare?.((token: string) => {
+      navigate(`/share/${token}`);
+    });
+    return () => cleanup?.();
+  }, [navigate]);
+  return null;
+}
 
 const App = () => {
   return (
@@ -28,6 +40,7 @@ const App = () => {
           <Toaster />
           <Sonner />
           <HashRouter>
+            <DeepLinkListener />
             <Routes>
               {/* Share routes are intentionally OUTSIDE AuthWrapper so anyone can view */}
               <Route path="/share/:token" element={<SharePage />} />
