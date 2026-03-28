@@ -447,30 +447,31 @@ class OptimizeResponse(BaseModel):
     model: str = ""
     latency_ms: Optional[float] = None
 
-# Simple in-memory cache (LRU would be better for production)
-prompt_cache: dict[str, str] = {}
-MAX_CACHE_SIZE = 100
+# ── Prompt cache with TTL (SCALE-01) ──────────────────────────────────────────
+from cachetools import TTLCache
+prompt_cache: TTLCache = TTLCache(maxsize=200, ttl=300)  # 200 entries, 5-min TTL
 
-# ── Server-side rate limiting ──────────────────────────────────────────────────
-# Per-user daily request counter. Key = (user_id, UTC-date-str), Value = count.
-# On a single-process deployment this is sufficient. For multi-process/multi-instance
-# deployments swap this for a Redis INCR with a 24-hour TTL.
+# ── Server-side rate limiting with daily cleanup (SCALE-02) ───────────────────
 import asyncio as _asyncio
 _rate_lock = _asyncio.Lock()
 _rate_counters: dict[str, int] = {}   # key: "<user_id>:<YYYY-MM-DD>"
+_rate_last_date: str = ""
 
 DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_REQUEST_LIMIT", "50"))
 
-# Cap the number of concurrent optimization streams to avoid thread-pool exhaustion.
 _optimize_semaphore = _asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_OPTIMIZATIONS", "50")))
 
 
 async def _check_rate_limit(user_id: str) -> bool:
     """Return True if the user may proceed, False if daily limit reached."""
     from datetime import datetime, timezone
+    global _rate_last_date
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     key = f"{user_id}:{today}"
     async with _rate_lock:
+        if _rate_last_date != today:
+            _rate_counters.clear()
+            _rate_last_date = today
         count = _rate_counters.get(key, 0)
         if count >= DAILY_REQUEST_LIMIT:
             return False
@@ -575,11 +576,8 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
         if len(clean_prompt) > 0:
             print(f"[Optimize] Improvement ratio: {len(optimized)/len(clean_prompt):.2f}x")
 
-        # Cache the result
-        cache_key = request.prompt.strip()
-        if len(prompt_cache) >= MAX_CACHE_SIZE:
-            prompt_cache.pop(next(iter(prompt_cache)))
-        prompt_cache[cache_key] = optimized
+        # Cache the result (TTLCache handles eviction automatically)
+        prompt_cache[request.prompt.strip()] = optimized
 
         latency = (time.time() - start_time) * 1000
 
@@ -790,12 +788,23 @@ async def optimize_stream(websocket: WebSocket):
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {
-        "status": "ok",
-        "service": "prompt-optimizer",
-        "api_ready": True
-    }
+    """Lightweight liveness probe."""
+    return {"status": "ok", "service": "prompt-optimizer"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """Readiness probe — checks that critical dependencies are available."""
+    checks: dict = {}
+    checks["llm_api_key"] = bool(OPENROUTER_API_KEY)
+    checks["optimizer_model"] = bool(OPTIMIZER_MODEL)
+    try:
+        get_faster_whisper_model()
+        checks["whisper_model"] = True
+    except Exception:
+        checks["whisper_model"] = False
+    all_ok = all(checks.values())
+    return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 
 class TitleRequest(BaseModel):
