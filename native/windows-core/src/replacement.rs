@@ -122,7 +122,7 @@ pub fn replace_at_last_anchor(text: &str) -> bool {
 unsafe fn execute_replacement(anchor: AnchorData, text: &str) -> bool {
     let hwnd = HWND(anchor.hwnd as *mut _);
 
-    if !IsWindow(hwnd).as_bool() {
+    if !IsWindow(Some(hwnd)).as_bool() {
         eprintln!("[Replacement] Target window gone (hwnd={:#x})", anchor.hwnd);
         return false;
     }
@@ -238,20 +238,20 @@ unsafe fn inject_via_edit_messages(hwnd: HWND, trigger_len: u32, text: &str) -> 
     let mut sel_end: u32 = 0;
     SendMessageW(
         hwnd, EM_GETSEL,
-        WPARAM(&mut sel_start as *mut u32 as usize),
-        LPARAM(&mut sel_end as *mut u32 as isize),
+        Some(WPARAM(&mut sel_start as *mut u32 as usize)),
+        Some(LPARAM(&mut sel_end as *mut u32 as isize)),
     );
 
     let caret = sel_end;
     let start = caret.saturating_sub(trigger_len);
-    SendMessageW(hwnd, EM_SETSEL, WPARAM(start as usize), LPARAM(caret as isize));
+    SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(start as usize)), Some(LPARAM(caret as isize)));
 
     let mut utf16: Vec<u16> = text.encode_utf16().collect();
     utf16.push(0);
     SendMessageW(
         hwnd, EM_REPLACESEL,
-        WPARAM(1),                        // TRUE → undoable via Ctrl+Z
-        LPARAM(utf16.as_ptr() as isize),
+        Some(WPARAM(1)),                        // TRUE → undoable via Ctrl+Z
+        Some(LPARAM(utf16.as_ptr() as isize)),
     );
     true
 }
@@ -500,7 +500,7 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
     // ── Step 1: Save current clipboard content ──────────────────────────────
     let mut saved_clipboard: Option<Vec<u16>> = None;
 
-    if OpenClipboard(HWND(std::ptr::null_mut())).is_ok() {
+    if OpenClipboard(None).is_ok() {
         let h = GetClipboardData(CF_UNICODETEXT);
         if let Ok(handle) = h {
             if !handle.0.is_null() {
@@ -523,7 +523,7 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
     let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
     let byte_len = utf16.len() * 2;
 
-    if OpenClipboard(HWND(std::ptr::null_mut())).is_err() {
+    if OpenClipboard(None).is_err() {
         eprintln!("[Replacement:Clipboard] Failed to open clipboard for write");
         return false;
     }
@@ -551,7 +551,7 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
 
     // SetClipboardData takes ownership of hmem — do NOT free it.
     // HANDLE and HGLOBAL both wrap *mut c_void, so reinterpret.
-    let set_result = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0));
+    let set_result = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0)));
     let _ = CloseClipboard();
 
     if set_result.is_err() {
@@ -586,7 +586,7 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(300));
             unsafe {
-                if OpenClipboard(HWND(std::ptr::null_mut())).is_ok() {
+                if OpenClipboard(None).is_ok() {
                     let _ = EmptyClipboard();
                     let byte_len = saved.len() * 2;
                     if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, byte_len) {
@@ -598,7 +598,7 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
                                 byte_len,
                             );
                             let _ = GlobalUnlock(hmem);
-                            let _ = SetClipboardData(CF_UNICODETEXT, HANDLE(hmem.0));
+                            let _ = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0)));
                         }
                     }
                     let _ = CloseClipboard();

@@ -19,9 +19,8 @@ use std::cell::RefCell;
 use std::sync::{mpsc, Mutex};
 use std::thread::JoinHandle;
 
-use napi::threadsafe_function::{
-    ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode,
-};
+use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi_derive::napi;
 
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -56,6 +55,7 @@ use crate::keymap::vk_to_char;
 // ── Public data sent to JS on trigger ────────────────────────────────────────
 
 /// Sent to the JS callback when @prompt is detected.
+#[napi(object)]
 pub struct TriggerData {
     /// Raw HWND of the foreground window at the moment of trigger.
     /// Stored as i64 so it crosses the FFI boundary safely.
@@ -75,7 +75,7 @@ static HOOK_STATE: Mutex<Option<HookState>> = Mutex::new(None);
 
 // ── Per-hook-thread state (thread_local is zero-cost and lock-free) ──────────
 
-type Tsfn = ThreadsafeFunction<TriggerData, ErrorStrategy::Fatal>;
+type Tsfn = ThreadsafeFunction<TriggerData>;
 
 thread_local! {
     static BUFFER:        RefCell<RollingBuffer> = RefCell::new(RollingBuffer::new());
@@ -104,7 +104,7 @@ unsafe extern "system" fn ll_keyboard_proc(
         // replacement would feed back into the detection buffer and could
         // corrupt it or re-trigger detection on replayed characters.
         if flags & LLKHF_INJECTED != 0 {
-            return CallNextHookEx(HHOOK::default(), code, wparam, lparam);
+            return CallNextHookEx(Some(HHOOK::default()), code, wparam, lparam);
         }
 
         let is_keydown =
@@ -122,7 +122,7 @@ unsafe extern "system" fn ll_keyboard_proc(
     }
 
     // CRITICAL: always forward the event — we are an observer, not a consumer.
-    CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    CallNextHookEx(Some(HHOOK::default()), code, wparam, lparam)
 }
 
 fn on_keydown(vk: u32) {
@@ -177,7 +177,7 @@ fn fire_trigger() {
         if let Some(ref tsfn) = *cb.borrow() {
             // NonBlocking: enqueues onto Node event loop, returns immediately.
             // Safe to call from any thread including OS hook callbacks.
-            tsfn.call(data, ThreadsafeFunctionCallMode::NonBlocking);
+            tsfn.call(Ok(data), ThreadsafeFunctionCallMode::NonBlocking);
         }
     });
 }
@@ -206,7 +206,7 @@ fn hook_thread_main(
         let hhook = match SetWindowsHookExW(
             WH_KEYBOARD_LL,
             Some(ll_keyboard_proc),
-            HINSTANCE::default(),
+            Some(HINSTANCE::default()),
             0,
         ) {
             Ok(h) => h,
