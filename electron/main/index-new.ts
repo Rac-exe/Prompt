@@ -68,6 +68,7 @@ import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './u
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
+import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -280,6 +281,7 @@ async function initialize() {
   registerAvatarHandlers();
   registerFileUploadHandlers();
   registerFeedbackHandlers();
+  registerDeletionHandlers();
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)

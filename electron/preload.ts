@@ -159,6 +159,13 @@ declare global {
         submit: (data: { rating: 'positive' | 'negative'; comment?: string }) => Promise<{ success: boolean; error?: string }>;
       };
 
+      // GDPR Account Deletion API
+      deletion: {
+        request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
+        cancel: () => Promise<{ success: boolean; cancelledAt?: string; error?: string }>;
+        status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
+      };
+
       // Skills API
       skills: {
         list: () => Promise<any>;
@@ -608,6 +615,15 @@ const electronAPI = {
   feedback: {
     submit: (data: { rating: 'positive' | 'negative'; comment?: string }) =>
       ipcRenderer.invoke('feedback:submit', data),
+  },
+
+  // ============================================
+  // GDPR ACCOUNT DELETION API
+  // ============================================
+  deletion: {
+    request: (reason?: string) => ipcRenderer.invoke('deletion:request', reason),
+    cancel: () => ipcRenderer.invoke('deletion:cancel'),
+    status: () => ipcRenderer.invoke('deletion:status'),
   },
 
   // ============================================
