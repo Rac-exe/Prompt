@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 import crypto from 'crypto';
+const { fileTypeFromBuffer } = require('file-type');
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -117,31 +118,39 @@ const MAX_TOTAL_SIZE = 25_000_000; // 25 MB total
 
 /**
  * Validate attached files before forwarding to Python.
- * Returns error message if validation fails, null if valid.
+ * Checks count, size (from actual buffer, not user-supplied metadata),
+ * and MIME type against magic bytes — not the user-supplied mimeType field.
+ * Returns an error string if validation fails, null if valid.
  */
-function validateAttachedFiles(files: AttachedFile[]): string | null {
+async function validateAttachedFiles(files: AttachedFile[]): Promise<string | null> {
   if (files.length > MAX_FILES_PER_MESSAGE) {
     return `Maximum ${MAX_FILES_PER_MESSAGE} files allowed per message`;
   }
 
   let totalSize = 0;
   for (const file of files) {
-    if (!ALLOWED_MIME_TYPES.includes(file.mimeType)) {
-      return `File type not allowed: ${file.mimeType}`;
-    }
+    const buf = Buffer.from(file.base64, 'base64');
 
-    if (file.sizeBytes > MAX_FILE_SIZE) {
+    // Use actual buffer byte count — not the renderer-supplied sizeBytes
+    const actualSize = buf.length;
+    if (actualSize > MAX_FILE_SIZE) {
       return `File "${file.name}" exceeds 10 MB limit`;
     }
+    totalSize += actualSize;
 
-    totalSize += file.sizeBytes;
+    // Detect MIME from magic bytes — ignores whatever the renderer claims
+    const detected = await fileTypeFromBuffer(buf);
+    const effectiveMime = detected?.mime ?? 'application/octet-stream';
+    if (!ALLOWED_MIME_TYPES.includes(effectiveMime)) {
+      return `File "${file.name}" is not an allowed type (detected: ${effectiveMime})`;
+    }
   }
 
   if (totalSize > MAX_TOTAL_SIZE) {
     return `Total upload size exceeds 25 MB limit`;
   }
 
-  return null; // Valid
+  return null;
 }
 
 // Lazy load services
@@ -556,7 +565,7 @@ export function registerChatHandlers(
             // Validate attached files if present
             const attachedFiles = data.attachedFiles || [];
             if (attachedFiles.length > 0) {
-                const validationError = validateAttachedFiles(attachedFiles);
+                const validationError = await validateAttachedFiles(attachedFiles);
                 if (validationError) {
                     console.error('[Chat] File validation failed:', validationError);
                     if (appWindowManager) {

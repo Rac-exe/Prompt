@@ -42,6 +42,7 @@
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
+    "file-type": "^22.0.0",
     "node-global-key-listener": "^0.2.0",
     "uiohook-napi": "^1.5.4",
     "ws": "^8.19.0"
