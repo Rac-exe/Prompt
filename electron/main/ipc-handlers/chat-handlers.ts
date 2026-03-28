@@ -514,6 +514,8 @@ export function registerChatHandlers(
                 }
 
                 // Text-only to an EXISTING chat → queue for retry when back online.
+                // The queue op.id doubles as the stable message UUID so duplicate
+                // replays produce a DB conflict and are safely ignored.
                 if (data.chatId) {
                     offlineQueue.enqueue('send-message', {
                         chatId: data.chatId,
@@ -1114,13 +1116,15 @@ export async function syncChatMessageQueue(
                 continue;
             }
 
-            // Save user message
+            // Save user message — use the stable op.id as the pre-generated message UUID.
+            // If a previous sync attempt already wrote this message, the insert will
+            // conflict on the primary key and be skipped (idempotent replay).
             const userGroupId = groupId || crypto.randomUUID();
             const userVersionIndex = versionIndex ?? 0;
             const userMsg = await svc.addMessage(chatId, content, 'user', undefined, {
                 groupId: userGroupId,
                 versionIndex: userVersionIndex,
-            });
+            }, op.id /* stable idempotency key */);
 
             // Fetch context
             let messagesContext: Array<{role: string; content: string}> = [];
