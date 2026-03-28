@@ -44,7 +44,7 @@ Sentry.init({
   },
 });
 
-import { app, globalShortcut, ipcMain, shell } from 'electron';
+import { app, globalShortcut, ipcMain, session, shell } from 'electron';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
@@ -119,7 +119,30 @@ function toggleOverlay() {
 // ============================================
 // INITIALIZATION
 // ============================================
+function installCSP() {
+  const supabaseHost = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            `img-src 'self' data: https: blob:`,
+            `font-src 'self' data:`,
+            `connect-src 'self' https://${supabaseHost} wss://${supabaseHost} http://127.0.0.1:8001 ws://127.0.0.1:8001 https://*.sentry.io https://res.cloudinary.com`,
+            `media-src 'self' blob:`,
+          ].join('; '),
+        ],
+      },
+    });
+  });
+}
+
 async function initialize() {
+  installCSP();
   console.log('[Main] Initializing Prompt Optimizer...');
 
   // Initialize Supabase
