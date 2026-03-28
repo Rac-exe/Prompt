@@ -117,7 +117,20 @@ import queue
 import asyncio
 import torch
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        import uuid as _uuid
+        req_id = request.headers.get("x-request-id") or str(_uuid.uuid4())
+        response: StarletteResponse = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
+
 app = FastAPI()
+app.add_middleware(RequestIDMiddleware)
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["60/minute"],
@@ -596,7 +609,8 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
                 status_code=500,
                 detail="Model not found. Please ensure Ollama is running and the model is installed (e.g., 'ollama pull llama3.2')"
             )
-        raise HTTPException(status_code=500, detail=f"Optimization failed: {error_msg}")
+        logger.error(f"Optimization failed: {error_msg}")
+        raise HTTPException(status_code=500, detail="Optimization failed — please try again")
 
 @app.websocket("/ws/optimize-stream")
 async def optimize_stream(websocket: WebSocket):
