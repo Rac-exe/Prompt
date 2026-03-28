@@ -20,7 +20,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -431,14 +431,14 @@ Remember: Output ONLY the improved prompt. Start your response directly with it.
 
 class Message(BaseModel):
     role: str  # "user" or "assistant"
-    content: str
+    content: str = Field(..., max_length=50_000)
 
 class OptimizeRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(..., min_length=3, max_length=50_000)
     skip_cache: Optional[bool] = False
-    messages: Optional[list[Message]] = None
+    messages: Optional[list[Message]] = Field(None, max_length=100)
     mode: Optional[str] = "fast"
-    custom_instructions: Optional[str] = ""
+    custom_instructions: Optional[str] = Field("", max_length=10_000)
     user_id: Optional[str] = None
 
 class OptimizeResponse(BaseModel):
@@ -799,7 +799,7 @@ async def health():
 
 
 class TitleRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(..., max_length=50_000)
 
 
 @app.post("/generate-title")
@@ -867,9 +867,9 @@ class MemoryFact(BaseModel):
 
 
 class ExtractMemoryRequest(BaseModel):
-    raw_prompt: str
-    optimized_text: str
-    skill: Optional[str] = None
+    raw_prompt: str = Field(..., max_length=50_000)
+    optimized_text: str = Field(..., max_length=50_000)
+    skill: Optional[str] = Field(None, max_length=200)
 
 
 class ExtractMemoryResponse(BaseModel):
