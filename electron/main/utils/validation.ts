@@ -32,23 +32,36 @@ export function validateEmail(email: string): ValidationResult {
 /**
  * Validate password strength
  */
+const WEAK_PASSWORDS = new Set([
+  'password', '123456', '12345678', 'qwerty', 'abc123', 'monkey', 'master',
+  'dragon', 'login', 'letmein', 'welcome', 'shadow', 'sunshine', 'princess',
+  'football', 'charlie', 'trustno1', 'iloveyou', 'batman', 'access',
+  'passw0rd', 'admin123', 'password1', 'qwerty123', '1234567890',
+]);
+
 export function validatePassword(password: string): ValidationResult {
   if (!password || password.length === 0) {
     return { isValid: false, error: 'Password is required' };
   }
 
-  if (password.length < 6) {
-    return { isValid: false, error: 'Password must be at least 6 characters' };
+  if (password.length < 8) {
+    return { isValid: false, error: 'Password must be at least 8 characters' };
   }
 
   if (password.length > 128) {
     return { isValid: false, error: 'Password is too long (max 128 characters)' };
   }
 
-  // Optional: Check for common weak passwords
-  const weakPasswords = ['password', '123456', 'qwerty', 'abc123'];
-  if (weakPasswords.includes(password.toLowerCase())) {
-    return { isValid: false, error: 'Password is too weak' };
+  if (WEAK_PASSWORDS.has(password.toLowerCase())) {
+    return { isValid: false, error: 'This password is too common — please choose a stronger one' };
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    return { isValid: false, error: 'Password must include at least one uppercase letter' };
+  }
+
+  if (!/[0-9]/.test(password)) {
+    return { isValid: false, error: 'Password must include at least one number' };
   }
 
   return { isValid: true };
