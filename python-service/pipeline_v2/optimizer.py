@@ -325,7 +325,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
     if stream:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=4096, temperature=temperature, stream=True,
+            max_tokens=8192, temperature=temperature, stream=True,
             stream_options={"include_usage": True}, **extra,
         )
         def _stream_generator():
@@ -358,7 +358,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
     else:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=4096, temperature=temperature, **extra,
+            max_tokens=8192, temperature=temperature, **extra,
         )
         result = response.choices[0].message.content
         usage = response.usage
