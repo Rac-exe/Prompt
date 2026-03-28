@@ -1,3 +1,12 @@
+import re
+
+_APP_BUILD_PATTERN = re.compile(
+    r'\b(build|create|make|develop|set\s?up|deploy|launch)\b'
+    r'.*\b(app|application|website|web\s?app|platform|system|service|'
+    r'dashboard|portal|saas|tool|bot|chatbot|clone|mvp)\b'
+)
+
+
 def detect_prompt_type(prompt: str) -> str:
     """
     Detect the type of prompt to apply appropriate optimization strategy.
@@ -5,9 +14,19 @@ def detect_prompt_type(prompt: str) -> str:
     """
     prompt_lower = prompt.lower()
 
-    coding_keywords = ['function', 'code', 'program', 'script', 'algorithm', 'debug', 'implement',
-                       'api', 'database', 'class', 'method', 'variable', 'loop', 'array', 'regex',
-                       'python', 'javascript', 'java', 'c++', 'sql', 'html', 'css', 'react']
+    if _APP_BUILD_PATTERN.search(prompt_lower):
+        return 'coding'
+
+    coding_keywords = [
+        'function', 'code', 'program', 'script', 'algorithm', 'debug', 'implement',
+        'api', 'database', 'class', 'method', 'variable', 'loop', 'array', 'regex',
+        'python', 'javascript', 'java', 'c++', 'sql', 'html', 'css', 'react',
+        'backend', 'frontend', 'fullstack', 'full-stack', 'server', 'microservice',
+        'endpoint', 'crud', 'authentication', 'middleware', 'docker', 'kubernetes',
+        'mongodb', 'postgresql', 'redis', 'graphql', 'rest api', 'webhook',
+        'node.js', 'express', 'django', 'flask', 'nextjs', 'next.js',
+        'typescript', 'angular', 'vue', 'svelte', 'tailwind',
+    ]
     if any(keyword in prompt_lower for keyword in coding_keywords):
         return 'coding'
 

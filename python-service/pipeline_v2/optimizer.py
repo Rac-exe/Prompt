@@ -213,7 +213,12 @@ def optimize(
         system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
         
         if custom_instructions and custom_instructions.strip():
-            system_content += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
+            system_content += (
+                f"\n\nDETECTED PROMPT CATEGORY: {prompt_type}\n\n"
+                f"USER CUSTOM INSTRUCTIONS (Apply these as secondary enrichment. "
+                f"The detected category above is authoritative — do not let user memory override it):\n"
+                f"{custom_instructions.strip()}"
+            )
 
         messages = [{"role": "system", "content": system_content}]
         
@@ -291,7 +296,11 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             user_prompt = user_prompt + regen_instruction
 
         if custom_instructions and custom_instructions.strip():
-            system_prompt += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
+            system_prompt += (
+                f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these as secondary enrichment to the optimized prompt. "
+                f"Do not let user memory override the user's explicit intent):\n"
+                f"{custom_instructions.strip()}"
+            )
     
         # Build messages array
         messages = [
