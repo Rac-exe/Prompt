@@ -24,12 +24,20 @@ from pipeline_v2.config import SUPABASE_JWT_SECRET
 
 logger = logging.getLogger("prmpt.auth")
 
+_APP_ENV = os.environ.get("APP_ENV", "development")
 _AUTH_ENABLED = bool(SUPABASE_JWT_SECRET)
 
 if not _AUTH_ENABLED:
+    if _APP_ENV == "production":
+        logger.critical(
+            "[Auth] FATAL: SUPABASE_JWT_SECRET is not set in production — "
+            "refusing to start. Set the JWT secret from Supabase dashboard → "
+            "Project Settings → API."
+        )
+        raise SystemExit(1)
     logger.warning(
         "[Auth] SUPABASE_JWT_SECRET is not set — endpoint authentication is DISABLED. "
-        "Set this in production to secure the API."
+        "This is only acceptable in development."
     )
 
 security = HTTPBearer(auto_error=False)
