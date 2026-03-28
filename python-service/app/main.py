@@ -172,16 +172,19 @@ async def startup_event():
 # which prevents the LLM from generating content instead of optimizing prompts
 
 
-# CORS middleware — restrict to known origins in production via ALLOWED_ORIGINS env var
-_raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
-_allowed_origins = [o.strip() for o in _raw_origins.split(",")] if _raw_origins != "*" else ["*"]
+# CORS middleware — defaults to localhost only; set ALLOWED_ORIGINS to override.
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else [
+    "http://127.0.0.1",
+    "http://localhost",
+]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 # Adaptive prompt optimization system with type detection and specialized strategies
