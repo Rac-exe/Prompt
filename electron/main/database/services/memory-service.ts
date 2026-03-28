@@ -162,6 +162,69 @@ export class MemoryService {
   }
 
   /**
+   * Batch upsert multiple inferred memory entries in 3 DB round-trips regardless
+   * of fact count (fetch explicit set → fetch existing counts → batch upsert).
+   * Respects explicit priority: any key that has an explicit entry is skipped.
+   * Returns the number of rows actually written.
+   */
+  async upsertInferredEntries(
+    facts: Array<{ memoryType: MemoryType; key: string; value: string; confidence: number }>,
+  ): Promise<number> {
+    if (facts.length === 0) return 0;
+
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+    const userId = userData.user.id;
+
+    // 1. Fetch all explicit entries in one query
+    const { data: explicitRows } = await this.client
+      .from('user_memory')
+      .select('memory_type, key')
+      .eq('user_id', userId)
+      .eq('source', 'explicit');
+
+    const explicitSet = new Set(
+      (explicitRows ?? []).map((r) => `${r.memory_type}::${r.key}`),
+    );
+
+    // 2. Filter out facts blocked by explicit priority
+    const eligible = facts.filter(
+      (f) => !explicitSet.has(`${f.memoryType}::${f.key}`),
+    );
+    if (eligible.length === 0) return 0;
+
+    // 3. Fetch existing inferred entries to increment observation_count
+    const { data: existing } = await this.client
+      .from('user_memory')
+      .select('memory_type, key, observation_count')
+      .eq('user_id', userId)
+      .in('key', eligible.map((f) => f.key));
+
+    const existingMap = new Map(
+      (existing ?? []).map((r) => [`${r.memory_type}::${r.key}`, r.observation_count as number]),
+    );
+
+    // 4. Build batch upsert payload
+    const rows = eligible.map((f) => ({
+      user_id: userId,
+      memory_type: f.memoryType,
+      key: f.key,
+      value: f.value,
+      source: 'inferred' as MemorySource,
+      confidence: f.confidence,
+      observation_count: (existingMap.get(`${f.memoryType}::${f.key}`) ?? 0) + 1,
+    }));
+
+    // 5. Single batch upsert — 3 queries total regardless of fact count
+    const { error } = await this.client
+      .from('user_memory')
+      .upsert(rows, { onConflict: 'user_id,memory_type,key' });
+
+    if (error) throw error;
+    return rows.length;
+  }
+
+  /**
    * Delete a specific memory entry.
    * Only deletes entries belonging to the authenticated user (RLS enforced server-side too).
    */
