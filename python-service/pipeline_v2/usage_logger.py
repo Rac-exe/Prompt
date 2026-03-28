@@ -123,9 +123,9 @@ def log_usage(
         with log_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
-    except Exception:
-        # Never let logging crash the main request
-        pass
+    except Exception as _log_err:
+        import sys
+        print(f"[UsageLogger] write failed: {_log_err}", file=sys.stderr)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
