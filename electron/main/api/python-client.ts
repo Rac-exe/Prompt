@@ -337,10 +337,12 @@ export class PythonClient extends EventEmitter {
         skip_cache: skipCache,
         messages: messages || null,
         mode,
-        custom_instructions: customInstructions
+        custom_instructions: customInstructions,
+        user_id: authState.currentUserId || undefined,
       });
       return response.data.optimized;
     } catch (error) {
+      Sentry.captureException(error);
       console.error('[PythonClient] Optimization failed:', error);
       throw error;
     }

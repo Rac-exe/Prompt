@@ -1,9 +1,11 @@
 import * as Sentry from '@sentry/react';
 const { logger } = Sentry;
 
+declare const __APP_VERSION__: string;
+
 Sentry.init({
   dsn: import.meta.env.VITE_SENTRY_DSN,
-  release: 'prmpt@0.1.0',
+  release: `prmpt@${__APP_VERSION__}`,
   environment: import.meta.env.DEV ? 'development' : 'production',
   integrations: [
     Sentry.browserTracingIntegration(),

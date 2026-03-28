@@ -61,7 +61,7 @@ _is_dev = os.environ.get("APP_ENV", "development") == "development"
 
 sentry_sdk.init(
     dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
-    release="prmpt-python@0.1.0",
+    release=f"prmpt-python@{os.environ.get('APP_VERSION', '0.0.0-dev')}",
     environment=os.environ.get("APP_ENV", "development"),
     traces_sample_rate=1.0 if _is_dev else 0.2,
     send_default_pii=False,
@@ -370,10 +370,11 @@ class Message(BaseModel):
 
 class OptimizeRequest(BaseModel):
     prompt: str
-    skip_cache: Optional[bool] = False  # Set to True to bypass cache (for refresh)
-    messages: Optional[list[Message]] = None  # Chat history for context-aware optimization
-    mode: Optional[str] = "fast"  # new dual-mode toggle ("fast" or "thinking")
-    custom_instructions: Optional[str] = ""  # User's custom prompt instructions
+    skip_cache: Optional[bool] = False
+    messages: Optional[list[Message]] = None
+    mode: Optional[str] = "fast"
+    custom_instructions: Optional[str] = ""
+    user_id: Optional[str] = None
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -417,6 +418,9 @@ def clean_optimized_text(text: str) -> str:
 
 @app.post("/optimize", response_model=OptimizeResponse)
 async def optimize_prompt(request: OptimizeRequest):
+    if request.user_id:
+        sentry_sdk.set_user({"id": request.user_id})
+
     start_time = time.time()
 
     if not request.prompt or len(request.prompt.strip()) < 3:
