@@ -1,18 +1,7 @@
 import * as https from 'https';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
 import { ipcMain, shell } from 'electron';
 import { SupabaseClientManager } from '../database/supabase-client';
-
-// #region agent log
-const DEBUG_LOG = 'C:\\prompt\\.cursor\\debug.log';
-function dbgLog(location: string, message: string, data: Record<string, unknown>) {
-  try {
-    const line = JSON.stringify({ location, message, data, timestamp: Date.now(), hypothesisId: 'pdf-upload', runId: 'pdf-debug-1' });
-    fs.appendFileSync(DEBUG_LOG, line + '\n');
-  } catch { /* non-fatal */ }
-}
-// #endregion
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -198,18 +187,6 @@ export async function uploadPdfToStorage(
 
   console.log(`[FileUpload] Uploading PDF to Supabase Storage: ${storagePath}`);
 
-  // #region agent log
-  dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload attempt', {
-    originalFilename: filename,
-    safeName,
-    storagePath,
-    bufferBytes: pdfBuffer.length,
-    userId,
-    chatId,
-    messageId,
-  });
-  // #endregion
-
   const { error } = await client.storage
     .from(BUCKET)
     .upload(storagePath, pdfBuffer, {
@@ -237,25 +214,14 @@ export async function uploadPdfToStorage(
 
     if (isDuplicate) {
       console.log('[FileUpload] ✅ Object already exists at content-addressed path, reusing:', storagePath);
-      dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF already exists — reusing path', { storagePath });
       return storagePath;
     }
 
     console.error('[FileUpload] ❌ Supabase Storage upload failed:', error.message);
-    // #region agent log
-    dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload FAILED', {
-      storagePath,
-      errorMessage: error.message,
-      errorCode: statusCode || (error as any).error || 'unknown',
-    });
-    // #endregion
     throw new Error(`PDF upload failed: ${error.message}`);
   }
 
   console.log('[FileUpload] ✅ Supabase Storage upload success:', storagePath);
-  // #region agent log
-  dbgLog('file-upload-service.ts:uploadPdfToStorage', 'PDF upload SUCCESS', { storagePath });
-  // #endregion
   return storagePath;
 }
 
