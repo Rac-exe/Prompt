@@ -153,6 +153,20 @@ declare global {
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
         onUpdated: (callback: (memory: any) => void) => (() => void);
       };
+
+      // Feedback API
+      feedback: {
+        submit: (data: { rating: 'positive' | 'negative'; comment?: string }) => Promise<{ success: boolean; error?: string }>;
+      };
+
+      // Skills API
+      skills: {
+        list: () => Promise<any>;
+      };
+
+      // Python service status
+      onPythonUnavailable: (callback: () => void) => void;
+      onPythonRecovered: (callback: () => void) => void;
     };
   }
 }
@@ -511,6 +525,15 @@ const electronAPI = {
   // COMMON API
   // ============================================
   send: (channel: string, data: any) => {
+    const ALLOWED_SEND_CHANNELS = new Set([
+      'overlay:settings-update',
+      'overlay:close',
+      'overlay:ready',
+    ]);
+    if (!ALLOWED_SEND_CHANNELS.has(channel)) {
+      console.warn(`[Preload] Blocked IPC send to unknown channel: ${channel}`);
+      return;
+    }
     ipcRenderer.send(channel, data);
   },
 
@@ -565,6 +588,24 @@ const electronAPI = {
       ipcRenderer.invoke('storage:get-signed-url', { storagePath }),
     openPdf: (storagePath: string) =>
       ipcRenderer.invoke('storage:open-pdf', { storagePath }),
+  },
+
+  // ============================================
+  // FEEDBACK API
+  // ============================================
+  feedback: {
+    submit: (data: { rating: 'positive' | 'negative'; comment?: string }) =>
+      ipcRenderer.invoke('feedback:submit', data),
+  },
+
+  // ============================================
+  // PYTHON SERVICE STATUS
+  // ============================================
+  onPythonUnavailable: (callback: () => void) => {
+    ipcRenderer.on('python:unavailable', () => callback());
+  },
+  onPythonRecovered: (callback: () => void) => {
+    ipcRenderer.on('python:recovered', () => callback());
   },
 
   // ============================================
