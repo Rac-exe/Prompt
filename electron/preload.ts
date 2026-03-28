@@ -211,19 +211,29 @@ const electronAPI = {
       return ipcRenderer.invoke('overlay:save-to-chat', { chatId, content });
     },
     onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
-      ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:opened', handler);
+      return () => ipcRenderer.removeListener('overlay:opened', handler);
     },
     onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => {
-      ipcRenderer.on('overlay:auth-state', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:auth-state', handler);
+      return () => ipcRenderer.removeListener('overlay:auth-state', handler);
     },
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
-      ipcRenderer.on('overlay:optimization-chunk', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:optimization-chunk', handler);
+      return () => ipcRenderer.removeListener('overlay:optimization-chunk', handler);
     },
     onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => {
-      ipcRenderer.on('overlay:optimization-complete', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:optimization-complete', handler);
+      return () => ipcRenderer.removeListener('overlay:optimization-complete', handler);
     },
     onOptimizationError: (callback: (data: { error: string }) => void) => {
-      ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:optimization-error', handler);
+      return () => ipcRenderer.removeListener('overlay:optimization-error', handler);
     },
     onCursorPos: (callback: (data: { x: number; y: number }) => void) => {
       ipcRenderer.on('overlay:cursor-pos', (_event, data) => callback(data));
@@ -232,7 +242,9 @@ const electronAPI = {
       return ipcRenderer.invoke('overlay:get-settings');
     },
     onSettingsUpdate: (callback: (settings: any) => void) => {
-      ipcRenderer.on('overlay:settings-update', (_event, settings) => callback(settings));
+      const handler = (_event: any, settings: any) => callback(settings);
+      ipcRenderer.on('overlay:settings-update', handler);
+      return () => ipcRenderer.removeListener('overlay:settings-update', handler);
     },
     newSession: () => {
       ipcRenderer.send('overlay:new-session');
