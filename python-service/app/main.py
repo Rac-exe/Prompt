@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
+from app.auth import require_auth, require_ws_auth
 import sys
 
 # Force UTF-8 stdout/stderr so emoji and non-ASCII chars don't crash the server
@@ -456,9 +457,11 @@ def clean_optimized_text(text: str) -> str:
     return text.strip()
 
 @app.post("/optimize", response_model=OptimizeResponse)
-async def optimize_prompt(request: OptimizeRequest):
-    if request.user_id:
-        sentry_sdk.set_user({"id": request.user_id})
+async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require_auth)):
+    # Derive user_id from verified JWT rather than trusting request body
+    user_id = auth.get("sub") or request.user_id
+    if user_id:
+        sentry_sdk.set_user({"id": user_id})
 
     start_time = time.time()
 
@@ -550,9 +553,12 @@ async def optimize_prompt(request: OptimizeRequest):
 async def optimize_stream(websocket: WebSocket):
     """
     WebSocket endpoint for streaming prompt optimization using pipeline_v2.
+    Auth token must be passed as ?token=<access_token> query param.
     """
+    auth = await require_ws_auth(websocket)
     await websocket.accept()
-    print("[OptimizeStream] WebSocket connection accepted")
+    verified_user_id = auth.get("sub")
+    print(f"[OptimizeStream] WebSocket connection accepted user={verified_user_id}")
     
     try:
         while True:
@@ -568,7 +574,8 @@ async def optimize_stream(websocket: WebSocket):
             forced_skill = data.get("forced_skill", None)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
-            user_id = data.get("user_id")
+            # Use JWT-verified user id; fall back to request body only for legacy local mode
+            user_id = verified_user_id or data.get("user_id")
 
             if user_id:
                 sentry_sdk.set_user({"id": user_id})
@@ -733,7 +740,7 @@ class TitleRequest(BaseModel):
 
 
 @app.post("/generate-title")
-async def generate_title(request: TitleRequest):
+async def generate_title(request: TitleRequest, auth: dict = Depends(require_auth)):
     """
     Generate a short smart chat title (3-5 words) from the first user message.
     Uses TITLE_MODEL (defaults to SUMMARIZER_MODEL — cheap & fast).
@@ -831,7 +838,7 @@ Example output:
 
 
 @app.post("/extract-memory-facts", response_model=ExtractMemoryResponse)
-async def extract_memory_facts(request: ExtractMemoryRequest):
+async def extract_memory_facts(request: ExtractMemoryRequest, auth: dict = Depends(require_auth)):
     """
     Extract user facts from a raw prompt + optimized output.
     Uses a cheap/fast model (same as optimizer) for minimal cost.
@@ -1583,9 +1590,10 @@ active_sessions: dict[str, TranscriptionSession] = {}
 
 @app.websocket("/ws/transcribe")
 async def websocket_transcribe(websocket: WebSocket):
-    """WebSocket endpoint for continuous transcription."""
+    """WebSocket endpoint for continuous transcription. Auth via ?token= query param."""
+    auth = await require_ws_auth(websocket)
     await websocket.accept()
-    logger.info("WebSocket.transcription_connected")
+    logger.info(f"WebSocket.transcription_connected user={auth.get('sub')}")
     print("[WebSocket] Client connected")
     session_id = None
     event_loop = asyncio.get_event_loop()

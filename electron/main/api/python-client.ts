@@ -44,6 +44,16 @@ export class PythonClient extends EventEmitter {
       timeout: 60000,
       headers: { "Content-Type": "application/json" }
     });
+
+    // Attach Bearer token to every outgoing HTTP request from the current auth session
+    this.client.interceptors.request.use((config) => {
+      const token = authState.currentAccessToken;
+      if (token) {
+        config.headers = config.headers ?? {};
+        config.headers['Authorization'] = `Bearer ${token}`;
+      }
+      return config;
+    });
   }
 
   public async connect(): Promise<void> {
@@ -52,6 +62,24 @@ export class PythonClient extends EventEmitter {
     } catch (error) {
       console.error('[PythonClient] Background connection failed:', error);
     }
+  }
+
+  /** Close and re-open the WebSocket (called after token refresh so the new token is used). */
+  public reconnect(): void {
+    if (this.ws) {
+      console.log('[PythonClient] Reconnecting WebSocket with refreshed token…');
+      try { this.ws.close(); } catch (_) {}
+      this.ws = null;
+      this.connectionPromise = null;
+    }
+    this.connect().catch(e => console.error('[PythonClient] Reconnect failed:', e));
+  }
+
+  /** Builds the WS URL including the auth token as a query param when available. */
+  private buildWsUrl(path: string): string {
+    const base = `${this.baseUrl.replace('http', 'ws')}${path}`;
+    const token = authState.currentAccessToken;
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
   }
 
   private async ensureConnection(): Promise<void> {
@@ -64,8 +92,8 @@ export class PythonClient extends EventEmitter {
     }
 
     this.connectionPromise = new Promise((resolve, reject) => {
-      const wsUrl = `${this.baseUrl.replace('http', 'ws')}/ws/optimize-stream`;
-      console.log(`[PythonClient] Connecting to WebSocket: ${wsUrl}`);
+      const wsUrl = this.buildWsUrl('/ws/optimize-stream');
+      console.log(`[PythonClient] Connecting to WebSocket: ${wsUrl.split('?')[0]}`);
 
       this.ws = new WebSocket(wsUrl);
 

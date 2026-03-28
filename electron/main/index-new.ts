@@ -325,6 +325,7 @@ async function initialize() {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
         authState.currentUserEmail = session.user.email ?? null;
+        authState.currentAccessToken = session.access_token ?? null;
         Sentry.setUser({ id: session.user.id });
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
@@ -339,6 +340,7 @@ async function initialize() {
         authState.isAuthenticated = false;
         authState.currentUserId = null;
         authState.currentUserEmail = null;
+        authState.currentAccessToken = null;
         Sentry.setUser(null);
         if (appWindowManager) appWindowManager.send('sentry:set-user', null);
 
@@ -350,7 +352,10 @@ async function initialize() {
         }
         overlayManager.sendAuthState(false);
       } else if (event === 'TOKEN_REFRESHED' && session) {
-        console.log('[Main] Session token refreshed');
+        console.log('[Main] Session token refreshed — updating auth state');
+        authState.currentAccessToken = session.access_token ?? null;
+        // Reconnect WebSocket so it carries the refreshed token
+        pythonClient.reconnect();
       }
     });
   } catch (error) {
