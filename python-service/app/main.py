@@ -426,6 +426,32 @@ class OptimizeResponse(BaseModel):
 prompt_cache: dict[str, str] = {}
 MAX_CACHE_SIZE = 100
 
+# ── Server-side rate limiting ──────────────────────────────────────────────────
+# Per-user daily request counter. Key = (user_id, UTC-date-str), Value = count.
+# On a single-process deployment this is sufficient. For multi-process/multi-instance
+# deployments swap this for a Redis INCR with a 24-hour TTL.
+import asyncio as _asyncio
+_rate_lock = _asyncio.Lock()
+_rate_counters: dict[str, int] = {}   # key: "<user_id>:<YYYY-MM-DD>"
+
+DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_REQUEST_LIMIT", "50"))
+
+# Cap the number of concurrent optimization streams to avoid thread-pool exhaustion.
+_optimize_semaphore = _asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_OPTIMIZATIONS", "50")))
+
+
+async def _check_rate_limit(user_id: str) -> bool:
+    """Return True if the user may proceed, False if daily limit reached."""
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = f"{user_id}:{today}"
+    async with _rate_lock:
+        count = _rate_counters.get(key, 0)
+        if count >= DAILY_REQUEST_LIMIT:
+            return False
+        _rate_counters[key] = count + 1
+        return True
+
 def clean_optimized_text(text: str) -> str:
     """Remove markdown code blocks and other formatting artifacts."""
     # Remove markdown code blocks
@@ -580,6 +606,17 @@ async def optimize_stream(websocket: WebSocket):
             if user_id:
                 sentry_sdk.set_user({"id": user_id})
 
+            # Server-side rate limit check (enforced even for direct WebSocket connections)
+            if user_id:
+                allowed = await _check_rate_limit(user_id)
+                if not allowed:
+                    await websocket.send_json({
+                        "type": "error",
+                        "request_id": request_id,
+                        "message": f"Daily limit of {DAILY_REQUEST_LIMIT} optimizations reached. Resets at midnight UTC.",
+                    })
+                    continue
+
             is_regeneration = bool(previous_output and previous_output.strip())
             print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
 
@@ -637,7 +674,8 @@ async def optimize_stream(websocket: WebSocket):
                     content_str = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
                     cc.add(role_str, content_str)
             
-            with transaction:
+            async with _optimize_semaphore:
+             with transaction:
               try:
                 models_info = {}
                 loop = asyncio.get_event_loop()
