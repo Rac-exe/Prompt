@@ -314,6 +314,7 @@ export function registerChatHandlers(
     // APP WINDOW: Save to chat
     // ============================================
     ipcMain.on('app:save-to-chat', async (event, originalText: string, optimizedText: string) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Save to chat', level: 'info' });
         try {
             const chat = await chatService.getOrCreateQuickOptimizationsChat();
             await chatService.addMessage(chat.id, originalText, 'user');
@@ -379,6 +380,7 @@ export function registerChatHandlers(
     // APP WINDOW: Create new chat
     // ============================================
     ipcMain.on('app:create-chat', async (event, title?: string) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Create chat', level: 'info' });
         try {
             const chat = await chatService.createChat(title);
             if (appWindowManager) {
@@ -431,6 +433,7 @@ export function registerChatHandlers(
     // APP WINDOW: Rename chat
     // ============================================
     ipcMain.on('app:rename-chat', async (event, data: { chatId: string; title: string }) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Rename chat', level: 'info', data: { chatId: data.chatId } });
         try {
             await chatService.updateChatTitle(data.chatId, data.title);
             if (appWindowManager) {
@@ -453,6 +456,7 @@ export function registerChatHandlers(
     // APP WINDOW: Delete chat
     // ============================================
     ipcMain.on('app:delete-chat', async (event, chatId: string) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Delete chat', level: 'info', data: { chatId } });
         try {
             await chatService.deleteChat(chatId);
             if (appWindowManager) {

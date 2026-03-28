@@ -351,8 +351,11 @@ export class PythonClient extends EventEmitter {
   async healthCheck(): Promise<boolean> {
     try {
       const response = await this.client.get("/health", { timeout: 5000 });
-      return response.data && response.data.status === "ok";
+      const ok = response.data && response.data.status === "ok";
+      Sentry.addBreadcrumb({ category: 'python', message: `Health check ${ok ? 'passed' : 'failed'}`, level: ok ? 'info' : 'warning' });
+      return ok;
     } catch (error) {
+      Sentry.addBreadcrumb({ category: 'python', message: 'Health check unreachable', level: 'error' });
       return false;
     }
   }

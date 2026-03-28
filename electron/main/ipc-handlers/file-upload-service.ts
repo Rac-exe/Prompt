@@ -102,6 +102,7 @@ export function uploadImageToCloudinary(
         try {
           const json = JSON.parse(data);
           if (json.secure_url) {
+            Sentry.addBreadcrumb({ category: 'file-upload', message: 'Cloudinary upload success', level: 'info' });
             console.log('[FileUpload] ✅ Cloudinary upload success:', json.secure_url);
             resolve(json.secure_url);
           } else {
@@ -228,6 +229,7 @@ export async function uploadPdfToStorage(
     throw uploadErr;
   }
 
+  Sentry.addBreadcrumb({ category: 'file-upload', message: 'Supabase Storage upload success', level: 'info', data: { storagePath } });
   console.log('[FileUpload] ✅ Supabase Storage upload success:', storagePath);
   return storagePath;
 }
