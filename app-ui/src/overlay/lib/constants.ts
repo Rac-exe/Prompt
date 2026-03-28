@@ -1,6 +1,6 @@
 // ── File attachment constraints ──────────────────────────────────────────────
 export const MAX_ATTACHED_FILES = 5;
-export const MAX_FILE_SIZE = 32_000_000;   // 32 MB hard cap (PDF limit per Claude)
+export const MAX_FILE_SIZE = 10_000_000;   // 10 MB — matches main process and Python parser validation
 export const MAX_IMAGE_SIZE = 4_500_000;   // 4.5 MB — images above this are auto-resized
 export const MAX_IMAGE_DIMENSION = 1920;   // max px on longest side after resize
 export const ALLOWED_MIME_TYPES = [
