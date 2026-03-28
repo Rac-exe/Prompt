@@ -45,6 +45,7 @@ import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
 import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
+import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -120,8 +121,10 @@ async function initialize() {
   // Initialize Python client
   pythonClient = new PythonClient('http://127.0.0.1:8001');
 
+  let pythonHealthy = false;
   try {
     const isHealthy = await pythonClient.healthCheck();
+    pythonHealthy = isHealthy;
     if (isHealthy) {
       console.log('[Main] Python service connected');
       pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
@@ -131,6 +134,32 @@ async function initialize() {
   } catch (error) {
     console.warn('[Main] Could not connect to Python service');
   }
+
+  // Background health-check loop — detects Python crashes mid-session
+  const HEALTH_CHECK_INTERVAL_MS = 30_000;
+  setInterval(async () => {
+    try {
+      const healthy = await pythonClient.healthCheck();
+      if (!healthy && pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python service became unavailable');
+      } else if (healthy && !pythonHealthy) {
+        pythonHealthy = true;
+        appWindowManager.send('python:recovered', {});
+        overlayManager.send('python:recovered', {});
+        console.log('[Main] Python service recovered');
+      }
+    } catch {
+      if (pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python health check failed');
+      }
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
 
   // Start network monitor — broadcasts online/offline status to all windows
   networkMonitor.start(
@@ -211,6 +240,7 @@ async function initialize() {
   registerSkillHandlers();
   registerAvatarHandlers();
   registerFileUploadHandlers();
+  registerFeedbackHandlers();
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)

@@ -1,4 +1,4 @@
-import { Settings, HelpCircle, LogOut } from "lucide-react";
+import { Settings, HelpCircle, LogOut, MessageSquarePlus } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -10,10 +10,11 @@ import { useAuth } from "@/context/AuthContext";
 interface ProfileMenuProps {
   onSettingsClick: () => void;
   onHelpClick: () => void;
+  onFeedbackClick?: () => void;
   collapsed?: boolean;
 }
 
-export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }: ProfileMenuProps) => {
+export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, collapsed = false }: ProfileMenuProps) => {
   const { user, signOut } = useAuth();
   const userEmail = user?.profile?.email || "user@example.com";
   const userName = user?.profile?.name || userEmail.split("@")[0];
@@ -87,6 +88,16 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }:
           <HelpCircle className="w-3.5 h-3.5 opacity-60" />
           Help & Docs
         </DropdownMenuItem>
+
+        {onFeedbackClick && (
+          <DropdownMenuItem
+            onClick={onFeedbackClick}
+            className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
+          >
+            <MessageSquarePlus className="w-3.5 h-3.5 opacity-60" />
+            Send Feedback
+          </DropdownMenuItem>
+        )}
 
         <DropdownMenuSeparator className="bg-border my-1" />
 
