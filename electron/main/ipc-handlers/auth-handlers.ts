@@ -130,8 +130,8 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
             };
         }
 
-        Sentry.setUser({ id: user.id, email: user.email });
-        appWindowManager.send('sentry:set-user', { id: user.id, email: user.email });
+        Sentry.setUser({ id: user.id });
+        appWindowManager.send('sentry:set-user', { id: user.id });
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
 
         // 1. Send Auth State

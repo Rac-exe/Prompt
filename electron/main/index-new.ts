@@ -11,10 +11,29 @@ Sentry.init({
   tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.2,
   _experiments: { enableLogs: true },
   beforeSend(event) {
+    const PII_RE = /prompt|content|message|text/i;
     if (event.extra) {
       for (const key of Object.keys(event.extra)) {
-        if (/prompt|content|message|text/i.test(key)) {
-          event.extra[key] = '[REDACTED]';
+        if (PII_RE.test(key)) event.extra[key] = '[REDACTED]';
+      }
+    }
+    if (event.breadcrumbs) {
+      for (const bc of event.breadcrumbs) {
+        if (bc.data) {
+          for (const key of Object.keys(bc.data)) {
+            if (PII_RE.test(key)) (bc.data as Record<string, unknown>)[key] = '[REDACTED]';
+          }
+        }
+      }
+    }
+    if (event.exception?.values) {
+      for (const ex of event.exception.values) {
+        for (const frame of ex.stacktrace?.frames ?? []) {
+          if (frame.vars) {
+            for (const key of Object.keys(frame.vars)) {
+              if (PII_RE.test(key)) frame.vars[key] = '[REDACTED]';
+            }
+          }
         }
       }
     }
@@ -286,7 +305,7 @@ async function initialize() {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
         authState.currentUserEmail = session.user.email ?? null;
-        Sentry.setUser({ id: session.user.id, email: session.user.email });
+        Sentry.setUser({ id: session.user.id });
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
         // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT

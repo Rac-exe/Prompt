@@ -26,10 +26,35 @@ logging.basicConfig(
 logger = logging.getLogger("prmpt")
 
 def _scrub_prompts(event, hint):
+    _pii_words = ("prompt", "content", "message", "text")
+    def _is_pii(k):
+        kl = k.lower()
+        return any(w in kl for w in _pii_words)
+
     if event.get("extra"):
         for key in list(event["extra"].keys()):
-            if any(w in key.lower() for w in ("prompt", "content", "message", "text")):
+            if _is_pii(key):
                 event["extra"][key] = "[REDACTED]"
+
+    for bc in event.get("breadcrumbs", {}).get("values", []):
+        if bc.get("data"):
+            for key in list(bc["data"].keys()):
+                if _is_pii(key):
+                    bc["data"][key] = "[REDACTED]"
+
+    req_data = event.get("request", {}).get("data")
+    if isinstance(req_data, dict):
+        for key in list(req_data.keys()):
+            if _is_pii(key):
+                req_data[key] = "[REDACTED]"
+
+    for exc in event.get("exception", {}).get("values", []):
+        for frame in exc.get("stacktrace", {}).get("frames", []):
+            if frame.get("vars"):
+                for key in list(frame["vars"].keys()):
+                    if _is_pii(key):
+                        frame["vars"][key] = "[REDACTED]"
+
     return event
 
 _is_dev = os.environ.get("APP_ENV", "development") == "development"
