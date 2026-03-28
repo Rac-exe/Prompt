@@ -51,7 +51,7 @@ import "./index.css";
 
 // Push from main process when user logs in/out (best-effort, may fire before renderer is ready)
 window.electronAPI?.onSentryUser?.((user) => {
-  Sentry.setUser(user ? { id: user.id } : null);
+  Sentry.setUser(user ? { id: user.id, email: user.email } : null);
 });
 
 // Reliable fallback: auth:state-changed fires after the renderer calls auth:check,
@@ -59,8 +59,9 @@ window.electronAPI?.onSentryUser?.((user) => {
 window.electronAPI?.onAuthStateChange?.((data) => {
   if (data.isAuthenticated && data.user) {
     const id = data.user.id ?? data.user.profile?.id;
+    const email = data.user.email ?? data.user.profile?.email;
     if (id) {
-      Sentry.setUser({ id });
+      Sentry.setUser({ id, email });
       logger.info(logger.fmt`renderer.authenticated userId=${id}`);
     }
   } else {
