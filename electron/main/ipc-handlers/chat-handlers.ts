@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 import crypto from 'crypto';
-const { fileTypeFromBuffer } = require('file-type');
+import FileType from 'file-type';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -139,7 +139,7 @@ async function validateAttachedFiles(files: AttachedFile[]): Promise<string | nu
     totalSize += actualSize;
 
     // Detect MIME from magic bytes — ignores whatever the renderer claims
-    const detected = await fileTypeFromBuffer(buf);
+    const detected = await FileType.fromBuffer(buf);
     const effectiveMime = detected?.mime ?? 'application/octet-stream';
     if (!ALLOWED_MIME_TYPES.includes(effectiveMime)) {
       return `File "${file.name}" is not an allowed type (detected: ${effectiveMime})`;
