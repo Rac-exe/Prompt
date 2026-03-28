@@ -18,7 +18,7 @@ const App = () => {
       fallback={({ error, resetError }) => (
         <div style={{ padding: 40, textAlign: 'center', fontFamily: 'Inter, sans-serif' }}>
           <h2>Something went wrong</h2>
-          <p style={{ color: '#888' }}>{(error as Error)?.message}</p>
+          <p style={{ color: '#888' }}>An unexpected error occurred. Please restart the application.</p>
           <button onClick={resetError}>Try Again</button>
         </div>
       )}
