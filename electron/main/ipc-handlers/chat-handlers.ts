@@ -298,6 +298,7 @@ export function registerChatHandlers(
                 });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
             if (appWindowManager) {
                 appWindowManager.send('optimization-complete', {
@@ -810,6 +811,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to send message:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
@@ -986,6 +988,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to regenerate response:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {

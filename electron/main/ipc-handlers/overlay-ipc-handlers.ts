@@ -518,6 +518,7 @@ export function registerOverlayHandlers(
       }
     } catch (error) {
       Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization error', level: 'error' });
+      Sentry.captureException(error);
       const message = humanizeLlmError(error);
       logger.error(logger.fmt`overlay.optimize_error error=${error instanceof Error ? error.message : String(error)}`);
       overlayManager.send('overlay:optimization-error', { error: message });

@@ -494,6 +494,7 @@ async def optimize_prompt(request: OptimizeRequest):
         )
 
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         error_msg = str(e)
         if "model" in error_msg.lower() or "not found" in error_msg.lower():
             raise HTTPException(
