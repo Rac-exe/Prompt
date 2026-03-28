@@ -285,7 +285,16 @@ async function initialize() {
   // WINDOW CONTROL IPC HANDLERS (frameless window)
   // ============================================
   ipcMain.on('shell:openExternal', (_event, url: string) => {
-    shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (!['https:', 'http:'].includes(parsed.protocol)) {
+        console.warn(`[Security] Blocked openExternal — disallowed protocol: ${parsed.protocol}`);
+        return;
+      }
+      shell.openExternal(url);
+    } catch {
+      console.warn(`[Security] Blocked openExternal — invalid URL: ${url}`);
+    }
   });
 
   ipcMain.on('window:minimize', () => {
