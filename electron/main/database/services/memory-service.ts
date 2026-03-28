@@ -204,16 +204,18 @@ export class MemoryService {
       (existing ?? []).map((r) => [`${r.memory_type}::${r.key}`, r.observation_count as number]),
     );
 
-    // 4. Build batch upsert payload
-    const rows = eligible.map((f) => ({
-      user_id: userId,
-      memory_type: f.memoryType,
-      key: f.key,
-      value: f.value,
-      source: 'inferred' as MemorySource,
-      confidence: f.confidence,
-      observation_count: (existingMap.get(`${f.memoryType}::${f.key}`) ?? 0) + 1,
-    }));
+    // 4. Build batch upsert payload — sanitize key/value before writing to DB
+    const rows = eligible
+      .map((f) => ({
+        user_id: userId,
+        memory_type: f.memoryType,
+        key: MemoryService.sanitizeField(f.key, MemoryService.MAX_KEY_LEN),
+        value: MemoryService.sanitizeField(f.value, MemoryService.MAX_VALUE_LEN),
+        source: 'inferred' as MemorySource,
+        confidence: f.confidence,
+        observation_count: (existingMap.get(`${f.memoryType}::${f.key}`) ?? 0) + 1,
+      }))
+      .filter((r) => r.key.length > 0 && r.value.length > 0);
 
     // 5. Single batch upsert — 3 queries total regardless of fact count
     const { error } = await this.client
@@ -240,6 +242,26 @@ export class MemoryService {
       .eq('key', key);
 
     if (error) throw error;
+  }
+
+  /** Max character lengths for stored fact fields. */
+  private static readonly MAX_KEY_LEN = 60;
+  private static readonly MAX_VALUE_LEN = 300;
+
+  /**
+   * Sanitize a memory key or value before it is injected into a system prompt.
+   * Strips characters that are commonly used in prompt injection attacks and
+   * enforces a hard length cap.
+   */
+  private static sanitizeField(raw: string, maxLen: number): string {
+    return raw
+      .slice(0, maxLen)
+      .replace(/\[|\]|\{|\}/g, '')                          // remove bracket markers
+      .replace(/SYSTEM\s*:/gi, '')                          // strip SYSTEM: prefixes
+      .replace(/IGNORE\s+(ALL\s+)?PREVIOUS/gi, '')          // strip jailbreak phrases
+      .replace(/OVERRIDE\s*:/gi, '')
+      .replace(/INSTRUCTION\s*:/gi, '')
+      .trim();
   }
 
   private static readonly PERSONA_KEYS = new Set([
@@ -273,7 +295,11 @@ export class MemoryService {
       if (highConf.length === 0) return;
       target.push(`${label}:`);
       for (const entry of highConf) {
-        target.push(`  - ${entry.key}: ${entry.value}`);
+        const safeKey = MemoryService.sanitizeField(entry.key, MemoryService.MAX_KEY_LEN);
+        const safeVal = MemoryService.sanitizeField(entry.value, MemoryService.MAX_VALUE_LEN);
+        if (safeKey && safeVal) {
+          target.push(`  - ${safeKey}: ${safeVal}`);
+        }
       }
     };
 
@@ -310,6 +336,8 @@ export class MemoryService {
 
     if (sections.length === 0) return '';
 
-    return sections.join('\n\n');
+    const combined = sections.join('\n\n');
+    // Hard cap — prevents a large injected context from overwhelming the system prompt
+    return combined.slice(0, 800);
   }
 }
