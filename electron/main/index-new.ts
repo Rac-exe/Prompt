@@ -447,6 +447,21 @@ async function shutdown() {
 }
 
 // ============================================
+// GLOBAL ERROR GUARDS — prevent silent crashes in Electron main process
+// ============================================
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  Sentry.captureException(err, { tags: { source: 'unhandledRejection' } });
+  console.error('[Main] Unhandled promise rejection (captured, process continues):', err.message);
+});
+
+process.on('uncaughtException', (err) => {
+  Sentry.captureException(err, { tags: { source: 'uncaughtException' } });
+  console.error('[Main] Uncaught exception:', err.message);
+  // Do NOT call process.exit — let Electron handle it via its own crash reporter
+});
+
+// ============================================
 // SINGLE INSTANCE LOCK (must be first, before any event listeners)
 // ============================================
 const gotTheLock = app.requestSingleInstanceLock();
