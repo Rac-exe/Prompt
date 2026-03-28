@@ -1,5 +1,5 @@
 import { ReactNode, useState, useEffect } from "react";
-import { Minus, Square, X, WifiOff } from "lucide-react";
+import { Minus, Square, X, WifiOff, AlertTriangle } from "lucide-react";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -12,6 +12,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
   const close = () => window.electronAPI?.windowControls?.close();
 
   const [isOnline, setIsOnline] = useState(true);
+  const [isPythonAvailable, setIsPythonAvailable] = useState(true);
 
   useEffect(() => {
     window.electronAPI?.onNetworkStatus?.((data) => {
@@ -19,6 +20,12 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
     });
     window.electronAPI?.onNetworkReconnected?.(() => {
       setIsOnline(true);
+    });
+    window.electronAPI?.onPythonUnavailable?.(() => {
+      setIsPythonAvailable(false);
+    });
+    window.electronAPI?.onPythonRecovered?.(() => {
+      setIsPythonAvailable(true);
     });
   }, []);
 
@@ -83,6 +90,16 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <WifiOff className="w-3 h-3 flex-shrink-0" />
             <span>You're offline — Prompt optimization unavailable.</span>
+          </div>
+        )}
+
+        {/* ── Python service unavailable banner ── */}
+        {!isPythonAvailable && (
+          <div className="flex items-center justify-center gap-2 px-4 py-1.5
+                         bg-red-500/10 border-b border-red-500/20 text-red-400
+                         text-[11px] font-medium flex-shrink-0 animate-fade-in">
+            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+            <span>AI service unavailable — please restart the application.</span>
           </div>
         )}
 
