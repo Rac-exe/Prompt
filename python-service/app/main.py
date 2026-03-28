@@ -1651,6 +1651,20 @@ class TranscriptionSession:
 # Active transcription sessions
 active_sessions: dict[str, TranscriptionSession] = {}
 
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up active sessions on SIGTERM/SIGINT."""
+    logger.info("[Shutdown] Cleaning up active transcription sessions...")
+    for sid, sess in list(active_sessions.items()):
+        try:
+            sess.stop_recording()
+        except Exception:
+            pass
+    active_sessions.clear()
+    logger.info("[Shutdown] Cleanup complete — server stopping.")
+
+
 @app.websocket("/ws/transcribe")
 async def websocket_transcribe(websocket: WebSocket):
     """WebSocket endpoint for continuous transcription. Auth via ?token= query param."""
