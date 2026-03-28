@@ -18,7 +18,8 @@ export interface TriggerAnchor {
 
 interface NativeBridge {
     getActiveWindowTitle(): string;
-    startHook(callback: (anchor: TriggerAnchor) => void): void;
+    // napi v3 ThreadsafeFunction uses error-first callbacks: (err, value)
+    startHook(callback: (err: Error | null, anchor: TriggerAnchor) => void): void;
     stopHook(): void;
     replaceAtLastAnchor(text: string): boolean;
     forceFocusWindow(hwnd: number): boolean;
@@ -78,7 +79,16 @@ export function getActiveWindowTitle(): string {
  * Fires `callback` on the Node.js event loop when @prompt is detected.
  */
 export function startHook(callback: (anchor: TriggerAnchor) => void): void {
-    loadBridge().startHook(callback);
+    // napi v3 ThreadsafeFunction wraps the value in Result<T, Error> and calls
+    // back with the error-first Node.js convention: (err, value).
+    // Adapt here so all callers keep the simpler (anchor) => void signature.
+    loadBridge().startHook((err: Error | null, anchor: TriggerAnchor) => {
+        if (err) {
+            console.error('[NativeBridge] startHook callback error:', err);
+            return;
+        }
+        callback(anchor);
+    });
 }
 
 /** Remove the keyboard hook and shut down the hook thread. */
