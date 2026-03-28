@@ -116,19 +116,42 @@ print("[Startup] pipeline_v2 loaded")
 
 @app.on_event("startup")
 async def startup_event():
-    # Warm up litellm / OpenRouter TLS connections in the background
-    try:
-        print("[Startup] Warming up OpenRouter connection...")
-        import litellm
+    """Single startup handler: warms up OpenRouter + preloads Whisper/VAD in parallel."""
+    loop = asyncio.get_event_loop()
 
-        kwargs = {"model": OPTIMIZER_MODEL, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
-        if OPENROUTER_API_KEY and "openrouter" in OPTIMIZER_MODEL.lower():
-            kwargs["api_key"] = OPENROUTER_API_KEY
+    async def _warmup_openrouter():
+        try:
+            print("[Startup] Warming up OpenRouter connection...")
+            import litellm as _litellm
+            kwargs: dict = {
+                "model": OPTIMIZER_MODEL,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            }
+            if OPENROUTER_API_KEY and "openrouter" in OPTIMIZER_MODEL.lower():
+                kwargs["api_key"] = OPENROUTER_API_KEY
+            await loop.run_in_executor(None, lambda: _litellm.completion(**kwargs))
+            print("[Startup] OpenRouter connection warmed up")
+        except Exception as e:
+            print(f"[Startup] WARNING: Warmup failed (harmless if offline): {e}")
 
-        litellm.completion(**kwargs)
-        print("[Startup] OpenRouter connection warmed up")
-    except Exception as e:
-        print(f"[Startup] WARNING: Warmup failed (this is harmless if no internet): {e}")
+    async def _load_whisper():
+        try:
+            print("[Startup] Preloading faster-whisper model …")
+            await loop.run_in_executor(None, get_faster_whisper_model)
+            print("[Startup] faster-whisper ready")
+        except Exception as e:
+            print(f"[Startup] Warning: faster-whisper preload failed: {e}")
+
+    async def _load_vad():
+        try:
+            print("[Startup] Preloading Silero VAD model …")
+            await loop.run_in_executor(None, get_vad_model)
+            print("[Startup] Silero VAD ready")
+        except Exception as e:
+            print(f"[Startup] Warning: Silero VAD preload failed: {e}")
+
+    await asyncio.gather(_warmup_openrouter(), _load_whisper(), _load_vad())
 
 
 # ============================================
@@ -138,10 +161,13 @@ async def startup_event():
 # which prevents the LLM from generating content instead of optimizing prompts
 
 
-# CORS middleware to allow Electron to communicate
+# CORS middleware — restrict to known origins in production via ALLOWED_ORIGINS env var
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "*")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",")] if _raw_origins != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -930,7 +956,7 @@ VAD_SPEECH_THRESH  = 0.5    # confidence threshold (0–1)
 VAD_MIN_SPEECH_MS  = 250    # ignore speech bursts shorter than this
 
 # Debug WAV output
-DEBUG_WAV_COUNT  = 3
+DEBUG_WAV_COUNT  = 3 if _is_dev else 0
 _debug_wav_saved = 0
 
 # Sentinel object placed on audio_queue by the capture thread after
@@ -1278,7 +1304,12 @@ class TranscriptionSession:
 
         # ── sentinel-based drain loop ─────────────────────────────
         while True:
-            chunk = self.audio_queue.get()   # blocks until something arrives
+            try:
+                chunk = self.audio_queue.get(timeout=60.0)  # 60 s hard stop — never block forever
+            except queue.Empty:
+                print("[TranscLoop] Queue timeout (60 s) — session may be orphaned, exiting")
+                self._flush_final_if_needed(is_final=True)
+                return
 
             if chunk is STOP_SIGNAL:
                 print("[TranscLoop] STOP signal received — draining complete")
@@ -1632,22 +1663,6 @@ async def root():
         }
     }
 
-@app.on_event("startup")
-async def startup_event():
-    """Preload faster-whisper and Silero VAD models at startup."""
-    print("[Startup] Preloading faster-whisper model …")
-    try:
-        get_faster_whisper_model()
-        print("[Startup] faster-whisper ready")
-    except Exception as e:
-        print(f"[Startup] Warning: faster-whisper preload failed: {e}")
-
-    print("[Startup] Preloading Silero VAD model …")
-    try:
-        get_vad_model()
-        print("[Startup] Silero VAD ready")
-    except Exception as e:
-        print(f"[Startup] Warning: Silero VAD preload failed: {e}")
 
 if __name__ == "__main__":
     import uvicorn
