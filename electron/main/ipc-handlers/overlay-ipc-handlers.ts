@@ -22,6 +22,20 @@ import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
 
+function humanizeLlmError(err: unknown): string {
+    const raw: string = ((err as any)?.message ?? (err as any)?.code ?? String(err)).toLowerCase();
+    if (raw.includes('econnrefused') || raw.includes('econnreset') || raw.includes('enotfound')) {
+        return 'The AI service is not reachable. Please restart the application and try again.';
+    }
+    if (raw.includes('etimedout') || raw.includes('timeout')) {
+        return 'The AI service timed out. It may be overloaded — please try again in a moment.';
+    }
+    if (raw.includes('socket hang up') || raw.includes('epipe')) {
+        return 'The connection to the AI service was lost mid-response. Please try again.';
+    }
+    return 'The AI service encountered an error. Please try again.';
+}
+
 function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
     return {
         model: models?.optimizer ?? 'unknown',
@@ -504,8 +518,8 @@ export function registerOverlayHandlers(
       }
     } catch (error) {
       Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization error', level: 'error' });
-      const message = error instanceof Error ? error.message : 'Optimization failed';
-      logger.error(logger.fmt`overlay.optimize_error error=${message}`);
+      const message = humanizeLlmError(error);
+      logger.error(logger.fmt`overlay.optimize_error error=${error instanceof Error ? error.message : String(error)}`);
       overlayManager.send('overlay:optimization-error', { error: message });
     }
   });

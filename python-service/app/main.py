@@ -560,25 +560,40 @@ async def optimize_stream(websocket: WebSocket):
             with transaction:
               try:
                 models_info = {}
-                # Call pipeline configured for streaming, returning a generator
-                stream_gen = pipeline_optimize(
-                    user_input=prompt_text,
-                    cc=cc,
-                    model=OPTIMIZER_MODEL,
-                    provider="auto",
-                    stream=True,
-                    mode=mode,
-                    custom_instructions=custom_instructions,
-                    attached_files=attached_files,
-                    forced_skill=forced_skill,
-                    previous_output=previous_output,
-                    models_info=models_info,
-                )
-                
+                loop = asyncio.get_event_loop()
+                chunk_queue: asyncio.Queue = asyncio.Queue()
+
+                def run_stream():
+                    """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""
+                    try:
+                        gen = pipeline_optimize(
+                            user_input=prompt_text,
+                            cc=cc,
+                            model=OPTIMIZER_MODEL,
+                            provider="auto",
+                            stream=True,
+                            mode=mode,
+                            custom_instructions=custom_instructions,
+                            attached_files=attached_files,
+                            forced_skill=forced_skill,
+                            previous_output=previous_output,
+                            models_info=models_info,
+                        )
+                        for chunk in gen:
+                            loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
+                    finally:
+                        loop.call_soon_threadsafe(chunk_queue.put_nowait, None)  # sentinel
+
+                # Start blocking generator in thread — event loop stays free for other requests
+                thread_future = loop.run_in_executor(None, run_stream)
+
                 accumulated_text = ""
                 chunk_count = 0
-                
-                for chunk in stream_gen:
+
+                while True:
+                    chunk = await chunk_queue.get()
+                    if chunk is None:
+                        break
                     accumulated_text += chunk
                     chunk_count += 1
                     await websocket.send_json({
@@ -587,7 +602,9 @@ async def optimize_stream(websocket: WebSocket):
                         "content": chunk,
                         "accumulated": accumulated_text
                     })
-                
+
+                await thread_future  # Propagate any thread exceptions
+
                 cleaned_text = clean_optimized_text(accumulated_text)
                 
                 await websocket.send_json({
@@ -615,7 +632,7 @@ async def optimize_stream(websocket: WebSocket):
                 await websocket.send_json({
                     "type": "error",
                     "request_id": request_id,
-                    "message": f"Optimization failed: {str(e)}"
+                    "message": "Optimization failed. Please try again."
                 })
                 
     except WebSocketDisconnect:
