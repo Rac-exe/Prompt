@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import { useState, useEffect, ReactNode, useCallback } from 'react';
 import { Logo } from "@/components/ui/Logo";
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
@@ -19,10 +19,6 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
   const { toast } = useToast();
-
-  // Track the view that was active when auth fires so we know if user just signed up
-  const authViewRef = useRef<AuthView>('loading');
-  authViewRef.current = authView;
 
   const handleSignOut = useCallback(() => {
     if (window.electronAPI?.signOut) {
@@ -64,15 +60,38 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         setUser(data.user);
         setError(null);
 
-        // Only show onboarding if the user JUST signed up (authView was 'signup')
-        const cameFromSignup = authViewRef.current === 'signup';
+        // Show onboarding only for genuinely NEW users.
+        // We combine two signals:
+        //   1. localStorage key — set when onboarding is completed
+        //   2. profile.created_at — if the account is older than 2 minutes,
+        //      the user is returning (not new), even if localStorage is missing
+        //      (e.g. app reinstall, cleared storage, or pre-existing account).
+        const userId = data.user?.profile?.id || data.user?.id;
+        const onboardingKey = userId ? `${ONBOARDING_KEY_PREFIX}${userId}` : null;
+        const markedComplete = onboardingKey
+          ? localStorage.getItem(onboardingKey) === 'true'
+          : true; // safety: skip onboarding if we can't identify the user
 
-        if (cameFromSignup) {
-          // Fresh signup → show onboarding
-          setAuthView('onboarding');
-        } else {
-          // Returning user (login / app re-launch) → go straight to app
+        if (markedComplete) {
+          // Already completed onboarding → straight to app
           setAuthView('app');
+        } else {
+          // Check if account was just created (within the last 2 minutes)
+          const createdAt = data.user?.profile?.created_at;
+          const isNewAccount = createdAt
+            ? (Date.now() - new Date(createdAt).getTime()) < 2 * 60 * 1000
+            : false; // if we can't determine age, assume existing user
+
+          if (isNewAccount) {
+            // Genuinely new signup → show onboarding
+            setAuthView('onboarding');
+          } else {
+            // Existing user without localStorage key → mark as done, skip
+            if (onboardingKey) {
+              localStorage.setItem(onboardingKey, 'true');
+            }
+            setAuthView('app');
+          }
         }
       } else {
         setAuthView('login');
