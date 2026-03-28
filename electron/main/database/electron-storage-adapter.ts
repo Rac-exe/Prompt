@@ -1,41 +1,71 @@
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 
 /**
- * Custom storage adapter for Supabase in Electron main process
- * Persists session to filesystem since localStorage is not available
+ * Custom storage adapter for Supabase in Electron main process.
+ * Uses Electron's safeStorage API (OS keychain / DPAPI) to encrypt session
+ * data at rest. Falls back to plaintext if safeStorage is unavailable.
  */
 export class ElectronStorageAdapter {
   private storagePath: string;
+  private legacyPath: string;
+  private encrypted: boolean;
 
   constructor() {
-    // Store in Electron's userData directory
     const userDataPath = app.getPath('userData');
     const storageDir = join(userDataPath, '.supabase');
 
-    // Create directory if it doesn't exist
     if (!existsSync(storageDir)) {
       mkdirSync(storageDir, { recursive: true });
     }
 
-    this.storagePath = join(storageDir, 'session.json');
-    console.log('[ElectronStorageAdapter] Storage path:', this.storagePath);
+    this.encrypted = safeStorage.isEncryptionAvailable();
+    this.storagePath = join(storageDir, this.encrypted ? 'session.enc' : 'session.json');
+    this.legacyPath = join(storageDir, 'session.json');
+
+    // One-time migration: encrypt existing plaintext session.json
+    if (this.encrypted && existsSync(this.legacyPath) && !existsSync(this.storagePath)) {
+      try {
+        const plaintext = readFileSync(this.legacyPath, 'utf-8');
+        JSON.parse(plaintext); // validate before migrating
+        writeFileSync(this.storagePath, safeStorage.encryptString(plaintext));
+        unlinkSync(this.legacyPath);
+        console.log('[ElectronStorageAdapter] Migrated plaintext session to encrypted storage');
+      } catch {
+        // Migration failure is non-fatal — we'll start fresh
+      }
+    }
+
+    console.log('[ElectronStorageAdapter] Storage path:', this.storagePath, this.encrypted ? '(encrypted)' : '(plaintext)');
+  }
+
+  private readStore(): Record<string, string> {
+    if (!existsSync(this.storagePath)) return {};
+    try {
+      if (this.encrypted) {
+        const buf = readFileSync(this.storagePath);
+        return JSON.parse(safeStorage.decryptString(buf));
+      }
+      return JSON.parse(readFileSync(this.storagePath, 'utf-8'));
+    } catch {
+      return {};
+    }
+  }
+
+  private writeStore(data: Record<string, string>): void {
+    const json = JSON.stringify(data, null, 2);
+    if (this.encrypted) {
+      writeFileSync(this.storagePath, safeStorage.encryptString(json));
+    } else {
+      writeFileSync(this.storagePath, json, 'utf-8');
+    }
   }
 
   async getItem(key: string): Promise<string | null> {
     try {
-      if (!existsSync(this.storagePath)) {
-        console.log('[ElectronStorageAdapter] No session file found');
-        return null;
-      }
-
-      const data = readFileSync(this.storagePath, 'utf-8');
-      const parsed = JSON.parse(data);
-      const value = parsed[key] || null;
-
-      // console.log('[ElectronStorageAdapter] getItem:', key, value ? 'found' : 'not found');
-      return value;
+      const data = this.readStore();
+      return data[key] || null;
     } catch (error) {
       console.error('[ElectronStorageAdapter] Error reading session:', error);
       return null;
@@ -44,20 +74,9 @@ export class ElectronStorageAdapter {
 
   async setItem(key: string, value: string): Promise<void> {
     try {
-      let data: Record<string, string> = {};
-
-      // Read existing data
-      if (existsSync(this.storagePath)) {
-        const existing = readFileSync(this.storagePath, 'utf-8');
-        data = JSON.parse(existing);
-      }
-
-      // Update key
+      const data = this.readStore();
       data[key] = value;
-
-      // Write to file
-      writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf-8');
-      // console.log('[ElectronStorageAdapter] setItem:', key, 'saved');
+      this.writeStore(data);
     } catch (error) {
       console.error('[ElectronStorageAdapter] Error saving session:', error);
       throw error;
@@ -66,15 +85,9 @@ export class ElectronStorageAdapter {
 
   async removeItem(key: string): Promise<void> {
     try {
-      if (!existsSync(this.storagePath)) {
-        return;
-      }
-
-      const data = JSON.parse(readFileSync(this.storagePath, 'utf-8'));
+      const data = this.readStore();
       delete data[key];
-
-      writeFileSync(this.storagePath, JSON.stringify(data, null, 2), 'utf-8');
-      // console.log('[ElectronStorageAdapter] removeItem:', key, 'removed');
+      this.writeStore(data);
     } catch (error) {
       console.error('[ElectronStorageAdapter] Error removing session:', error);
       throw error;
