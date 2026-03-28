@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import { SupabaseClientManager } from '../database/supabase-client';
 
 export function registerFeedbackHandlers(): void {
@@ -18,6 +19,7 @@ export function registerFeedbackHandlers(): void {
             });
 
             if (error) {
+                Sentry.captureMessage(`Feedback save failed: ${error.message}`, 'error');
                 console.error('[Feedback] Failed to save feedback:', error.message);
                 return { success: false, error: error.message };
             }
@@ -25,6 +27,7 @@ export function registerFeedbackHandlers(): void {
             console.log('[Feedback] Feedback saved:', data.rating);
             return { success: true };
         } catch (err: any) {
+            Sentry.captureException(err);
             console.error('[Feedback] Unexpected error:', err.message);
             return { success: false, error: 'Failed to save feedback' };
         }

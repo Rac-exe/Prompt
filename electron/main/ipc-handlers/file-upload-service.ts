@@ -1,6 +1,7 @@
 import * as https from 'https';
 import * as crypto from 'crypto';
 import { ipcMain, shell } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import { SupabaseClientManager } from '../database/supabase-client';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -105,10 +106,13 @@ export function uploadImageToCloudinary(
             resolve(json.secure_url);
           } else {
             console.error('[FileUpload] ❌ Cloudinary response:', json);
-            reject(new Error(json.error?.message || 'Cloudinary upload failed — no secure_url'));
+            const err = new Error(json.error?.message || 'Cloudinary upload failed — no secure_url');
+            Sentry.captureException(err);
+            reject(err);
           }
         } catch (e) {
           console.error('[FileUpload] ❌ Failed to parse Cloudinary response:', data.substring(0, 200));
+          Sentry.captureException(e);
           reject(new Error('Invalid response from Cloudinary'));
         }
       });
@@ -116,6 +120,7 @@ export function uploadImageToCloudinary(
 
     req.on('error', (err) => {
       console.error('[FileUpload] ❌ Cloudinary network error:', err.message);
+      Sentry.captureException(err);
       reject(err);
     });
 
@@ -218,7 +223,9 @@ export async function uploadPdfToStorage(
     }
 
     console.error('[FileUpload] ❌ Supabase Storage upload failed:', error.message);
-    throw new Error(`PDF upload failed: ${error.message}`);
+    const uploadErr = new Error(`PDF upload failed: ${error.message}`);
+    Sentry.captureException(uploadErr);
+    throw uploadErr;
   }
 
   console.log('[FileUpload] ✅ Supabase Storage upload success:', storagePath);
@@ -309,6 +316,7 @@ export function registerFileUploadHandlers(): void {
       const signedUrl = await getSignedStorageUrl(data.storagePath);
       return { signedUrl };
     } catch (err: any) {
+      Sentry.captureException(err);
       console.error('[FileUpload] storage:get-signed-url error:', err.message);
       return { error: err.message };
     }
@@ -326,6 +334,7 @@ export function registerFileUploadHandlers(): void {
       await shell.openExternal(signedUrl);
       return { success: true };
     } catch (err: any) {
+      Sentry.captureException(err);
       console.error('[FileUpload] storage:open-pdf error:', err.message);
       return { success: false, error: err.message };
     }

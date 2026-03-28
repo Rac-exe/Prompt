@@ -525,6 +525,10 @@ async def optimize_stream(websocket: WebSocket):
             forced_skill = data.get("forced_skill", None)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
+            user_id = data.get("user_id")
+
+            if user_id:
+                sentry_sdk.set_user({"id": user_id})
 
             is_regeneration = bool(previous_output and previous_output.strip())
             print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
@@ -665,6 +669,7 @@ async def optimize_stream(websocket: WebSocket):
         logger.info("OptimizeStream.client_disconnected")
         print("[OptimizeStream] Client disconnected")
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"OptimizeStream.fatal_error error={e}")
         print(f"[OptimizeStream] ✗ Fatal connection error: {e}")
     finally:
@@ -1182,6 +1187,7 @@ class TranscriptionSession:
             print("[Capture] STOP_SIGNAL placed after last chunk")
 
         except Exception as e:
+            sentry_sdk.capture_exception(e)
             print(f"[Capture] FATAL: {e}")
             import traceback; traceback.print_exc()
             if self.event_loop:
@@ -1450,6 +1456,7 @@ class TranscriptionSession:
             # Materialise the lazy generator
             segments = list(segments_gen)
         except Exception as e:
+            sentry_sdk.capture_exception(e)
             print(f"[Infer:{tag}] faster-whisper error: {e}")
             import traceback; traceback.print_exc()
             self._flush_final_if_needed(is_final)

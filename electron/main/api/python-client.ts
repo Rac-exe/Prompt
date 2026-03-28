@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 import * as Sentry from '@sentry/electron/main';
 import { logger, getActiveSpan, spanToTraceHeader, getDynamicSamplingContextFromSpan, dynamicSamplingContextToSentryBaggageHeader } from '@sentry/core';
 import { EventEmitter } from "events";
+import { authState } from '../utils/auth-state';
 const WebSocket = require('ws');
 
 export interface ModelsUsed {
@@ -126,8 +127,10 @@ export class PythonClient extends EventEmitter {
       this.ws.on('close', () => {
         console.log(`[PythonClient] WebSocket closed`);
 
-        // CRITICAL FIX: Resolve/Reject all active requests when socket closes
-        // Otherwise they hang forever if the server disconnects
+        if (this.activeRequests.size > 0) {
+          Sentry.captureMessage(`Python WebSocket closed with ${this.activeRequests.size} pending request(s)`, 'warning');
+        }
+
         for (const [requestId, request] of this.activeRequests.entries()) {
           if (request.accumulated && request.accumulated.length > 0) {
             console.warn(`[PythonClient] Request ${requestId} socket closed but has data, resolving along with warning.`);
@@ -275,6 +278,7 @@ export class PythonClient extends EventEmitter {
           forced_skill: forcedSkill,
           sentry_trace: sentryTrace,
           baggage,
+          user_id: authState.currentUserId || undefined,
         }));
       } catch (error) {
         clearTimeout(timeoutId);

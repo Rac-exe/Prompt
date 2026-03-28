@@ -328,6 +328,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chat-saved', { chatId: chat.id });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to save to chat:', error);
         }
     });
@@ -366,6 +367,7 @@ export function registerChatHandlers(
                 ).then(() => console.log('[Chat] Pre-cached messages for top 5 recent chats'));
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to load chats:', error);
             const userId = authState.currentUserId;
             const cached = userId ? localCache.getChats(userId) : [];
@@ -385,6 +387,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to create chat:', error);
         }
     });
@@ -410,6 +413,7 @@ export function registerChatHandlers(
 
             if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages });
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to load messages:', error);
             // Fallback to cache on any error (e.g. "Not authenticated" when offline)
             const cached = userId ? localCache.getMessages(userId, chatId) : [];
@@ -436,6 +440,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to rename chat:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
@@ -456,6 +461,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to delete chat:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
@@ -1016,6 +1022,7 @@ export function registerChatHandlers(
                 appWindowManager.send('feedback-saved', { messageId: data.messageId, rating: data.rating });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to save feedback:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {

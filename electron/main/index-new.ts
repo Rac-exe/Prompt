@@ -230,6 +230,7 @@ async function initialize() {
       );
     } catch (error) {
       Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error', level: 'error' });
+      Sentry.captureException(error);
       logger.error(logger.fmt`transcription.error ${error instanceof Error ? error.message : String(error)}`);
       console.error('[Main] Failed to start transcription:', error);
       overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
@@ -244,6 +245,7 @@ async function initialize() {
       console.log('[Main] Stopping transcription');
       await transcriptionClient.stopTranscription();
     } catch (error) {
+      Sentry.captureException(error);
       console.error('[Main] Failed to stop transcription:', error);
     }
   });
