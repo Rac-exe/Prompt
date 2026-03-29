@@ -58,6 +58,7 @@
 ///               └── not supported                 →  PATH C: Guarded SendInput
 
 use std::mem::size_of;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -71,6 +72,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, IsWindow,
     SendMessageW, SetForegroundWindow, GUITHREADINFO, GW_CHILD, GW_HWNDNEXT,
 };
+use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 
 // ─── Anchor ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +88,12 @@ pub struct AnchorData {
 }
 
 static LAST_ANCHOR: Mutex<Option<AnchorData>> = Mutex::new(None);
+
+/// Cancellation flag for the clipboard restore thread. Set to `true` at the
+/// start of each new `inject_via_clipboard_paste` call so that any pending
+/// restore from a previous invocation is skipped instead of clobbering the
+/// clipboard with stale data.
+static RESTORE_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Store the foreground window and trigger length captured at trigger time.
 /// Called from hook.rs → fire_trigger(). Not modified.
@@ -485,6 +493,10 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
 
     const CF_UNICODETEXT: u32 = 13;
 
+    // Cancel any pending clipboard restore from a previous replace so it
+    // doesn't overwrite the data we're about to set.
+    RESTORE_CANCELLED.store(true, Ordering::SeqCst);
+
     // Foreground guard
     let fg_now = GetForegroundWindow();
     if fg_now.0 != hwnd.0 {
@@ -497,38 +509,39 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
         return false;
     }
 
-    // ── Step 1: Save current clipboard content ──────────────────────────────
+    // ── Step 1+2: Save current clipboard and set new text in ONE session ────
+    // A single OpenClipboard/CloseClipboard session prevents any other process
+    // from grabbing the clipboard between the read and write.
     let mut saved_clipboard: Option<Vec<u16>> = None;
 
-    if OpenClipboard(None).is_ok() {
-        let h = GetClipboardData(CF_UNICODETEXT);
-        if let Ok(handle) = h {
-            if !handle.0.is_null() {
-                // GetClipboardData returns HANDLE; reinterpret as HGLOBAL for GlobalLock
-                let hglob = HGLOBAL(handle.0);
-                let ptr = GlobalLock(hglob);
-                if !ptr.is_null() {
-                    let size = GlobalSize(hglob);
-                    let len_u16 = size / 2;
-                    let slice = std::slice::from_raw_parts(ptr as *const u16, len_u16);
-                    saved_clipboard = Some(slice.to_vec());
-                    let _ = GlobalUnlock(hglob);
-                }
-            }
-        }
-        let _ = CloseClipboard();
-    }
-
-    // ── Step 2: Set replacement text to clipboard ───────────────────────────
-    let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    let byte_len = utf16.len() * 2;
+    let seq_before = GetClipboardSequenceNumber();
 
     if OpenClipboard(None).is_err() {
-        eprintln!("[Replacement:Clipboard] Failed to open clipboard for write");
+        eprintln!("[Replacement:Clipboard] Failed to open clipboard");
         return false;
     }
 
+    // ── Save existing content before we overwrite ───────────────────────────
+    let h = GetClipboardData(CF_UNICODETEXT);
+    if let Ok(handle) = h {
+        if !handle.0.is_null() {
+            let hglob = HGLOBAL(handle.0);
+            let ptr = GlobalLock(hglob);
+            if !ptr.is_null() {
+                let size = GlobalSize(hglob);
+                let len_u16 = size / 2;
+                let slice = std::slice::from_raw_parts(ptr as *const u16, len_u16);
+                saved_clipboard = Some(slice.to_vec());
+                let _ = GlobalUnlock(hglob);
+            }
+        }
+    }
+
+    // ── Write replacement text ──────────────────────────────────────────────
     let _ = EmptyClipboard();
+
+    let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    let byte_len = utf16.len() * 2;
 
     let hmem = match GlobalAlloc(GMEM_MOVEABLE, byte_len) {
         Ok(h) => h,
@@ -541,7 +554,6 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
 
     let ptr = GlobalLock(hmem);
     if ptr.is_null() {
-        // Cannot free hmem after failed lock — just close clipboard
         let _ = CloseClipboard();
         eprintln!("[Replacement:Clipboard] GlobalLock failed");
         return false;
@@ -549,8 +561,6 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
     std::ptr::copy_nonoverlapping(utf16.as_ptr() as *const u8, ptr as *mut u8, byte_len);
     let _ = GlobalUnlock(hmem);
 
-    // SetClipboardData takes ownership of hmem — do NOT free it.
-    // HANDLE and HGLOBAL both wrap *mut c_void, so reinterpret.
     let set_result = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0)));
     let _ = CloseClipboard();
 
@@ -559,8 +569,50 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
         return false;
     }
 
-    // ── Step 3: Send Ctrl+V to paste ────────────────────────────────────────
-    // 4 key events total — instant replacement regardless of text length.
+    // ── Verify clipboard was actually updated ───────────────────────────────
+    let seq_after = GetClipboardSequenceNumber();
+    if seq_after == seq_before {
+        eprintln!(
+            "[Replacement:Clipboard] WARNING: clipboard sequence unchanged \
+             ({seq_before} → {seq_after}) — SetClipboardData may have silently failed"
+        );
+        // Retry once: re-open, re-set, re-close
+        if OpenClipboard(None).is_ok() {
+            let _ = EmptyClipboard();
+            if let Ok(hmem2) = GlobalAlloc(GMEM_MOVEABLE, byte_len) {
+                let ptr2 = GlobalLock(hmem2);
+                if !ptr2.is_null() {
+                    std::ptr::copy_nonoverlapping(
+                        utf16.as_ptr() as *const u8,
+                        ptr2 as *mut u8,
+                        byte_len,
+                    );
+                    let _ = GlobalUnlock(hmem2);
+                    let _ = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem2.0)));
+                }
+            }
+            let _ = CloseClipboard();
+            let seq_retry = GetClipboardSequenceNumber();
+            println!(
+                "[Replacement:Clipboard] Retry set — seq {seq_after} → {seq_retry}"
+            );
+        }
+    } else {
+        println!(
+            "[Replacement:Clipboard] Clipboard updated OK (seq {seq_before} → {seq_after})"
+        );
+    }
+
+    // ── Let clipboard listeners settle ──────────────────────────────────────
+    // CloseClipboard() dispatches WM_CLIPBOARDUPDATE to all clipboard format
+    // listeners. Chromium-based apps (VS Code, browsers) open the clipboard
+    // on that notification to update their internal state. We must wait for
+    // ALL listeners to finish processing before sending Ctrl+V, otherwise the
+    // target app's OpenClipboard during paste can fail (clipboard still locked
+    // by another listener) causing a fallback to stale cached data.
+    std::thread::sleep(std::time::Duration::from_millis(150));
+
+    // ── Send Ctrl+V to paste ────────────────────────────────────────────────
     let paste_inputs = [
         key_vk(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),     // Ctrl down
         key_vk(VK_V, KEYBD_EVENT_FLAGS(0)),            // V down
@@ -580,11 +632,17 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
         hwnd.0 as usize
     );
 
-    // ── Step 4: Restore original clipboard (after a short delay) ────────────
-    // Give the target app time to process the paste before we swap clipboard.
+    // ── Restore original clipboard (after a short delay) ────────────────────
+    // The restore thread checks RESTORE_CANCELLED before writing — a new
+    // inject_via_clipboard_paste call sets the flag so stale restores are skipped.
     if let Some(saved) = saved_clipboard {
+        RESTORE_CANCELLED.store(false, Ordering::SeqCst);
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if RESTORE_CANCELLED.load(Ordering::SeqCst) {
+                println!("[Replacement:Clipboard] Restore cancelled — newer replace in flight");
+                return;
+            }
             unsafe {
                 if OpenClipboard(None).is_ok() {
                     let _ = EmptyClipboard();
