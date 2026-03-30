@@ -137,7 +137,7 @@ export interface ElectronAPI {
     getSharedCollection: (token: string) => Promise<SharedCollectionView>;
     saveSharedCollection: (originalCollectionId: string) => Promise<{ collection: any; alreadyExisted: boolean }>;
     // Prompt sharing
-    getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string }>;
+    getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string; webUrl: string }>;
     getSharedPrompt: (token: string) => Promise<SharedPromptView>;
   };
   onPromptLibraryLoaded: (callback: (data: any) => void) => void;
@@ -211,6 +211,9 @@ export interface ElectronAPI {
 
   // Stop generation
   stopGeneration: () => void;
+
+  // Deep link navigation — receives the full React Router route path (e.g. /share/c/<token>)
+  onNavigateToShare: (callback: (routePath: string) => void) => (() => void);
 
   // Overlay (available when running inside the overlay renderer)
   overlay?: {

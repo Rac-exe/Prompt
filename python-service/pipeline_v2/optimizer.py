@@ -83,10 +83,12 @@ def supports_vision(model: str) -> bool:
 def _get_litellm_kwargs(provider: str, model: str) -> Tuple[str, dict]:
     """Return (resolved_model, extra_kwargs) for litellm."""
     if provider == "openrouter" or model.startswith("openrouter/"):
-        if not OPENROUTER_API_KEY:
-            print("ERROR: OPENROUTER_API_KEY not set in .env")
-            sys.exit(1)
-        return model, {"api_key": OPENROUTER_API_KEY}
+        key = os.environ.get("OPENROUTER_API_KEY", "") or OPENROUTER_API_KEY
+        if not key:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY is not set. Add it to your .env file."
+            )
+        return model, {"api_key": key}
     return model, {}
 
 
@@ -213,7 +215,12 @@ def optimize(
         system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
         
         if custom_instructions and custom_instructions.strip():
-            system_content += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
+            system_content += (
+                f"\n\nDETECTED PROMPT CATEGORY: {prompt_type}\n\n"
+                f"USER CUSTOM INSTRUCTIONS (Apply these as secondary enrichment. "
+                f"The detected category above is authoritative — do not let user memory override it):\n"
+                f"{custom_instructions.strip()}"
+            )
 
         messages = [{"role": "system", "content": system_content}]
         
@@ -291,7 +298,11 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             user_prompt = user_prompt + regen_instruction
 
         if custom_instructions and custom_instructions.strip():
-            system_prompt += f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these secondary rules to the optimized prompt):\n{custom_instructions.strip()}"
+            system_prompt += (
+                f"\n\nUSER CUSTOM INSTRUCTIONS (Apply these as secondary enrichment to the optimized prompt. "
+                f"Do not let user memory override the user's explicit intent):\n"
+                f"{custom_instructions.strip()}"
+            )
     
         # Build messages array
         messages = [
@@ -314,7 +325,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
     if stream:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=1500, temperature=temperature, stream=True,
+            max_tokens=8192, temperature=temperature, stream=True,
             stream_options={"include_usage": True}, **extra,
         )
         def _stream_generator():
@@ -347,7 +358,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
     else:
         response = litellm.completion(
             model=resolved_model, messages=messages,
-            max_tokens=1500, temperature=temperature, **extra,
+            max_tokens=8192, temperature=temperature, **extra,
         )
         result = response.choices[0].message.content
         usage = response.usage

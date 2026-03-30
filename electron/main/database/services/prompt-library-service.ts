@@ -1,5 +1,35 @@
 import { SupabaseClientManager } from '../supabase-client';
 import { randomBytes } from 'crypto';
+import * as Sentry from '@sentry/electron/main';
+
+// ============================================
+// SHARE TOKEN HELPERS
+// ============================================
+
+/**
+ * Generates a cryptographically secure opaque share token.
+ * 24 random bytes = 192 bits of entropy — computationally impossible to brute-force
+ * even at 1 billion guesses/second (would take ~10^39 years).
+ *
+ * The token is stored in the DB and acts as the credential. The DB lookup IS the
+ * verification — no shared secret is needed, so tokens work identically across
+ * all user machines without any configuration.
+ *
+ * Security layers:
+ *  - Token entropy: 192 bits (brute-force infeasible)
+ *  - Collections: RLS requires auth.uid() IS NOT NULL (must be signed in)
+ *  - Prompts: publicly readable by design
+ *  - Type confusion: prevented by querying the correct table based on the URL path prefix (c/p)
+ *  - Injection: token format validated in the deep link handler before any DB call
+ */
+function generateShareToken(): string {
+  return randomBytes(24).toString('base64url');
+}
+
+/** Validates that a token string has the correct format before any DB interaction. */
+export function isValidTokenFormat(token: string): boolean {
+  return /^[A-Za-z0-9_-]{20,50}$/.test(token);
+}
 
 // ============================================
 // INTERFACES
@@ -453,169 +483,259 @@ export class PromptLibraryService {
   /**
    * Generate (or return existing) share token for an individual prompt.
    * Idempotent — calling twice returns the same token.
+   * Returns both a deep-link URL (in-app) and a web URL (Edge Function, browser-accessible).
    */
-  async getOrCreatePromptShareToken(promptId: string): Promise<{ shareToken: string; shareUrl: string }> {
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) throw new Error('Not authenticated');
+  async getOrCreatePromptShareToken(promptId: string): Promise<{ shareToken: string; shareUrl: string; webUrl: string }> {
+    try {
+      const { data: userData, error: authError } = await this.client.auth.getUser();
+      if (authError || !userData.user) throw new Error('Not authenticated');
 
-    // Fetch the prompt — must belong to the current user
-    const { data: prompt, error: fetchError } = await this.client
-      .from('saved_prompts')
-      .select('id, share_token')
-      .eq('id', promptId)
-      .eq('user_id', userData.user.id)
-      .single();
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Generating prompt share link',
+        level: 'info',
+        data: { promptId, userId: userData.user.id },
+      });
 
-    if (fetchError || !prompt) throw new Error('Prompt not found');
+      const { data: prompt, error: fetchError } = await this.client
+        .from('saved_prompts')
+        .select('id, share_token')
+        .eq('id', promptId)
+        .eq('user_id', userData.user.id)
+        .single();
 
-    // Re-use existing token (idempotent)
-    if (prompt.share_token) {
+      if (fetchError || !prompt) throw new Error('Prompt not found');
+
+      // Re-use existing token if it has the correct format
+      if (prompt.share_token && isValidTokenFormat(prompt.share_token)) {
+        const supabaseUrl = process.env.SUPABASE_URL!;
+        Sentry.addBreadcrumb({
+          category: 'sharing',
+          message: 'Reused existing prompt share token',
+          level: 'info',
+          data: { promptId, tokenLength: prompt.share_token.length },
+        });
+        return {
+          shareToken: prompt.share_token,
+          shareUrl: `prmpt://share/p/${prompt.share_token}`,
+          webUrl: `${supabaseUrl}/functions/v1/share-view?token=${prompt.share_token}`,
+        };
+      }
+
+      const token = generateShareToken();
+
+      const { data: updated, error: updateError } = await this.client
+        .from('saved_prompts')
+        .update({ share_token: token })
+        .eq('id', promptId)
+        .eq('user_id', userData.user.id)
+        .select('share_token')
+        .single();
+
+      if (updateError || !updated) throw new Error('Failed to generate prompt share token');
+
+      const supabaseUrl = process.env.SUPABASE_URL!;
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Created new prompt share token',
+        level: 'info',
+        data: { promptId, tokenLength: updated.share_token?.length || 0 },
+      });
       return {
-        shareToken: prompt.share_token,
-        shareUrl: `promptweaver://share/prompt/${prompt.share_token}`,
+        shareToken: updated.share_token!,
+        shareUrl: `prmpt://share/p/${updated.share_token}`,
+        webUrl: `${supabaseUrl}/functions/v1/share-view?token=${updated.share_token}`,
       };
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { component: 'prompt-library-service', operation: 'getOrCreatePromptShareToken' },
+        extra: { promptId },
+      });
+      throw error;
     }
-
-    // Generate a new crypto-random URL-safe token
-    const token = randomBytes(24).toString('base64url');
-
-    const { data: updated, error: updateError } = await this.client
-      .from('saved_prompts')
-      .update({ share_token: token })
-      .eq('id', promptId)
-      .eq('user_id', userData.user.id)
-      .select('share_token')
-      .single();
-
-    if (updateError || !updated) throw new Error('Failed to generate prompt share token');
-
-    return {
-      shareToken: updated.share_token!,
-      shareUrl: `promptweaver://share/prompt/${updated.share_token}`,
-    };
   }
 
   /**
-   * Fetch a shared prompt by its public token (no auth required).
+   * Fetch a shared prompt by its opaque token.
+   * The DB lookup by share_token IS the verification — the token is the credential.
    */
   async getSharedPrompt(token: string): Promise<SharedPromptView> {
-    // RLS policy allows reading prompts with a share_token
-    const { data: prompt, error: promptError } = await this.client
-      .from('saved_prompts')
-      .select('id, title, content, share_token, user_id, created_at')
-      .eq('share_token', token)
-      .single();
+    try {
+      if (!isValidTokenFormat(token)) throw new Error('Invalid share link');
 
-    if (promptError || !prompt) {
-      throw new Error('Shared prompt not found or link is invalid');
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Loading shared prompt',
+        level: 'info',
+        data: { tokenLength: token.length },
+      });
+
+      const { data: prompt, error: promptError } = await this.client
+        .from('saved_prompts')
+        .select('id, title, content, share_token, user_id, created_at')
+        .eq('share_token', token)
+        .single();
+
+      if (promptError || !prompt) {
+        throw new Error('Shared prompt not found or link is invalid');
+      }
+
+      // Fetch owner name from profiles
+      const { data: profile } = await this.client
+        .from('profiles')
+        .select('name')
+        .eq('id', prompt.user_id)
+        .single();
+
+      return {
+        id: prompt.id,
+        title: prompt.title,
+        content: prompt.content,
+        share_token: prompt.share_token,
+        owner_name: profile?.name || 'Unknown User',
+        owner_id: prompt.user_id,
+        created_at: prompt.created_at,
+      };
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { component: 'prompt-library-service', operation: 'getSharedPrompt' },
+        extra: { tokenLength: token?.length || 0 },
+      });
+      throw error;
     }
-
-    // Fetch owner name from profiles
-    const { data: profile } = await this.client
-      .from('profiles')
-      .select('name')
-      .eq('id', prompt.user_id)
-      .single();
-
-    return {
-      id: prompt.id,
-      title: prompt.title,
-      content: prompt.content,
-      share_token: prompt.share_token,
-      owner_name: profile?.name || 'Unknown User',
-      owner_id: prompt.user_id,
-      created_at: prompt.created_at,
-    };
   }
 
   /**
    * Generate (or return existing) share token for a collection.
    * Idempotent — calling twice returns the same token.
+   * Collections are app-only: shareUrl uses the prmpt:// deep-link scheme.
    */
   async getOrCreateShareToken(collectionId: string): Promise<{ shareToken: string; shareUrl: string }> {
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) throw new Error('Not authenticated');
+    try {
+      const { data: userData, error: authError } = await this.client.auth.getUser();
+      if (authError || !userData.user) throw new Error('Not authenticated');
 
-    // Fetch the collection (must belong to this user)
-    const { data: collection, error: fetchError } = await this.client
-      .from('prompt_collections')
-      .select('id, share_token')
-      .eq('id', collectionId)
-      .eq('user_id', userData.user.id)
-      .single();
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Generating collection share link',
+        level: 'info',
+        data: { collectionId, userId: userData.user.id },
+      });
 
-    if (fetchError || !collection) throw new Error('Collection not found');
+      const { data: collection, error: fetchError } = await this.client
+        .from('prompt_collections')
+        .select('id, share_token')
+        .eq('id', collectionId)
+        .eq('user_id', userData.user.id)
+        .single();
 
-    // Re-use existing token if present
-    if (collection.share_token) {
+      if (fetchError || !collection) throw new Error('Collection not found');
+
+      // Re-use existing token if it has the correct format
+      if (collection.share_token && isValidTokenFormat(collection.share_token)) {
+        Sentry.addBreadcrumb({
+          category: 'sharing',
+          message: 'Reused existing collection share token',
+          level: 'info',
+          data: { collectionId, tokenLength: collection.share_token.length },
+        });
+        return {
+          shareToken: collection.share_token,
+          shareUrl: `prmpt://share/c/${collection.share_token}`,
+        };
+      }
+
+      const token = generateShareToken();
+
+      const { data: updated, error: updateError } = await this.client
+        .from('prompt_collections')
+        .update({ share_token: token })
+        .eq('id', collectionId)
+        .eq('user_id', userData.user.id)
+        .select('share_token')
+        .single();
+
+      if (updateError || !updated) throw new Error('Failed to generate share token');
+
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Created new collection share token',
+        level: 'info',
+        data: { collectionId, tokenLength: updated.share_token?.length || 0 },
+      });
       return {
-        shareToken: collection.share_token,
-        shareUrl: `promptweaver://share/${collection.share_token}`,
+        shareToken: updated.share_token!,
+        shareUrl: `prmpt://share/c/${updated.share_token}`,
       };
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { component: 'prompt-library-service', operation: 'getOrCreateShareToken' },
+        extra: { collectionId },
+      });
+      throw error;
     }
-
-    // Generate a new unique token (crypto-random, URL-safe)
-    const token = randomBytes(24).toString('base64url');
-
-    const { data: updated, error: updateError } = await this.client
-      .from('prompt_collections')
-      .update({ share_token: token })
-      .eq('id', collectionId)
-      .eq('user_id', userData.user.id)
-      .select('share_token')
-      .single();
-
-    if (updateError || !updated) throw new Error('Failed to generate share token');
-
-    return {
-      shareToken: updated.share_token!,
-      shareUrl: `promptweaver://share/${updated.share_token}`,
-    };
   }
 
   /**
-   * Fetch a shared collection by its public token (no auth required on DB side,
-   * but we do want to enrich it with owner name).
+   * Fetch a shared collection by its opaque token.
+   * The DB lookup by share_token IS the verification — the token is the credential.
+   * RLS requires auth.uid() IS NOT NULL so only signed-in users can read collections.
    */
   async getSharedCollection(token: string): Promise<SharedCollectionView> {
-    // Fetch collection by share token (public RLS allows this)
-    const { data: collection, error: collectionError } = await this.client
-      .from('prompt_collections')
-      .select('id, name, icon, share_token, user_id')
-      .eq('share_token', token)
-      .single();
+    try {
+      if (!isValidTokenFormat(token)) throw new Error('Invalid share link');
 
-    if (collectionError || !collection) {
-      throw new Error('Shared library not found or link is invalid');
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Loading shared collection',
+        level: 'info',
+        data: { tokenLength: token.length },
+      });
+
+      // RLS: requires authenticated Supabase session
+      const { data: collection, error: collectionError } = await this.client
+        .from('prompt_collections')
+        .select('id, name, icon, share_token, user_id')
+        .eq('share_token', token)
+        .single();
+
+      if (collectionError || !collection) {
+        throw new Error('Shared library not found or link is invalid');
+      }
+
+      // Fetch owner profile name
+      const { data: profile } = await this.client
+        .from('profiles')
+        .select('name')
+        .eq('id', collection.user_id)
+        .single();
+
+      const ownerName = profile?.name || 'Unknown User';
+
+      const { data: prompts, error: promptsError } = await this.client
+        .from('saved_prompts')
+        .select('*')
+        .eq('collection_id', collection.id)
+        .order('created_at', { ascending: false });
+
+      if (promptsError) throw promptsError;
+
+      return {
+        id: collection.id,
+        name: collection.name,
+        icon: collection.icon,
+        share_token: collection.share_token,
+        owner_name: ownerName,
+        owner_id: collection.user_id,
+        prompts: prompts || [],
+      };
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { component: 'prompt-library-service', operation: 'getSharedCollection' },
+        extra: { tokenLength: token?.length || 0 },
+      });
+      throw error;
     }
-
-    // Fetch owner profile name
-    const { data: profile } = await this.client
-      .from('profiles')
-      .select('name')
-      .eq('id', collection.user_id)
-      .single();
-
-    const ownerName = profile?.name || 'Unknown User';
-
-    // Fetch prompts (public RLS allows this for shared collections)
-    const { data: prompts, error: promptsError } = await this.client
-      .from('saved_prompts')
-      .select('*')
-      .eq('collection_id', collection.id)
-      .order('created_at', { ascending: false });
-
-    if (promptsError) throw promptsError;
-
-    return {
-      id: collection.id,
-      name: collection.name,
-      icon: collection.icon,
-      share_token: collection.share_token,
-      owner_name: ownerName,
-      owner_id: collection.user_id,
-      prompts: prompts || [],
-    };
   }
 
   /**
@@ -626,20 +746,34 @@ export class PromptLibraryService {
     collection: PromptCollection;
     alreadyExisted: boolean;
   }> {
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) throw new Error('Not authenticated');
+    try {
+      const { data: userData, error: authError } = await this.client.auth.getUser();
+      if (authError || !userData.user) throw new Error('Not authenticated');
 
-    // Check if user already forked this collection (idempotency — Task 7)
-    const { data: existing } = await this.client
-      .from('prompt_collections')
-      .select('*')
-      .eq('user_id', userData.user.id)
-      .eq('original_collection_id', originalCollectionId)
-      .maybeSingle();
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Saving shared collection copy',
+        level: 'info',
+        data: { originalCollectionId, userId: userData.user.id },
+      });
 
-    if (existing) {
-      return { collection: existing as PromptCollection, alreadyExisted: true };
-    }
+      // Check if user already forked this collection (idempotency — Task 7)
+      const { data: existing } = await this.client
+        .from('prompt_collections')
+        .select('*')
+        .eq('user_id', userData.user.id)
+        .eq('original_collection_id', originalCollectionId)
+        .maybeSingle();
+
+      if (existing) {
+        Sentry.addBreadcrumb({
+          category: 'sharing',
+          message: 'Shared collection already saved',
+          level: 'info',
+          data: { originalCollectionId, existingCollectionId: existing.id },
+        });
+        return { collection: existing as PromptCollection, alreadyExisted: true };
+      }
 
     // Fetch original collection + owner name
     const { data: original, error: originalError } = await this.client
@@ -708,7 +842,14 @@ export class PromptLibraryService {
         collection_id: newCollection.id,
         title: p.title,
         content: p.content,
-        metadata: p.metadata || {},
+        metadata: {
+          ...(p.metadata || {}),
+          // Prompt-level attribution: only copied prompts keep source attribution.
+          // New prompts created later in this collection should not inherit it.
+          shared_origin_creator_id: original.user_id,
+          shared_origin_creator_name: creatorName,
+          shared_origin_collection_id: original.id,
+        },
       }));
 
       const { error: insertError } = await this.client
@@ -720,8 +861,25 @@ export class PromptLibraryService {
       }
     }
 
-    console.log('[PromptLibraryService] ✅ Collection forked:', newCollection.id);
-    return { collection: newCollection as PromptCollection, alreadyExisted: false };
+      console.log('[PromptLibraryService] ✅ Collection forked:', newCollection.id);
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Shared collection forked',
+        level: 'info',
+        data: {
+          originalCollectionId,
+          newCollectionId: newCollection.id,
+          copiedPromptCount: originalPrompts?.length || 0,
+        },
+      });
+      return { collection: newCollection as PromptCollection, alreadyExisted: false };
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { component: 'prompt-library-service', operation: 'saveSharedCollection' },
+        extra: { originalCollectionId },
+      });
+      throw error;
+    }
   }
 
   /**

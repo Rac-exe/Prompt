@@ -3,6 +3,10 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
+import { readFileSync } from "fs";
+
+const rootPkg = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf-8"));
+const APP_VERSION: string = rootPkg.version;
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -23,7 +27,7 @@ export default defineConfig(({ mode }) => ({
         org: process.env.SENTRY_ORG || "prmpt",
         project: process.env.SENTRY_PROJECT || "prmpt-desktop",
         authToken: process.env.SENTRY_AUTH_TOKEN,
-        release: { name: "prmpt@0.1.0" },
+        release: { name: `prmpt@${APP_VERSION}` },
         sourcemaps: { filesToDeleteAfterUpload: ["../electron/renderer/app-ui/**/*.map"] },
       }),
   ].filter(Boolean),
@@ -31,6 +35,9 @@ export default defineConfig(({ mode }) => ({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   build: {
     outDir: "../electron/renderer/app-ui", // Build directly to Electron

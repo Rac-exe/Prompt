@@ -162,6 +162,71 @@ export class MemoryService {
   }
 
   /**
+   * Batch upsert multiple inferred memory entries in 3 DB round-trips regardless
+   * of fact count (fetch explicit set → fetch existing counts → batch upsert).
+   * Respects explicit priority: any key that has an explicit entry is skipped.
+   * Returns the number of rows actually written.
+   */
+  async upsertInferredEntries(
+    facts: Array<{ memoryType: MemoryType; key: string; value: string; confidence: number }>,
+  ): Promise<number> {
+    if (facts.length === 0) return 0;
+
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+    const userId = userData.user.id;
+
+    // 1. Fetch all explicit entries in one query
+    const { data: explicitRows } = await this.client
+      .from('user_memory')
+      .select('memory_type, key')
+      .eq('user_id', userId)
+      .eq('source', 'explicit');
+
+    const explicitSet = new Set(
+      (explicitRows ?? []).map((r) => `${r.memory_type}::${r.key}`),
+    );
+
+    // 2. Filter out facts blocked by explicit priority
+    const eligible = facts.filter(
+      (f) => !explicitSet.has(`${f.memoryType}::${f.key}`),
+    );
+    if (eligible.length === 0) return 0;
+
+    // 3. Fetch existing inferred entries to increment observation_count
+    const { data: existing } = await this.client
+      .from('user_memory')
+      .select('memory_type, key, observation_count')
+      .eq('user_id', userId)
+      .in('key', eligible.map((f) => f.key));
+
+    const existingMap = new Map(
+      (existing ?? []).map((r) => [`${r.memory_type}::${r.key}`, r.observation_count as number]),
+    );
+
+    // 4. Build batch upsert payload — sanitize key/value before writing to DB
+    const rows = eligible
+      .map((f) => ({
+        user_id: userId,
+        memory_type: f.memoryType,
+        key: MemoryService.sanitizeField(f.key, MemoryService.MAX_KEY_LEN),
+        value: MemoryService.sanitizeField(f.value, MemoryService.MAX_VALUE_LEN),
+        source: 'inferred' as MemorySource,
+        confidence: f.confidence,
+        observation_count: (existingMap.get(`${f.memoryType}::${f.key}`) ?? 0) + 1,
+      }))
+      .filter((r) => r.key.length > 0 && r.value.length > 0);
+
+    // 5. Single batch upsert — 3 queries total regardless of fact count
+    const { error } = await this.client
+      .from('user_memory')
+      .upsert(rows, { onConflict: 'user_id,memory_type,key' });
+
+    if (error) throw error;
+    return rows.length;
+  }
+
+  /**
    * Delete a specific memory entry.
    * Only deletes entries belonging to the authenticated user (RLS enforced server-side too).
    */
@@ -179,9 +244,38 @@ export class MemoryService {
     if (error) throw error;
   }
 
+  /** Max character lengths for stored fact fields. */
+  private static readonly MAX_KEY_LEN = 60;
+  private static readonly MAX_VALUE_LEN = 300;
+
+  /**
+   * Sanitize a memory key or value before it is injected into a system prompt.
+   * Strips characters that are commonly used in prompt injection attacks and
+   * enforces a hard length cap.
+   */
+  private static sanitizeField(raw: string, maxLen: number): string {
+    return raw
+      .slice(0, maxLen)
+      .replace(/\[|\]|\{|\}/g, '')                          // remove bracket markers
+      .replace(/SYSTEM\s*:/gi, '')                          // strip SYSTEM: prefixes
+      .replace(/IGNORE\s+(ALL\s+)?PREVIOUS/gi, '')          // strip jailbreak phrases
+      .replace(/OVERRIDE\s*:/gi, '')
+      .replace(/INSTRUCTION\s*:/gi, '')
+      .trim();
+  }
+
+  private static readonly PERSONA_KEYS = new Set([
+    'occupation', 'role', 'job_title', 'profession', 'industry',
+    'expertise', 'background', 'identity', 'title', 'position',
+  ]);
+
   /**
    * Builds a compact memory context string suitable for injection into the
    * optimizer's custom_instructions field. Only includes high-confidence entries.
+   *
+   * Persona-type facts (occupation, role, etc.) get a strict "never reframe intent"
+   * directive, while preference/enrichment facts get the standard "apply where relevant"
+   * directive. This prevents persona memory from overriding the user's actual prompt intent.
    *
    * Returns an empty string if no memory exists yet.
    */
@@ -190,30 +284,60 @@ export class MemoryService {
     try {
       memory = await this.getMemory();
     } catch {
-      // Not authenticated or table doesn't exist yet — fail silently
       return '';
     }
 
-    const lines: string[] = [];
+    const personaLines: string[] = [];
+    const enrichmentLines: string[] = [];
 
-    const add = (label: string, entries: Record<string, MemoryEntry>) => {
+    const addTo = (label: string, entries: Record<string, MemoryEntry>, target: string[]) => {
       const highConf = Object.values(entries).filter((e) => e.confidence >= 0.5);
       if (highConf.length === 0) return;
-      lines.push(`${label}:`);
+      target.push(`${label}:`);
       for (const entry of highConf) {
-        lines.push(`  - ${entry.key}: ${entry.value}`);
+        const safeKey = MemoryService.sanitizeField(entry.key, MemoryService.MAX_KEY_LEN);
+        const safeVal = MemoryService.sanitizeField(entry.value, MemoryService.MAX_VALUE_LEN);
+        if (safeKey && safeVal) {
+          target.push(`  - ${safeKey}: ${safeVal}`);
+        }
       }
     };
 
-    add('User Profile', memory.user);
-    add('Usage Patterns', memory.behavioral);
-    add('Recurring Themes', memory.context);
+    const userPersona: Record<string, MemoryEntry> = {};
+    const userPrefs: Record<string, MemoryEntry> = {};
+    for (const [key, entry] of Object.entries(memory.user)) {
+      if (MemoryService.PERSONA_KEYS.has(key.toLowerCase())) {
+        userPersona[key] = entry;
+      } else {
+        userPrefs[key] = entry;
+      }
+    }
 
-    if (lines.length === 0) return '';
+    addTo('User Identity', userPersona, personaLines);
+    addTo('User Preferences', userPrefs, enrichmentLines);
+    addTo('Usage Patterns', memory.behavioral, enrichmentLines);
+    addTo('Recurring Themes', memory.context, enrichmentLines);
 
-    return [
-      '[USER MEMORY — apply where relevant to enrich the optimized prompt]',
-      ...lines,
-    ].join('\n');
+    const sections: string[] = [];
+
+    if (personaLines.length > 0) {
+      sections.push(
+        '[USER PERSONA — background context only. Use to calibrate tone and technical depth. NEVER use to change the type or purpose of the prompt. If the user asks to build software, it is a coding task regardless of their occupation.]\n' +
+          personaLines.join('\n'),
+      );
+    }
+
+    if (enrichmentLines.length > 0) {
+      sections.push(
+        '[USER PREFERENCES — apply where relevant to enrich the optimized prompt.]\n' +
+          enrichmentLines.join('\n'),
+      );
+    }
+
+    if (sections.length === 0) return '';
+
+    const combined = sections.join('\n\n');
+    // Hard cap — prevents a large injected context from overwhelming the system prompt
+    return combined.slice(0, 800);
   }
 }

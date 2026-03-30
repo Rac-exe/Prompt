@@ -4,17 +4,39 @@ dotenv.config();
 import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 
+const appVersion = require('../../package.json').version;
+
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
-  release: 'prmpt@0.1.0',
+  release: `prmpt@${appVersion}`,
   environment: process.env.NODE_ENV === 'development' ? 'development' : 'production',
   tracesSampleRate: process.env.NODE_ENV === 'development' ? 1.0 : 0.2,
   _experiments: { enableLogs: true },
   beforeSend(event) {
+    const PII_RE = /prompt|content|message|text/i;
     if (event.extra) {
       for (const key of Object.keys(event.extra)) {
-        if (/prompt|content|message|text/i.test(key)) {
-          event.extra[key] = '[REDACTED]';
+        if (PII_RE.test(key)) event.extra[key] = '[REDACTED]';
+      }
+    }
+    if (event.breadcrumbs) {
+      for (const bc of event.breadcrumbs) {
+        if (bc.data) {
+          for (const key of Object.keys(bc.data)) {
+            if (PII_RE.test(key)) (bc.data as Record<string, unknown>)[key] = '[REDACTED]';
+          }
+        }
+      }
+    }
+    if (event.exception?.values) {
+      for (const ex of event.exception.values) {
+        if (ex.value && PII_RE.test(ex.value)) ex.value = '[REDACTED]';
+        for (const frame of ex.stacktrace?.frames ?? []) {
+          if (frame.vars) {
+            for (const key of Object.keys(frame.vars)) {
+              if (PII_RE.test(key)) frame.vars[key] = '[REDACTED]';
+            }
+          }
         }
       }
     }
@@ -22,7 +44,7 @@ Sentry.init({
   },
 });
 
-import { app, globalShortcut, ipcMain, shell } from 'electron';
+import { app, globalShortcut, ipcMain, session, shell } from 'electron';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
@@ -45,6 +67,8 @@ import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
 import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
+import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
+import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -88,13 +112,37 @@ function toggleOverlay() {
   const sentryUser = authState.currentUserId
     ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' }
     : null;
+  Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay toggled', level: 'info', data: { isAuthenticated: authState.isAuthenticated } });
   overlayManager.toggle(authState.isAuthenticated, sentryUser);
 }
 
 // ============================================
 // INITIALIZATION
 // ============================================
+function installCSP() {
+  const supabaseHost = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            `img-src 'self' data: https: blob:`,
+            `font-src 'self' data:`,
+            `connect-src 'self' https://${supabaseHost} wss://${supabaseHost} http://127.0.0.1:8001 ws://127.0.0.1:8001 https://*.sentry.io https://res.cloudinary.com`,
+            `media-src 'self' blob:`,
+          ].join('; '),
+        ],
+      },
+    });
+  });
+}
+
 async function initialize() {
+  installCSP();
   console.log('[Main] Initializing Prompt Optimizer...');
 
   // Initialize Supabase
@@ -104,6 +152,8 @@ async function initialize() {
   if (!SUPABASE_URL || !SUPABASE_KEY) {
     console.error('[Main] ERROR: Supabase credentials not found!');
     console.error('[Main] Please set SUPABASE_URL and SUPABASE_ANON_KEY environment variables');
+    Sentry.captureMessage('App failed to start: SUPABASE_URL or SUPABASE_ANON_KEY missing', 'fatal');
+    await Sentry.flush(2000);
     return;
   }
 
@@ -120,8 +170,10 @@ async function initialize() {
   // Initialize Python client
   pythonClient = new PythonClient('http://127.0.0.1:8001');
 
+  let pythonHealthy = false;
   try {
     const isHealthy = await pythonClient.healthCheck();
+    pythonHealthy = isHealthy;
     if (isHealthy) {
       console.log('[Main] Python service connected');
       pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
@@ -130,7 +182,39 @@ async function initialize() {
     }
   } catch (error) {
     console.warn('[Main] Could not connect to Python service');
+    Sentry.captureException(error, { level: 'warning', tags: { component: 'python-init' } });
   }
+
+  // Background health-check loop — detects Python crashes mid-session
+  const HEALTH_CHECK_INTERVAL_MS = 30_000;
+  setInterval(async () => {
+    try {
+      const healthy = await pythonClient.healthCheck();
+      if (!healthy && pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python service became unavailable');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service became unavailable', level: 'warning' });
+        Sentry.captureMessage('Python service became unavailable', 'warning');
+      } else if (healthy && !pythonHealthy) {
+        pythonHealthy = true;
+        appWindowManager.send('python:recovered', {});
+        overlayManager.send('python:recovered', {});
+        console.log('[Main] Python service recovered');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service recovered', level: 'info' });
+      }
+    } catch (healthErr) {
+      if (pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python health check failed');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python health check failed', level: 'warning' });
+        Sentry.captureMessage('Python health check failed', 'warning');
+      }
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
 
   // Start network monitor — broadcasts online/offline status to all windows
   networkMonitor.start(
@@ -140,9 +224,15 @@ async function initialize() {
       // Reconnected: notify renderer, then drain the offline queue
       appWindowManager.send('network:reconnected', {});
       syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
-        .catch(e => console.error('[Main] Prompt-library offline sync failed:', e));
+        .catch(e => {
+          console.error('[Main] Prompt-library offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-prompt-library' } });
+        });
       syncChatMessageQueue(appWindowManager, pythonClient)
-        .catch(e => console.error('[Main] Chat message offline sync failed:', e));
+        .catch(e => {
+          console.error('[Main] Chat message offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-chat' } });
+        });
     }
   );
   console.log('[Main] NetworkMonitor started');
@@ -182,6 +272,7 @@ async function initialize() {
       );
     } catch (error) {
       Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error', level: 'error' });
+      Sentry.captureException(error);
       logger.error(logger.fmt`transcription.error ${error instanceof Error ? error.message : String(error)}`);
       console.error('[Main] Failed to start transcription:', error);
       overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
@@ -196,6 +287,7 @@ async function initialize() {
       console.log('[Main] Stopping transcription');
       await transcriptionClient.stopTranscription();
     } catch (error) {
+      Sentry.captureException(error);
       console.error('[Main] Failed to stop transcription:', error);
     }
   });
@@ -211,12 +303,23 @@ async function initialize() {
   registerSkillHandlers();
   registerAvatarHandlers();
   registerFileUploadHandlers();
+  registerFeedbackHandlers();
+  registerDeletionHandlers();
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)
   // ============================================
   ipcMain.on('shell:openExternal', (_event, url: string) => {
-    shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      if (!['https:', 'http:'].includes(parsed.protocol)) {
+        console.warn(`[Security] Blocked openExternal — disallowed protocol: ${parsed.protocol}`);
+        return;
+      }
+      shell.openExternal(url);
+    } catch {
+      console.warn(`[Security] Blocked openExternal — invalid URL: ${url}`);
+    }
   });
 
   ipcMain.on('window:minimize', () => {
@@ -256,7 +359,8 @@ async function initialize() {
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
         authState.currentUserEmail = session.user.email ?? null;
-        Sentry.setUser({ id: session.user.id, email: session.user.email });
+        authState.currentAccessToken = session.access_token ?? null;
+        Sentry.setUser({ id: session.user.id });
         overlayManager.sendAuthState(true);
       } else if (event === 'SIGNED_OUT') {
         // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT
@@ -269,6 +373,10 @@ async function initialize() {
 
         authState.isAuthenticated = false;
         authState.currentUserId = null;
+        authState.currentUserEmail = null;
+        authState.currentAccessToken = null;
+        Sentry.setUser(null);
+        if (appWindowManager) appWindowManager.send('sentry:set-user', null);
 
         if (appWindowManager) {
           appWindowManager.send('auth:state-changed', {
@@ -278,11 +386,15 @@ async function initialize() {
         }
         overlayManager.sendAuthState(false);
       } else if (event === 'TOKEN_REFRESHED' && session) {
-        console.log('[Main] Session token refreshed');
+        console.log('[Main] Session token refreshed — updating auth state');
+        authState.currentAccessToken = session.access_token ?? null;
+        // Reconnect WebSocket so it carries the refreshed token
+        pythonClient.reconnect();
       }
     });
   } catch (error) {
     console.error('[Main] Auth initialization error:', error);
+    Sentry.captureException(error, { tags: { component: 'auth-init' } });
   }
 
   // ============================================
@@ -304,6 +416,7 @@ async function initialize() {
     console.log('[Main] Global hotkey registered: Ctrl+5');
   } else {
     console.error('[Main] Failed to register global hotkey');
+    Sentry.captureMessage('Global hotkey Ctrl+5 registration failed', 'warning');
   }
 
   // ============================================
@@ -359,6 +472,21 @@ async function shutdown() {
 }
 
 // ============================================
+// GLOBAL ERROR GUARDS — prevent silent crashes in Electron main process
+// ============================================
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  Sentry.captureException(err, { tags: { source: 'unhandledRejection' } });
+  console.error('[Main] Unhandled promise rejection (captured, process continues):', err.message);
+});
+
+process.on('uncaughtException', (err) => {
+  Sentry.captureException(err, { tags: { source: 'uncaughtException' } });
+  console.error('[Main] Uncaught exception:', err.message);
+  // Do NOT call process.exit — let Electron handle it via its own crash reporter
+});
+
+// ============================================
 // SINGLE INSTANCE LOCK (must be first, before any event listeners)
 // ============================================
 const gotTheLock = app.requestSingleInstanceLock();
@@ -366,40 +494,91 @@ if (!gotTheLock) {
   app.quit();
 } else {
   // ============================================
-  // DEEP LINK PROTOCOL: promptweaver://share/<token>
+  // DEEP LINK PROTOCOL: prmpt://share/<type>/<token>
   // ============================================
-  // Register the custom protocol so the OS routes promptweaver:// URLs to us.
+  // Register the custom protocol so the OS routes prmpt:// URLs to us.
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
-      app.setAsDefaultProtocolClient('promptweaver', process.execPath, [process.argv[1]]);
+      app.setAsDefaultProtocolClient('prmpt', process.execPath, [process.argv[1]]);
     }
   } else {
-    app.setAsDefaultProtocolClient('promptweaver');
+    app.setAsDefaultProtocolClient('prmpt');
   }
 
   /**
-   * Extract a share token from a protocol URL such as:
-   *   promptweaver://share/abc123
+   * Token validation regex: base64url characters only, 20–50 chars.
+   * Matches randomBytes(24).toString('base64url') output (32 chars).
+   * Bounded length prevents oversized input abuse.
+   */
+  const VALID_SHARE_TOKEN = /^[A-Za-z0-9_-]{20,50}$/;
+
+  /**
+   * Hard-whitelisted path prefixes → React Router route prefixes.
+   * "c" = collection (app-only), "p" = prompt (app deep-link).
+   * Anything not in this map is silently discarded.
+   */
+  const SHARE_PATH_MAP: Record<string, string> = {
+    c: '/share/c',
+    p: '/share/p',
+  };
+
+  /**
+   * Handle a prmpt:// deep link URL.
+   * Expected shape: prmpt://share/<c|p>/<hmac_token>
+   * Sends the validated route path to the renderer via navigate-to-share.
    */
   function handleDeepLink(url: string): void {
     try {
       const parsed = new URL(url);
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Deep link received',
+        level: 'info',
+        data: {
+          protocol: parsed.protocol,
+          host: parsed.hostname,
+          pathLength: parsed.pathname.length,
+        },
+      });
 
-      // ── Share deep link: promptweaver://share/<token> ──────────────────────
-      if (parsed.hostname === 'share') {
-        const token = parsed.pathname.replace(/^\//, '');
-        if (token && appWindowManager) {
-          appWindowManager.show();
-          const win = appWindowManager.getWindow();
-          if (win && !win.isDestroyed()) {
-            win.webContents.executeJavaScript(
-              `window.location.hash = '/share/${token}';`
-            ).catch(() => {});
-          }
+      // Only handle prmpt:// share links
+      if (parsed.protocol !== 'prmpt:' || parsed.hostname !== 'share') return;
+
+      // pathname = "/<type>/<token>" — strip leading slash then split
+      const parts = parsed.pathname.replace(/^\//, '').split('/');
+      if (parts.length !== 2) return;
+
+      const [typePrefix, token] = parts;
+      const routeBase = SHARE_PATH_MAP[typePrefix];
+
+      // Hard-whitelist check + token format validation
+      if (!routeBase || !VALID_SHARE_TOKEN.test(token)) return;
+
+      if (appWindowManager) {
+        appWindowManager.show();
+        const win = appWindowManager.getWindow();
+        if (win && !win.isDestroyed()) {
+          Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'Deep link routed to renderer',
+            level: 'info',
+            data: {
+              typePrefix,
+              tokenLength: token.length,
+              routeBase,
+            },
+          });
+          // Send the full route path — renderer calls navigate(routePath) directly
+          win.webContents.send('navigate-to-share', `${routeBase}/${token}`);
         }
       }
-    } catch (err) {
-      console.error('[Main] Failed to handle deep link:', url, err);
+    } catch (error) {
+      Sentry.captureException(error, {
+        level: 'warning',
+        tags: { component: 'deep-link' },
+        extra: { urlPrefix: typeof url === 'string' ? url.slice(0, 24) : 'unknown' },
+      });
+      // Swallow all errors — never let malformed URLs crash app startup flow
     }
   }
 
@@ -415,7 +594,7 @@ if (!gotTheLock) {
       appWindowManager.show();
     }
     // The last arg may be the protocol URL on Windows
-    const url = commandLine.find((arg) => arg.startsWith('promptweaver://'));
+    const url = commandLine.find((arg) => arg.startsWith('prmpt://'));
     if (url) handleDeepLink(url);
   });
 
@@ -429,7 +608,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     // Handle protocol URL passed on startup (Windows/Linux first-launch)
-    const startUrl = process.argv.find((arg) => arg.startsWith('promptweaver://'));
+    const startUrl = process.argv.find((arg) => arg.startsWith('prmpt://'));
     if (startUrl) {
       // Defer until the window is ready
       app.once('browser-window-created', () => {

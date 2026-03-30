@@ -22,6 +22,20 @@ import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
 
+function humanizeLlmError(err: unknown): string {
+    const raw: string = ((err as any)?.message ?? (err as any)?.code ?? String(err)).toLowerCase();
+    if (raw.includes('econnrefused') || raw.includes('econnreset') || raw.includes('enotfound')) {
+        return 'The AI service is not reachable. Please restart the application and try again.';
+    }
+    if (raw.includes('etimedout') || raw.includes('timeout')) {
+        return 'The AI service timed out. It may be overloaded — please try again in a moment.';
+    }
+    if (raw.includes('socket hang up') || raw.includes('epipe')) {
+        return 'The connection to the AI service was lost mid-response. Please try again.';
+    }
+    return 'The AI service encountered an error. Please try again.';
+}
+
 function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
     return {
         model: models?.optimizer ?? 'unknown',
@@ -358,7 +372,9 @@ export function registerOverlayHandlers(
                   );
                   filesForDb = results.map((r, i) => {
                     if (r.status === 'fulfilled') return r.value;
-                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    const reason = (r as PromiseRejectedResult).reason;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, reason?.message);
+                    Sentry.captureException(reason, { tags: { component: 'file-upload', context: 'overlay-context-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
                 }
@@ -456,7 +472,9 @@ export function registerOverlayHandlers(
                   );
                   const olFilesForDb = olResults.map((r, i) => {
                     if (r.status === 'fulfilled') return r.value;
-                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    const olReason = (r as PromiseRejectedResult).reason;
+                    console.error(`[Overlay] Upload failed for "${data.attachedFiles![i].name}":`, olReason?.message);
+                    Sentry.captureException(olReason, { tags: { component: 'file-upload', context: 'overlay-session-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
                   await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
@@ -499,13 +517,15 @@ export function registerOverlayHandlers(
             }
           } catch (chatErr) {
             errorLog.append('[Overlay] DB save', chatErr);
+            Sentry.captureException(chatErr, { tags: { component: 'overlay-db-save' } });
           }
         })();
       }
     } catch (error) {
       Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimization error', level: 'error' });
-      const message = error instanceof Error ? error.message : 'Optimization failed';
-      logger.error(logger.fmt`overlay.optimize_error error=${message}`);
+      Sentry.captureException(error);
+      const message = humanizeLlmError(error);
+      logger.error(logger.fmt`overlay.optimize_error error=${error instanceof Error ? error.message : String(error)}`);
       overlayManager.send('overlay:optimization-error', { error: message });
     }
   });

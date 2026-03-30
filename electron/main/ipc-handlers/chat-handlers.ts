@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 import crypto from 'crypto';
+import FileType from 'file-type';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -117,31 +118,39 @@ const MAX_TOTAL_SIZE = 25_000_000; // 25 MB total
 
 /**
  * Validate attached files before forwarding to Python.
- * Returns error message if validation fails, null if valid.
+ * Checks count, size (from actual buffer, not user-supplied metadata),
+ * and MIME type against magic bytes — not the user-supplied mimeType field.
+ * Returns an error string if validation fails, null if valid.
  */
-function validateAttachedFiles(files: AttachedFile[]): string | null {
+async function validateAttachedFiles(files: AttachedFile[]): Promise<string | null> {
   if (files.length > MAX_FILES_PER_MESSAGE) {
     return `Maximum ${MAX_FILES_PER_MESSAGE} files allowed per message`;
   }
 
   let totalSize = 0;
   for (const file of files) {
-    if (!ALLOWED_MIME_TYPES.includes(file.mimeType)) {
-      return `File type not allowed: ${file.mimeType}`;
-    }
+    const buf = Buffer.from(file.base64, 'base64');
 
-    if (file.sizeBytes > MAX_FILE_SIZE) {
+    // Use actual buffer byte count — not the renderer-supplied sizeBytes
+    const actualSize = buf.length;
+    if (actualSize > MAX_FILE_SIZE) {
       return `File "${file.name}" exceeds 10 MB limit`;
     }
+    totalSize += actualSize;
 
-    totalSize += file.sizeBytes;
+    // Detect MIME from magic bytes — ignores whatever the renderer claims
+    const detected = await FileType.fromBuffer(buf);
+    const effectiveMime = detected?.mime ?? 'application/octet-stream';
+    if (!ALLOWED_MIME_TYPES.includes(effectiveMime)) {
+      return `File "${file.name}" is not an allowed type (detected: ${effectiveMime})`;
+    }
   }
 
   if (totalSize > MAX_TOTAL_SIZE) {
     return `Total upload size exceeds 25 MB limit`;
   }
 
-  return null; // Valid
+  return null;
 }
 
 // Lazy load services
@@ -298,6 +307,7 @@ export function registerChatHandlers(
                 });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
             if (appWindowManager) {
                 appWindowManager.send('optimization-complete', {
@@ -313,6 +323,7 @@ export function registerChatHandlers(
     // APP WINDOW: Save to chat
     // ============================================
     ipcMain.on('app:save-to-chat', async (event, originalText: string, optimizedText: string) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Save to chat', level: 'info' });
         try {
             const chat = await chatService.getOrCreateQuickOptimizationsChat();
             await chatService.addMessage(chat.id, originalText, 'user');
@@ -327,6 +338,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chat-saved', { chatId: chat.id });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to save to chat:', error);
         }
     });
@@ -365,6 +377,7 @@ export function registerChatHandlers(
                 ).then(() => console.log('[Chat] Pre-cached messages for top 5 recent chats'));
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to load chats:', error);
             const userId = authState.currentUserId;
             const cached = userId ? localCache.getChats(userId) : [];
@@ -376,6 +389,7 @@ export function registerChatHandlers(
     // APP WINDOW: Create new chat
     // ============================================
     ipcMain.on('app:create-chat', async (event, title?: string) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Create chat', level: 'info' });
         try {
             const chat = await chatService.createChat(title);
             if (appWindowManager) {
@@ -384,6 +398,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to create chat:', error);
         }
     });
@@ -409,6 +424,7 @@ export function registerChatHandlers(
 
             if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages });
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to load messages:', error);
             // Fallback to cache on any error (e.g. "Not authenticated" when offline)
             const cached = userId ? localCache.getMessages(userId, chatId) : [];
@@ -426,6 +442,7 @@ export function registerChatHandlers(
     // APP WINDOW: Rename chat
     // ============================================
     ipcMain.on('app:rename-chat', async (event, data: { chatId: string; title: string }) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Rename chat', level: 'info', data: { chatId: data.chatId } });
         try {
             await chatService.updateChatTitle(data.chatId, data.title);
             if (appWindowManager) {
@@ -435,6 +452,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to rename chat:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
@@ -447,6 +465,7 @@ export function registerChatHandlers(
     // APP WINDOW: Delete chat
     // ============================================
     ipcMain.on('app:delete-chat', async (event, chatId: string) => {
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Delete chat', level: 'info', data: { chatId } });
         try {
             await chatService.deleteChat(chatId);
             if (appWindowManager) {
@@ -455,6 +474,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to delete chat:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
@@ -494,6 +514,8 @@ export function registerChatHandlers(
                 }
 
                 // Text-only to an EXISTING chat → queue for retry when back online.
+                // The queue op.id doubles as the stable message UUID so duplicate
+                // replays produce a DB conflict and are safely ignored.
                 if (data.chatId) {
                     offlineQueue.enqueue('send-message', {
                         chatId: data.chatId,
@@ -545,7 +567,7 @@ export function registerChatHandlers(
             // Validate attached files if present
             const attachedFiles = data.attachedFiles || [];
             if (attachedFiles.length > 0) {
-                const validationError = validateAttachedFiles(attachedFiles);
+                const validationError = await validateAttachedFiles(attachedFiles);
                 if (validationError) {
                     console.error('[Chat] File validation failed:', validationError);
                     if (appWindowManager) {
@@ -623,7 +645,9 @@ export function registerChatHandlers(
                     if (r.status === 'fulfilled') return r.value;
                     // Upload failed for this file — keep name/type/size so the chip
                     // still renders, but flag it so we don't show a broken URL.
-                    console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, (r as PromiseRejectedResult).reason?.message);
+                    const uploadErr = (r as PromiseRejectedResult).reason;
+                    console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
+                    Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
                     return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
                 });
             }
@@ -810,6 +834,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to send message:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
@@ -986,6 +1011,7 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to regenerate response:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
@@ -1013,6 +1039,7 @@ export function registerChatHandlers(
                 appWindowManager.send('feedback-saved', { messageId: data.messageId, rating: data.rating });
             }
         } catch (error) {
+            Sentry.captureException(error);
             console.error('[Chat] Failed to save feedback:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
@@ -1089,13 +1116,15 @@ export async function syncChatMessageQueue(
                 continue;
             }
 
-            // Save user message
+            // Save user message — use the stable op.id as the pre-generated message UUID.
+            // If a previous sync attempt already wrote this message, the insert will
+            // conflict on the primary key and be skipped (idempotent replay).
             const userGroupId = groupId || crypto.randomUUID();
             const userVersionIndex = versionIndex ?? 0;
             const userMsg = await svc.addMessage(chatId, content, 'user', undefined, {
                 groupId: userGroupId,
                 versionIndex: userVersionIndex,
-            });
+            }, op.id /* stable idempotency key */);
 
             // Fetch context
             let messagesContext: Array<{role: string; content: string}> = [];
@@ -1153,6 +1182,7 @@ export async function syncChatMessageQueue(
             console.log(`[ChatOfflineSync] ✅ Synced queued message for chat ${chatId}`);
         } catch (err) {
             console.warn(`[ChatOfflineSync] Failed to sync op ${op.id} — will retry:`, err);
+            Sentry.captureException(err, { tags: { component: 'offline-sync-chat' }, extra: { opId: op.id } });
             offlineQueue.incrementRetry(op.id);
         }
     }

@@ -62,7 +62,8 @@ export class ChatService {
       .from('chats')
       .select('*')
       .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('updated_at', { ascending: false });
+      .order('updated_at', { ascending: false })
+      .limit(100);
 
     if (error) {
       console.error('[ChatService] ❌ Error loading chats:', error);
@@ -187,7 +188,8 @@ export class ChatService {
       .select('*')
       .eq('chat_id', chatId)
       .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(500);
 
     if (error) throw error;
     return data || [];

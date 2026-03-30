@@ -15,3 +15,9 @@ MEMORY_MODEL     = os.environ.get("MEMORY_MODEL",     SUMMARIZER_MODEL)
 
 # ── API keys ──────────────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
+# Supabase JWT secret — from Supabase dashboard → Project Settings → API → JWT Secret.
+# When set, every protected endpoint verifies the caller's Bearer token.
+# If unset in local dev, auth is skipped with a warning.
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")

@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosError } from "axios";
 import * as Sentry from '@sentry/electron/main';
 import { logger, getActiveSpan, spanToTraceHeader, getDynamicSamplingContextFromSpan, dynamicSamplingContextToSentryBaggageHeader } from '@sentry/core';
 import { EventEmitter } from "events";
+import { authState } from '../utils/auth-state';
 const WebSocket = require('ws');
 
 export interface ModelsUsed {
@@ -43,6 +44,16 @@ export class PythonClient extends EventEmitter {
       timeout: 60000,
       headers: { "Content-Type": "application/json" }
     });
+
+    // Attach Bearer token to every outgoing HTTP request from the current auth session
+    this.client.interceptors.request.use((config) => {
+      const token = authState.currentAccessToken;
+      if (token) {
+        config.headers = config.headers ?? {};
+        config.headers['Authorization'] = `Bearer ${token}`;
+      }
+      return config;
+    });
   }
 
   public async connect(): Promise<void> {
@@ -51,6 +62,24 @@ export class PythonClient extends EventEmitter {
     } catch (error) {
       console.error('[PythonClient] Background connection failed:', error);
     }
+  }
+
+  /** Close and re-open the WebSocket (called after token refresh so the new token is used). */
+  public reconnect(): void {
+    if (this.ws) {
+      console.log('[PythonClient] Reconnecting WebSocket with refreshed token…');
+      try { this.ws.close(); } catch (_) {}
+      this.ws = null;
+      this.connectionPromise = null;
+    }
+    this.connect().catch(e => console.error('[PythonClient] Reconnect failed:', e));
+  }
+
+  /** Builds the WS URL including the auth token as a query param when available. */
+  private buildWsUrl(path: string): string {
+    const base = `${this.baseUrl.replace('http', 'ws')}${path}`;
+    const token = authState.currentAccessToken;
+    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
   }
 
   private async ensureConnection(): Promise<void> {
@@ -63,8 +92,8 @@ export class PythonClient extends EventEmitter {
     }
 
     this.connectionPromise = new Promise((resolve, reject) => {
-      const wsUrl = `${this.baseUrl.replace('http', 'ws')}/ws/optimize-stream`;
-      console.log(`[PythonClient] Connecting to WebSocket: ${wsUrl}`);
+      const wsUrl = this.buildWsUrl('/ws/optimize-stream');
+      console.log(`[PythonClient] Connecting to WebSocket: ${wsUrl.split('?')[0]}`);
 
       this.ws = new WebSocket(wsUrl);
 
@@ -126,8 +155,10 @@ export class PythonClient extends EventEmitter {
       this.ws.on('close', () => {
         console.log(`[PythonClient] WebSocket closed`);
 
-        // CRITICAL FIX: Resolve/Reject all active requests when socket closes
-        // Otherwise they hang forever if the server disconnects
+        if (this.activeRequests.size > 0) {
+          Sentry.captureMessage(`Python WebSocket closed with ${this.activeRequests.size} pending request(s)`, 'warning');
+        }
+
         for (const [requestId, request] of this.activeRequests.entries()) {
           if (request.accumulated && request.accumulated.length > 0) {
             console.warn(`[PythonClient] Request ${requestId} socket closed but has data, resolving along with warning.`);
@@ -275,6 +306,7 @@ export class PythonClient extends EventEmitter {
           forced_skill: forcedSkill,
           sentry_trace: sentryTrace,
           baggage,
+          user_id: authState.currentUserId || undefined,
         }));
       } catch (error) {
         clearTimeout(timeoutId);
@@ -333,10 +365,12 @@ export class PythonClient extends EventEmitter {
         skip_cache: skipCache,
         messages: messages || null,
         mode,
-        custom_instructions: customInstructions
+        custom_instructions: customInstructions,
+        user_id: authState.currentUserId || undefined,
       });
       return response.data.optimized;
     } catch (error) {
+      Sentry.captureException(error);
       console.error('[PythonClient] Optimization failed:', error);
       throw error;
     }
@@ -345,8 +379,11 @@ export class PythonClient extends EventEmitter {
   async healthCheck(): Promise<boolean> {
     try {
       const response = await this.client.get("/health", { timeout: 5000 });
-      return response.data && response.data.status === "ok";
+      const ok = response.data && response.data.status === "ok";
+      Sentry.addBreadcrumb({ category: 'python', message: `Health check ${ok ? 'passed' : 'failed'}`, level: ok ? 'info' : 'warning' });
+      return ok;
     } catch (error) {
+      Sentry.addBreadcrumb({ category: 'python', message: 'Health check unreachable', level: 'error' });
       return false;
     }
   }

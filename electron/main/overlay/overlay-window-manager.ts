@@ -1,4 +1,5 @@
 import { BrowserWindow, screen, app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 import { forceFocusWindow } from '../utils/native-bridge';
 
@@ -259,6 +260,7 @@ export class OverlayWindowManager {
   private showAndFocus() {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     this.focusWindow();
   }
 
@@ -327,6 +329,7 @@ export class OverlayWindowManager {
   close() {
     if (this.window && !this.window.isDestroyed()) {
       this.isOpen = false;
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay closed', level: 'info' });
       this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
       this.window.blur();
     }

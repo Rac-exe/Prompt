@@ -19,13 +19,13 @@ declare global {
         createCollection: (name: string, icon?: string) => Promise<any>;
         getChats: () => Promise<Array<{ id: string; title: string }>>;
         saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
-        onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => void;
-        onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => void;
-        onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
-        onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
-        onOptimizationError: (callback: (data: { error: string }) => void) => void;
+        onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => () => void;
+        onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => () => void;
+        onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => () => void;
+        onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => () => void;
+        onOptimizationError: (callback: (data: { error: string }) => void) => () => void;
         getSettings: () => Promise<any>;
-        onSettingsUpdate: (callback: (settings: any) => void) => void;
+        onSettingsUpdate: (callback: (settings: any) => void) => () => void;
         newSession: () => void;
         stopGeneration: () => void;
         truncateHistory: (keepCount: number) => void;
@@ -153,6 +153,27 @@ declare global {
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
         onUpdated: (callback: (memory: any) => void) => (() => void);
       };
+
+      // Feedback API
+      feedback: {
+        submit: (data: { rating: 'positive' | 'negative'; comment?: string }) => Promise<{ success: boolean; error?: string }>;
+      };
+
+      // GDPR Account Deletion API
+      deletion: {
+        request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
+        cancel: () => Promise<{ success: boolean; cancelledAt?: string; error?: string }>;
+        status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
+      };
+
+      // Skills API
+      skills: {
+        list: () => Promise<any>;
+      };
+
+      // Python service status
+      onPythonUnavailable: (callback: () => void) => void;
+      onPythonRecovered: (callback: () => void) => void;
     };
   }
 }
@@ -197,19 +218,29 @@ const electronAPI = {
       return ipcRenderer.invoke('overlay:save-to-chat', { chatId, content });
     },
     onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => {
-      ipcRenderer.on('overlay:opened', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:opened', handler);
+      return () => ipcRenderer.removeListener('overlay:opened', handler);
     },
     onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => {
-      ipcRenderer.on('overlay:auth-state', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:auth-state', handler);
+      return () => ipcRenderer.removeListener('overlay:auth-state', handler);
     },
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
-      ipcRenderer.on('overlay:optimization-chunk', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:optimization-chunk', handler);
+      return () => ipcRenderer.removeListener('overlay:optimization-chunk', handler);
     },
     onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => {
-      ipcRenderer.on('overlay:optimization-complete', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:optimization-complete', handler);
+      return () => ipcRenderer.removeListener('overlay:optimization-complete', handler);
     },
     onOptimizationError: (callback: (data: { error: string }) => void) => {
-      ipcRenderer.on('overlay:optimization-error', (_event, data) => callback(data));
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:optimization-error', handler);
+      return () => ipcRenderer.removeListener('overlay:optimization-error', handler);
     },
     onCursorPos: (callback: (data: { x: number; y: number }) => void) => {
       ipcRenderer.on('overlay:cursor-pos', (_event, data) => callback(data));
@@ -218,7 +249,9 @@ const electronAPI = {
       return ipcRenderer.invoke('overlay:get-settings');
     },
     onSettingsUpdate: (callback: (settings: any) => void) => {
-      ipcRenderer.on('overlay:settings-update', (_event, settings) => callback(settings));
+      const handler = (_event: any, settings: any) => callback(settings);
+      ipcRenderer.on('overlay:settings-update', handler);
+      return () => ipcRenderer.removeListener('overlay:settings-update', handler);
     },
     newSession: () => {
       ipcRenderer.send('overlay:new-session');
@@ -511,6 +544,15 @@ const electronAPI = {
   // COMMON API
   // ============================================
   send: (channel: string, data: any) => {
+    const ALLOWED_SEND_CHANNELS = new Set([
+      'overlay:settings-update',
+      'overlay:close',
+      'overlay:ready',
+    ]);
+    if (!ALLOWED_SEND_CHANNELS.has(channel)) {
+      console.warn(`[Preload] Blocked IPC send to unknown channel: ${channel}`);
+      return;
+    }
     ipcRenderer.send(channel, data);
   },
 
@@ -565,6 +607,42 @@ const electronAPI = {
       ipcRenderer.invoke('storage:get-signed-url', { storagePath }),
     openPdf: (storagePath: string) =>
       ipcRenderer.invoke('storage:open-pdf', { storagePath }),
+  },
+
+  // ============================================
+  // FEEDBACK API
+  // ============================================
+  feedback: {
+    submit: (data: { rating: 'positive' | 'negative'; comment?: string }) =>
+      ipcRenderer.invoke('feedback:submit', data),
+  },
+
+  // ============================================
+  // GDPR ACCOUNT DELETION API
+  // ============================================
+  deletion: {
+    request: (reason?: string) => ipcRenderer.invoke('deletion:request', reason),
+    cancel: () => ipcRenderer.invoke('deletion:cancel'),
+    status: () => ipcRenderer.invoke('deletion:status'),
+  },
+
+  // ============================================
+  // DEEP LINK NAVIGATION
+  // ============================================
+  onNavigateToShare: (callback: (routePath: string) => void): (() => void) => {
+    const handler = (_event: any, routePath: string) => callback(routePath);
+    ipcRenderer.on('navigate-to-share', handler);
+    return () => ipcRenderer.removeListener('navigate-to-share', handler);
+  },
+
+  // ============================================
+  // PYTHON SERVICE STATUS
+  // ============================================
+  onPythonUnavailable: (callback: () => void) => {
+    ipcRenderer.on('python:unavailable', () => callback());
+  },
+  onPythonRecovered: (callback: () => void) => {
+    ipcRenderer.on('python:recovered', () => callback());
   },
 
   // ============================================

@@ -95,24 +95,17 @@ export class MemoryAnalyzer {
 
     console.log(`[MemoryAnalyzer] Extracted ${facts.length} facts — upserting...`);
 
-    // ── 3. Upsert into user_memory ──────────────────────────────────────
-    let upsertedCount = 0;
-    for (const fact of facts) {
-      const category = fact.category as MemoryType;
-      if (!['user', 'behavioral', 'context'].includes(category)) continue;
+    // ── 3. Batch upsert into user_memory (3 DB queries regardless of fact count) ──
+    const eligibleFacts = facts
+      .filter((f) => ['user', 'behavioral', 'context'].includes(f.category))
+      .map((f) => ({
+        memoryType: f.category as MemoryType,
+        key: f.key,
+        value: f.value,
+        confidence: f.confidence,
+      }));
 
-      try {
-        const didUpsert = await this.memoryService.upsertInferredEntry(
-          category,
-          fact.key,
-          fact.value,
-          fact.confidence,
-        );
-        if (didUpsert) upsertedCount++;
-      } catch (upsertErr) {
-        console.warn(`[MemoryAnalyzer] Failed to upsert fact "${fact.key}":`, upsertErr);
-      }
-    }
+    const upsertedCount = await this.memoryService.upsertInferredEntries(eligibleFacts);
 
     if (upsertedCount === 0) {
       console.log('[MemoryAnalyzer] All facts skipped (explicit priority or duplicates)');

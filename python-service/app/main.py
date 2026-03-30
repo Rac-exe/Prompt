@@ -1,8 +1,15 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
 import sys
+import os
+from pathlib import Path
+
+# Load .env from the project root BEFORE any pipeline imports so that
+# os.environ is populated when config.py reads OPENROUTER_API_KEY etc.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_path = Path(__file__).parent.parent.parent / ".env"
+    _load_dotenv(dotenv_path=_env_path, override=False)
+except ImportError:
+    pass  # python-dotenv not installed; rely on system env vars
 
 # Force UTF-8 stdout/stderr so emoji and non-ASCII chars don't crash the server
 # on Windows where the default console encoding is cp1252.
@@ -11,7 +18,15 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-import os
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from app.auth import require_auth, require_ws_auth
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -26,18 +41,56 @@ logging.basicConfig(
 logger = logging.getLogger("prmpt")
 
 def _scrub_prompts(event, hint):
+    _pii_words = ("prompt", "content", "message", "text")
+    def _is_pii(k):
+        kl = k.lower()
+        return any(w in kl for w in _pii_words)
+
     if event.get("extra"):
         for key in list(event["extra"].keys()):
-            if any(w in key.lower() for w in ("prompt", "content", "message", "text")):
+            if _is_pii(key):
                 event["extra"][key] = "[REDACTED]"
+
+    for bc in event.get("breadcrumbs", {}).get("values", []):
+        if bc.get("data"):
+            for key in list(bc["data"].keys()):
+                if _is_pii(key):
+                    bc["data"][key] = "[REDACTED]"
+
+    req_data = event.get("request", {}).get("data")
+    if isinstance(req_data, dict):
+        for key in list(req_data.keys()):
+            if _is_pii(key):
+                req_data[key] = "[REDACTED]"
+
+    for exc in event.get("exception", {}).get("values", []):
+        if _is_pii(exc.get("value", "")):
+            exc["value"] = "[REDACTED]"
+        for frame in exc.get("stacktrace", {}).get("frames", []):
+            if frame.get("vars"):
+                for key in list(frame["vars"].keys()):
+                    if _is_pii(key):
+                        frame["vars"][key] = "[REDACTED]"
+
     return event
 
 _is_dev = os.environ.get("APP_ENV", "development") == "development"
 
+_sentry_dsn = os.environ.get("SENTRY_PYTHON_DSN", "")
+_app_env = os.environ.get("APP_ENV", "development")
+_app_version = os.environ.get("APP_VERSION", "0.0.0-dev")
+
+if not _sentry_dsn:
+    logger.warning("[Sentry] SENTRY_PYTHON_DSN is not set — error tracking is disabled")
+if _app_env == "development" and not _is_dev:
+    logger.warning("[Sentry] APP_ENV is unset or 'development' but appears to be a production build — set APP_ENV=production")
+if _app_version == "0.0.0-dev":
+    logger.warning("[Sentry] APP_VERSION is not set — Sentry release will report as 0.0.0-dev")
+
 sentry_sdk.init(
-    dsn=os.environ.get("SENTRY_PYTHON_DSN", ""),
-    release="prmpt-python@0.1.0",
-    environment=os.environ.get("APP_ENV", "development"),
+    dsn=_sentry_dsn,
+    release=f"prmpt-python@{_app_version}",
+    environment=_app_env,
     traces_sample_rate=1.0 if _is_dev else 0.2,
     send_default_pii=False,
     before_send=_scrub_prompts,
@@ -64,33 +117,77 @@ import queue
 import asyncio
 import torch
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        import uuid as _uuid
+        req_id = request.headers.get("x-request-id") or str(_uuid.uuid4())
+        response: StarletteResponse = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        return response
+
 app = FastAPI()
+app.add_middleware(RequestIDMiddleware)
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["60/minute"],
+    application_limits=["200/minute"],
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Preload heavy modules to eliminate cold start latency
-print("[Startup] Loading pipeline_v2 modules...")
+logger.info("Loading pipeline_v2 modules...")
 from pipeline_v2.context import ChatContext
 from pipeline_v2.optimizer import optimize as pipeline_optimize
 from pipeline_v2.config import (
     OPTIMIZER_MODEL, SUMMARIZER_MODEL, TITLE_MODEL, MEMORY_MODEL, OPENROUTER_API_KEY,
 )
 import uuid
-print("[Startup] pipeline_v2 loaded")
+logger.info("pipeline_v2 loaded")
 
 @app.on_event("startup")
 async def startup_event():
-    # Warm up litellm / OpenRouter TLS connections in the background
-    try:
-        print("[Startup] Warming up OpenRouter connection...")
-        import litellm
+    """Single startup handler: warms up OpenRouter + preloads Whisper/VAD in parallel."""
+    loop = asyncio.get_event_loop()
 
-        kwargs = {"model": OPTIMIZER_MODEL, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
-        if OPENROUTER_API_KEY and "openrouter" in OPTIMIZER_MODEL.lower():
-            kwargs["api_key"] = OPENROUTER_API_KEY
+    async def _warmup_openrouter():
+        try:
+            logger.info("Warming up OpenRouter connection...")
+            import litellm as _litellm
+            kwargs: dict = {
+                "model": OPTIMIZER_MODEL,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            }
+            if OPENROUTER_API_KEY and "openrouter" in OPTIMIZER_MODEL.lower():
+                kwargs["api_key"] = OPENROUTER_API_KEY
+            await loop.run_in_executor(None, lambda: _litellm.completion(**kwargs))
+            logger.info("OpenRouter connection warmed up")
+        except Exception as e:
+            logger.warning(f"Warmup failed (harmless if offline): {e}")
 
-        litellm.completion(**kwargs)
-        print("[Startup] OpenRouter connection warmed up")
-    except Exception as e:
-        print(f"[Startup] WARNING: Warmup failed (this is harmless if no internet): {e}")
+    async def _load_whisper():
+        try:
+            logger.info("Preloading faster-whisper model …")
+            await loop.run_in_executor(None, get_faster_whisper_model)
+            logger.info("faster-whisper ready")
+        except Exception as e:
+            logger.warning(f"faster-whisper preload failed: {e}")
+
+    async def _load_vad():
+        try:
+            logger.info("Preloading Silero VAD model …")
+            await loop.run_in_executor(None, get_vad_model)
+            logger.info("Silero VAD ready")
+        except Exception as e:
+            logger.warning(f"Silero VAD preload failed: {e}")
+
+    await asyncio.gather(_warmup_openrouter(), _load_whisper(), _load_vad())
 
 
 # ============================================
@@ -100,13 +197,19 @@ async def startup_event():
 # which prevents the LLM from generating content instead of optimizing prompts
 
 
-# CORS middleware to allow Electron to communicate
+# CORS middleware — defaults to localhost only; set ALLOWED_ORIGINS to override.
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else [
+    "http://127.0.0.1",
+    "http://localhost",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 # Adaptive prompt optimization system with type detection and specialized strategies
@@ -341,14 +444,15 @@ Remember: Output ONLY the improved prompt. Start your response directly with it.
 
 class Message(BaseModel):
     role: str  # "user" or "assistant"
-    content: str
+    content: str = Field(..., max_length=50_000)
 
 class OptimizeRequest(BaseModel):
-    prompt: str
-    skip_cache: Optional[bool] = False  # Set to True to bypass cache (for refresh)
-    messages: Optional[list[Message]] = None  # Chat history for context-aware optimization
-    mode: Optional[str] = "fast"  # new dual-mode toggle ("fast" or "thinking")
-    custom_instructions: Optional[str] = ""  # User's custom prompt instructions
+    prompt: str = Field(..., min_length=3, max_length=50_000)
+    skip_cache: Optional[bool] = False
+    messages: Optional[list[Message]] = Field(None, max_length=100)
+    mode: Optional[str] = "fast"
+    custom_instructions: Optional[str] = Field("", max_length=10_000)
+    user_id: Optional[str] = None
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -356,9 +460,36 @@ class OptimizeResponse(BaseModel):
     model: str = ""
     latency_ms: Optional[float] = None
 
-# Simple in-memory cache (LRU would be better for production)
-prompt_cache: dict[str, str] = {}
-MAX_CACHE_SIZE = 100
+# ── Prompt cache with TTL (SCALE-01) ──────────────────────────────────────────
+from cachetools import TTLCache
+prompt_cache: TTLCache = TTLCache(maxsize=200, ttl=300)  # 200 entries, 5-min TTL
+
+# ── Server-side rate limiting with daily cleanup (SCALE-02) ───────────────────
+import asyncio as _asyncio
+_rate_lock = _asyncio.Lock()
+_rate_counters: dict[str, int] = {}   # key: "<user_id>:<YYYY-MM-DD>"
+_rate_last_date: str = ""
+
+DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_REQUEST_LIMIT", "50"))
+
+_optimize_semaphore = _asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_OPTIMIZATIONS", "50")))
+
+
+async def _check_rate_limit(user_id: str) -> bool:
+    """Return True if the user may proceed, False if daily limit reached."""
+    from datetime import datetime, timezone
+    global _rate_last_date
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = f"{user_id}:{today}"
+    async with _rate_lock:
+        if _rate_last_date != today:
+            _rate_counters.clear()
+            _rate_last_date = today
+        count = _rate_counters.get(key, 0)
+        if count >= DAILY_REQUEST_LIMIT:
+            return False
+        _rate_counters[key] = count + 1
+        return True
 
 def clean_optimized_text(text: str) -> str:
     """Remove markdown code blocks and other formatting artifacts."""
@@ -391,7 +522,12 @@ def clean_optimized_text(text: str) -> str:
     return text.strip()
 
 @app.post("/optimize", response_model=OptimizeResponse)
-async def optimize_prompt(request: OptimizeRequest):
+async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require_auth)):
+    # Derive user_id from verified JWT rather than trusting request body
+    user_id = auth.get("sub") or request.user_id
+    if user_id:
+        sentry_sdk.set_user({"id": user_id})
+
     start_time = time.time()
 
     if not request.prompt or len(request.prompt.strip()) < 3:
@@ -403,11 +539,11 @@ async def optimize_prompt(request: OptimizeRequest):
     if request.skip_cache:
         unique_id = str(int(time.time() * 1000000))  # Microsecond precision
         prompt_text = f"{prompt_text}\n\n[REGENERATE_{unique_id}]"
-        print(f"[Optimize] Regenerate request - added unique ID: {unique_id}")
+        logger.info(f"Regenerate request - added unique ID: {unique_id}")
 
     # Check cache (skip if refresh requested)
     if not request.skip_cache and prompt_text in prompt_cache:
-        print(f"[Optimize] Cache hit - returning cached result")
+        logger.info(f"Cache hit - returning cached result")
         latency = (time.time() - start_time) * 1000
         return OptimizeResponse(
             optimized=prompt_cache[prompt_text],
@@ -448,16 +584,13 @@ async def optimize_prompt(request: OptimizeRequest):
         
         optimized = clean_optimized_text(optimized_raw)
 
-        print(f"[Optimize] Original length: {len(clean_prompt)} chars")
-        print(f"[Optimize] Optimized length: {len(optimized)} chars")
+        logger.info(f"Original length: {len(clean_prompt)} chars")
+        logger.info(f"Optimized length: {len(optimized)} chars")
         if len(clean_prompt) > 0:
-            print(f"[Optimize] Improvement ratio: {len(optimized)/len(clean_prompt):.2f}x")
+            logger.info(f"Improvement ratio: {len(optimized)/len(clean_prompt):.2f}x")
 
-        # Cache the result
-        cache_key = request.prompt.strip()
-        if len(prompt_cache) >= MAX_CACHE_SIZE:
-            prompt_cache.pop(next(iter(prompt_cache)))
-        prompt_cache[cache_key] = optimized
+        # Cache the result (TTLCache handles eviction automatically)
+        prompt_cache[request.prompt.strip()] = optimized
 
         latency = (time.time() - start_time) * 1000
 
@@ -469,21 +602,26 @@ async def optimize_prompt(request: OptimizeRequest):
         )
 
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         error_msg = str(e)
         if "model" in error_msg.lower() or "not found" in error_msg.lower():
             raise HTTPException(
                 status_code=500,
                 detail="Model not found. Please ensure Ollama is running and the model is installed (e.g., 'ollama pull llama3.2')"
             )
-        raise HTTPException(status_code=500, detail=f"Optimization failed: {error_msg}")
+        logger.error(f"Optimization failed: {error_msg}")
+        raise HTTPException(status_code=500, detail="Optimization failed — please try again")
 
 @app.websocket("/ws/optimize-stream")
 async def optimize_stream(websocket: WebSocket):
     """
     WebSocket endpoint for streaming prompt optimization using pipeline_v2.
+    Auth token must be passed as ?token=<access_token> query param.
     """
+    auth = await require_ws_auth(websocket)
     await websocket.accept()
-    print("[OptimizeStream] WebSocket connection accepted")
+    verified_user_id = auth.get("sub")
+    logger.info(f"WebSocket connection accepted user={verified_user_id}")
     
     try:
         while True:
@@ -499,9 +637,25 @@ async def optimize_stream(websocket: WebSocket):
             forced_skill = data.get("forced_skill", None)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
+            # Use JWT-verified user id; fall back to request body only for legacy local mode
+            user_id = verified_user_id or data.get("user_id")
+
+            if user_id:
+                sentry_sdk.set_user({"id": user_id})
+
+            # Server-side rate limit check (enforced even for direct WebSocket connections)
+            if user_id:
+                allowed = await _check_rate_limit(user_id)
+                if not allowed:
+                    await websocket.send_json({
+                        "type": "error",
+                        "request_id": request_id,
+                        "message": f"Daily limit of {DAILY_REQUEST_LIMIT} optimizations reached. Resets at midnight UTC.",
+                    })
+                    continue
 
             is_regeneration = bool(previous_output and previous_output.strip())
-            print(f"[OptimizeStream] Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
+            logger.info(f"Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
 
             # Continue distributed trace from Electron so Python spans are linked.
             if sentry_trace:
@@ -557,28 +711,44 @@ async def optimize_stream(websocket: WebSocket):
                     content_str = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
                     cc.add(role_str, content_str)
             
-            with transaction:
+            async with _optimize_semaphore:
+             with transaction:
               try:
                 models_info = {}
-                # Call pipeline configured for streaming, returning a generator
-                stream_gen = pipeline_optimize(
-                    user_input=prompt_text,
-                    cc=cc,
-                    model=OPTIMIZER_MODEL,
-                    provider="auto",
-                    stream=True,
-                    mode=mode,
-                    custom_instructions=custom_instructions,
-                    attached_files=attached_files,
-                    forced_skill=forced_skill,
-                    previous_output=previous_output,
-                    models_info=models_info,
-                )
-                
+                loop = asyncio.get_event_loop()
+                chunk_queue: asyncio.Queue = asyncio.Queue()
+
+                def run_stream():
+                    """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""
+                    try:
+                        gen = pipeline_optimize(
+                            user_input=prompt_text,
+                            cc=cc,
+                            model=OPTIMIZER_MODEL,
+                            provider="auto",
+                            stream=True,
+                            mode=mode,
+                            custom_instructions=custom_instructions,
+                            attached_files=attached_files,
+                            forced_skill=forced_skill,
+                            previous_output=previous_output,
+                            models_info=models_info,
+                        )
+                        for chunk in gen:
+                            loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
+                    finally:
+                        loop.call_soon_threadsafe(chunk_queue.put_nowait, None)  # sentinel
+
+                # Start blocking generator in thread — event loop stays free for other requests
+                thread_future = loop.run_in_executor(None, run_stream)
+
                 accumulated_text = ""
                 chunk_count = 0
-                
-                for chunk in stream_gen:
+
+                while True:
+                    chunk = await chunk_queue.get()
+                    if chunk is None:
+                        break
                     accumulated_text += chunk
                     chunk_count += 1
                     await websocket.send_json({
@@ -587,7 +757,9 @@ async def optimize_stream(websocket: WebSocket):
                         "content": chunk,
                         "accumulated": accumulated_text
                     })
-                
+
+                await thread_future  # Propagate any thread exceptions
+
                 cleaned_text = clean_optimized_text(accumulated_text)
                 
                 await websocket.send_json({
@@ -604,45 +776,57 @@ async def optimize_stream(websocket: WebSocket):
                     level="info",
                     data={"request_id": request_id, "chunk_count": chunk_count, "mode": mode},
                 )
-                print(f"[OptimizeStream] Request {request_id} complete. Chunks: {chunk_count}")
+                logger.info(f"Request {request_id} complete. Chunks: {chunk_count}")
                 
               except Exception as e:
                 logger.error(f"OptimizeStream.request_error request_id={request_id} error={e}")
                 sentry_sdk.capture_exception(e)
-                print(f"[OptimizeStream] ✗ Error processing request {request_id}: {e}")
+                logger.error(f"✗ Error processing request {request_id}: {e}")
                 import traceback
                 traceback.print_exc()
                 await websocket.send_json({
                     "type": "error",
                     "request_id": request_id,
-                    "message": f"Optimization failed: {str(e)}"
+                    "message": "Optimization failed. Please try again."
                 })
                 
     except WebSocketDisconnect:
         logger.info("OptimizeStream.client_disconnected")
-        print("[OptimizeStream] Client disconnected")
+        logger.info("Client disconnected")
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"OptimizeStream.fatal_error error={e}")
-        print(f"[OptimizeStream] ✗ Fatal connection error: {e}")
+        logger.error(f"✗ Fatal connection error: {e}")
     finally:
         pass # Connection closed
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
-    return {
-        "status": "ok",
-        "service": "prompt-optimizer",
-        "api_ready": True
-    }
+    """Lightweight liveness probe."""
+    return {"status": "ok", "service": "prompt-optimizer"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """Readiness probe — checks that critical dependencies are available."""
+    checks: dict = {}
+    checks["llm_api_key"] = bool(OPENROUTER_API_KEY)
+    checks["optimizer_model"] = bool(OPTIMIZER_MODEL)
+    try:
+        get_faster_whisper_model()
+        checks["whisper_model"] = True
+    except Exception:
+        checks["whisper_model"] = False
+    all_ok = all(checks.values())
+    return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 
 class TitleRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(..., max_length=50_000)
 
 
 @app.post("/generate-title")
-async def generate_title(request: TitleRequest):
+async def generate_title(request: TitleRequest, auth: dict = Depends(require_auth)):
     """
     Generate a short smart chat title (3-5 words) from the first user message.
     Uses TITLE_MODEL (defaults to SUMMARIZER_MODEL — cheap & fast).
@@ -685,12 +869,12 @@ async def generate_title(request: TitleRequest):
         words = raw_title.split()[:5]
         title = " ".join(words) if words else "New Chat"
 
-        print(f"[TitleGen] '{prompt_text[:50]}' -> '{title}'")
+        logger.info(f"'{prompt_text[:50]}' -> '{title}'")
         return {"title": title}
 
     except Exception as exc:
-        logger.warning(f"TitleGen.llm_failed error={exc.__class__.__name__}: {exc}")
-        print(f"[TitleGen] LLM failed ({exc.__class__.__name__}: {exc}), using fallback")
+        logger.error(f"TitleGen.llm_failed error={exc.__class__.__name__}: {exc}")
+        logger.error(f"LLM failed ({exc.__class__.__name__}: {exc}), using fallback")
         return {"title": "New Chat"}
 
 
@@ -706,9 +890,9 @@ class MemoryFact(BaseModel):
 
 
 class ExtractMemoryRequest(BaseModel):
-    raw_prompt: str
-    optimized_text: str
-    skill: Optional[str] = None
+    raw_prompt: str = Field(..., max_length=50_000)
+    optimized_text: str = Field(..., max_length=50_000)
+    skill: Optional[str] = Field(None, max_length=200)
 
 
 class ExtractMemoryResponse(BaseModel):
@@ -740,7 +924,7 @@ Example output:
 
 
 @app.post("/extract-memory-facts", response_model=ExtractMemoryResponse)
-async def extract_memory_facts(request: ExtractMemoryRequest):
+async def extract_memory_facts(request: ExtractMemoryRequest, auth: dict = Depends(require_auth)):
     """
     Extract user facts from a raw prompt + optimized output.
     Uses a cheap/fast model (same as optimizer) for minimal cost.
@@ -801,7 +985,7 @@ async def extract_memory_facts(request: ExtractMemoryRequest):
 
         parsed = json.loads(cleaned)
         if not isinstance(parsed, list):
-            print(f"[MemoryExtract] Expected array, got {type(parsed)}")
+            logger.info(f"Expected array, got {type(parsed)}")
             return ExtractMemoryResponse(facts=[])
 
         valid_categories = {"user", "behavioral", "context"}
@@ -821,16 +1005,16 @@ async def extract_memory_facts(request: ExtractMemoryRequest):
                     confidence=min(conf, 0.95),  # cap inferred confidence below explicit (1.0)
                 ))
 
-        print(f"[MemoryExtract] Extracted {len(facts)} facts in {latency_ms}ms")
+        logger.info(f"Extracted {len(facts)} facts in {latency_ms}ms")
         return ExtractMemoryResponse(facts=facts)
 
     except json.JSONDecodeError as je:
         logger.warning(f"MemoryExtract.json_parse_error error={je}")
-        print(f"[MemoryExtract] JSON parse error: {je}")
+        logger.error(f"JSON parse error: {je}")
         return ExtractMemoryResponse(facts=[])
     except Exception as exc:
         logger.error(f"MemoryExtract.error error={exc.__class__.__name__}: {exc}")
-        print(f"[MemoryExtract] Error: {exc.__class__.__name__}: {exc}")
+        logger.error(f"Error: {exc.__class__.__name__}: {exc}")
         return ExtractMemoryResponse(facts=[])
 
 
@@ -865,7 +1049,7 @@ VAD_SPEECH_THRESH  = 0.5    # confidence threshold (0–1)
 VAD_MIN_SPEECH_MS  = 250    # ignore speech bursts shorter than this
 
 # Debug WAV output
-DEBUG_WAV_COUNT  = 3
+DEBUG_WAV_COUNT  = 3 if _is_dev else 0
 _debug_wav_saved = 0
 
 # Sentinel object placed on audio_queue by the capture thread after
@@ -886,9 +1070,9 @@ def get_faster_whisper_model() -> WhisperModel:
     """
     global _fw_model
     if _fw_model is None:
-        print("[FW] Loading faster-whisper 'small' (int8) …")
+        logger.info("Loading faster-whisper 'small' (int8) …")
         _fw_model = WhisperModel("small", device="cpu", compute_type="int8")
-        print("[FW] faster-whisper model ready")
+        logger.info("faster-whisper model ready")
     return _fw_model
 
 
@@ -899,7 +1083,7 @@ def get_vad_model():
     """
     global _vad_model, _vad_utils
     if _vad_model is None:
-        print("[VAD] Loading Silero VAD model …")
+        logger.info("Loading Silero VAD model …")
         import torch
         _vad_model, _vad_utils = torch.hub.load(
             repo_or_dir = "snakers4/silero-vad",
@@ -908,7 +1092,7 @@ def get_vad_model():
             onnx        = False,
         )
         _vad_model.eval()
-        print("[VAD] Silero VAD ready")
+        logger.info("Silero VAD ready")
     return _vad_model, _vad_utils
 
 
@@ -925,7 +1109,7 @@ def _vad_has_speech(audio_f32: np.ndarray) -> bool:
         vad_model, utils = get_vad_model()
         get_speech_timestamps = utils[0]  # first util function
 
-        print(f"[VAD] audio length: {len(audio_f32) / WHISPER_RATE:.2f} seconds")
+        logger.info(f"audio length: {len(audio_f32) / WHISPER_RATE:.2f} seconds")
 
         # Silero requires a 1-D, float32, contiguous tensor at 16 kHz
         audio_tensor = torch.from_numpy(audio_f32).float().squeeze().contiguous()
@@ -944,13 +1128,13 @@ def _vad_has_speech(audio_f32: np.ndarray) -> bool:
         total_speech_s = sum(
             (ts["end"] - ts["start"]) / WHISPER_RATE for ts in speech_ts
         )
-        print(f"[VAD] segments={len(speech_ts)}  "
+        logger.info(f"segments={len(speech_ts)}  "
               f"total_speech={total_speech_s:.2f}s  "
               f"has_speech={has_speech}")
         return has_speech
 
     except Exception as e:
-        print(f"[VAD] Error — falling back to pass-through: {e}")
+        logger.error(f"Error — falling back to pass-through: {e}")
         # If VAD fails for any reason, let the segment through so
         # we don't silently drop valid audio.
         return True
@@ -969,7 +1153,7 @@ def _resample(audio_int16: np.ndarray, src_rate: int) -> np.ndarray:
     up  = WHISPER_RATE // g
     dn  = src_rate      // g
 
-    print(f"[Resample] {src_rate} Hz -> {WHISPER_RATE} Hz  (up={up}, dn={dn})")
+    logger.info(f"{src_rate} Hz -> {WHISPER_RATE} Hz  (up={up}, dn={dn})")
     audio_f32 = audio_int16.astype(np.float32) / 32768.0
     resampled  = resample_poly(audio_f32, up, dn).astype(np.float32)
     return resampled
@@ -988,9 +1172,9 @@ def _save_debug_wav(audio_int16: np.ndarray, capture_rate: int, tag: str = ""):
             wf.setsampwidth(2)          # int16 = 2 bytes
             wf.setframerate(capture_rate)
             wf.writeframes(audio_int16.tobytes())
-        print(f"[Debug] Saved {fname} ({len(audio_int16)/capture_rate:.2f}s @ {capture_rate} Hz)")
+        logger.info(f"Saved {fname} ({len(audio_int16)/capture_rate:.2f}s @ {capture_rate} Hz)")
     except Exception as e:
-        print(f"[Debug] Failed to save WAV: {e}")
+        logger.error(f"Failed to save WAV: {e}")
 
 
 class TranscriptionSession:
@@ -1010,10 +1194,10 @@ class TranscriptionSession:
 
     def start_recording(self):
         if self.is_recording:
-            print("[Transcription] Already recording")
+            logger.info("Already recording")
             return
 
-        print("[Transcription] ===== STARTING RECORDING SESSION =====")
+        logger.info("===== STARTING RECORDING SESSION =====")
         self.is_recording     = True
         self.accumulated_text = ""
         self.capture_rate     = 0
@@ -1022,24 +1206,24 @@ class TranscriptionSession:
         while not self.audio_queue.empty():
             try: self.audio_queue.get_nowait()
             except: break
-        print("[Transcription] Audio queue cleared")
+        logger.info("Audio queue cleared")
 
         self.audio_thread = threading.Thread(
             target=self._capture_audio, daemon=True, name="audio-capture"
         )
         self.audio_thread.start()
-        print("[Transcription] Audio capture thread started")
+        logger.info("Audio capture thread started")
 
         self.transcription_thread = threading.Thread(
             target=self._transcribe_loop, daemon=True, name="transcribe-loop"
         )
         self.transcription_thread.start()
-        print("[Transcription] Transcription thread started")
-        print("[Transcription] ===== SESSION ACTIVE =====")
+        logger.info("Transcription thread started")
+        logger.info("===== SESSION ACTIVE =====")
 
     def stop_recording(self):
-        print("[Transcription] ===== STOPPING RECORDING SESSION =====")
-        print("[Transcription] stop requested")
+        logger.info("===== STOPPING RECORDING SESSION =====")
+        logger.info("stop requested")
         # Set flag — the capture thread will see this, exit its loop,
         # and THEN place STOP_SIGNAL on the queue.  This guarantees every
         # captured chunk is enqueued before the sentinel.
@@ -1067,7 +1251,7 @@ class TranscriptionSession:
         audio  = None
         stream = None
         try:
-            print("[Capture] Initialising PyAudio …")
+            logger.info("Initialising PyAudio …")
             audio = pyaudio.PyAudio()
 
             # ── Discover native device rate ─────────────────────
@@ -1076,13 +1260,13 @@ class TranscriptionSession:
                 native_rate = int(dev_info["defaultSampleRate"])
                 dev_name    = dev_info["name"]
             except Exception as e:
-                print(f"[Capture] Could not query default device: {e}. Falling back to 44100 Hz")
+                logger.info(f"Could not query default device: {e}. Falling back to 44100 Hz")
                 native_rate = 44_100
                 dev_name    = "unknown"
 
-            print(f"[Capture] Device  : {dev_name}")
-            print(f"[Capture] Native rate: {native_rate} Hz")
-            print(f"[Capture] Channels: {CAPTURE_CHANS}  |  Chunk: {CAPTURE_CHUNK} frames")
+            logger.info(f"Device  : {dev_name}")
+            logger.info(f"Native rate: {native_rate} Hz")
+            logger.info(f"Channels: {CAPTURE_CHANS}  |  Chunk: {CAPTURE_CHUNK} frames")
 
             self.capture_rate = native_rate
 
@@ -1093,7 +1277,7 @@ class TranscriptionSession:
                 input=True,
                 frames_per_buffer=CAPTURE_CHUNK,
             )
-            print("[Capture] Stream opened — recording …")
+            logger.info("Stream opened — recording …")
 
             chunk_count       = 0
             debug_chunks_left = 5    # log first N chunks in detail
@@ -1104,7 +1288,7 @@ class TranscriptionSession:
                 try:
                     raw = stream.read(CAPTURE_CHUNK, exception_on_overflow=False)
                 except IOError as e:
-                    print(f"[Capture] Stream read error: {e}")
+                    logger.error(f"Stream read error: {e}")
                     break
 
                 chunk_count += 1
@@ -1113,33 +1297,34 @@ class TranscriptionSession:
 
                 if debug_chunks_left > 0:
                     dur_ms = len(chunk_arr) / native_rate * 1000
-                    print(f"[Capture] chunk #{chunk_count}: "
+                    logger.info(f"chunk #{chunk_count}: "
                           f"{len(chunk_arr)} samples  {dur_ms:.1f} ms  "
                           f"RMS={rms:.1f}  min={chunk_arr.min()}  max={chunk_arr.max()}")
                     debug_chunks_left -= 1
                 elif chunk_count % 50 == 0:
                     dur_s = chunk_count * CAPTURE_CHUNK / native_rate
-                    print(f"[Capture] {chunk_count} chunks ({dur_s:.1f}s recorded)  RMS={rms:.1f}")
+                    logger.info(f"{chunk_count} chunks ({dur_s:.1f}s recorded)  RMS={rms:.1f}")
 
                 # Always enqueue the chunk BEFORE checking the stop flag so
                 # the very last chunk captured is never lost.
                 self.audio_queue.put(chunk_arr)
 
                 if not self.is_recording:
-                    print("[Capture] stop flag received — exiting capture loop")
+                    logger.info("stop flag received — exiting capture loop")
                     break
 
-            print(f"[Capture] Stopped — {chunk_count} chunks captured "
+            logger.info(f"Stopped — {chunk_count} chunks captured "
                   f"({chunk_count * CAPTURE_CHUNK / native_rate:.1f}s)")
 
             # Place STOP_SIGNAL *after* the last chunk so the transcription
             # thread is guaranteed to see every audio frame before the sentinel.
             self.audio_queue.put(STOP_SIGNAL)
             stop_signal_sent = True
-            print("[Capture] STOP_SIGNAL placed after last chunk")
+            logger.info("STOP_SIGNAL placed after last chunk")
 
         except Exception as e:
-            print(f"[Capture] FATAL: {e}")
+            sentry_sdk.capture_exception(e)
+            logger.error(f"FATAL: {e}")
             import traceback; traceback.print_exc()
             if self.event_loop:
                 asyncio.run_coroutine_threadsafe(
@@ -1152,14 +1337,14 @@ class TranscriptionSession:
             # transcription thread never blocks forever.
             if not stop_signal_sent:
                 self.audio_queue.put(STOP_SIGNAL)
-                print("[Capture] STOP_SIGNAL placed in finally (error path)")
+                logger.info("STOP_SIGNAL placed in finally (error path)")
             if stream:
                 try: stream.stop_stream(); stream.close()
                 except: pass
             if audio:
                 try: audio.terminate()
                 except: pass
-            print("[Capture] PyAudio cleaned up")
+            logger.info("PyAudio cleaned up")
 
     # ── transcription loop ───────────────────────────────────────
 
@@ -1170,7 +1355,7 @@ class TranscriptionSession:
         Live partial results are sent while recording; a final
         result is sent when the session ends.
         """
-        print("[TranscLoop] Starting …")
+        logger.info("Starting …")
         model = get_faster_whisper_model()
 
         # ── Wait for capture thread to open the mic and set capture_rate ──
@@ -1181,7 +1366,7 @@ class TranscriptionSession:
             waited += 0.05
 
         if self.capture_rate == 0:
-            print("[TranscLoop] capture_rate never set after "
+            logger.info("capture_rate never set after "
                   f"{wait_limit}s — microphone may not be available")
             self._flush_final_if_needed(is_final=True)
             return
@@ -1205,17 +1390,22 @@ class TranscriptionSession:
         vad_check_frames = 0
         VAD_CHECK_INTERVAL = int(0.3 * cap_rate)
 
-        print(f"[TranscLoop] capture_rate={cap_rate} Hz  "
+        logger.info(f"capture_rate={cap_rate} Hz  "
               f"max_buffer={MAX_SPEECH_S}s ({max_frames} frames)  "
               f"silence_endpoint=0.6s ({SILENCE_ENDPOINT_FRAMES} frames)  "
               f"overlap={OVERLAP_SECONDS}s ({overlap_frames} frames)")
 
         # ── sentinel-based drain loop ─────────────────────────────
         while True:
-            chunk = self.audio_queue.get()   # blocks until something arrives
+            try:
+                chunk = self.audio_queue.get(timeout=60.0)  # 60 s hard stop — never block forever
+            except queue.Empty:
+                logger.info("Queue timeout (60 s) — session may be orphaned, exiting")
+                self._flush_final_if_needed(is_final=True)
+                return
 
             if chunk is STOP_SIGNAL:
-                print("[TranscLoop] STOP signal received — draining complete")
+                logger.info("STOP signal received — draining complete")
                 break
 
             buffer.append(chunk)
@@ -1226,7 +1416,7 @@ class TranscriptionSession:
             vad_check_frames += len(chunk)
 
             if buffer_frames % (cap_rate * 2) < len(chunk):   # log every ~2 s
-                print(f"[TranscLoop] buffer={buffer_frames/cap_rate:.1f}s  "
+                logger.info(f"buffer={buffer_frames/cap_rate:.1f}s  "
                       f"queue_size={self.audio_queue.qsize()}  "
                       f"speech_active={speech_active}")
 
@@ -1254,7 +1444,7 @@ class TranscriptionSession:
             if (speech_active
                     and silence_frames >= SILENCE_ENDPOINT_FRAMES
                     and buffer_frames > 0):
-                print(f"[TranscLoop] endpoint trigger "
+                logger.info(f"endpoint trigger "
                       f"({buffer_frames/cap_rate:.1f}s buffered, "
                       f"{silence_frames/cap_rate:.2f}s silence)")
                 audio_int16   = np.concatenate(buffer)
@@ -1268,7 +1458,7 @@ class TranscriptionSession:
 
             # 2. Overflow trigger (hard cap to prevent memory growth)
             elif buffer_frames >= max_frames:
-                print(f"[TranscLoop] overflow trigger "
+                logger.info(f"overflow trigger "
                       f"({buffer_frames/cap_rate:.1f}s buffered)")
                 audio_int16 = np.concatenate(buffer)
                 if len(audio_int16) > overlap_frames:
@@ -1287,7 +1477,7 @@ class TranscriptionSession:
                       and buffer_frames >= int(MIN_SPEECH_S * cap_rate)):
                 elapsed = time.time() - last_infer_t
                 if elapsed >= MIN_SPEECH_S:
-                    print(f"[TranscLoop] live trigger "
+                    logger.info(f"live trigger "
                           f"({buffer_frames/cap_rate:.1f}s buffered)")
                     audio_int16 = np.concatenate(buffer)
                     if len(audio_int16) > overlap_frames:
@@ -1305,18 +1495,18 @@ class TranscriptionSession:
         # Whisper hallucinates on the leftover silence.
         if buffer_frames > 0 and has_speech_since_last_emit:
             total_s = buffer_frames / cap_rate
-            print(f"[TranscLoop] final inference on {total_s:.2f}s of audio")
+            logger.info(f"final inference on {total_s:.2f}s of audio")
             audio_int16 = np.concatenate(buffer)
             self._infer(model, audio_int16, cap_rate, is_final=True)
         else:
             if buffer_frames > 0:
-                print(f"[TranscLoop] Skipping final — no new speech since last emit "
+                logger.info(f"Skipping final — no new speech since last emit "
                       f"({buffer_frames/cap_rate:.2f}s of silence/overlap)")
             else:
-                print("[TranscLoop] No audio captured")
+                logger.info("No audio captured")
             self._flush_final_if_needed(is_final=True)
 
-        print("[TranscLoop] Done")
+        logger.info("Done")
 
     # ── inference ────────────────────────────────────────────────
 
@@ -1337,7 +1527,7 @@ class TranscriptionSession:
         in _transcribe_loop() instead.
         """
         tag = "FINAL" if is_final else "live"
-        print(f"[Infer] CALLED with audio length: {len(audio_int16)}"
+        logger.info(f"CALLED with audio length: {len(audio_int16)}"
               f" ({len(audio_int16)/cap_rate:.2f}s @ {cap_rate} Hz)")
 
         # ── 1. Raw buffer quality metrics ────────────────────────────────
@@ -1346,50 +1536,50 @@ class TranscriptionSession:
         raw_peak       = int(np.abs(audio_int16).max())
         raw_db         = 20 * math.log10(raw_rms / 32768.0 + 1e-9)
 
-        print(f"[Infer:{tag}] raw buffer  dur={raw_duration_s:.2f}s  "
+        logger.info(f"raw buffer  dur={raw_duration_s:.2f}s  "
               f"RMS={raw_rms:.1f}  peak={raw_peak}  dB={raw_db:.1f}")
 
         # ── 2. Debug WAV ──────────────────────────────────────────────────
         _save_debug_wav(audio_int16, cap_rate, tag=f"_{tag.lower()}")
 
         # ── 3. Resample to WHISPER_RATE ───────────────────────────────────
-        print(f"[Infer:{tag}] resampling {cap_rate} Hz -> {WHISPER_RATE} Hz ...")
+        logger.info(f"resampling {cap_rate} Hz -> {WHISPER_RATE} Hz ...")
         audio_f32 = _resample(audio_int16, cap_rate)
 
         resampled_dur = len(audio_f32) / WHISPER_RATE
         resampled_rms = float(np.sqrt(np.mean(audio_f32 ** 2)))
-        print(f"[Infer:{tag}] resampled  dur={resampled_dur:.2f}s  "
+        logger.info(f"resampled  dur={resampled_dur:.2f}s  "
               f"RMS_f32={resampled_rms:.4f}  "
               f"min={audio_f32.min():.4f}  max={audio_f32.max():.4f}")
 
         # ── 4. Duration gate (bypassed for final inference) ──────────────
-        print(f"[Infer:{tag}] duration: {resampled_dur:.3f}s  "
+        logger.info(f"duration: {resampled_dur:.3f}s  "
               f"(minimum: {MIN_INFER_DURATION_S}s)")
         if resampled_dur < MIN_INFER_DURATION_S and not is_final:
-            print(f"[Infer:{tag}] SKIP: duration too short (non-final)")
+            logger.info(f"SKIP: duration too short (non-final)")
             self._flush_final_if_needed(is_final)
             return
         if is_final and resampled_dur < 0.3:
-            print(f"[Infer:{tag}] SKIP: final segment too short (<0.3s)")
+            logger.info(f"SKIP: final segment too short (<0.3s)")
             self._flush_final_if_needed(is_final)
             return
 
         # ── 5. RMS gate ───────────────────────────────────────────────────
-        print(f"[Infer:{tag}] RMS: {resampled_rms:.5f}  "
+        logger.info(f"RMS: {resampled_rms:.5f}  "
               f"(threshold: {MIN_INFER_RMS})")
         if resampled_rms < MIN_INFER_RMS:
-            print(f"[Infer:{tag}] SKIP: RMS below threshold (dead signal)")
+            logger.info(f"SKIP: RMS below threshold (dead signal)")
             self._flush_final_if_needed(is_final)
             return
 
         # ── 6. Zero-Crossing Rate (diagnostic) ───────────────────────────
         zcr_total  = np.sum(np.abs(np.diff(audio_f32 > 0)))
         zcr_rate   = zcr_total / max(len(audio_f32) - 1, 1)
-        print(f"[Infer:{tag}] ZCR={zcr_rate:.4f} crossings/sample  "
+        logger.info(f"ZCR={zcr_rate:.4f} crossings/sample  "
               f"({zcr_total} total)")
 
         # ── 7. faster-whisper inference ────────────────────────────────────
-        print(f"[Infer:{tag}] starting faster-whisper inference …")
+        logger.info(f"starting faster-whisper inference …")
         t0 = time.time()
         try:
             segments_gen, info = model.transcribe(
@@ -1407,7 +1597,8 @@ class TranscriptionSession:
             # Materialise the lazy generator
             segments = list(segments_gen)
         except Exception as e:
-            print(f"[Infer:{tag}] faster-whisper error: {e}")
+            sentry_sdk.capture_exception(e)
+            logger.error(f"faster-whisper error: {e}")
             import traceback; traceback.print_exc()
             self._flush_final_if_needed(is_final)
             return
@@ -1415,7 +1606,7 @@ class TranscriptionSession:
         elapsed_ms = int((time.time() - t0) * 1000)
         detected_lang = getattr(info, "language", "?")
         lang_prob     = getattr(info, "language_probability", 0.0)
-        print(f"[Infer:{tag}] inference done in {elapsed_ms}ms  "
+        logger.info(f"inference done in {elapsed_ms}ms  "
               f"lang={detected_lang} ({lang_prob:.2f})")
 
         # Log individual segments
@@ -1424,16 +1615,16 @@ class TranscriptionSession:
             nsp = getattr(seg, "no_speech_prob", None)
             nsp_str = f"{nsp:.3f}" if nsp is not None else "?"
             text = seg.text.strip()
-            print(f"  segment[{i}]  [{seg.start:.2f}s-{seg.end:.2f}s]  "
+            logger.info(f"  segment[{i}]  [{seg.start:.2f}s-{seg.end:.2f}s]  "
                   f"no_speech={nsp_str}  '{text}'")
             if text:
                 raw_parts.append(text)
 
         raw_text = " ".join(raw_parts).strip()
-        print(f"[Infer:{tag}] combined result: '{raw_text}'")
+        logger.info(f"combined result: '{raw_text}'")
 
         if not raw_text:
-            print(f"[Infer:{tag}] empty output — skipping")
+            logger.info(f"empty output — skipping")
             self._flush_final_if_needed(is_final)
             return
 
@@ -1454,7 +1645,7 @@ class TranscriptionSession:
         else:
             self.accumulated_text = raw_text
 
-        print(f"[Infer:{tag}] accumulated: '{self.accumulated_text}'")
+        logger.info(f"accumulated: '{self.accumulated_text}'")
 
         self._send({
             "type":        "final" if is_final else "transcription",
@@ -1483,36 +1674,51 @@ class TranscriptionSession:
 # Active transcription sessions
 active_sessions: dict[str, TranscriptionSession] = {}
 
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up active sessions on SIGTERM/SIGINT."""
+    logger.info("[Shutdown] Cleaning up active transcription sessions...")
+    for sid, sess in list(active_sessions.items()):
+        try:
+            sess.stop_recording()
+        except Exception:
+            pass
+    active_sessions.clear()
+    logger.info("[Shutdown] Cleanup complete — server stopping.")
+
+
 @app.websocket("/ws/transcribe")
 async def websocket_transcribe(websocket: WebSocket):
-    """WebSocket endpoint for continuous transcription."""
+    """WebSocket endpoint for continuous transcription. Auth via ?token= query param."""
+    auth = await require_ws_auth(websocket)
     await websocket.accept()
-    logger.info("WebSocket.transcription_connected")
-    print("[WebSocket] Client connected")
+    logger.info(f"WebSocket.transcription_connected user={auth.get('sub')}")
+    logger.info("Client connected")
     session_id = None
     event_loop = asyncio.get_event_loop()
 
     try:
         while True:
             data = await websocket.receive_json()
-            print(f"[WebSocket] Received message: {data}")
+            logger.info(f"Received message: {data}")
 
             if data["action"] == "start":
                 session_id = data.get("session_id", f"session_{int(time.time())}")
                 logger.info(f"WebSocket.transcription_start session_id={session_id}")
-                print(f"[WebSocket] Starting transcription session: {session_id}")
+                logger.info(f"Starting transcription session: {session_id}")
                 session = TranscriptionSession(websocket, event_loop)
                 active_sessions[session_id] = session
                 session.start_recording()
-                print(f"[WebSocket] Recording started for session: {session_id}")
+                logger.info(f"Recording started for session: {session_id}")
                 await websocket.send_json({"type": "status", "status": "listening", "session_id": session_id})
 
             elif data["action"] == "stop":
-                print(f"[WebSocket] Received stop request for session: {session_id}")
+                logger.info(f"Received stop request for session: {session_id}")
                 if session_id and session_id in active_sessions:
                     session = active_sessions[session_id]
                     session.stop_recording()
-                    print(f"[WebSocket] Stopping recording for session: {session_id}")
+                    logger.info(f"Stopping recording for session: {session_id}")
 
                     # Wait for the transcription thread to drain the queue and
                     # deliver the final result — poll in short increments so we
@@ -1528,24 +1734,24 @@ async def websocket_transcribe(websocket: WebSocket):
                         waited += poll_interval_s
 
                     if waited >= max_wait_s:
-                        print(f"[WebSocket] WARNING: transcription thread did not finish within {max_wait_s}s")
+                        logger.warning(f"transcription thread did not finish within {max_wait_s}s")
 
-                    print(f"[WebSocket] Transcription thread finished after {waited:.1f}s")
+                    logger.info(f"Transcription thread finished after {waited:.1f}s")
                     del active_sessions[session_id]
                     await websocket.send_json({"type": "status", "status": "stopped"})
                 else:
-                    print(f"[WebSocket] WARNING: Stop requested but no active session found: {session_id}")
+                    logger.warning(f"Stop requested but no active session found: {session_id}")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket.transcription_disconnected session_id={session_id}")
-        print(f"[WebSocket] Client disconnected (session: {session_id})")
+        logger.info(f"Client disconnected (session: {session_id})")
         if session_id and session_id in active_sessions:
             session = active_sessions[session_id]
             session.stop_recording()
             del active_sessions[session_id]
     except Exception as e:
         logger.error(f"WebSocket.transcription_error session_id={session_id} error={e}")
-        print(f"[WebSocket] Error in websocket handler: {e}")
+        logger.error(f"Error in websocket handler: {e}")
         import traceback
         traceback.print_exc()
         if session_id and session_id in active_sessions:
@@ -1565,22 +1771,6 @@ async def root():
         }
     }
 
-@app.on_event("startup")
-async def startup_event():
-    """Preload faster-whisper and Silero VAD models at startup."""
-    print("[Startup] Preloading faster-whisper model …")
-    try:
-        get_faster_whisper_model()
-        print("[Startup] faster-whisper ready")
-    except Exception as e:
-        print(f"[Startup] Warning: faster-whisper preload failed: {e}")
-
-    print("[Startup] Preloading Silero VAD model …")
-    try:
-        get_vad_model()
-        print("[Startup] Silero VAD ready")
-    except Exception as e:
-        print(f"[Startup] Warning: Silero VAD preload failed: {e}")
 
 if __name__ == "__main__":
     import uvicorn

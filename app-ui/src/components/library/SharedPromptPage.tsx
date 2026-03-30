@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import * as Sentry from "@sentry/react";
 import { Copy, Check, ArrowLeft, Loader2, FileText, User, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -30,6 +31,12 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
 
   useEffect(() => {
     if (!token) return;
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Loading shared prompt view",
+      level: "info",
+      data: { tokenLength: token.length },
+    });
     setLoading(true);
     setLoadError(null);
 
@@ -42,6 +49,10 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
       .then((data: SharedPromptData) => setPrompt(data))
       .catch((err: any) => {
         console.error("[SharedPromptPage] Failed to load:", err);
+        Sentry.captureException(err, {
+          tags: { component: "shared-prompt-page", action: "load" },
+          extra: { tokenLength: token.length },
+        });
         setLoadError(err?.message || "Failed to load the shared prompt.");
       })
       .finally(() => setLoading(false));
@@ -50,6 +61,12 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
   const handleCopy = () => {
     if (!prompt) return;
     navigator.clipboard.writeText(prompt.content);
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Shared prompt copied",
+      level: "info",
+      data: { promptId: prompt.id },
+    });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({ title: "Copied!", description: "Prompt copied to clipboard." });

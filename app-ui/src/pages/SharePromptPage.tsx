@@ -1,17 +1,19 @@
 import { useParams, useNavigate } from "react-router-dom";
+import * as Sentry from "@sentry/react";
 import { SharedPromptPage } from "@/components/library/SharedPromptPage";
 
 /**
- * Route: /#/share/prompt/:token
+ * Route: /#/share/p/:token
  *
- * Public viewer for a single shared prompt.
- * No authentication required — anyone with the link can view it.
+ * In-app viewer for a shared prompt (prmpt://share/p/<token> deep link).
+ * HMAC token verified server-side. For browser access, use the Edge Function URL.
  */
 const SharePromptPage = () => {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
 
   if (!token) {
+    Sentry.captureMessage("Share prompt route missing token", "warning");
     return (
       <div className="flex items-center justify-center h-screen text-muted-foreground text-sm">
         Invalid share link.

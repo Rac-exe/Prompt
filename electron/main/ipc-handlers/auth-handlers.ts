@@ -46,6 +46,7 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
         // Set auth state from the locally-stored session token — no network required
         authState.isAuthenticated = true;
         authState.currentUserId = session.user.id;
+        authState.currentAccessToken = session.access_token ?? null;
         console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
         // handleSuccessfulAuth already handles online/offline branching for data loading
@@ -130,8 +131,8 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
             };
         }
 
-        Sentry.setUser({ id: user.id, email: user.email });
-        appWindowManager.send('sentry:set-user', { id: user.id, email: user.email });
+        Sentry.setUser({ id: user.id });
+        appWindowManager.send('sentry:set-user', { id: user.id });
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
 
         // 1. Send Auth State
@@ -473,6 +474,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             // Set auth state from local session (no network needed for this)
             authState.isAuthenticated = true;
             authState.currentUserId = session.user.id;
+            authState.currentAccessToken = session.access_token ?? null;
             console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
             // If checkAndRestoreSession already ran handleSuccessfulAuth on startup,

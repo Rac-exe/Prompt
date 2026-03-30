@@ -6,10 +6,7 @@ mod keymap;
 #[cfg(target_os = "windows")]
 mod replacement;
 
-use napi::threadsafe_function::{
-    ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction,
-};
-use napi::JsFunction;
+use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +55,7 @@ pub fn get_active_window_title() -> String {
 ///
 /// Idempotent — calling twice has no effect.
 #[napi]
-pub fn start_hook(callback: JsFunction) -> napi::Result<()> {
+pub fn start_hook(callback: ThreadsafeFunction<hook::TriggerData>) -> napi::Result<()> {
     #[cfg(not(target_os = "windows"))]
     {
         eprintln!("[NativeHook] start_hook: Windows only. No-op.");
@@ -67,22 +64,7 @@ pub fn start_hook(callback: JsFunction) -> napi::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        // Build the ThreadsafeFunction that converts TriggerData → JS object.
-        let tsfn: ThreadsafeFunction<hook::TriggerData, ErrorStrategy::Fatal> =
-            callback.create_threadsafe_function(
-                0, // queue depth 0 = unlimited
-                |ctx: ThreadSafeCallContext<hook::TriggerData>| {
-                    let mut obj = ctx.env.create_object()?;
-                    obj.set_named_property("hwnd", ctx.env.create_int64(ctx.value.hwnd)?)?;
-                    obj.set_named_property(
-                        "triggerLen",
-                        ctx.env.create_uint32(ctx.value.trigger_len)?,
-                    )?;
-                    Ok(vec![obj.into_unknown()])
-                },
-            )?;
-
-        hook::start(tsfn)
+        hook::start(callback)
     }
 }
 
