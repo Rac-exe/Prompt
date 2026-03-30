@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ThumbsUp, ThumbsDown, X } from "lucide-react";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
 import {
     Dialog,
     DialogContent,
@@ -49,19 +49,18 @@ export const FeedbackModal = ({
     };
 
     return (
-        <Dialog open={open} onOpenChange={handleClose}>
+        <Dialog
+            open={open}
+            onOpenChange={(nextOpen) => {
+                if (!nextOpen) {
+                    handleClose();
+                }
+            }}
+        >
             <DialogContent className="sm:max-w-md bg-card border-border">
                 <DialogHeader>
-                    <DialogTitle className="text-foreground flex items-center justify-between">
+                    <DialogTitle className="text-foreground">
                         {submitted ? "Thank you!" : "Rate this prompt"}
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={handleClose}
-                            className="h-6 w-6 rounded-full hover:bg-secondary"
-                        >
-                            <X className="h-4 w-4" />
-                        </Button>
                     </DialogTitle>
                     <DialogDescription className="text-muted-foreground">
                         {submitted
