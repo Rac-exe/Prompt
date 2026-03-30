@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import * as Sentry from "@sentry/react";
 import {
   FolderPlus, Star, Folder, MoreVertical,
   Pencil, Trash2, Library, Search, Share2, Link,
@@ -91,9 +92,16 @@ export const PromptLibrary = ({
     setLinkError("");
     const route = parseShareLink(pastedLink);
     if (!route) {
+      Sentry.captureMessage("Invalid pasted share link format", "warning");
       setLinkError("Invalid link. Make sure you copied the full prmpt://share/c/... link from the Share modal.");
       return;
     }
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Opened shared link from pasted input",
+      level: "info",
+      data: { routePath: route },
+    });
     setOpenLinkDialogOpen(false);
     setPastedLink("");
     setLinkError("");

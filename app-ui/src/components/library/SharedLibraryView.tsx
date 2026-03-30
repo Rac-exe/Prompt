@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import * as Sentry from "@sentry/react";
 import {
   User,
   Library,
@@ -95,6 +96,12 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
   // ── Fetch shared library ──────────────────────────────────────────────────
   useEffect(() => {
     if (!token) return;
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Loading shared library view",
+      level: "info",
+      data: { tokenLength: token.length },
+    });
     setLoading(true);
     setLoadError(null);
 
@@ -106,6 +113,10 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
       .then((data: SharedLibraryData) => setLibrary(data))
       .catch((err: any) => {
         console.error("[SharedLibraryView] Failed to load:", err);
+        Sentry.captureException(err, {
+          tags: { component: "shared-library-view", action: "load" },
+          extra: { tokenLength: token.length },
+        });
         setLoadError(err?.message || "Failed to load the shared library.");
       })
       .finally(() => setLoading(false));
@@ -125,6 +136,12 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
         throw new Error("Electron API not available");
       }
 
+      Sentry.addBreadcrumb({
+        category: "sharing",
+        message: "Shared library saved by recipient",
+        level: "info",
+        data: { libraryId: library.id, alreadyExisted: result.alreadyExisted },
+      });
       setSaved(true);
       toast({
         title: result.alreadyExisted ? "Already saved" : "Library saved!",
@@ -136,6 +153,10 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
       onSaved?.(result.collection.id);
     } catch (err: any) {
       console.error("[SharedLibraryView] Save error:", err);
+      Sentry.captureException(err, {
+        tags: { component: "shared-library-view", action: "save" },
+        extra: { libraryId: library?.id || "unknown" },
+      });
       toast({
         title: "Error",
         description: err?.message || "Failed to save the library.",

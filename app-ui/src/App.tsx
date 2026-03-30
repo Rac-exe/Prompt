@@ -17,6 +17,12 @@ function DeepLinkListener() {
   const navigate = useNavigate();
   useEffect(() => {
     const cleanup = window.electronAPI?.onNavigateToShare?.((routePath: string) => {
+      Sentry.addBreadcrumb({
+        category: "sharing",
+        message: "Renderer received deep-link route",
+        level: "info",
+        data: { routePath },
+      });
       // routePath is already the full validated route, e.g. /share/c/<token>
       navigate(routePath);
     });

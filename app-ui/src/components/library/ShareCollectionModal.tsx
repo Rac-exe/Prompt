@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import * as Sentry from "@sentry/react";
 import { Share2, Check, Link as LinkIcon, Loader2, Smartphone } from "lucide-react";
 import {
   Dialog,
@@ -36,6 +37,12 @@ export const ShareCollectionModal = ({
   // Fetch / generate share link when modal opens
   useEffect(() => {
     if (!open || !collection.id) return;
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Share collection modal opened",
+      level: "info",
+      data: { collectionId: collection.id },
+    });
     setLoading(true);
     setShareUrl("");
     setShareToken("");
@@ -44,11 +51,21 @@ export const ShareCollectionModal = ({
       window.electronAPI.promptLibrary
         .getShareLink(collection.id)
         .then(({ shareToken: token, shareUrl: url }) => {
+          Sentry.addBreadcrumb({
+            category: "sharing",
+            message: "Collection share link generated",
+            level: "info",
+            data: { collectionId: collection.id, tokenLength: token?.length || 0 },
+          });
           setShareToken(token);
           setShareUrl(url);
         })
         .catch((err: any) => {
           console.error("[ShareCollectionModal] Error generating share link:", err);
+          Sentry.captureException(err, {
+            tags: { component: "share-collection-modal", action: "generate-link" },
+            extra: { collectionId: collection.id },
+          });
           toast({
             title: "Error",
             description: err?.message || "Failed to generate share link.",
@@ -69,6 +86,12 @@ export const ShareCollectionModal = ({
   const handleCopy = () => {
     if (!shareUrl) return;
     navigator.clipboard.writeText(shareUrl);
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Collection share link copied",
+      level: "info",
+      data: { collectionId: collection.id, tokenLength: shareToken?.length || 0 },
+    });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({

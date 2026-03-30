@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
 import { authState } from '../utils/auth-state';
 import { localCache } from '../database/local-cache';
@@ -386,12 +387,22 @@ ipcMain.handle('prompt-library:toggle-favorite', async (event, { promptId }) => 
 ipcMain.handle('prompt-library:get-share-link', async (event, { collectionId }) => {
     try {
         if (!authState.isAuthenticated) throw new Error('Not authenticated');
+        Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'IPC get collection share link',
+            level: 'info',
+            data: { collectionId, userId: authState.currentUserId || 'unknown' },
+        });
         console.log('[IPC] prompt-library:get-share-link:', collectionId);
         const result = await getService().getOrCreateShareToken(collectionId);
         console.log('[IPC] ✅ Share token generated for collection:', collectionId);
         return result; // { shareToken, shareUrl }
     } catch (error: any) {
         console.error('[IPC] ❌ Error generating share link:', error);
+        Sentry.captureException(error, {
+            tags: { component: 'prompt-library-handlers', handler: 'prompt-library:get-share-link' },
+            extra: { collectionId },
+        });
         throw error;
     }
 });
@@ -399,36 +410,66 @@ ipcMain.handle('prompt-library:get-share-link', async (event, { collectionId }) 
 ipcMain.handle('prompt-library:get-prompt-share-link', async (event, { promptId }) => {
     try {
         if (!authState.isAuthenticated) throw new Error('Not authenticated');
+        Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'IPC get prompt share link',
+            level: 'info',
+            data: { promptId, userId: authState.currentUserId || 'unknown' },
+        });
         console.log('[IPC] prompt-library:get-prompt-share-link:', promptId);
         const result = await getService().getOrCreatePromptShareToken(promptId);
         console.log('[IPC] ✅ Share token generated for prompt:', promptId);
         return result; // { shareToken, shareUrl, webUrl }
     } catch (error: any) {
         console.error('[IPC] ❌ Error generating prompt share link:', error);
+        Sentry.captureException(error, {
+            tags: { component: 'prompt-library-handlers', handler: 'prompt-library:get-prompt-share-link' },
+            extra: { promptId },
+        });
         throw error;
     }
 });
 
 ipcMain.handle('prompt-library:get-shared-prompt', async (event, { token }) => {
     try {
+        Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'IPC get shared prompt',
+            level: 'info',
+            data: { tokenLength: token?.length || 0 },
+        });
         console.log('[IPC] prompt-library:get-shared-prompt:', token);
         const result = await getService().getSharedPrompt(token);
         console.log('[IPC] ✅ Shared prompt loaded:', result.id);
         return result;
     } catch (error: any) {
         console.error('[IPC] ❌ Error loading shared prompt:', error);
+        Sentry.captureException(error, {
+            tags: { component: 'prompt-library-handlers', handler: 'prompt-library:get-shared-prompt' },
+            extra: { tokenLength: token?.length || 0 },
+        });
         throw error;
     }
 });
 
 ipcMain.handle('prompt-library:get-shared-collection', async (event, { token }) => {
     try {
+        Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'IPC get shared collection',
+            level: 'info',
+            data: { tokenLength: token?.length || 0, userId: authState.currentUserId || 'anonymous' },
+        });
         console.log('[IPC] prompt-library:get-shared-collection:', token);
         const result = await getService().getSharedCollection(token);
         console.log('[IPC] ✅ Shared collection loaded:', result.id);
         return result;
     } catch (error: any) {
         console.error('[IPC] ❌ Error loading shared collection:', error);
+        Sentry.captureException(error, {
+            tags: { component: 'prompt-library-handlers', handler: 'prompt-library:get-shared-collection' },
+            extra: { tokenLength: token?.length || 0, userId: authState.currentUserId || null },
+        });
         throw error;
     }
 });
@@ -437,6 +478,12 @@ ipcMain.handle('prompt-library:save-shared-collection', async (event, { original
     try {
         if (!authState.isAuthenticated) throw new Error('Not authenticated');
         const userId = authState.currentUserId;
+        Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'IPC save shared collection',
+            level: 'info',
+            data: { originalCollectionId, userId: userId || 'unknown' },
+        });
         console.log('[IPC] prompt-library:save-shared-collection:', originalCollectionId);
         const result = await getService().saveSharedCollection(originalCollectionId);
 
@@ -454,6 +501,10 @@ ipcMain.handle('prompt-library:save-shared-collection', async (event, { original
         return result; // { collection, alreadyExisted }
     } catch (error: any) {
         console.error('[IPC] ❌ Error saving shared collection:', error);
+        Sentry.captureException(error, {
+            tags: { component: 'prompt-library-handlers', handler: 'prompt-library:save-shared-collection' },
+            extra: { originalCollectionId, userId: authState.currentUserId || null },
+        });
         throw error;
     }
 });

@@ -530,6 +530,16 @@ if (!gotTheLock) {
   function handleDeepLink(url: string): void {
     try {
       const parsed = new URL(url);
+      Sentry.addBreadcrumb({
+        category: 'sharing',
+        message: 'Deep link received',
+        level: 'info',
+        data: {
+          protocol: parsed.protocol,
+          host: parsed.hostname,
+          pathLength: parsed.pathname.length,
+        },
+      });
 
       // Only handle prmpt:// share links
       if (parsed.protocol !== 'prmpt:' || parsed.hostname !== 'share') return;
@@ -541,20 +551,34 @@ if (!gotTheLock) {
       const [typePrefix, token] = parts;
       const routeBase = SHARE_PATH_MAP[typePrefix];
 
-      // Hard-whitelist check + HMAC token format validation
+      // Hard-whitelist check + token format validation
       if (!routeBase || !VALID_SHARE_TOKEN.test(token)) return;
 
       if (appWindowManager) {
         appWindowManager.show();
         const win = appWindowManager.getWindow();
         if (win && !win.isDestroyed()) {
+          Sentry.addBreadcrumb({
+            category: 'sharing',
+            message: 'Deep link routed to renderer',
+            level: 'info',
+            data: {
+              typePrefix,
+              tokenLength: token.length,
+              routeBase,
+            },
+          });
           // Send the full route path — renderer calls navigate(routePath) directly
           win.webContents.send('navigate-to-share', `${routeBase}/${token}`);
         }
       }
-    } catch {
-      // Swallow all errors — never let a malformed URL surface to the user
-      // or reveal app internals via error messages
+    } catch (error) {
+      Sentry.captureException(error, {
+        level: 'warning',
+        tags: { component: 'deep-link' },
+        extra: { urlPrefix: typeof url === 'string' ? url.slice(0, 24) : 'unknown' },
+      });
+      // Swallow all errors — never let malformed URLs crash app startup flow
     }
   }
 

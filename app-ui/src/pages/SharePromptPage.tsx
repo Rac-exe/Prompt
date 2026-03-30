@@ -1,4 +1,5 @@
 import { useParams, useNavigate } from "react-router-dom";
+import * as Sentry from "@sentry/react";
 import { SharedPromptPage } from "@/components/library/SharedPromptPage";
 
 /**
@@ -12,6 +13,7 @@ const SharePromptPage = () => {
   const navigate = useNavigate();
 
   if (!token) {
+    Sentry.captureMessage("Share prompt route missing token", "warning");
     return (
       <div className="flex items-center justify-center h-screen text-muted-foreground text-sm">
         Invalid share link.

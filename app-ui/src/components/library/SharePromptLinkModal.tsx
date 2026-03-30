@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import * as Sentry from "@sentry/react";
 import { Share2, Link as LinkIcon, Check, Loader2, Globe } from "lucide-react";
 import {
   Dialog,
@@ -32,6 +33,12 @@ export const SharePromptLinkModal = ({
   // Generate / fetch share link when modal opens
   useEffect(() => {
     if (!open || !prompt.id) return;
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Share prompt modal opened",
+      level: "info",
+      data: { promptId: prompt.id },
+    });
     setLoading(true);
     setWebUrl("");
 
@@ -41,9 +48,21 @@ export const SharePromptLinkModal = ({
         : Promise.reject(new Error("Electron API not available"));
 
     req
-      .then(({ webUrl: url }: { webUrl: string }) => setWebUrl(url))
+      .then(({ webUrl: url }: { webUrl: string }) => {
+        Sentry.addBreadcrumb({
+          category: "sharing",
+          message: "Prompt web share link generated",
+          level: "info",
+          data: { promptId: prompt.id },
+        });
+        setWebUrl(url);
+      })
       .catch((err: any) => {
         console.error("[SharePromptLinkModal] Error:", err);
+        Sentry.captureException(err, {
+          tags: { component: "share-prompt-modal", action: "generate-link" },
+          extra: { promptId: prompt.id },
+        });
         toast({
           title: "Error",
           description: err?.message || "Failed to generate share link.",
@@ -57,6 +76,12 @@ export const SharePromptLinkModal = ({
   const handleCopy = () => {
     if (!webUrl) return;
     navigator.clipboard.writeText(webUrl);
+    Sentry.addBreadcrumb({
+      category: "sharing",
+      message: "Prompt web share link copied",
+      level: "info",
+      data: { promptId: prompt.id },
+    });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({ title: "Copied!", description: "Share link copied to clipboard." });
