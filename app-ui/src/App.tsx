@@ -16,8 +16,9 @@ const queryClient = new QueryClient();
 function DeepLinkListener() {
   const navigate = useNavigate();
   useEffect(() => {
-    const cleanup = window.electronAPI?.onNavigateToShare?.((token: string) => {
-      navigate(`/share/${token}`);
+    const cleanup = window.electronAPI?.onNavigateToShare?.((routePath: string) => {
+      // routePath is already the full validated route, e.g. /share/c/<token>
+      navigate(routePath);
     });
     return () => cleanup?.();
   }, [navigate]);
@@ -42,9 +43,11 @@ const App = () => {
           <HashRouter>
             <DeepLinkListener />
             <Routes>
-              {/* Share routes are intentionally OUTSIDE AuthWrapper so anyone can view */}
-              <Route path="/share/:token" element={<SharePage />} />
-              <Route path="/share/prompt/:token" element={<SharePromptPage />} />
+              {/* Share routes — outside AuthWrapper */}
+              {/* Collections require app auth (handled inside SharedLibraryView via IPC) */}
+              <Route path="/share/c/:token" element={<SharePage />} />
+              {/* Prompts viewable in-app; web viewers use the Edge Function URL */}
+              <Route path="/share/p/:token" element={<SharePromptPage />} />
               {/* All other routes require authentication */}
               <Route
                 path="/*"

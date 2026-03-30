@@ -134,9 +134,7 @@ const Index = () => {
     originalCreatorName: c.original_creator_name || undefined,
   }));
 
-  const mapPrompts = (raw: any[], collectionList?: Collection[]) => raw.map((p: any) => {
-    // Find the collection's originalCreatorName so each prompt inherits it
-    const col = collectionList?.find((c) => c.id === p.collection_id);
+  const mapPrompts = (raw: any[], _collectionList?: Collection[]) => raw.map((p: any) => {
     return {
       id: p.id,
       title: p.title,
@@ -144,7 +142,9 @@ const Index = () => {
       collectionId: p.collection_id,
       sourceChat: p.metadata?.source_chat,
       createdAt: new Date(p.created_at),
-      originalCreatorName: col?.originalCreatorName,
+      // Attribution is prompt-level. Only prompts copied from a shared library
+      // carry this metadata; new prompts in the same collection stay untagged.
+      originalCreatorName: p.metadata?.shared_origin_creator_name || undefined,
     };
   });
 
@@ -1039,9 +1039,6 @@ Your prompt was: "${content}"`;
           { source_chat: recentChats.find((c) => c.id === selectedChatId)?.title }
         );
 
-        // Find original creator name from collection
-        const col = collections.find((c) => c.id === targetCollectionId);
-
         // Update local state
         setSavedPrompts((prev) => [{
           id: savedPrompt.id,
@@ -1050,7 +1047,7 @@ Your prompt was: "${content}"`;
           collectionId: savedPrompt.collection_id,
           sourceChat: savedPrompt.metadata?.source_chat,
           createdAt: new Date(savedPrompt.created_at),
-          originalCreatorName: col?.originalCreatorName,
+          originalCreatorName: savedPrompt.metadata?.shared_origin_creator_name || undefined,
         }, ...prev]);
         setSavedPromptIds((prev) => [...prev, promptToSave.id]);
 

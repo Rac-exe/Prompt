@@ -402,7 +402,7 @@ ipcMain.handle('prompt-library:get-prompt-share-link', async (event, { promptId 
         console.log('[IPC] prompt-library:get-prompt-share-link:', promptId);
         const result = await getService().getOrCreatePromptShareToken(promptId);
         console.log('[IPC] ✅ Share token generated for prompt:', promptId);
-        return result; // { shareToken, shareUrl }
+        return result; // { shareToken, shareUrl, webUrl }
     } catch (error: any) {
         console.error('[IPC] ❌ Error generating prompt share link:', error);
         throw error;

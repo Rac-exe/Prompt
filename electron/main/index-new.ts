@@ -494,39 +494,67 @@ if (!gotTheLock) {
   app.quit();
 } else {
   // ============================================
-  // DEEP LINK PROTOCOL: promptweaver://share/<token>
+  // DEEP LINK PROTOCOL: prmpt://share/<type>/<token>
   // ============================================
-  // Register the custom protocol so the OS routes promptweaver:// URLs to us.
+  // Register the custom protocol so the OS routes prmpt:// URLs to us.
   if (process.defaultApp) {
     if (process.argv.length >= 2) {
-      app.setAsDefaultProtocolClient('promptweaver', process.execPath, [process.argv[1]]);
+      app.setAsDefaultProtocolClient('prmpt', process.execPath, [process.argv[1]]);
     }
   } else {
-    app.setAsDefaultProtocolClient('promptweaver');
+    app.setAsDefaultProtocolClient('prmpt');
   }
 
   /**
-   * Extract a share token from a protocol URL such as:
-   *   promptweaver://share/abc123
+   * Token validation regex: base64url characters only, 20–50 chars.
+   * Matches randomBytes(24).toString('base64url') output (32 chars).
+   * Bounded length prevents oversized input abuse.
+   */
+  const VALID_SHARE_TOKEN = /^[A-Za-z0-9_-]{20,50}$/;
+
+  /**
+   * Hard-whitelisted path prefixes → React Router route prefixes.
+   * "c" = collection (app-only), "p" = prompt (app deep-link).
+   * Anything not in this map is silently discarded.
+   */
+  const SHARE_PATH_MAP: Record<string, string> = {
+    c: '/share/c',
+    p: '/share/p',
+  };
+
+  /**
+   * Handle a prmpt:// deep link URL.
+   * Expected shape: prmpt://share/<c|p>/<hmac_token>
+   * Sends the validated route path to the renderer via navigate-to-share.
    */
   function handleDeepLink(url: string): void {
     try {
       const parsed = new URL(url);
 
-      // ── Share deep link: promptweaver://share/<token> ──────────────────────
-      if (parsed.hostname === 'share') {
-        const token = parsed.pathname.replace(/^\//, '');
-        if (token && /^[a-zA-Z0-9_-]+$/.test(token) && appWindowManager) {
-          appWindowManager.show();
-          const win = appWindowManager.getWindow();
-          if (win && !win.isDestroyed()) {
-            win.webContents.send('navigate-to-share', token);
-          }
+      // Only handle prmpt:// share links
+      if (parsed.protocol !== 'prmpt:' || parsed.hostname !== 'share') return;
+
+      // pathname = "/<type>/<token>" — strip leading slash then split
+      const parts = parsed.pathname.replace(/^\//, '').split('/');
+      if (parts.length !== 2) return;
+
+      const [typePrefix, token] = parts;
+      const routeBase = SHARE_PATH_MAP[typePrefix];
+
+      // Hard-whitelist check + HMAC token format validation
+      if (!routeBase || !VALID_SHARE_TOKEN.test(token)) return;
+
+      if (appWindowManager) {
+        appWindowManager.show();
+        const win = appWindowManager.getWindow();
+        if (win && !win.isDestroyed()) {
+          // Send the full route path — renderer calls navigate(routePath) directly
+          win.webContents.send('navigate-to-share', `${routeBase}/${token}`);
         }
       }
-    } catch (err) {
-      console.error('[Main] Failed to handle deep link:', url, err);
-      Sentry.captureException(err, { tags: { component: 'deep-link' }, extra: { url } });
+    } catch {
+      // Swallow all errors — never let a malformed URL surface to the user
+      // or reveal app internals via error messages
     }
   }
 
@@ -542,7 +570,7 @@ if (!gotTheLock) {
       appWindowManager.show();
     }
     // The last arg may be the protocol URL on Windows
-    const url = commandLine.find((arg) => arg.startsWith('promptweaver://'));
+    const url = commandLine.find((arg) => arg.startsWith('prmpt://'));
     if (url) handleDeepLink(url);
   });
 
@@ -556,7 +584,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(async () => {
     // Handle protocol URL passed on startup (Windows/Linux first-launch)
-    const startUrl = process.argv.find((arg) => arg.startsWith('promptweaver://'));
+    const startUrl = process.argv.find((arg) => arg.startsWith('prmpt://'));
     if (startUrl) {
       // Defer until the window is ready
       app.once('browser-window-created', () => {

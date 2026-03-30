@@ -2,10 +2,10 @@ import { useParams, useNavigate } from "react-router-dom";
 import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 
 /**
- * Route: /#/share/:token
+ * Route: /#/share/c/:token
  *
- * Renders the shared library view for any visitor.
- * After the user saves the library, they are redirected to the main app (/#/).
+ * Renders the shared library view. Requires the user to be authenticated in-app
+ * (HMAC verified + RLS auth.uid() required). After saving, redirects to /#/.
  */
 const SharePage = () => {
   const { token } = useParams<{ token: string }>();

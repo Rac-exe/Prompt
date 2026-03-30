@@ -1,17 +1,55 @@
 import { useState, useMemo } from "react";
 import {
   FolderPlus, Star, Folder, MoreVertical,
-  Pencil, Trash2, Library, Search, Share2,
+  Pencil, Trash2, Library, Search, Share2, Link,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { PromptCard, SavedPrompt } from "./PromptCard";
 import { ShareCollectionModal } from "./ShareCollectionModal";
+
+/**
+ * Parses a prmpt:// share link entirely client-side and returns the
+ * React Router route path to navigate to, or null if invalid.
+ *
+ * Uses plain string parsing instead of new URL() — custom schemes like
+ * prmpt:// can behave inconsistently across environments with the URL API.
+ *
+ * Expected shapes:
+ *   prmpt://share/c/<hmac_token>   → /share/c/<token>  (collection)
+ *   prmpt://share/p/<hmac_token>   → /share/p/<token>  (prompt)
+ */
+function parseShareLink(input: string): string | null {
+  try {
+    const trimmed = input.trim();
+    const PREFIX = 'prmpt://share/';
+    if (!trimmed.toLowerCase().startsWith(PREFIX)) return null;
+
+    const rest = trimmed.slice(PREFIX.length);
+    const slashIdx = rest.indexOf('/');
+    if (slashIdx === -1) return null;
+
+    const type = rest.slice(0, slashIdx);
+    const token = rest.slice(slashIdx + 1).trim();
+
+    if (type !== 'c' && type !== 'p') return null;
+    // Matches randomBytes(24).toString('base64url') — 32 base64url chars
+    if (!/^[A-Za-z0-9_-]{20,50}$/.test(token)) return null;
+
+    return `/share/${type}/${token}`;
+  } catch {
+    return null;
+  }
+}
 
 export interface Collection {
   id: string;
@@ -37,6 +75,7 @@ export const PromptLibrary = ({
   collections, prompts, onCreateCollection, onRenameCollection,
   onDeleteCollection, onCopyPrompt, onEditPrompt, onDeletePrompt, onOpenPrompt,
 }: PromptLibraryProps) => {
+  const navigate = useNavigate();
   const [selectedCollection, setSelectedCollection] = useState<string>("all");
   const [isCreating, setIsCreating] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState("");
@@ -44,6 +83,22 @@ export const PromptLibrary = ({
   const [editName, setEditName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [shareModalCollection, setShareModalCollection] = useState<Collection | null>(null);
+  const [openLinkDialogOpen, setOpenLinkDialogOpen] = useState(false);
+  const [pastedLink, setPastedLink] = useState("");
+  const [linkError, setLinkError] = useState("");
+
+  const handleOpenSharedLink = () => {
+    setLinkError("");
+    const route = parseShareLink(pastedLink);
+    if (!route) {
+      setLinkError("Invalid link. Make sure you copied the full prmpt://share/c/... link from the Share modal.");
+      return;
+    }
+    setOpenLinkDialogOpen(false);
+    setPastedLink("");
+    setLinkError("");
+    navigate(route);
+  };
 
   const handleCreateCollection = () => {
     if (newCollectionName.trim()) {
@@ -131,6 +186,16 @@ export const PromptLibrary = ({
                 New Collection
               </button>
             )}
+
+            {/* Open shared link */}
+            <button
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-foreground transition-smooth mb-1"
+              onClick={() => { setPastedLink(""); setLinkError(""); setOpenLinkDialogOpen(true); }}
+              data-testid="open-share-link-button"
+            >
+              <Link className="w-3.5 h-3.5 flex-shrink-0" />
+              Open Shared Link
+            </button>
 
             {/* Collection list */}
             {collections.map((collection) => {
@@ -310,6 +375,42 @@ export const PromptLibrary = ({
         collection={{ id: shareModalCollection.id, name: shareModalCollection.name }}
       />
     )}
+
+    {/* Open Shared Link Dialog */}
+    <Dialog open={openLinkDialogOpen} onOpenChange={(open) => { setOpenLinkDialogOpen(open); if (!open) { setPastedLink(""); setLinkError(""); } }}>
+      <DialogContent className="sm:max-w-[460px] bg-card border-border">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-foreground">
+            <Link className="w-4 h-4 text-emerald" />
+            Open Shared Link
+          </DialogTitle>
+          <DialogDescription className="text-muted-foreground">
+            Paste a <span className="font-mono text-foreground text-xs">prmpt://</span> share link to view a shared collection or prompt.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 pt-1">
+          <Input
+            placeholder="prmpt://share/c/..."
+            value={pastedLink}
+            onChange={(e) => { setPastedLink(e.target.value); setLinkError(""); }}
+            onKeyDown={(e) => e.key === "Enter" && handleOpenSharedLink()}
+            className="bg-secondary border-border font-mono text-xs"
+            autoFocus
+          />
+          {linkError && (
+            <p className="text-xs text-destructive">{linkError}</p>
+          )}
+          <Button
+            onClick={handleOpenSharedLink}
+            disabled={!pastedLink.trim()}
+            className="w-full bg-emerald text-white hover:bg-emerald/90 font-semibold"
+          >
+            Open
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   </>
   );
 };

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Share2, Link as LinkIcon, Check, Loader2 } from "lucide-react";
+import { Share2, Link as LinkIcon, Check, Loader2, Globe } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +25,7 @@ export const SharePromptLinkModal = ({
   onOpenChange,
   prompt,
 }: SharePromptLinkModalProps) => {
-  const [shareUrl, setShareUrl] = useState("");
+  const [webUrl, setWebUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -33,7 +33,7 @@ export const SharePromptLinkModal = ({
   useEffect(() => {
     if (!open || !prompt.id) return;
     setLoading(true);
-    setShareUrl("");
+    setWebUrl("");
 
     const req =
       isElectron && window.electronAPI?.promptLibrary?.getPromptShareLink
@@ -41,7 +41,7 @@ export const SharePromptLinkModal = ({
         : Promise.reject(new Error("Electron API not available"));
 
     req
-      .then(({ shareUrl: url }: { shareUrl: string }) => setShareUrl(url))
+      .then(({ webUrl: url }: { webUrl: string }) => setWebUrl(url))
       .catch((err: any) => {
         console.error("[SharePromptLinkModal] Error:", err);
         toast({
@@ -55,8 +55,8 @@ export const SharePromptLinkModal = ({
   }, [open, prompt.id]);
 
   const handleCopy = () => {
-    if (!shareUrl) return;
-    navigator.clipboard.writeText(shareUrl);
+    if (!webUrl) return;
+    navigator.clipboard.writeText(webUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({ title: "Copied!", description: "Share link copied to clipboard." });
@@ -72,7 +72,7 @@ export const SharePromptLinkModal = ({
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             Anyone with this link can view{" "}
-            <span className="font-medium text-foreground">"{prompt.title}"</span>.
+            <span className="font-medium text-foreground">"{prompt.title}"</span> — no app required.
           </DialogDescription>
         </DialogHeader>
 
@@ -85,10 +85,13 @@ export const SharePromptLinkModal = ({
           ) : (
             <>
               <div className="space-y-1.5">
-                <Label className="text-sm text-foreground">Share Link</Label>
+                <Label className="text-sm text-foreground flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-emerald" />
+                  Web Share Link
+                </Label>
                 <div className="flex gap-2">
                   <Input
-                    value={shareUrl}
+                    value={webUrl}
                     readOnly
                     className="bg-secondary border-border text-xs font-mono"
                   />
@@ -96,7 +99,7 @@ export const SharePromptLinkModal = ({
                     onClick={handleCopy}
                     variant="outline"
                     className="flex-shrink-0 border-border"
-                    disabled={!shareUrl}
+                    disabled={!webUrl}
                   >
                     {copied ? (
                       <Check className="w-4 h-4 text-emerald" />
@@ -106,7 +109,7 @@ export const SharePromptLinkModal = ({
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  The recipient can view and copy the prompt without needing an account.
+                  Opens in any browser — no account or app needed.
                 </p>
               </div>
 
@@ -114,7 +117,7 @@ export const SharePromptLinkModal = ({
                 <p className="font-medium text-foreground text-[11px] uppercase tracking-wide mb-2">
                   What recipients can do
                 </p>
-                <p>✓ Read the full prompt</p>
+                <p>✓ Read the full prompt in their browser</p>
                 <p>✓ Copy it to their clipboard</p>
                 <p>✗ Edit the original (only you can do that)</p>
               </div>

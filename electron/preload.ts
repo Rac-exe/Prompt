@@ -629,8 +629,8 @@ const electronAPI = {
   // ============================================
   // DEEP LINK NAVIGATION
   // ============================================
-  onNavigateToShare: (callback: (token: string) => void): (() => void) => {
-    const handler = (_event: any, token: string) => callback(token);
+  onNavigateToShare: (callback: (routePath: string) => void): (() => void) => {
+    const handler = (_event: any, routePath: string) => callback(routePath);
     ipcRenderer.on('navigate-to-share', handler);
     return () => ipcRenderer.removeListener('navigate-to-share', handler);
   },
