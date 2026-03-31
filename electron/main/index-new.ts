@@ -196,13 +196,16 @@ async function initialize() {
   // Initialize Python client
   pythonClient = new PythonClient(pythonHttpBase);
 
+  // Fire WebSocket connection immediately in the background — this wakes up Render
+  // before the user sends their first prompt, absorbing cold-start latency at launch.
+  pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
+
   let pythonHealthy = false;
   try {
     const isHealthy = await pythonClient.healthCheck();
     pythonHealthy = isHealthy;
     if (isHealthy) {
       console.log('[Main] Python service connected');
-      pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
     } else {
       console.warn('[Main] Python service not available');
     }

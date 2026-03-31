@@ -194,7 +194,8 @@ async def _background_warmup():
 
     async def _warmup_openrouter():
         try:
-            _ensure_pipeline()
+            # Load pipeline in thread pool first so the event loop stays free
+            await loop.run_in_executor(None, _ensure_pipeline)
             logger.info("Warming up OpenRouter connection...")
             import litellm as _litellm
             kwargs: dict = {
