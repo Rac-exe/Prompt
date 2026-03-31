@@ -106,12 +106,12 @@ import time
 import re
 import base64
 import websockets
-import numpy as np
 import io
 import wave
 import math
 from math import gcd
 import asyncio
+import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
@@ -136,15 +136,44 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# Preload heavy modules to eliminate cold start latency
-logger.info("Loading pipeline_v2 modules...")
-from pipeline_v2.context import ChatContext
-from pipeline_v2.optimizer import optimize as pipeline_optimize
-from pipeline_v2.config import (
-    OPTIMIZER_MODEL, SUMMARIZER_MODEL, TITLE_MODEL, MEMORY_MODEL, OPENROUTER_API_KEY,
-)
-import uuid
-logger.info("pipeline_v2 loaded")
+# Heavy modules (numpy, pipeline_v2, litellm, torch, faster_whisper, scipy)
+# are imported lazily inside the functions that use them so the server
+# binds its port immediately on startup.
+
+_pipeline_loaded = False
+ChatContext = None
+pipeline_optimize = None
+OPTIMIZER_MODEL = SUMMARIZER_MODEL = TITLE_MODEL = MEMORY_MODEL = OPENROUTER_API_KEY = None
+
+
+def _ensure_pipeline():
+    """Lazy-load pipeline_v2 and its transitive deps (litellm, etc.) on first use."""
+    global _pipeline_loaded, ChatContext, pipeline_optimize
+    global OPTIMIZER_MODEL, SUMMARIZER_MODEL, TITLE_MODEL, MEMORY_MODEL, OPENROUTER_API_KEY
+    if _pipeline_loaded:
+        return
+    logger.info("Loading pipeline_v2 modules (lazy)...")
+    from pipeline_v2.context import ChatContext as _CC
+    from pipeline_v2.optimizer import optimize as _opt
+    from pipeline_v2.config import (
+        OPTIMIZER_MODEL as _OM, SUMMARIZER_MODEL as _SM,
+        TITLE_MODEL as _TM, MEMORY_MODEL as _MM, OPENROUTER_API_KEY as _OR,
+    )
+    ChatContext = _CC
+    pipeline_optimize = _opt
+    OPTIMIZER_MODEL = _OM
+    SUMMARIZER_MODEL = _SM
+    TITLE_MODEL = _TM
+    MEMORY_MODEL = _MM
+    OPENROUTER_API_KEY = _OR
+    _pipeline_loaded = True
+    logger.info("pipeline_v2 loaded")
+
+
+def _get_np():
+    """Lazy numpy import."""
+    import numpy as np
+    return np
 
 @app.on_event("startup")
 async def startup_event():
@@ -157,8 +186,15 @@ async def _background_warmup():
     """Non-blocking warmup: OpenRouter + Whisper/VAD load after the port is open."""
     loop = asyncio.get_event_loop()
 
+    async def _warmup_pipeline():
+        try:
+            await loop.run_in_executor(None, _ensure_pipeline)
+        except Exception as e:
+            logger.warning(f"Pipeline preload failed: {e}")
+
     async def _warmup_openrouter():
         try:
+            _ensure_pipeline()
             logger.info("Warming up OpenRouter connection...")
             import litellm as _litellm
             kwargs: dict = {
@@ -526,6 +562,7 @@ def clean_optimized_text(text: str) -> str:
 
 @app.post("/optimize", response_model=OptimizeResponse)
 async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require_auth)):
+    _ensure_pipeline()
     # Derive user_id from verified JWT rather than trusting request body
     user_id = auth.get("sub") or request.user_id
     if user_id:
@@ -621,6 +658,7 @@ async def optimize_stream(websocket: WebSocket):
     WebSocket endpoint for streaming prompt optimization using pipeline_v2.
     Auth token must be passed as ?token=<access_token> query param.
     """
+    _ensure_pipeline()
     auth = await require_ws_auth(websocket)
     await websocket.accept()
     verified_user_id = auth.get("sub")
@@ -812,6 +850,7 @@ async def health():
 @app.get("/health/ready")
 async def health_ready():
     """Readiness probe — checks that critical dependencies are available."""
+    _ensure_pipeline()
     checks: dict = {}
     checks["llm_api_key"] = bool(OPENROUTER_API_KEY)
     checks["optimizer_model"] = bool(OPTIMIZER_MODEL)
@@ -835,6 +874,7 @@ async def generate_title(request: TitleRequest, auth: dict = Depends(require_aut
     Uses TITLE_MODEL (defaults to SUMMARIZER_MODEL — cheap & fast).
     Falls back to "New Chat" if the LLM call fails or prompt is empty.
     """
+    _ensure_pipeline()
     prompt_text = request.prompt.strip()
     if not prompt_text:
         return {"title": "New Chat"}
@@ -933,6 +973,7 @@ async def extract_memory_facts(request: ExtractMemoryRequest, auth: dict = Depen
     Uses a cheap/fast model (same as optimizer) for minimal cost.
     Called fire-and-forget from Electron after each optimization.
     """
+    _ensure_pipeline()
     raw = request.raw_prompt.strip()
     optimized = request.optimized_text.strip()
 
@@ -1094,7 +1135,7 @@ def get_vad_model():
     return _vad_model, _vad_utils
 
 
-def _vad_has_speech(audio_f32: np.ndarray) -> bool:
+def _vad_has_speech(audio_f32) -> bool:
     """
     Run Silero VAD on 16 kHz float32 audio.
     Returns True if at least one speech segment >= VAD_MIN_SPEECH_MS is found.
@@ -1138,12 +1179,13 @@ def _vad_has_speech(audio_f32: np.ndarray) -> bool:
         return True
 
 
-def _resample(audio_int16: np.ndarray, src_rate: int) -> np.ndarray:
+def _resample(audio_int16, src_rate: int):
     """
     Resample int16 audio from src_rate → WHISPER_RATE using
     scipy.signal.resample_poly (polyphase, no aliasing).
     Returns float32 in [-1, 1].
     """
+    np = _get_np()
     if src_rate == WHISPER_RATE:
         return audio_int16.astype(np.float32) / 32768.0
 
@@ -1158,7 +1200,7 @@ def _resample(audio_int16: np.ndarray, src_rate: int) -> np.ndarray:
     return resampled
 
 
-def _save_debug_wav(audio_int16: np.ndarray, capture_rate: int, tag: str = ""):
+def _save_debug_wav(audio_int16, capture_rate: int, tag: str = ""):
     """Save a WAV file for manual inspection. Writes at most DEBUG_WAV_COUNT files."""
     global _debug_wav_saved
     if _debug_wav_saved >= DEBUG_WAV_COUNT:
@@ -1181,6 +1223,7 @@ class AudioTranscriptionRequest(BaseModel):
 
 
 def _transcribe_uploaded_wav(audio_bytes: bytes) -> str:
+    np = _get_np()
     try:
         with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
             sample_rate = wf.getframerate()
