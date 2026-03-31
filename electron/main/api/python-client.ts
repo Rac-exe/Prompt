@@ -91,90 +91,113 @@ export class PythonClient extends EventEmitter {
       return this.connectionPromise;
     }
 
-    this.connectionPromise = new Promise((resolve, reject) => {
-      const wsUrl = this.buildWsUrl('/ws/optimize-stream');
-      console.log(`[PythonClient] Connecting to WebSocket: ${wsUrl.split('?')[0]}`);
-
-      this.ws = new WebSocket(wsUrl);
-
-      this.ws.on('open', () => {
-        console.log(`[PythonClient] ✓ WebSocket connected`);
-        this.connectionPromise = null;
-        resolve();
-      });
-
-      this.ws.on('message', (data: any) => {
-        try {
-          const messageStr = data.toString();
-          // console.log('[PythonClient] Raw WS message:', messageStr.substring(0, 200)); 
-          const message = JSON.parse(messageStr);
-          let requestId = message.request_id;
-
-          // Fallback: If no request_id in message but we have exactly one active request, assume it matches
-          if (!requestId && this.activeRequests.size === 1) {
-            requestId = this.activeRequests.keys().next().value;
-            // console.log('[PythonClient] No requestId in message, using single active request:', requestId);
-          }
-
-          if (requestId && this.activeRequests.has(requestId)) {
-            const request = this.activeRequests.get(requestId)!;
-
-            // If aborted, ignore further messages for this request
-            if (request.aborted) {
-              this.activeRequests.delete(requestId);
-              return;
-            }
-
-            if (message.type === 'chunk') {
-              request.onChunk(message.content, message.accumulated);
-            } else if (message.type === 'complete') {
-              request.resolve({ text: message.optimized, models: message.models_used });
-              this.activeRequests.delete(requestId);
-            } else if (message.type === 'error') {
-              console.error('[PythonClient] Received error signal:', message.message);
-              request.reject(new Error(message.message));
-              this.activeRequests.delete(requestId);
-            }
-          } else {
-            // Only warn if this wasn't a deliberate abort
-            if (!this.abortedRequestIds.has(requestId)) {
-              console.warn('[PythonClient] Received message for unknown or missing request ID:', requestId);
-            }
-          }
-        } catch (error) {
-          console.error('[PythonClient] Failed to parse message:', error);
-        }
-      });
-
-      this.ws.on('error', (error: Error) => {
-        console.error(`[PythonClient] WebSocket error:`, error);
-        this.connectionPromise = null;
-        reject(error);
-      });
-
-      this.ws.on('close', () => {
-        console.log(`[PythonClient] WebSocket closed`);
-
-        if (this.activeRequests.size > 0) {
-          Sentry.captureMessage(`Python WebSocket closed with ${this.activeRequests.size} pending request(s)`, 'warning');
-        }
-
-        for (const [requestId, request] of this.activeRequests.entries()) {
-          if (request.accumulated && request.accumulated.length > 0) {
-            console.warn(`[PythonClient] Request ${requestId} socket closed but has data, resolving along with warning.`);
-            request.resolve({ text: request.accumulated, models: undefined });
-          } else {
-            request.reject(new Error('WebSocket connection closed unexpectedly'));
-          }
-        }
-        this.activeRequests.clear();
-
-        this.ws = null;
-        this.connectionPromise = null;
-      });
-    });
-
+    this.connectionPromise = this.connectWithRetry();
     return this.connectionPromise;
+  }
+
+  private connectWithRetry(maxElapsedMs = 90_000): Promise<void> {
+    const start = Date.now();
+    const delays = [2000, 4000, 8000, 15000, 20000]; // backoff steps
+
+    const attempt = (attemptIndex: number): Promise<void> => {
+      return new Promise<void>((resolve, reject) => {
+        const wsUrl = this.buildWsUrl('/ws/optimize-stream');
+        console.log(`[PythonClient] Connecting to WebSocket (attempt ${attemptIndex + 1}): ${wsUrl.split('?')[0]}`);
+
+        const ws = new WebSocket(wsUrl);
+        let settled = false;
+
+        const onOpen = () => {
+          if (settled) return;
+          settled = true;
+          console.log(`[PythonClient] ✓ WebSocket connected`);
+          this.ws = ws;
+          this.connectionPromise = null;
+          resolve();
+        };
+
+        const onError = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          try { ws.close(); } catch (_) {}
+          const elapsed = Date.now() - start;
+          const delay = delays[Math.min(attemptIndex, delays.length - 1)];
+          if (elapsed + delay < maxElapsedMs) {
+            console.warn(`[PythonClient] WS connect failed, retrying in ${delay}ms… (${Math.round(elapsed / 1000)}s elapsed)`);
+            setTimeout(() => attempt(attemptIndex + 1).then(resolve).catch(reject), delay);
+          } else {
+            this.connectionPromise = null;
+            reject(err);
+          }
+        };
+
+        ws.once('open', onOpen);
+        ws.once('error', onError);
+        // Also handle immediate close before open (server refusing / cold start not ready)
+        ws.once('close', () => { if (!settled) onError(new Error('WebSocket closed before open')); });
+
+        ws.on('message', (data: any) => {
+          try {
+            const messageStr = data.toString();
+            const message = JSON.parse(messageStr);
+            let requestId = message.request_id;
+
+            // Fallback: If no request_id in message but we have exactly one active request, assume it matches
+            if (!requestId && this.activeRequests.size === 1) {
+              requestId = this.activeRequests.keys().next().value;
+            }
+
+            if (requestId && this.activeRequests.has(requestId)) {
+              const request = this.activeRequests.get(requestId)!;
+
+              if (request.aborted) {
+                this.activeRequests.delete(requestId);
+                return;
+              }
+
+              if (message.type === 'chunk') {
+                request.onChunk(message.content, message.accumulated);
+              } else if (message.type === 'complete') {
+                request.resolve({ text: message.optimized, models: message.models_used });
+                this.activeRequests.delete(requestId);
+              } else if (message.type === 'error') {
+                console.error('[PythonClient] Received error signal:', message.message);
+                request.reject(new Error(message.message));
+                this.activeRequests.delete(requestId);
+              }
+            } else {
+              if (!this.abortedRequestIds.has(requestId)) {
+                console.warn('[PythonClient] Received message for unknown or missing request ID:', requestId);
+              }
+            }
+          } catch (error) {
+            console.error('[PythonClient] Failed to parse message:', error);
+          }
+        });
+
+        ws.on('close', () => {
+          console.log(`[PythonClient] WebSocket closed`);
+
+          if (this.activeRequests.size > 0) {
+            Sentry.captureMessage(`Python WebSocket closed with ${this.activeRequests.size} pending request(s)`, 'warning');
+          }
+
+          for (const [reqId, request] of this.activeRequests.entries()) {
+            if (request.accumulated && request.accumulated.length > 0) {
+              console.warn(`[PythonClient] Request ${reqId} socket closed but has data, resolving with partial.`);
+              request.resolve({ text: request.accumulated, models: undefined });
+            } else {
+              request.reject(new Error('WebSocket connection closed unexpectedly'));
+            }
+          }
+          this.activeRequests.clear();
+          this.ws = null;
+          this.connectionPromise = null;
+        });
+      });
+    };
+
+    return attempt(0);
   }
 
   async optimizeStream(
@@ -209,8 +232,8 @@ export class PythonClient extends EventEmitter {
         accumulated: "" // Initialize
       });
 
-      // Safety Timeout (Hard limit)
-      const timeoutMs = 30000; // 30 seconds
+      // Safety Timeout (Hard limit — generous for Render cold starts which can take 50s+)
+      const timeoutMs = 90000; // 90 seconds
       const timeoutId = setTimeout(() => {
         if (this.activeRequests.has(requestId)) {
           console.warn(`[PythonClient] Request ${requestId} timed out (hard limit)`);
