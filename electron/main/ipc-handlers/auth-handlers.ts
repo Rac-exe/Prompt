@@ -472,10 +472,14 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
         try {
             const { authService } = getServices();
             const { identities, error } = await authService.getIdentities();
-            if (error) return { identities: [], error: error.message };
+            if (error) {
+                logger.warn(logger.fmt`auth.get_identities_failed error=${error.message}`);
+                return { identities: [], error: error.message };
+            }
             return { identities, error: null };
         } catch (error: any) {
             console.error('[Auth] Get identities error:', error);
+            logger.warn(logger.fmt`auth.get_identities_error error=${error.message ?? 'unknown'}`);
             Sentry.captureException(error);
             return { identities: [], error: error.message || 'Failed to get identities' };
         }
@@ -483,6 +487,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
     // Link a new OAuth provider to the current account
     ipcMain.handle('auth:link-identity', async (_event, { provider }: { provider: 'google' | 'github' }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: `Link identity started: ${provider}`, level: 'info' });
+        logger.info(logger.fmt`auth.link_started provider=${provider}`);
         try {
             return await new Promise<{ success?: boolean; error?: string }>((resolve, reject) => {
                 let serverClosed = false;
@@ -533,15 +539,23 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                             const { authService } = getServices();
                             const { session, error: sessionError } = await authService.exchangeCodeForSession(code);
                             if (sessionError || !session) {
+                                logger.warn(logger.fmt`auth.link_exchange_failed provider=${provider} error=${sessionError?.message ?? 'unknown'}`);
+                                Sentry.addBreadcrumb({ category: 'auth', message: `Link exchange failed: ${provider}`, level: 'warning' });
                                 console.error('[Auth] Link identity code exchange failed:', sessionError?.message);
                                 return;
                             }
+                            logger.info(logger.fmt`auth.link_success provider=${provider} userId=${session.user.id}`);
+                            Sentry.addBreadcrumb({ category: 'auth', message: `Link identity success: ${provider}`, level: 'info' });
                             console.log(`[Auth] Identity linked (${provider})`);
                             appWindowManager.show();
                             await handleSuccessfulAuth(appWindowManager, session.user);
+                        } else if (oauthError) {
+                            logger.warn(logger.fmt`auth.link_oauth_error provider=${provider} error=${oauthError}`);
+                            Sentry.addBreadcrumb({ category: 'auth', message: `Link identity OAuth error: ${provider}`, level: 'warning' });
                         }
                     } catch (err) {
                         console.error('[Auth] Link identity callback error:', err);
+                        logger.warn(logger.fmt`auth.link_callback_error provider=${provider}`);
                         Sentry.captureException(err);
                         res.writeHead(500); res.end();
                         clearTimeout(timeout);
@@ -579,6 +593,8 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             });
         } catch (err: any) {
             console.error('[Auth] Link identity failed:', err.message);
+            logger.warn(logger.fmt`auth.link_failed provider=${provider} error=${err.message ?? 'unknown'}`);
+            Sentry.addBreadcrumb({ category: 'auth', message: `Link identity failed: ${provider}`, level: 'error' });
             Sentry.captureException(err);
             return { error: err.message || 'Link identity failed' };
         }
@@ -586,14 +602,23 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
     // Unlink an OAuth provider from the current account
     ipcMain.handle('auth:unlink-identity', async (_event, { identityId }: { identityId: string }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Unlink identity started', level: 'info' });
+        logger.info(logger.fmt`auth.unlink_started identityId=${identityId}`);
         try {
             const { authService } = getServices();
             const { error } = await authService.unlinkIdentity(identityId);
-            if (error) return { error: error.message };
+            if (error) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'Unlink identity failed', level: 'warning' });
+                logger.warn(logger.fmt`auth.unlink_failed identityId=${identityId} error=${error.message}`);
+                return { error: error.message };
+            }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Unlink identity success', level: 'info' });
+            logger.info(logger.fmt`auth.unlink_success identityId=${identityId}`);
             await handleSuccessfulAuth(appWindowManager);
             return { success: true };
         } catch (error: any) {
             console.error('[Auth] Unlink identity error:', error);
+            logger.warn(logger.fmt`auth.unlink_error identityId=${identityId} error=${error.message ?? 'unknown'}`);
             Sentry.captureException(error);
             return { error: error.message || 'Failed to unlink identity' };
         }
@@ -601,13 +626,22 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
 
     // Reset password (send email)
     ipcMain.handle('auth:reset-password', async (_event, { email }: { email: string }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset requested', level: 'info' });
+        logger.info(logger.fmt`auth.password_reset_requested email=${email}`);
         try {
             const { authService } = getServices();
             const { error } = await authService.resetPasswordForEmail(email);
-            if (error) return { error: error.message };
+            if (error) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset failed', level: 'warning' });
+                logger.warn(logger.fmt`auth.password_reset_failed email=${email} error=${error.message}`);
+                return { error: error.message };
+            }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset email sent', level: 'info' });
+            logger.info(logger.fmt`auth.password_reset_sent email=${email}`);
             return { success: true };
         } catch (error: any) {
             console.error('[Auth] Reset password error:', error);
+            logger.warn(logger.fmt`auth.password_reset_error email=${email} error=${error.message ?? 'unknown'}`);
             Sentry.captureException(error);
             return { error: error.message || 'Failed to send reset email' };
         }
