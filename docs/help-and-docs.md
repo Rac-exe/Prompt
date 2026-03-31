@@ -1,391 +1,335 @@
-# Prmpt — Help & Documentation
+# Prmpt: Help & Docs
 
-> **Prmpt** turns your rough prompt ideas into clear, detailed, AI-ready prompts — from inside any app on your computer, in seconds.
+---
+
+## What is this, exactly?
+
+You've probably had this happen: you open ChatGPT, type something like *"write me a cover letter"*, and get back something completely generic that you'd never actually send. The problem isn't the AI. It's that the AI needed more to work with than you gave it.
+
+Prmpt sits between you and whatever AI you're using. You give it your rough idea, it turns it into a detailed, specific prompt that gets you a real answer. Then you paste that into ChatGPT, Claude, Midjourney, or wherever.
+
+The part that makes it different is the overlay, a small floating panel that appears right where you're working, so you don't have to open another tab or switch apps. Type `@prompt` in any text box on Windows, and it's there.
 
 ---
 
 ## Table of Contents
 
-1. [What Does Prmpt Actually Do?](#1-what-does-prmpt-actually-do)
-2. [Getting Started](#2-getting-started)
-3. [The Overlay Panel](#3-the-overlay-panel)
-4. [Optimization Modes](#4-optimization-modes)
-5. [Skills](#5-skills)
-6. [Attach Files or Images](#6-attach-files-or-images)
-7. [Voice Input](#7-voice-input)
-8. [Chat Context](#8-chat-context)
-9. [Your Conversation History](#9-your-conversation-history)
-10. [Prompt Library](#10-prompt-library)
-11. [Sharing](#11-sharing)
-12. [App Memory](#12-app-memory)
-13. [Settings](#13-settings)
-14. [Sign In & Account](#14-sign-in--account)
-15. [Keyboard Shortcuts](#15-keyboard-shortcuts)
-16. [Common Questions](#16-common-questions)
-17. [Contact Us](#17-contact-us)
+1. [The Overlay: how it actually works](#1-the-overlay-how-it-actually-works)
+2. [Getting results you're happy with](#2-getting-results-youre-happy-with)
+3. [Fast mode vs. Thinking mode](#3-fast-mode-vs-thinking-mode)
+4. [Skills: when to bother](#4-skills-when-to-bother)
+5. [Attaching files and images](#5-attaching-files-and-images)
+6. [Voice input](#6-voice-input)
+7. [Your chat history](#7-your-chat-history)
+8. [Saving prompts you want to keep](#8-saving-prompts-you-want-to-keep)
+9. [Sharing](#9-sharing)
+10. [Memory: how Prmpt learns your style](#10-memory-how-prmpt-learns-your-style)
+11. [Custom instructions](#11-custom-instructions)
+12. [Account and sign-in](#12-account-and-sign-in)
+13. [Keyboard shortcuts](#13-keyboard-shortcuts)
+14. [Things that catch people off guard](#14-things-that-catch-people-off-guard)
+15. [Reach us](#15-reach-us)
 
 ---
 
-## 1. What Does Prmpt Actually Do?
+## 1. The Overlay: how it actually works
 
-Most people type a quick, vague idea when asking an AI tool something. The AI gets a vague question and gives a vague answer.
+The overlay is a small floating panel that appears on top of whatever you're doing. You don't have to stop working or switch apps.
 
-**Prmpt fixes that.** You write your rough idea, Prmpt rewrites it into a well-structured, detailed prompt — and you paste that polished version into ChatGPT, Claude, Midjourney, or anywhere else.
+### Three ways to open it
 
-### Before & After Examples
+**Type `@prompt` in any text field.**
+This is the main one. While you're writing in a browser, in Slack, in Notion, in Word, anywhere, just type `@prompt`. The overlay opens right next to your cursor. When you're done, click **Insert** and the optimized text replaces the `@prompt` you typed. You never had to leave the app.
+
+**Press `Ctrl+5` from anywhere.**
+Works as a toggle; press it again to close. Good for when you want to quickly optimize something that's already in your head, without typing `@prompt` first.
+
+**Right-click the tray icon → Toggle Overlay.**
+The Prmpt icon lives in your system tray (bottom-right of your taskbar). If you don't see it, click the up arrow to show hidden icons.
 
 ---
 
-**Example 1 — Writing**
+### The Insert button: why it's sometimes missing
+
+If you opened the overlay with `Ctrl+5` or via the tray, the **Insert** button won't appear. That's not a bug. Insert works by putting the optimized text back into the exact app and text field where you typed `@prompt`. If you didn't trigger it that way, Prmpt doesn't know where to send it, so it only shows Copy instead.
+
+If you want Insert, close the overlay, go to the text field where you want the result to end up, and type `@prompt` there.
+
+---
+
+### The overlay closed and I lost my result
+
+The overlay closes when you click anywhere outside it. If that happened before you could copy or insert the result:
+
+- Open the main Prmpt window from the tray → **Open App**
+- Go to **History** in the sidebar — your last optimization is saved there
+- Open it and copy from there
+
+---
+
+## 2. Getting results you're happy with
+
+The first result you get might not be exactly what you want. That's fine. You can refine it without starting over.
+
+**Just reply in the same chat.** If the result was too long, say *"make it shorter"*. If it was too formal, say *"more casual"*. If it missed the point, tell it what was wrong. Prmpt keeps the context of your entire conversation, so it knows what it already gave you.
+
+**Edit your original message.** Hover over your message and click the pencil icon. Change what you wrote and send it again. Prmpt treats this as a new version; you can flip between the original and the new one using the `← →` arrows that appear on the message.
+
+**Hit Regenerate.** If the result wasn't what you wanted but you're not sure exactly why, just try again. Different run, different result.
+
+---
+
+### The result is in the wrong format
+
+If Prmpt keeps giving you bullet-point lists when you want paragraphs, or formal language when you want casual, instead of correcting it every time, set a custom instruction (see [section 11](#11-custom-instructions)). That way you only have to say it once.
+
+---
+
+### Before and after
+
+**Writing task**
 
 | | Prompt |
 |---|---|
-| ❌ **Before** | *"write a blog post about productivity"* |
-| ✅ **After** | *"Write a 600-word blog post for busy professionals titled 'The 3 Habits That Separate Productive People From Everyone Else'. Use a conversational tone, open with a relatable story about feeling overwhelmed, and end with a clear 3-step action plan the reader can start today. Avoid generic advice — make it feel personal and actionable."* |
+| What you typed | *write a blog post about productivity* |
+| What you send to the AI | *Write a 600-word blog post for busy professionals. Open with a real story about a week where everything felt out of control. Focus on three habits that are unglamorous but actually work. End with something the reader can do in the next 10 minutes. Tone: direct, a little dry.* |
 
 ---
 
-**Example 2 — Coding**
+**Coding task**
 
 | | Prompt |
 |---|---|
-| ❌ **Before** | *"write python code to read a csv"* |
-| ✅ **After** | *"Write a Python function that reads a CSV file from a given file path using the `pandas` library. The function should: handle missing values by filling them with 0, skip the first row if it's a header, return a cleaned DataFrame, and raise a clear error message if the file is not found. Include a usage example at the bottom."* |
+| What you typed | *python script to parse csv* |
+| What you send to the AI | *Write a Python function that reads a CSV file from a given path using pandas. It should: fill missing values with 0, detect and skip header rows automatically, return a cleaned DataFrame, and raise a descriptive error if the file doesn't exist. Add a short usage example below the function definition.* |
 
 ---
 
-**Example 3 — Image Generation**
+**Image generation**
 
 | | Prompt |
 |---|---|
-| ❌ **Before** | *"a city at night"* |
-| ✅ **After** | *"A futuristic Tokyo street at night, heavy rain, neon signs reflecting in puddles, cinematic lighting, a lone figure in a hooded jacket walking away from camera, shot on 35mm film, shallow depth of field, moody atmosphere, cyberpunk aesthetic — ultra-detailed, 8K"* |
+| What you typed | *a city at night* |
+| What you send to the AI | *Rainy Tokyo street at night, neon signs reflected in standing water, a single person in a dark hoodie walking away from camera, 35mm film, shallow depth of field, low ambient light, no lens flare, moody and quiet atmosphere, ultra-detailed, cinematic.* |
 
 ---
 
-That's the difference Prmpt makes every single time.
+## 3. Fast mode vs. Thinking mode
+
+Both modes do the same thing. One just takes longer and works harder.
+
+**Fast mode** is the default. It's genuinely fast (a few seconds) and handles the vast majority of things well: emails, quick code questions, social captions, everyday writing. Use this for anything you'd describe as "straightforward."
+
+**Thinking mode** is for when you actually need it. It takes longer (sometimes 15-30 seconds), but it reasons through your request more carefully. Worth it for prompts that need nuance, anything where the wording really matters, complex technical specs, or creative requests where "good enough" isn't enough.
+
+Switch between them using the button at the bottom-left of the input bar. If you're not sure, start with Fast. You can always switch and try again.
 
 ---
 
-## 2. Getting Started
+## 4. Skills: when to bother
 
-### Create an Account
-1. Open Prmpt from your desktop or system tray.
-2. Click **Sign up** on the welcome screen.
-3. Enter your name, date of birth, email, and a password — or click **Continue with Google** / **Continue with GitHub** to sign up in one click.
-4. You're in — no email verification required.
+Skills give Prmpt a lens to look through when optimizing your prompt. Picking "Technical" makes it think like a developer. Picking "Creative" makes it think like an editor. Each one changes how the result is structured and worded.
 
-### Sign In
-- Use your email and password, or use the Google / GitHub buttons.
-- Prmpt keeps you signed in between sessions.
+| Skill | Use it when you're working on... |
+|---|---|
+| **Technical** | Code, APIs, system design, debugging prompts |
+| **Creative** | Fiction, blog posts, social content, anything where voice matters |
+| **Business** | Strategy docs, analysis, pitches, board-level writing |
+| **Communication** | Emails, messages, anything going to a real person |
+| **Educational** | Tutorials, explanations, guides meant to teach |
+| **Visual** | Prompts for image generators (Midjourney, DALL-E, etc.) |
+| **Automation** | Workflow instructions, scripts, step-by-step task specs |
+| **Research** | Summaries, literature review, synthesizing information |
 
-### Your First Optimization
-1. Open the main app window.
-2. Click **New Chat** in the sidebar.
-3. Type a rough idea (e.g., *"email to my boss asking for a raise"*).
-4. Press **Enter**.
-5. Prmpt returns a detailed, polished version of your prompt — ready to paste anywhere.
+**When to skip it:** If you don't pick a skill, Prmpt looks at what you wrote and makes a reasonable guess. For most people most of the time, this works fine. You only really need to set one when the auto-detection is getting it wrong.
 
----
-
-## 3. The Overlay Panel
-
-The Overlay is Prmpt's signature feature. It's a small floating panel that pops up **over whatever app you're using** — so you never have to stop what you're doing.
-
-### Three Ways to Open It
-
-| Method | How |
-|--------|-----|
-| **Type `@prompt`** | Type `@prompt` in any text field on your computer — a browser, Word, Slack, anything. The overlay appears right next to your cursor. |
-| **Keyboard shortcut** | Press **Ctrl+5** (Windows) or **Cmd+5** (Mac) from anywhere. |
-| **System tray** | Right-click the Prmpt icon in your taskbar → **Toggle Overlay**. |
-
-### How It Works
-1. Type your rough idea into the overlay.
-2. Press **Enter** to optimize.
-3. Read the polished result.
-4. Click **Replace** to swap your `@prompt` text with the result — right in the app you were using.
-5. Or click **Copy** to copy it to your clipboard.
-6. Press **Esc** or click **✕** to close.
-
-> **Replace** is available when you opened the overlay by typing `@prompt`. It automatically puts the optimized text back where your cursor was.
-
-### No Internet?
-If you go offline, a banner appears at the top of the overlay. Optimization resumes automatically once you're back online.
+**How to pick one:** Click the `+` button in the input area → **Choose skill** → click whichever fits. A small tag appears in the input bar. Click `×` on it to remove it.
 
 ---
 
-## 4. Optimization Modes
+## 5. Attaching files and images
 
-Choose how deeply you want Prmpt to think before it rewrites your prompt.
+**What you can attach:** PDFs, PNG, JPG, or WebP images. Up to 5 files at a time, 10 MB each.
 
-| Mode | Best For |
-|------|----------|
-| ⚡ **Fast** | Quick everyday tasks — emails, social posts, simple coding questions. Results in seconds. |
-| 🧠 **Thinking** | Complex requests — detailed documents, tricky code, nuanced creative writing. Takes a few extra seconds but goes deeper. |
+**To attach:** Click `+` in the input → **Add photos & files** → pick your files. They show up as cards above the input. Hit `×` on any card to remove it.
 
-Click the mode button (bottom-left of the input box) to switch. When in doubt, start with **Fast**.
+You can also **paste an image directly from your clipboard** with `Ctrl+V`, useful if you just took a screenshot.
 
 ---
 
-## 5. Skills
+**When files actually help:**
 
-Skills tell Prmpt what type of task you're working on so it can apply the right style and approach.
+- You have a dense PDF (a report, a paper, a spec) and you want Prmpt to use the actual content, not just your description of it
+- You have a screenshot of a UI and want to ask an image generator to create something similar
+- You have a document you want rewritten and attaching it is faster than pasting the text
 
-### Available Skills
-
-| Skill | Good For |
-|-------|----------|
-| **Technical** | Code, APIs, databases, algorithms |
-| **Creative** | Stories, blog posts, social content, brainstorming |
-| **Business** | Strategy, market analysis, reports, pitches |
-| **Communication** | Emails, messages, memos, presentations |
-| **Educational** | Tutorials, explanations, study guides |
-| **Visual** | Image generation prompts, design briefs |
-| **Automation** | Workflows, scripts, task instructions |
-| **Research** | Analysis, summaries, literature review |
-
-### How to Pick a Skill
-1. Click the **+** button in the input area.
-2. Choose **Choose skill**.
-3. Click the skill that fits your task (hover to see a description).
-4. A small tag appears in the input bar to show it's selected. Click **✕** to remove it.
-
-> Don't worry if you're not sure — Prmpt picks a good default on its own.
+**When files don't help much:** Attaching a huge PDF when you only care about one paragraph. Just paste the relevant section instead; it'll be faster and more accurate.
 
 ---
 
-## 6. Attach Files or Images
+## 6. Voice input
 
-Give Prmpt more context by sharing a document or screenshot alongside your request.
+Click the microphone icon on the right side of the input bar. It turns red when recording. Speak your idea, and the text appears in real time as you talk. Click the icon again to stop, review what was captured, then hit Enter to optimize.
 
-**What you can attach:**
-- Images — PNG, JPG, WebP
-- Documents — PDF (up to 32 MB each)
-- Up to **5 files** at a time
-
-**How to attach:**
-1. Click the **+** button in the input area.
-2. Choose **Add photos & files**.
-3. Pick your files.
-4. They appear as small cards above the input box. Click **✕** on any card to remove it.
-
-**Useful when:** You want to say *"rewrite this document in a friendlier tone"* and attach the original PDF, or *"describe this image for an AI image generator"* and attach a photo.
+A few things worth knowing:
+- It works best in a reasonably quiet environment, as background noise can throw off transcription
+- You don't need to speak slowly or formally. Normal conversational speed is fine
+- If it gets a word wrong, you can edit the text in the input box before sending
+- On Windows, make sure Prmpt has microphone permission: **Settings → Privacy & Security → Microphone**
 
 ---
 
-## 7. Voice Input
+## 7. Your chat history
 
-Rather than typing, you can just speak your idea.
+Every optimization you do is saved as a conversation.
 
-1. Click the **microphone** icon (right side of the input bar).
-2. The icon turns red — you're recording.
-3. Say your idea out loud.
-4. Your words appear in the input box as you speak.
-5. Click the icon again to stop.
-6. Review what was captured, then press **Enter** to optimize.
+**Things you can do:**
+- Click any chat in the sidebar to open it
+- Hover over a chat → click `⋯` → **Rename** to give it a meaningful name
+- Hover → `⋯` → **Delete** to remove it permanently
+- Click **New Chat** to start fresh
 
-**Works great when** you're away from your keyboard or just think faster out loud.
+**Version history within a chat:**
+When you edit or regenerate a message, Prmpt saves the previous version. The `← →` arrows on a message let you flip between them. This is useful when you're not sure if the new version is actually better.
 
----
-
-## 8. Chat Context
-
-Already had a conversation with Prmpt? You can attach it as context for your next request so Prmpt knows what you've already worked on.
-
-1. In the input area, click **Attach Chat Context**.
-2. Pick a recent conversation from the list.
-3. A tag appears showing the chat name.
-4. Prmpt will factor that conversation into its next response.
-5. Click **✕** on the tag to detach it.
+**Offline:** If you lose internet, your most recent chats are still readable from a local cache. You won't be able to send new optimizations until you're back online.
 
 ---
 
-## 9. Your Conversation History
+## 8. Saving prompts you want to keep
 
-Every time you optimize something, Prmpt saves it as a conversation so you can come back to it later.
+Chat history keeps everything, but it's not where you go when you want to *reuse* something. The library is.
 
-### What You Can Do
+After getting a result you like, click the **save** icon on the response. You'll name it and put it in a collection.
 
-| Action | How |
-|--------|-----|
-| **Browse old versions** | Click the **← →** arrows on any message to flip between different versions |
-| **Edit a past message** | Click the **pencil icon** on any of your messages to change it and re-optimize from there |
-| **Get a fresh result** | Click **regenerate** on any Prmpt response to try again |
-| **Start fresh** | Click **New Chat** in the sidebar |
-| **Rename a chat** | Hover over it in the sidebar → click **⋯** → **Rename** |
-| **Delete a chat** | Hover over it → click **⋯** → **Delete** |
+**Collections** are just folders. Make as many as you want — *Work Emails*, *Code Snippets*, *Image Prompts*, whatever makes sense for how you actually work. The default **All Prompts** and **Favorites** views are always there.
 
-Your recent chats are always visible in the left sidebar for quick access.
+**Things you can do with a saved prompt:**
 
----
-
-## 10. Prompt Library
-
-The Library is where you save your best prompts so you can reuse them anytime.
-
-### Saving a Prompt
-After getting a result you like, click the **save** icon on the response. Give it a name and choose a collection (folder) to put it in.
-
-### Organizing with Collections
-Collections are like folders. You can create as many as you want to keep things tidy — for example: *Work Emails*, *Creative Writing*, *Code Snippets*.
-
-- **All Prompts** and **Favorites** are always available by default.
-- Create a new collection with the **+ New Collection** button.
-- Rename or delete collections from the **⋯** menu.
-
-### What You Can Do With a Saved Prompt
-
-| Action | What it does |
-|--------|-------------|
-| **Open** | Load it back into chat to keep refining |
-| **Copy** | Copy the text to paste anywhere |
+| | |
+|---|---|
+| **Open** | Load it back into chat to keep refining it |
+| **Copy** | Grab the text to paste somewhere |
 | **Download** | Save it as a `.txt` file on your computer |
-| **Edit** | Rename it or move it to another collection |
-| **Delete** | Remove it permanently |
-| **Share** | Create a link others can view |
+| **Favorite** | Star it so it shows up in the Favorites view |
+| **Edit** | Change the title, or fix something in the content |
+| **Share** | Generate a link anyone can open |
+| **Delete** | Gone permanently, no undo |
 
-### Searching
-Use the search bar at the top of the library to find any prompt by its title or content.
-
----
-
-## 11. Sharing
-
-### Share a Collection
-1. Open the **Prompt Library**.
-2. Click the **share** icon next to any collection name.
-3. A link is copied to your clipboard — share it with anyone.
-4. Anyone with the link can see the collection and save it to their own Prmpt library.
-
-### Share a Single Prompt
-1. Hover over any saved prompt card and click the **share** icon.
-2. Copy the link — anyone can open it and read or copy the prompt, no account needed.
+Deletions are permanent. If you have a prompt you worked hard on, use **Download** to keep a backup before deleting.
 
 ---
 
-## 12. App Memory
+## 9. Sharing
 
-Prmpt quietly learns from how you use it, so your results get better and more personal over time.
+**Share a whole collection:**
+Open the Prompt Library → click the share icon next to a collection name → copy the link. Anyone with the link can view the collection and save the whole thing to their own Prmpt library.
 
-### What It Remembers
+**Share a single prompt:**
+Hover over any prompt card → click the share icon → copy the link. The link opens in a browser. No account needed. Anyone can read it or copy the text.
 
-| Category | What gets stored |
-|----------|-----------------|
-| **About You** | Things you tell it directly — your job, your preferred writing style, your field |
-| **Usage Patterns** | Habits it picks up on — like always wanting short answers, or always needing code examples |
-| **Recurring Themes** | Topics that come up in your prompts often |
-
-### Viewing & Editing Your Memory
-Go to **Settings → Memory** to see everything stored about you.
-
-- Click the **pencil icon** on any item to change it.
-- Click the **trash icon** to delete it.
-- Click **+ Add fact** to manually tell Prmpt something about yourself.
-- Things you add yourself are marked **"You set this"** and are always trusted first.
-
-### Turning It Off
-Toggle **Learn from my usage** at the top of the Memory screen to pause automatic learning. Your manually added facts are still used even when learning is off.
-
-> Everything in memory lives only on your device — it is never sold or shared.
+**What recipients can and can't do:**
+- They can view and copy any shared prompt or collection without signing in
+- If they have a Prmpt account, they can save a shared collection directly to their own library
+- They can't edit your originals — sharing is read-only
 
 ---
 
-## 13. Settings
+## 10. Memory: how Prmpt learns your style
 
-Open settings by clicking your profile picture or name at the bottom of the sidebar.
+After you've used Prmpt for a bit, it starts picking up on patterns: what field you work in, how you like things written, what keeps coming up in your requests. It stores these inferences and uses them as background context for future optimizations, so results feel more like they're written for you.
 
-### Profile Tab
-- Change your profile photo — click the avatar and upload a new one.
-- Update your display name.
-- Link or manage your Google account.
-- **Delete Account** — removes everything permanently (this cannot be undone).
+**To see what it's inferred:** Settings → Memory. You'll see entries like "Backend engineering" or "Prefers concise answers."
 
-### Customize Tab
+**You can:**
+- Edit any entry to correct it
+- Delete entries that are wrong
+- Add your own facts manually (these are always trusted over inferred ones)
+- Turn off automatic learning entirely if you'd rather it not track patterns
 
-**Custom Instructions** — Write a short note that gets added to every single optimization. For example:
-- *"Always write in British English"*
-- *"I'm a nurse — avoid overly technical jargon"*
-- *"Keep all responses under 150 words"*
+**About privacy:** Memory data is stored in your account and not shared with anyone.
 
-**Appearance** — Switch between **Dark** and **Light** mode.
-
-**Typography** — Change the font size (Small / Medium / Large) and font family (Default / Monospace / Serif).
-
-### Memory Tab
-See [App Memory](#12-app-memory) above.
+**When memory isn't helping:** If you work across very different domains (developer some days, marketing writing other days), memory might pull in assumptions that don't fit. Either delete the entries that don't apply, or turn off automatic learning and add manual facts for what's always true about you.
 
 ---
 
-## 14. Sign In & Account
+## 11. Custom instructions
 
-### Sign Up
-Fill in your name, date of birth, email, and password on the welcome screen. Or use one of the social sign-in buttons for instant access.
+Custom instructions are a short note you write once, and Prmpt adds it to every single optimization. Most people skip this and then wonder why results don't sound like them. This is where you fix that.
 
-### Sign In with Google
-1. Click **Continue with Google**.
-2. Your browser opens — sign in with your Google account.
-3. The tab closes by itself and you're signed in to Prmpt.
+**Where to set it:** Settings → Customize → Custom Instructions.
 
-### Sign In with GitHub
-1. Click **Continue with GitHub**.
-2. Your browser opens — authorize Prmpt.
-3. The tab closes by itself and you're signed in.
+Just tell it what you always want:
 
-### Sign Out
-Click your name at the bottom of the sidebar → **Sign Out**.
+- `I'm a backend engineer. Always assume I know what I'm doing, don't over-explain basics.`
+- `I work in healthcare. Avoid medical jargon when writing for patients, use it freely when writing for clinicians.`
+- `Keep everything under 200 words unless I specifically ask for something longer.`
+- `British English spelling. Always.`
+- `I hate bullet points. Write in prose unless the task genuinely calls for a list.`
 
 ---
 
-## 15. Keyboard Shortcuts
+## 12. Account and sign-in
+
+**Sign up:** Open Prmpt → click **Sign up** → enter your email and password, or use **Continue with Google** / **Continue with GitHub** for one-click signup. No email verification step.
+
+**Sign in with Google or GitHub:**
+Click the button, your browser opens, sign in, and the tab closes automatically. If the tab doesn't close, you can close it manually — the session will have already been picked up.
+
+**Sign out:** Click your name or avatar at the bottom of the sidebar → **Sign Out**.
+
+**Staying signed in:** Prmpt keeps your session active between restarts.
+
+**Delete account:** Settings → Profile → **Delete Account**. This permanently removes your chats, library, memory, and profile. There's no recovery.
+
+---
+
+## 13. Keyboard shortcuts
 
 | Shortcut | What it does |
-|----------|--------------|
-| Type `@prompt` anywhere | Opens the overlay next to your cursor |
-| `Ctrl+5` / `Cmd+5` | Toggle the overlay on/off |
-| `Enter` | Send your message / optimize |
+|---|---|
+| Type `@prompt` anywhere | Opens the overlay at your cursor |
+| `Ctrl+5` | Toggle the overlay open or closed |
+| `Enter` | Send your message |
 | `Shift+Enter` | New line in the input box |
 | `Esc` | Close the overlay |
 
 ---
 
-## 16. Common Questions
+## 14. Things that catch people off guard
 
-**Does Prmpt work with ChatGPT, Claude, Midjourney, etc.?**
-Yes — Prmpt is not an AI itself. It polishes your prompt, which you then paste into whatever AI tool you use. It works with any AI tool.
+**`@prompt` didn't do anything.**
+It only works in actual, editable text fields. If you typed it in a browser address bar, a read-only area, a search box, or a game, it won't trigger. Try it in something like a Gmail compose window, Notepad, or a Slack message box.
 
-**Is my data private?**
-Your prompts and memory are stored securely and are never sold or shared with third parties. Memory data lives on your own device.
+**The result is pasted in the wrong place.**
+When you click Insert, Prmpt sends the text to the last active text field before the overlay opened. If you clicked somewhere else between triggering the overlay and clicking Insert, the focus may have shifted. Click Insert promptly, or use Copy and paste manually.
 
-**Can I use it without creating an account?**
-The overlay works in a limited mode without signing in. To save prompts, use history, and enable memory, you'll need a free account.
+**The overlay appeared on the wrong monitor.**
+The overlay opens at your cursor position. Before triggering it, make sure your cursor is on the right screen.
 
-**The overlay opened on the wrong screen — what do I do?**
-The overlay appears near your mouse cursor. Move your cursor to the screen you want before triggering it.
+**The optimization sounds nothing like me.**
+Go to Settings → Customize → Custom Instructions and describe your preferences. Even one or two sentences makes a noticeable difference.
 
-**I accidentally deleted a prompt — can I get it back?**
-Unfortunately, deletions are permanent. We recommend using the **Download** option to keep a backup of your most important prompts.
+**I'm getting the same result every time I regenerate.**
+Try switching from Fast to Thinking mode, or add a note like "give me something different from last time." If your original prompt is very constrained, there's only so much variation it can introduce.
 
-**My microphone isn't working with voice input — what should I check?**
-Make sure Prmpt has microphone permission in your computer's system settings (Windows: Settings → Privacy → Microphone / Mac: System Preferences → Security & Privacy → Microphone).
+**The app seems slow or unresponsive.**
+The Python service needs to be running separately. If you see connection errors, start it with `npm run python:dev` in a terminal and leave it running.
 
-**Can I share prompts with people who don't have Prmpt?**
-Yes — shared prompt links open in a browser and anyone can read or copy the prompt without an account.
+**I edited a message and now I can't find the original.**
+The original is still there. Use the `←` arrow on the message to go back to the previous version.
 
----
-
-## 17. Contact Us
-
-Have a question that isn't answered here, found something that isn't working, or just want to share feedback?
-
-We'd love to hear from you.
-
-- 🌐 **Website:** [tryprmpt.vercel.app](https://tryprmpt.vercel.app)
-- 📧 **Email:** support@tryprmpt.com
-- 💬 **Feedback:** Use the **Help** button at the bottom of the sidebar inside the app to reach us directly.
-
-We read every message and aim to respond within 1 business day.
+**Shared link says the content doesn't exist.**
+The collection or prompt may have been deleted after the link was generated.
 
 ---
 
-*Thank you for using Prmpt — we're just getting started, and your feedback shapes every update.*
+## 15. Reach us
+
+If something isn't working, something's confusing, or you have a suggestion, reach out.
+
+- **In the app:** Click **Help** at the bottom of the sidebar
+- **Email:** support@tryprmpt.com
+- **Website:** [tryprmpt.vercel.app](https://tryprmpt.vercel.app)
+
+If it's a bug, tell us what you were doing when it happened and what you expected instead.
