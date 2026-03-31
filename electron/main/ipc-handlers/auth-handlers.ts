@@ -131,6 +131,19 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
             };
         }
 
+        // Attach connected identities when online
+        if (networkMonitor.isOnline) {
+            try {
+                const { identities } = await authService.getIdentities();
+                userData.identities = identities;
+            } catch (e) {
+                console.warn('[Auth] Could not load identities:', e);
+                userData.identities = [];
+            }
+        } else {
+            userData.identities = [];
+        }
+
         Sentry.setUser({ id: user.id });
         appWindowManager.send('sentry:set-user', { id: user.id });
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
@@ -451,6 +464,152 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             console.error('[Auth] OAuth sign-in failed:', err.message);
             Sentry.captureException(err);
             return { error: err.message || 'OAuth sign-in failed' };
+        }
+    });
+
+    // Get Connected Identities
+    ipcMain.handle('auth:get-identities', async () => {
+        try {
+            const { authService } = getServices();
+            const { identities, error } = await authService.getIdentities();
+            if (error) return { identities: [], error: error.message };
+            return { identities, error: null };
+        } catch (error: any) {
+            console.error('[Auth] Get identities error:', error);
+            Sentry.captureException(error);
+            return { identities: [], error: error.message || 'Failed to get identities' };
+        }
+    });
+
+    // Link a new OAuth provider to the current account
+    ipcMain.handle('auth:link-identity', async (_event, { provider }: { provider: 'google' | 'github' }) => {
+        try {
+            return await new Promise<{ success?: boolean; error?: string }>((resolve, reject) => {
+                let serverClosed = false;
+                const closeServer = () => {
+                    if (!serverClosed) { serverClosed = true; server.close(); }
+                };
+                const timeout = setTimeout(() => {
+                    closeServer();
+                    resolve({ error: 'Link identity timed out' });
+                }, 10 * 60 * 1000);
+
+                const server = http.createServer(async (req, res) => {
+                    const actualPort = (server.address() as { port: number } | null)?.port ?? 0;
+                    try {
+                        const reqUrl = new URL(req.url!, `http://127.0.0.1:${actualPort}`);
+                        if (reqUrl.pathname !== '/auth/callback') {
+                            res.writeHead(404); res.end(); return;
+                        }
+
+                        const code = reqUrl.searchParams.get('code');
+                        const oauthError = reqUrl.searchParams.get('error');
+
+                        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                        if (code) {
+                            res.end(`<!DOCTYPE html><html><head><title>Connected — Prmpt</title>
+                              <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
+                              .card{text-align:center;padding:40px;max-width:360px}.title{font-size:22px;font-weight:600;margin-bottom:8px}
+                              .sub{color:#888;font-size:14px}</style></head>
+                              <body><div class="card">
+                              <div class="title">Account connected!</div>
+                              <div class="sub">You can close this tab and return to Prmpt.</div>
+                              </div><script>setTimeout(()=>window.close(),2500)</script></body></html>`);
+                        } else {
+                            res.end(`<!DOCTYPE html><html><head><title>Connection failed — Prmpt</title>
+                              <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
+                              .card{text-align:center;padding:40px;max-width:360px}.title{font-size:22px;font-weight:600;margin-bottom:8px}
+                              .sub{color:#888;font-size:14px}</style></head>
+                              <body><div class="card">
+                              <div class="title">Connection failed</div>
+                              <div class="sub">${oauthError || 'No authorization code received.'}</div>
+                              </div></body></html>`);
+                        }
+
+                        clearTimeout(timeout);
+                        closeServer();
+
+                        if (code) {
+                            const { authService } = getServices();
+                            const { session, error: sessionError } = await authService.exchangeCodeForSession(code);
+                            if (sessionError || !session) {
+                                console.error('[Auth] Link identity code exchange failed:', sessionError?.message);
+                                return;
+                            }
+                            console.log(`[Auth] Identity linked (${provider})`);
+                            appWindowManager.show();
+                            await handleSuccessfulAuth(appWindowManager, session.user);
+                        }
+                    } catch (err) {
+                        console.error('[Auth] Link identity callback error:', err);
+                        Sentry.captureException(err);
+                        res.writeHead(500); res.end();
+                        clearTimeout(timeout);
+                        closeServer();
+                    }
+                });
+
+                server.on('error', (err: NodeJS.ErrnoException) => {
+                    Sentry.captureException(err);
+                    clearTimeout(timeout);
+                    reject(err);
+                });
+
+                server.listen(0, '127.0.0.1', async () => {
+                    const actualPort = (server.address() as { port: number }).port;
+                    const redirectTo = `http://127.0.0.1:${actualPort}/auth/callback`;
+                    try {
+                        const { authService } = getServices();
+                        const { url, error } = await authService.linkIdentity(provider, redirectTo);
+                        if (error || !url) {
+                            closeServer();
+                            clearTimeout(timeout);
+                            resolve({ error: error?.message || 'Failed to generate link URL' });
+                            return;
+                        }
+                        await shell.openExternal(url);
+                        console.log(`[Auth] Link identity flow started for ${provider} — callback on port ${actualPort}`);
+                        resolve({ success: true });
+                    } catch (err: any) {
+                        closeServer();
+                        clearTimeout(timeout);
+                        resolve({ error: err.message || 'Link identity failed' });
+                    }
+                });
+            });
+        } catch (err: any) {
+            console.error('[Auth] Link identity failed:', err.message);
+            Sentry.captureException(err);
+            return { error: err.message || 'Link identity failed' };
+        }
+    });
+
+    // Unlink an OAuth provider from the current account
+    ipcMain.handle('auth:unlink-identity', async (_event, { identityId }: { identityId: string }) => {
+        try {
+            const { authService } = getServices();
+            const { error } = await authService.unlinkIdentity(identityId);
+            if (error) return { error: error.message };
+            await handleSuccessfulAuth(appWindowManager);
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Unlink identity error:', error);
+            Sentry.captureException(error);
+            return { error: error.message || 'Failed to unlink identity' };
+        }
+    });
+
+    // Reset password (send email)
+    ipcMain.handle('auth:reset-password', async (_event, { email }: { email: string }) => {
+        try {
+            const { authService } = getServices();
+            const { error } = await authService.resetPasswordForEmail(email);
+            if (error) return { error: error.message };
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Reset password error:', error);
+            Sentry.captureException(error);
+            return { error: error.message || 'Failed to send reset email' };
         }
     });
 
