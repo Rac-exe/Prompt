@@ -72,6 +72,10 @@ export interface ElectronAPI {
   signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
   checkAuth: () => void;
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any; error?: string }) => void) => void;
+  getIdentities: () => Promise<{ identities: any[]; error?: string | null }>;
+  linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
+  unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
+  resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
   signOut: () => void;
 
   // Chat
