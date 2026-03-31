@@ -842,12 +842,14 @@ async def optimize_stream(websocket: WebSocket):
         pass # Connection closed
 
 @app.get("/health")
+@limiter.exempt
 async def health():
     """Lightweight liveness probe."""
     return {"status": "ok", "service": "prompt-optimizer"}
 
 
 @app.get("/health/ready")
+@limiter.exempt
 async def health_ready():
     """Readiness probe — checks that critical dependencies are available."""
     _ensure_pipeline()
@@ -1580,6 +1582,7 @@ async def shutdown_event():
 
 
 @app.get("/")
+@limiter.exempt
 async def root():
     return {
         "service": "Prompt Optimizer API",
