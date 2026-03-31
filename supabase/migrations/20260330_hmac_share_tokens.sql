@@ -78,7 +78,7 @@ CREATE POLICY "Authenticated can view prompts in shared collections"
 -- ============================================
 -- SUCCESS
 -- ============================================
--- Collection shares now require: valid opaque token + authenticated session.
+-- Collection shares now reqated session.
 -- Prompt shares require: valid opaque token (format-checked in service layer).
 -- All previous tokens have been cleared and will regenerate automatically.
 -- ============================================
