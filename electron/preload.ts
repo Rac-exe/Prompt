@@ -1,5 +1,109 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+type TranscriptionPayload = { text: string; accumulated: string; type: string };
+type TranscriptionStatus = 'listening' | 'processing' | 'stopped';
+type RecorderHandle = {
+  stream: any;
+  recorder: any;
+};
+
+const transcriptionListeners = {
+  transcription: new Set<(data: TranscriptionPayload) => void>(),
+  status: new Set<(status: TranscriptionStatus) => void>(),
+  error: new Set<(error: string) => void>(),
+};
+
+let activeRecorder: RecorderHandle | null = null;
+
+function emitTranscription(data: TranscriptionPayload) {
+  transcriptionListeners.transcription.forEach((listener) => listener(data));
+}
+
+function emitTranscriptionStatus(status: TranscriptionStatus) {
+  transcriptionListeners.status.forEach((listener) => listener(status));
+}
+
+function emitTranscriptionError(error: string) {
+  transcriptionListeners.error.forEach((listener) => listener(error));
+}
+
+ipcRenderer.on('transcription:update', (_event: any, data: any) => {
+  emitTranscription(data);
+});
+ipcRenderer.on('transcription:status', (_event: any, status: string) => {
+  emitTranscriptionStatus(status as TranscriptionStatus);
+});
+ipcRenderer.on('transcription:error', (_event: any, error: string) => {
+  emitTranscriptionError(error);
+});
+
+async function startLocalTranscription() {
+  if (activeRecorder) {
+    emitTranscriptionError('Recording already in progress.');
+    return;
+  }
+
+  try {
+    const mediaDevices = (globalThis as any).navigator?.mediaDevices;
+    const MR = (globalThis as any).MediaRecorder;
+
+    if (!mediaDevices?.getUserMedia || !MR) {
+      throw new Error('Microphone capture is not available in this window.');
+    }
+
+    const stream = await mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+
+    const mimeType = MR.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
+
+    const recorder = new MR(stream, { mimeType });
+    let chunksSent = 0;
+
+    recorder.ondataavailable = async (event: any) => {
+      if (!activeRecorder || event.data.size === 0) return;
+      try {
+        const ab = await event.data.arrayBuffer();
+        const uint8 = new Uint8Array(ab);
+        ipcRenderer.send('transcription:audio-chunk', uint8);
+        chunksSent++;
+      } catch (_) {}
+    };
+
+    recorder.start(250);
+
+    activeRecorder = { stream, recorder };
+
+    ipcRenderer.send('transcription:debug', `mic started mimeType=${mimeType}`);
+    ipcRenderer.send('transcription:start', {
+      sessionId: Date.now().toString(),
+      sampleRate: 48000,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Microphone access failed.';
+    emitTranscriptionError(message);
+    emitTranscriptionStatus('stopped');
+  }
+}
+
+async function stopLocalTranscription() {
+  if (!activeRecorder) return;
+
+  const rec = activeRecorder;
+  activeRecorder = null;
+
+  try { rec.recorder.stop(); } catch (_) {}
+  rec.stream.getTracks().forEach((track: any) => track.stop());
+
+  ipcRenderer.send('transcription:stop');
+}
+
 // Declare window type for TypeScript
 declare global {
   interface Window {
@@ -271,20 +375,20 @@ const electronAPI = {
   // TRANSCRIPTION API (voice input)
   // ============================================
   transcription: {
-    start: (sessionId: string) => {
-      ipcRenderer.send('transcription:start', sessionId);
+    start: (_sessionId: string) => {
+      void startLocalTranscription();
     },
     stop: () => {
-      ipcRenderer.send('transcription:stop');
+      void stopLocalTranscription();
     },
     onTranscription: (callback: (data: { text: string; accumulated: string; type: string }) => void) => {
-      ipcRenderer.on('transcription:update', (_event, data) => callback(data));
+      transcriptionListeners.transcription.add(callback);
     },
     onStatus: (callback: (status: string) => void) => {
-      ipcRenderer.on('transcription:status', (_event, status) => callback(status));
+      transcriptionListeners.status.add(callback as (status: TranscriptionStatus) => void);
     },
     onError: (callback: (error: string) => void) => {
-      ipcRenderer.on('transcription:error', (_event, error) => callback(error));
+      transcriptionListeners.error.add(callback);
     },
   },
 

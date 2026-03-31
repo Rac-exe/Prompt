@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import * as Sentry from '@sentry/react';
 import type { AttachedFile, SkillInfo } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON, MAX_ATTACHED_FILES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../lib/constants';
 import { fileToBase64, resizeImageIfNeeded } from '../lib/utils';
@@ -351,6 +352,7 @@ const InputSection: React.FC<InputSectionProps> = ({
 
   // Voice state
   const [isListening, setIsListening] = useState(false);
+  const voiceActiveRef = useRef(false);
   const transcriptionSessionIdRef = useRef<string | null>(null);
 
   const canSend = !!inputValue.trim() && !isOptimizing && isOnline;
@@ -369,13 +371,20 @@ const InputSection: React.FC<InputSectionProps> = ({
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
     if (!text || isOptimizing) return;
+    if (isListening) {
+      Sentry.addBreadcrumb({ category: 'transcription', message: 'Send pressed while voice active — stopping transcription', level: 'info', data: { window: 'overlay' } });
+      voiceActiveRef.current = false;
+      setIsListening(false);
+      window.electronAPI?.transcription?.stop?.();
+      transcriptionSessionIdRef.current = null;
+    }
     onSend(text);
     setInputValue('');
     if (inputRef.current) {
       inputRef.current.style.height = '';
       inputRef.current.style.overflowY = 'hidden';
     }
-  }, [inputValue, isOptimizing, onSend, inputRef]);
+  }, [inputValue, isOptimizing, isListening, onSend, inputRef]);
 
   // Handle file input change
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -453,10 +462,14 @@ const InputSection: React.FC<InputSectionProps> = ({
   // Voice input
   const toggleVoice = useCallback(() => {
     if (isListening) {
+      Sentry.addBreadcrumb({ category: 'transcription', message: 'Mic toggled off by user', level: 'info', data: { window: 'overlay' } });
+      voiceActiveRef.current = false;
       setIsListening(false);
       window.electronAPI?.transcription?.stop?.();
       transcriptionSessionIdRef.current = null;
     } else {
+      Sentry.addBreadcrumb({ category: 'transcription', message: 'Mic toggled on by user', level: 'info', data: { window: 'overlay' } });
+      voiceActiveRef.current = true;
       setIsListening(true);
       const sessionId = Date.now().toString();
       transcriptionSessionIdRef.current = sessionId;
@@ -469,9 +482,24 @@ const InputSection: React.FC<InputSectionProps> = ({
     const api = window.electronAPI?.transcription;
     if (!api?.onTranscription) return;
     api.onTranscription((data) => {
+      if (!voiceActiveRef.current) return;
       if (data.text) {
         setInputValue(data.accumulated || data.text);
       }
+    });
+    api.onStatus?.((status) => {
+      Sentry.addBreadcrumb({ category: 'transcription', message: `Voice status: ${status}`, level: 'info', data: { window: 'overlay' } });
+      if (status === 'listening') {
+        voiceActiveRef.current = true;
+      } else {
+        voiceActiveRef.current = false;
+      }
+      setIsListening(status === 'listening');
+    });
+    api.onError?.((error) => {
+      Sentry.addBreadcrumb({ category: 'transcription', message: 'Voice transcription error', level: 'error', data: { error, window: 'overlay' } });
+      voiceActiveRef.current = false;
+      setIsListening(false);
     });
   }, []);
 

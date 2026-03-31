@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import * as Sentry from "@sentry/react";
 import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn, Loader2, Brain, ArrowDown } from "lucide-react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
@@ -67,6 +68,7 @@ export const ChatView = ({
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceActiveRef = useRef(false);
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   // File preview modal — null = closed
@@ -101,20 +103,34 @@ export const ChatView = ({
     if (!isElectron) return;
 
     window.electronAPI?.transcription?.onTranscription?.((data) => {
+      if (!voiceActiveRef.current) return;
       const text = (data.accumulated || data.text || "").trim();
       if (text) {
         setInput(text);
-        if (data.type === "final") setVoiceState("idle");
+        if (data.type === "final") {
+          Sentry.addBreadcrumb({ category: "transcription", message: "Final transcription received (ChatView)", level: "info" });
+          voiceActiveRef.current = false;
+          setVoiceState("idle");
+        }
       }
     });
 
     window.electronAPI?.transcription?.onStatus?.((status) => {
-      if (status === "listening") { setVoiceState("listening"); setVoiceError(null); }
-      else if (status === "processing") setVoiceState("processing");
-      else if (status === "stopped") setVoiceState("idle");
+      Sentry.addBreadcrumb({ category: "transcription", message: `Voice status: ${status}`, level: "info", data: { window: "main" } });
+      if (status === "listening") {
+        voiceActiveRef.current = true;
+        setVoiceState("listening");
+        setVoiceError(null);
+      } else if (status === "processing") {
+        setVoiceState("processing");
+      } else if (status === "stopped") {
+        voiceActiveRef.current = false;
+        setVoiceState("idle");
+      }
     });
 
     window.electronAPI?.transcription?.onError?.((error) => {
+      Sentry.addBreadcrumb({ category: "transcription", message: "Voice transcription error", level: "error", data: { error, window: "main" } });
       setVoiceState("idle");
       setVoiceError(error || "Transcription failed.");
       setTimeout(() => setVoiceError(null), 5000);
@@ -124,6 +140,12 @@ export const ChatView = ({
   // ── Submit ──────────────────────────────────────────────────
   const handleSubmit = () => {
     if (!input.trim() || isGenerating || !isOnline) return;
+    if (voiceState === "listening") {
+      Sentry.addBreadcrumb({ category: "transcription", message: "Send pressed while voice active — stopping transcription", level: "info", data: { window: "main" } });
+      voiceActiveRef.current = false;
+      window.electronAPI?.transcription?.stop?.();
+      setVoiceState("idle");
+    }
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
     setAttachedFiles([]);
@@ -157,9 +179,11 @@ export const ChatView = ({
     const isElectron = !!(window as any).electronAPI;
     if (!isElectron) return;
     if (voiceState === "listening") {
+      Sentry.addBreadcrumb({ category: "transcription", message: "Mic toggled off by user", level: "info", data: { window: "main" } });
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("processing");
     } else if (voiceState === "idle") {
+      Sentry.addBreadcrumb({ category: "transcription", message: "Mic toggled on by user", level: "info", data: { window: "main" } });
       setVoiceError(null);
       window.electronAPI?.transcription?.start?.(Date.now().toString());
     }

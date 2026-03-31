@@ -1,197 +1,288 @@
 /**
  * TranscriptionClient
  *
- * Manages WebSocket connection to Python Whisper transcription service.
- * Uses the `ws` package (Node.js) — NOT the browser WebSocket API.
+ * Manages a per-session WebSocket connection to the Python streaming
+ * transcription service at /ws/transcribe-stream.
  *
- * Flow:
- *   start → [status: listening] → [transcription: ...] × N
- *         → [status: processing] ← fired when user clicks Stop
- *         → [final: ...] ← last Whisper result
- *         → [status: stopped]
+ * Each recording session opens a fresh WebSocket. When the session ends
+ * the socket is closed — no persistent connection or reconnection logic.
  */
 const WebSocket = require('ws');
+import * as Sentry from '@sentry/electron/main';
+import { authState } from '../utils/auth-state';
+
+export interface TranscriptionCallbacks {
+  onTranscription: (data: {
+    text: string;
+    accumulated: string;
+    type: string;
+    is_final?: boolean;
+    speech_final?: boolean;
+  }) => void;
+  onError: (error: string) => void;
+  onStatus: (status: string) => void;
+}
 
 export class TranscriptionClient {
   private ws: any | null = null;
   private baseUrl: string;
-  private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 3;
-  private reconnectDelay: number = 1000;
-  private currentSessionId: string | null = null;
-
-  private onTranscriptionCallback: ((data: { text: string; accumulated: string; type: string }) => void) | null = null;
-  private onErrorCallback:         ((error: string) => void) | null = null;
-  private onStatusCallback:        ((status: string) => void) | null = null;
-
-  private connectionPromise: Promise<void> | null = null;
+  private callbacks: TranscriptionCallbacks | null = null;
+  private sessionReady = false;
+  private pendingChunks: Buffer[] = [];
+  private chunkCount = 0;
+  private sessionId: string | null = null;
+  private finishSpan: (() => void) | null = null;
 
   constructor(baseUrl: string = 'ws://127.0.0.1:8001') {
     this.baseUrl = baseUrl;
   }
 
-  // ── Connection ──────────────────────────────────────────────────────────────
+  async startSession(
+    sessionId: string,
+    sampleRate: number,
+    callbacks: TranscriptionCallbacks,
+  ): Promise<void> {
+    this.forceClose();
 
-  private async ensureConnection(): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
-    if (this.connectionPromise) return this.connectionPromise;
+    this.callbacks = callbacks;
+    this.sessionReady = false;
+    this.pendingChunks = [];
+    this.chunkCount = 0;
+    this.sessionId = sessionId;
 
-    this.connectionPromise = new Promise<void>((resolve, reject) => {
-      const wsUrl = `${this.baseUrl}/ws/transcribe`;
-      console.log(`[TranscriptionClient] Connecting to: ${wsUrl}`);
+    const token = authState.currentAccessToken;
+    const wsUrl = token
+      ? `${this.baseUrl}/ws/transcribe-stream?token=${encodeURIComponent(token)}`
+      : `${this.baseUrl}/ws/transcribe-stream`;
 
+    console.log(`[TranscriptionClient] Connecting…`);
+
+    Sentry.addBreadcrumb({
+      category: 'transcription',
+      message: 'Connecting to transcription service',
+      level: 'info',
+      data: { sessionId, sampleRate },
+    });
+
+    return new Promise<void>((resolve, reject) => {
       try {
-        this.ws = new WebSocket(wsUrl);
+        const ws = new WebSocket(wsUrl);
+        this.ws = ws;
 
-        this.ws.on('open', () => {
+        ws.on('open', () => {
+          if (this.ws !== ws) return;
           console.log('[TranscriptionClient] WebSocket connected');
-          this.reconnectAttempts = 0;
-          this.connectionPromise = null;
+
+          Sentry.addBreadcrumb({
+            category: 'transcription',
+            message: 'WebSocket connected to backend',
+            level: 'info',
+            data: { sessionId },
+          });
+
+          const startMsg = JSON.stringify({
+            action: 'start',
+            session_id: sessionId,
+            sample_rate: sampleRate,
+          });
+          ws.send(startMsg);
+
+          this.sessionReady = true;
+          if (this.pendingChunks.length > 0) {
+            console.log(`[TranscriptionClient] Flushing ${this.pendingChunks.length} buffered chunks`);
+            Sentry.addBreadcrumb({
+              category: 'transcription',
+              message: 'Flushing buffered audio chunks',
+              level: 'info',
+              data: { count: this.pendingChunks.length, sessionId },
+            });
+            for (const chunk of this.pendingChunks) {
+              ws.send(chunk);
+            }
+            this.chunkCount += this.pendingChunks.length;
+          }
+          this.pendingChunks = [];
           resolve();
         });
 
-        this.ws.on('message', (rawData: any) => {
+        ws.on('message', (rawData: any) => {
+          if (this.ws !== ws) return;
           try {
             const data = JSON.parse(rawData.toString());
-            console.log(`[TranscriptionClient] ← ${JSON.stringify(data)}`);
-
-            switch (data.type) {
-              case 'transcription':
-              case 'final':
-                if (this.onTranscriptionCallback) {
-                  this.onTranscriptionCallback({
-                    text:        data.text        || '',
-                    accumulated: data.accumulated || data.text || '',
-                    type:        data.type,
-                  });
-                }
-                break;
-
-              case 'status':
-                console.log(`[TranscriptionClient] Status: ${data.status}`);
-                // Surface every status change to the renderer so it can show
-                // "Listening…", "Processing…", and "Stopped" states.
-                if (this.onStatusCallback) {
-                  this.onStatusCallback(data.status);
-                }
-                break;
-
-              case 'error':
-                console.error('[TranscriptionClient] Server error:', data.message);
-                if (this.onErrorCallback) this.onErrorCallback(data.message);
-                break;
-
-              default:
-                console.warn('[TranscriptionClient] Unknown message type:', data.type);
-            }
-          } catch (error) {
-            console.error('[TranscriptionClient] Failed to parse message:', error);
+            this.routeMessage(data);
+          } catch (err) {
+            console.error('[TranscriptionClient] Failed to parse message:', err);
+            Sentry.captureException(err, { tags: { component: 'transcription-client', sessionId } });
           }
         });
 
-        this.ws.on('error', (error: Error) => {
+        ws.on('error', (error: Error) => {
+          if (this.ws !== ws) return;
           console.error('[TranscriptionClient] WebSocket error:', error.message);
-          this.connectionPromise = null;
+          Sentry.addBreadcrumb({
+            category: 'transcription',
+            message: 'WebSocket error',
+            level: 'error',
+            data: { error: error.message, sessionId },
+          });
+          Sentry.captureException(error, { tags: { component: 'transcription-client', sessionId } });
+          this.callbacks?.onError(error.message);
           reject(new Error('Failed to connect to transcription service'));
         });
 
-        this.ws.on('close', () => {
-          console.log('[TranscriptionClient] WebSocket closed');
+        ws.on('close', () => {
+          if (this.ws !== ws) return;
+          console.log(`[TranscriptionClient] WebSocket closed (sent ${this.chunkCount} chunks)`);
+          Sentry.addBreadcrumb({
+            category: 'transcription',
+            message: 'WebSocket closed',
+            level: 'info',
+            data: { chunksSent: this.chunkCount, sessionId },
+          });
           this.ws = null;
-          this.connectionPromise = null;
-
-          if (this.currentSessionId && this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            console.log(`[TranscriptionClient] Reconnecting (attempt ${this.reconnectAttempts})…`);
-            setTimeout(() => {
-              this.ensureConnection().catch(err =>
-                console.error('[TranscriptionClient] Reconnect failed:', err)
-              );
-            }, this.reconnectDelay * this.reconnectAttempts);
-          }
+          this.sessionReady = false;
         });
-
-      } catch (error) {
+      } catch (error: any) {
         console.error('[TranscriptionClient] Failed to create WebSocket:', error);
-        this.connectionPromise = null;
+        Sentry.captureException(error, { tags: { component: 'transcription-client' } });
+        this.callbacks?.onError(error?.message ?? 'WebSocket creation failed');
         reject(error);
       }
     });
-
-    return this.connectionPromise;
   }
 
-  // ── Public API ──────────────────────────────────────────────────────────────
-
-  async startTranscription(
-    sessionId: string,
-    onTranscription: (data: { text: string; accumulated: string; type: string }) => void,
-    onError?:        (error: string) => void,
-    onStatus?:       (status: string) => void,
-  ): Promise<void> {
-    console.log(`[TranscriptionClient] startTranscription — session: ${sessionId}`);
-
-    this.onTranscriptionCallback = onTranscription;
-    this.onErrorCallback         = onError  || null;
-    this.onStatusCallback        = onStatus || null;
-
-    try {
-      await this.ensureConnection();
-
-      if (!this.ws) throw new Error('WebSocket not connected');
-
-      this.currentSessionId = sessionId;
-
-      const msg = JSON.stringify({ action: 'start', session_id: sessionId });
-      console.log(`[TranscriptionClient] → ${msg}`);
-      this.ws.send(msg);
-
-    } catch (error) {
-      console.error('[TranscriptionClient] Failed to start transcription:', error);
-      if (onError) onError(error instanceof Error ? error.message : 'Failed to start transcription');
-      throw error;
+  sendAudioChunk(chunk: Buffer): void {
+    if (!this.sessionReady) {
+      this.pendingChunks.push(chunk);
+      return;
+    }
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(chunk);
+    this.chunkCount++;
+    if (this.chunkCount <= 3 || this.chunkCount % 100 === 0) {
+      console.log(`[TranscriptionClient] chunk #${this.chunkCount} (${chunk.length} bytes)`);
     }
   }
 
-  async stopTranscription(): Promise<void> {
-    console.log('[TranscriptionClient] stopTranscription called');
+  async stopSession(): Promise<void> {
+    console.log(`[TranscriptionClient] stopSession (sent ${this.chunkCount} chunks total)`);
+
+    Sentry.addBreadcrumb({
+      category: 'transcription',
+      message: 'Stopping transcription session',
+      level: 'info',
+      data: { chunksSent: this.chunkCount, sessionId: this.sessionId },
+    });
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('[TranscriptionClient] No active connection to stop');
-      this.currentSessionId = null;
+      this.forceClose();
       return;
     }
 
     try {
-      const msg = JSON.stringify({ action: 'stop' });
-      console.log(`[TranscriptionClient] → ${msg}`);
-      this.ws.send(msg);
-      this.currentSessionId = null;
-    } catch (error) {
-      console.error('[TranscriptionClient] Failed to stop transcription:', error);
+      this.ws.send(JSON.stringify({ action: 'stop' }));
+    } catch (err) {
+      console.error('[TranscriptionClient] Error sending stop:', err);
+      Sentry.captureException(err, { tags: { component: 'transcription-client', sessionId: this.sessionId ?? undefined } });
     }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+    this.forceClose();
   }
 
   disconnect(): void {
-    console.log('[TranscriptionClient] disconnect called');
-    this.currentSessionId        = null;
-    this.onTranscriptionCallback = null;
-    this.onErrorCallback         = null;
-    this.onStatusCallback        = null;
-
-    if (this.ws) {
-      try { this.ws.close(); } catch (_) {}
-      this.ws = null;
-    }
+    this.forceClose();
   }
 
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl.replace('ws://', 'http://')}/health`);
+      const response = await fetch(
+        `${this.baseUrl.replace('ws://', 'http://')}/health`,
+      );
       const data: any = await response.json();
       return data.status === 'ok';
     } catch {
       return false;
+    }
+  }
+
+  private routeMessage(data: any): void {
+    if (!this.callbacks) return;
+
+    switch (data.type) {
+      case 'transcription':
+        this.callbacks.onTranscription({
+          text: data.text ?? '',
+          accumulated: data.accumulated ?? data.text ?? '',
+          type: data.type,
+          is_final: data.is_final,
+          speech_final: data.speech_final,
+        });
+        if (data.is_final) {
+          Sentry.addBreadcrumb({
+            category: 'transcription',
+            message: 'Received finalized transcription segment',
+            level: 'info',
+            data: { sessionId: this.sessionId, speech_final: data.speech_final },
+          });
+        }
+        break;
+
+      case 'final':
+        Sentry.addBreadcrumb({
+          category: 'transcription',
+          message: 'Received final accumulated transcription',
+          level: 'info',
+          data: { sessionId: this.sessionId, length: (data.accumulated ?? '').length },
+        });
+        this.callbacks.onTranscription({
+          text: data.text ?? '',
+          accumulated: data.accumulated ?? data.text ?? '',
+          type: data.type,
+          is_final: data.is_final,
+          speech_final: data.speech_final,
+        });
+        break;
+
+      case 'status':
+        console.log(`[TranscriptionClient] status: ${data.status}`);
+        Sentry.addBreadcrumb({
+          category: 'transcription',
+          message: `Transcription status: ${data.status}`,
+          level: 'info',
+          data: { status: data.status, sessionId: this.sessionId },
+        });
+        this.callbacks.onStatus(data.status);
+        break;
+
+      case 'error':
+        console.error(`[TranscriptionClient] server error: ${data.message}`);
+        Sentry.addBreadcrumb({
+          category: 'transcription',
+          message: 'Transcription server error',
+          level: 'error',
+          data: { error: data.message, sessionId: this.sessionId },
+        });
+        this.callbacks.onError(data.message ?? 'Unknown server error');
+        break;
+
+      default:
+        console.warn('[TranscriptionClient] Unknown message type:', data.type);
+    }
+  }
+
+  private forceClose(): void {
+    this.sessionReady = false;
+    this.pendingChunks = [];
+    this.callbacks = null;
+    if (this.finishSpan) {
+      this.finishSpan();
+      this.finishSpan = null;
+    }
+    const ws = this.ws;
+    this.ws = null;
+    if (ws) {
+      try { ws.removeAllListeners(); ws.close(); } catch (_) {}
     }
   }
 }

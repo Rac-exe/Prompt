@@ -428,4 +428,25 @@ export class PythonClient extends EventEmitter {
       return 'New Chat';
     }
   }
+
+  async transcribeAudio(audioBase64: string): Promise<string> {
+    try {
+      const response = await this.client.post(
+        '/transcribe-audio',
+        { audio_base64: audioBase64 },
+        { timeout: 120000 }
+      );
+      const text = response.data?.text;
+      return typeof text === 'string' ? text : '';
+    } catch (error) {
+      Sentry.captureException(error);
+      const message = error instanceof AxiosError
+        ? error.response?.data?.detail || error.message
+        : error instanceof Error
+          ? error.message
+          : 'Transcription failed';
+      console.error('[PythonClient] Audio transcription failed:', message);
+      throw new Error(message);
+    }
+  }
 }

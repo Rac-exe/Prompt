@@ -81,6 +81,27 @@ let systemTray: SystemTray;
 let pythonClient: PythonClient;
 let transcriptionClient: TranscriptionClient;
 
+function getPythonHttpBaseUrl(): string {
+  const raw = (process.env.PYTHON_SERVICE_URL || '').trim();
+  if (!raw) return 'http://127.0.0.1:8001';
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.origin;
+    }
+  } catch {
+    // Ignore malformed values and fall back to localhost.
+  }
+  console.warn('[Main] Invalid PYTHON_SERVICE_URL — falling back to http://127.0.0.1:8001');
+  return 'http://127.0.0.1:8001';
+}
+
+function toWsBaseUrl(httpBaseUrl: string): string {
+  return httpBaseUrl.startsWith('https://')
+    ? httpBaseUrl.replace('https://', 'wss://')
+    : httpBaseUrl.replace('http://', 'ws://');
+}
+
 
 // ============================================
 // KEYSTROKE DETECTION (Rust native bridge)
@@ -121,6 +142,8 @@ function toggleOverlay() {
 // ============================================
 function installCSP() {
   const supabaseHost = (process.env.SUPABASE_URL || '').replace(/^https?:\/\//, '');
+  const pythonHttpBase = getPythonHttpBaseUrl();
+  const pythonWsBase = toWsBaseUrl(pythonHttpBase);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -132,7 +155,7 @@ function installCSP() {
             "style-src 'self' 'unsafe-inline'",
             `img-src 'self' data: https: blob:`,
             `font-src 'self' data:`,
-            `connect-src 'self' https://${supabaseHost} wss://${supabaseHost} http://127.0.0.1:8001 ws://127.0.0.1:8001 https://*.sentry.io https://res.cloudinary.com`,
+            `connect-src 'self' https://${supabaseHost} wss://${supabaseHost} ${pythonHttpBase} ${pythonWsBase} https://*.sentry.io https://res.cloudinary.com`,
             `media-src 'self' blob:`,
           ].join('; '),
         ],
@@ -144,6 +167,9 @@ function installCSP() {
 async function initialize() {
   installCSP();
   console.log('[Main] Initializing Prompt Optimizer...');
+  const pythonHttpBase = getPythonHttpBaseUrl();
+  const pythonWsBase = toWsBaseUrl(pythonHttpBase);
+  console.log(`[Main] Python service URL: ${pythonHttpBase}`);
 
   // Initialize Supabase
   const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -168,7 +194,7 @@ async function initialize() {
   overlayManager.preload();
 
   // Initialize Python client
-  pythonClient = new PythonClient('http://127.0.0.1:8001');
+  pythonClient = new PythonClient(pythonHttpBase);
 
   let pythonHealthy = false;
   try {
@@ -238,57 +264,78 @@ async function initialize() {
   console.log('[Main] NetworkMonitor started');
 
   // Initialize Transcription client
-  transcriptionClient = new TranscriptionClient('ws://127.0.0.1:8001');
+  transcriptionClient = new TranscriptionClient(pythonWsBase);
   console.log('[Main] Transcription client initialized');
 
   // ============================================
-  // TRANSCRIPTION IPC HANDLERS
+  // TRANSCRIPTION IPC HANDLERS (streaming)
   // ============================================
-  ipcMain.on('transcription:start', async (event, sessionId: string) => {
-    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription started', level: 'info', data: { sessionId } });
-    logger.info(logger.fmt`transcription.started sessionId=${sessionId}`);
-    try {
-      console.log('[Main] Starting transcription session:', sessionId);
+  ipcMain.on('transcription:debug', (_event, msg: string) => {
+    console.log(`[Preload] ${msg}`);
+  });
 
-      await transcriptionClient.startTranscription(
-        sessionId,
-        // onTranscription — live chunks + final result
-        (data) => {
-          overlayManager.send('transcription:update', data);
-          appWindowManager.send('transcription:update', data);
-        },
-        // onError
-        (error) => {
-          console.error('[Main] Transcription error:', error);
-          overlayManager.send('transcription:error', error);
-          appWindowManager.send('transcription:error', error);
-        },
-        // onStatus — 'listening' | 'processing' | 'stopped'
-        (status) => {
-          console.log('[Main] Transcription status:', status);
-          overlayManager.send('transcription:status', status);
-          appWindowManager.send('transcription:status', status);
-        },
-      );
-    } catch (error) {
-      Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error', level: 'error' });
-      Sentry.captureException(error);
-      logger.error(logger.fmt`transcription.error ${error instanceof Error ? error.message : String(error)}`);
-      console.error('[Main] Failed to start transcription:', error);
-      overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
-      appWindowManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start');
-    }
+  let activeTranscriptionSpan: { finish: () => void } | null = null;
+
+  ipcMain.on('transcription:start', async (_event, config: { sessionId: string; sampleRate: number }) => {
+    const { sessionId, sampleRate } = config;
+    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription started', level: 'info', data: { sessionId, sampleRate } });
+    logger.info(logger.fmt`transcription.started sessionId=${sessionId} sampleRate=${sampleRate}`);
+
+    await Sentry.startSpan(
+      { name: 'voice-transcription', op: 'transcription.session', attributes: { sessionId, sampleRate } },
+      async (span) => {
+        activeTranscriptionSpan = { finish: () => span.end() };
+        try {
+          console.log('[Main] Starting streaming transcription session:', sessionId, 'rate:', sampleRate);
+
+          await transcriptionClient.startSession(sessionId, sampleRate, {
+            onTranscription: (data) => {
+              try { overlayManager.send('transcription:update', data); } catch (_) {}
+              try { appWindowManager.send('transcription:update', data); } catch (_) {}
+            },
+            onError: (error) => {
+              console.error('[Main] Transcription error:', error);
+              Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription error forwarded to renderer', level: 'error', data: { error, sessionId } });
+              try { overlayManager.send('transcription:error', error); } catch (_) {}
+              try { appWindowManager.send('transcription:error', error); } catch (_) {}
+            },
+            onStatus: (status) => {
+              console.log('[Main] Transcription status:', status);
+              Sentry.addBreadcrumb({ category: 'transcription', message: `Transcription status: ${status}`, level: 'info', data: { status, sessionId } });
+              try { overlayManager.send('transcription:status', status); } catch (_) {}
+              try { appWindowManager.send('transcription:status', status); } catch (_) {}
+            },
+          });
+        } catch (error) {
+          Sentry.captureException(error, { tags: { component: 'transcription-ipc', sessionId } });
+          logger.error(logger.fmt`transcription.error ${error instanceof Error ? error.message : String(error)}`);
+          console.error('[Main] Failed to start transcription:', error);
+          try { overlayManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start'); } catch (_) {}
+          try { appWindowManager.send('transcription:error', error instanceof Error ? error.message : 'Failed to start'); } catch (_) {}
+          activeTranscriptionSpan = null;
+        }
+      },
+    );
+  });
+
+  ipcMain.on('transcription:audio-chunk', (_event, chunk: any) => {
+    transcriptionClient.sendAudioChunk(Buffer.from(chunk));
   });
 
   ipcMain.on('transcription:stop', async () => {
-    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription stopped', level: 'info' });
+    Sentry.addBreadcrumb({ category: 'transcription', message: 'Transcription stop requested', level: 'info' });
     logger.info('transcription.stopped');
     try {
       console.log('[Main] Stopping transcription');
-      await transcriptionClient.stopTranscription();
+      await transcriptionClient.stopSession();
     } catch (error) {
-      Sentry.captureException(error);
+      Sentry.captureException(error, { tags: { component: 'transcription-ipc' } });
       console.error('[Main] Failed to stop transcription:', error);
+    } finally {
+      if (activeTranscriptionSpan) {
+        activeTranscriptionSpan.finish();
+        activeTranscriptionSpan = null;
+      }
     }
   });
 

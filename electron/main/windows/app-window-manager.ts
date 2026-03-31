@@ -146,9 +146,11 @@ export class AppWindowManager {
    * Send IPC message to window
    */
   send(channel: string, ...args: any[]) {
-    if (this.window && !this.window.isDestroyed()) {
-      this.window.webContents.send(channel, ...args);
-    }
+    try {
+      if (this.window && !this.window.isDestroyed() && this.window.webContents && !this.window.webContents.isDestroyed()) {
+        this.window.webContents.send(channel, ...args);
+      }
+    } catch (_) {}
   }
 
   /**
