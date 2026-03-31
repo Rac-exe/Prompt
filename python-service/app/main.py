@@ -1261,6 +1261,7 @@ _active_stream_sessions: set[str] = set()
 
 async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: list[str]):
     """Background task: read Deepgram JSON results and forward to the client."""
+    finalized_count = 0
     try:
         async for raw_msg in dg_ws:
             try:
@@ -1279,6 +1280,7 @@ async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: li
 
                 if is_final and transcript:
                     finalized_parts.append(transcript)
+                    finalized_count += 1
 
                 finalized_text = " ".join(finalized_parts)
                 if is_final:
@@ -1297,14 +1299,33 @@ async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: li
 
             elif msg_type == "Metadata":
                 logger.info(f"[Deepgram] Metadata session={session_id}: request_id={msg.get('request_id')}")
+                sentry_sdk.add_breadcrumb(
+                    category="transcription",
+                    message="Deepgram metadata received",
+                    level="info",
+                    data={"session_id": session_id, "request_id": msg.get("request_id")},
+                )
 
     except websockets.exceptions.ConnectionClosedOK:
         logger.info(f"[Deepgram] Connection closed normally session={session_id}")
     except websockets.exceptions.ConnectionClosedError as e:
         logger.warning(f"[Deepgram] Connection closed with error session={session_id}: {e}")
+        sentry_sdk.add_breadcrumb(
+            category="transcription",
+            message="Deepgram connection closed with error",
+            level="warning",
+            data={"session_id": session_id, "error": str(e)},
+        )
     except Exception as e:
         sentry_sdk.capture_exception(e)
         logger.error(f"[Deepgram] Relay error session={session_id}: {e}")
+    finally:
+        sentry_sdk.add_breadcrumb(
+            category="transcription",
+            message="Deepgram relay finished",
+            level="info",
+            data={"session_id": session_id, "finalized_segments": finalized_count},
+        )
 
 
 @app.websocket("/ws/transcribe-stream")
@@ -1315,27 +1336,53 @@ async def websocket_transcribe_stream(websocket: WebSocket):
     user_id = auth.get("sub")
     logger.info(f"WebSocket.transcribe_stream connected user={user_id}")
 
+    sentry_sdk.set_user({"id": user_id} if user_id else None)
+
     session_id: str | None = None
     dg_ws = None
     relay_task: asyncio.Task | None = None
     finalized_parts: list[str] = []
+    audio_chunks_received = 0
+
+    transaction = sentry_sdk.start_transaction(
+        op="transcription.stream",
+        name="ws.transcribe-stream",
+    )
+    transaction.set_tag("user_id", user_id or "anonymous")
 
     try:
         start_data = await websocket.receive_json()
         if start_data.get("action") != "start":
             await websocket.send_json({"type": "error", "message": "Expected {action: 'start'} as first message"})
             await websocket.close(code=1008)
+            transaction.set_status("invalid_argument")
             return
 
         sample_rate = int(start_data.get("sample_rate", 16000))
         session_id = start_data.get("session_id", f"stream_{int(time.time())}")
         logger.info(f"[Deepgram] Starting session={session_id} sample_rate={sample_rate}")
 
+        transaction.set_tag("session_id", session_id)
+        transaction.set_data("sample_rate", sample_rate)
+
+        sentry_sdk.add_breadcrumb(
+            category="transcription",
+            message="Transcription session started",
+            level="info",
+            data={"session_id": session_id, "sample_rate": sample_rate, "user_id": user_id},
+        )
+
         api_key = DEEPGRAM_API_KEY
         if not api_key:
             logger.error("[Deepgram] DEEPGRAM_API_KEY is not set")
+            sentry_sdk.add_breadcrumb(
+                category="transcription",
+                message="Deepgram API key missing",
+                level="error",
+            )
             await websocket.send_json({"type": "error", "message": "Deepgram API key not configured"})
             await websocket.close(code=1011)
+            transaction.set_status("unavailable")
             return
 
         dg_url = (
@@ -1346,14 +1393,29 @@ async def websocket_transcribe_stream(websocket: WebSocket):
         )
         dg_headers = {"Authorization": f"Token {api_key}"}
 
-        try:
-            dg_ws = await websockets.connect(dg_url, additional_headers=dg_headers)
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.error(f"[Deepgram] Failed to connect: {e}")
-            await websocket.send_json({"type": "error", "message": f"Deepgram connection failed: {e}"})
-            await websocket.close(code=1011)
-            return
+        with transaction.start_child(op="transcription.deepgram_connect", description="Connect to Deepgram STT"):
+            try:
+                dg_ws = await websockets.connect(dg_url, additional_headers=dg_headers)
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                sentry_sdk.add_breadcrumb(
+                    category="transcription",
+                    message="Deepgram connection failed",
+                    level="error",
+                    data={"session_id": session_id, "error": str(e)},
+                )
+                logger.error(f"[Deepgram] Failed to connect: {e}")
+                await websocket.send_json({"type": "error", "message": f"Deepgram connection failed: {e}"})
+                await websocket.close(code=1011)
+                transaction.set_status("internal_error")
+                return
+
+        sentry_sdk.add_breadcrumb(
+            category="transcription",
+            message="Connected to Deepgram STT",
+            level="info",
+            data={"session_id": session_id},
+        )
 
         _active_stream_sessions.add(session_id)
         relay_task = asyncio.create_task(
@@ -1370,10 +1432,17 @@ async def websocket_transcribe_stream(websocket: WebSocket):
             msg = await websocket.receive()
 
             if "bytes" in msg and msg["bytes"]:
+                audio_chunks_received += 1
                 try:
                     await dg_ws.send(msg["bytes"])
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning(f"[Deepgram] WS closed while sending audio session={session_id}")
+                    sentry_sdk.add_breadcrumb(
+                        category="transcription",
+                        message="Deepgram WS closed while forwarding audio",
+                        level="warning",
+                        data={"session_id": session_id, "chunks_received": audio_chunks_received},
+                    )
                     break
 
             elif "text" in msg and msg["text"]:
@@ -1384,19 +1453,35 @@ async def websocket_transcribe_stream(websocket: WebSocket):
 
                 if data.get("action") == "stop":
                     logger.info(f"[Deepgram] Client requested stop session={session_id}")
+                    sentry_sdk.add_breadcrumb(
+                        category="transcription",
+                        message="Client requested stop",
+                        level="info",
+                        data={"session_id": session_id, "chunks_received": audio_chunks_received},
+                    )
                     try:
                         await dg_ws.send(json.dumps({"type": "CloseStream"}))
                     except websockets.exceptions.ConnectionClosed:
                         pass
                     break
 
+        transaction.set_status("ok")
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket.transcribe_stream disconnected session={session_id}")
+        sentry_sdk.add_breadcrumb(
+            category="transcription",
+            message="Client WebSocket disconnected",
+            level="info",
+            data={"session_id": session_id},
+        )
+        transaction.set_status("cancelled")
     except Exception as e:
         sentry_sdk.capture_exception(e)
         logger.error(f"WebSocket.transcribe_stream error session={session_id}: {e}")
         import traceback
         traceback.print_exc()
+        transaction.set_status("internal_error")
     finally:
         if relay_task and not relay_task.done():
             try:
@@ -1427,8 +1512,14 @@ async def websocket_transcribe_stream(websocket: WebSocket):
         if session_id:
             _active_stream_sessions.discard(session_id)
 
+        transaction.set_data("audio_chunks_received", audio_chunks_received)
+        transaction.set_data("finalized_segments", len(finalized_parts))
+        transaction.set_data("accumulated_length", len(accumulated))
+        transaction.finish()
+
         logger.info(f"[Deepgram] Session ended session={session_id} "
-                    f"accumulated_length={len(accumulated)}")
+                    f"accumulated_length={len(accumulated)} "
+                    f"audio_chunks={audio_chunks_received}")
 
 
 @app.on_event("shutdown")
