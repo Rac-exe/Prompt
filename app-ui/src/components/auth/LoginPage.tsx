@@ -17,18 +17,43 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'github' | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
   const { toast } = useToast();
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      toast({ variant: 'destructive', title: 'Enter your email', description: 'Type your email address above first.' });
+      return;
+    }
+    setResetLoading(true);
+    try {
+      const result = await window.electronAPI?.resetPassword(email.trim());
+      if (result?.error) {
+        toast({ variant: 'destructive', title: 'Failed', description: result.error });
+      } else {
+        toast({ title: 'Email sent', description: 'Check your inbox for a password reset link.' });
+      }
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Could not send reset email.' });
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (externalError) {
       setIsLoading(false);
       setPassword('');
       setEmail('');
+
+      const isInvalidCreds = externalError.toLowerCase().includes('invalid login credentials');
       toast({
         variant: "destructive",
         title: "Login Failed",
-        description: externalError,
-        duration: 4000,
+        description: isInvalidCreds
+          ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
+          : externalError,
+        duration: 5000,
       });
     }
   }, [externalError, toast]);
@@ -235,6 +260,14 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
                 <Label htmlFor="password" className="text-sm font-medium text-foreground">
                   Password
                 </Label>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={resetLoading}
+                  className="text-xs text-emerald hover:text-emerald/80 font-medium transition-colors disabled:opacity-50"
+                >
+                  {resetLoading ? 'Sending...' : 'Forgot password?'}
+                </button>
               </div>
               <Input
                 id="password"
