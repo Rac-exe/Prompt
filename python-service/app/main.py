@@ -226,8 +226,15 @@ async def _background_warmup():
         except Exception as e:
             logger.warning(f"Silero VAD preload failed: {e}")
 
-    await asyncio.gather(_warmup_openrouter(), _load_whisper(), _load_vad())
-    logger.info("Background warmup complete — all models ready")
+    warmup_tasks = [_warmup_openrouter()]
+    try:
+        import torch  # noqa: F401
+        warmup_tasks.extend([_load_whisper(), _load_vad()])
+    except ImportError:
+        logger.info("torch not installed — skipping whisper/VAD preload (Deepgram streaming only)")
+
+    await asyncio.gather(*warmup_tasks)
+    logger.info("Background warmup complete")
 
 
 # ============================================
@@ -858,11 +865,14 @@ async def health_ready():
     checks["llm_api_key"] = bool(OPENROUTER_API_KEY)
     checks["optimizer_model"] = bool(OPTIMIZER_MODEL)
     try:
+        import torch  # noqa: F401
         get_faster_whisper_model()
         checks["whisper_model"] = True
+    except ImportError:
+        checks["whisper_model"] = "skipped (not installed)"
     except Exception:
         checks["whisper_model"] = False
-    all_ok = all(checks.values())
+    all_ok = checks["llm_api_key"] and checks["optimizer_model"]
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 
@@ -1287,6 +1297,11 @@ def _transcribe_uploaded_wav(audio_bytes: bytes) -> str:
 
 @app.post("/transcribe-audio")
 async def transcribe_audio(request: AudioTranscriptionRequest, auth: dict = Depends(require_auth)):
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Local transcription unavailable — use streaming via /ws/transcribe-stream")
+
     user_id = auth.get("sub")
     if user_id:
         sentry_sdk.set_user({"id": user_id})
