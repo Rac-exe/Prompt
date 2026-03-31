@@ -182,6 +182,10 @@ declare global {
       signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
+      getIdentities: () => Promise<{ identities: any[]; error?: string | null }>;
+      linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
+      unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
+      resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
       updateProfile: (updates: any) => void;
       uploadAvatar: (imageData: string, filename: string) => Promise<{ success: boolean; url?: string; error?: string }>;
       updatePreferences: (updates: any) => void;
@@ -552,6 +556,18 @@ const electronAPI = {
   },
   checkAuth: () => {
     ipcRenderer.send('auth:check');
+  },
+  getIdentities: () => {
+    return ipcRenderer.invoke('auth:get-identities');
+  },
+  linkIdentity: (provider: 'google' | 'github') => {
+    return ipcRenderer.invoke('auth:link-identity', { provider });
+  },
+  unlinkIdentity: (identityId: string) => {
+    return ipcRenderer.invoke('auth:unlink-identity', { identityId });
+  },
+  resetPassword: (email: string) => {
+    return ipcRenderer.invoke('auth:reset-password', { email });
   },
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
     ipcRenderer.removeAllListeners('auth:state-changed');
