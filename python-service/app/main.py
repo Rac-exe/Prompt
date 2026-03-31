@@ -110,11 +110,8 @@ import numpy as np
 import io
 import wave
 import math
-from scipy.signal import resample_poly
 from math import gcd
-from faster_whisper import WhisperModel
 import asyncio
-import torch
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
@@ -151,7 +148,13 @@ logger.info("pipeline_v2 loaded")
 
 @app.on_event("startup")
 async def startup_event():
-    """Single startup handler: warms up OpenRouter + preloads Whisper/VAD in parallel."""
+    """Kick off model warmup in the background so the port binds immediately."""
+    logger.info("Server starting — model preloads will run in background")
+    asyncio.create_task(_background_warmup())
+
+
+async def _background_warmup():
+    """Non-blocking warmup: OpenRouter + Whisper/VAD load after the port is open."""
     loop = asyncio.get_event_loop()
 
     async def _warmup_openrouter():
@@ -187,6 +190,7 @@ async def startup_event():
             logger.warning(f"Silero VAD preload failed: {e}")
 
     await asyncio.gather(_warmup_openrouter(), _load_whisper(), _load_vad())
+    logger.info("Background warmup complete — all models ready")
 
 
 # ============================================
@@ -1055,7 +1059,7 @@ _vad_model = None   # Silero VAD model
 _vad_utils = None   # Silero VAD utility functions
 
 
-def get_faster_whisper_model() -> WhisperModel:
+def get_faster_whisper_model():
     """
     Lazy-load faster-whisper 'small' model with int8 quantisation.
     small (244 M) gives much better accuracy than base (74 M) and
@@ -1063,6 +1067,7 @@ def get_faster_whisper_model() -> WhisperModel:
     """
     global _fw_model
     if _fw_model is None:
+        from faster_whisper import WhisperModel
         logger.info("Loading faster-whisper 'small' (int8) …")
         _fw_model = WhisperModel("small", device="cpu", compute_type="int8")
         logger.info("faster-whisper model ready")
@@ -1148,6 +1153,7 @@ def _resample(audio_int16: np.ndarray, src_rate: int) -> np.ndarray:
 
     logger.info(f"{src_rate} Hz -> {WHISPER_RATE} Hz  (up={up}, dn={dn})")
     audio_f32 = audio_int16.astype(np.float32) / 32768.0
+    from scipy.signal import resample_poly
     resampled  = resample_poly(audio_f32, up, dn).astype(np.float32)
     return resampled
 
