@@ -67,6 +67,7 @@ export const ChatView = ({
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceActiveRef = useRef(false);
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   // File preview modal — null = closed
@@ -101,17 +102,28 @@ export const ChatView = ({
     if (!isElectron) return;
 
     window.electronAPI?.transcription?.onTranscription?.((data) => {
+      if (!voiceActiveRef.current) return;
       const text = (data.accumulated || data.text || "").trim();
       if (text) {
         setInput(text);
-        if (data.type === "final") setVoiceState("idle");
+        if (data.type === "final") {
+          voiceActiveRef.current = false;
+          setVoiceState("idle");
+        }
       }
     });
 
     window.electronAPI?.transcription?.onStatus?.((status) => {
-      if (status === "listening") { setVoiceState("listening"); setVoiceError(null); }
-      else if (status === "processing") setVoiceState("processing");
-      else if (status === "stopped") setVoiceState("idle");
+      if (status === "listening") {
+        voiceActiveRef.current = true;
+        setVoiceState("listening");
+        setVoiceError(null);
+      } else if (status === "processing") {
+        setVoiceState("processing");
+      } else if (status === "stopped") {
+        voiceActiveRef.current = false;
+        setVoiceState("idle");
+      }
     });
 
     window.electronAPI?.transcription?.onError?.((error) => {
@@ -124,6 +136,11 @@ export const ChatView = ({
   // ── Submit ──────────────────────────────────────────────────
   const handleSubmit = () => {
     if (!input.trim() || isGenerating || !isOnline) return;
+    if (voiceState === "listening") {
+      voiceActiveRef.current = false;
+      window.electronAPI?.transcription?.stop?.();
+      setVoiceState("idle");
+    }
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
     setAttachedFiles([]);

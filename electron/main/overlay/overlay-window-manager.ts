@@ -357,9 +357,11 @@ export class OverlayWindowManager {
    * Send an IPC message to the overlay renderer.
    */
   send(channel: string, data?: any) {
-    if (this.window && !this.window.isDestroyed()) {
-      this.window.webContents.send(channel, data);
-    }
+    try {
+      if (this.window && !this.window.isDestroyed() && this.window.webContents && !this.window.webContents.isDestroyed()) {
+        this.window.webContents.send(channel, data);
+      }
+    } catch (_) {}
   }
 
   /**

@@ -79,6 +79,7 @@ _is_dev = os.environ.get("APP_ENV", "development") == "development"
 _sentry_dsn = os.environ.get("SENTRY_PYTHON_DSN", "")
 _app_env = os.environ.get("APP_ENV", "development")
 _app_version = os.environ.get("APP_VERSION", "0.0.0-dev")
+DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
 
 if not _sentry_dsn:
     logger.warning("[Sentry] SENTRY_PYTHON_DSN is not set — error tracking is disabled")
@@ -103,17 +104,15 @@ sentry_sdk.init(
 import json
 import time
 import re
-import whisper
+import base64
+import websockets
 import numpy as np
-import pyaudio
 import io
 import wave
 import math
 from scipy.signal import resample_poly
 from math import gcd
 from faster_whisper import WhisperModel
-import threading
-import queue
 import asyncio
 import torch
 
@@ -1027,8 +1026,6 @@ async def extract_memory_facts(request: ExtractMemoryRequest, auth: dict = Depen
 # ============================================================
 
 WHISPER_RATE   = 16_000   # faster-whisper always expects 16 kHz mono float32
-CAPTURE_CHUNK  = 1024     # frames per PyAudio read
-CAPTURE_CHANS  = 1        # mono
 
 # Speech window accumulation
 MIN_SPEECH_S   = 10.0     # seconds before a live partial trigger — most spoken
@@ -1052,10 +1049,6 @@ VAD_MIN_SPEECH_MS  = 250    # ignore speech bursts shorter than this
 DEBUG_WAV_COUNT  = 3 if _is_dev else 0
 _debug_wav_saved = 0
 
-# Sentinel object placed on audio_queue by the capture thread after
-# its last chunk.  The transcription loop uses this to know all audio
-# has been enqueued.
-STOP_SIGNAL = object()
 
 _fw_model  = None   # faster-whisper WhisperModel
 _vad_model = None   # Silero VAD model
@@ -1177,587 +1170,274 @@ def _save_debug_wav(audio_int16: np.ndarray, capture_rate: int, tag: str = ""):
         logger.error(f"Failed to save WAV: {e}")
 
 
-class TranscriptionSession:
-    """Manages a single transcription session."""
+class AudioTranscriptionRequest(BaseModel):
+    audio_base64: str = Field(..., min_length=10, max_length=20_000_000)
 
-    def __init__(self, websocket: WebSocket, event_loop):
-        self.websocket       = websocket
-        self.event_loop      = event_loop
-        self.audio_queue     = queue.Queue()   # items: np.ndarray int16 chunks
-        self.is_recording    = False
-        self.capture_rate    = 0               # set after device is opened
-        self.audio_thread    = None
-        self.transcription_thread = None
-        self.accumulated_text = ""
 
-    # ── lifecycle ────────────────────────────────────────────────
+def _transcribe_uploaded_wav(audio_bytes: bytes) -> str:
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
+            sample_rate = wf.getframerate()
+            channel_count = wf.getnchannels()
+            sample_width = wf.getsampwidth()
+            frame_count = wf.getnframes()
+            raw_frames = wf.readframes(frame_count)
+    except wave.Error as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid WAV audio: {exc}")
 
-    def start_recording(self):
-        if self.is_recording:
-            logger.info("Already recording")
+    if sample_width != 2:
+        raise HTTPException(status_code=400, detail="Only 16-bit PCM WAV audio is supported")
+
+    audio_int16 = np.frombuffer(raw_frames, dtype=np.int16)
+    if audio_int16.size == 0:
+        raise HTTPException(status_code=400, detail="Uploaded audio is empty")
+
+    if channel_count > 1:
+        audio_int16 = audio_int16.reshape(-1, channel_count).mean(axis=1).astype(np.int16)
+
+    audio_f32 = _resample(audio_int16, sample_rate)
+    duration_s = len(audio_f32) / WHISPER_RATE
+    rms = float(np.sqrt(np.mean(audio_f32 ** 2)))
+
+    logger.info(f"Uploaded audio duration={duration_s:.2f}s rms={rms:.5f}")
+
+    if duration_s < 0.3:
+        raise HTTPException(status_code=400, detail="Audio is too short to transcribe")
+    if rms < MIN_INFER_RMS:
+        raise HTTPException(status_code=400, detail="Audio signal is too quiet")
+    if not _vad_has_speech(audio_f32):
+        raise HTTPException(status_code=400, detail="No speech detected in audio")
+
+    model = get_faster_whisper_model()
+
+    try:
+        segments_gen, _info = model.transcribe(
+            audio_f32,
+            language="en",
+            task="transcribe",
+            beam_size=5,
+            temperature=0.0,
+            condition_on_previous_text=False,
+            no_speech_threshold=0.6,
+            log_prob_threshold=-1.0,
+            vad_filter=False,
+            without_timestamps=True,
+        )
+        segments = list(segments_gen)
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.error(f"Uploaded transcription failed: {exc}")
+        raise HTTPException(status_code=500, detail="Transcription failed")
+
+    text = " ".join(seg.text.strip() for seg in segments if seg.text.strip()).strip()
+    return text
+
+
+@app.post("/transcribe-audio")
+async def transcribe_audio(request: AudioTranscriptionRequest, auth: dict = Depends(require_auth)):
+    user_id = auth.get("sub")
+    if user_id:
+        sentry_sdk.set_user({"id": user_id})
+
+    try:
+        audio_bytes = base64.b64decode(request.audio_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 audio payload")
+
+    text = _transcribe_uploaded_wav(audio_bytes)
+    return {"text": text}
+
+
+# ============================================================
+# DEEPGRAM STREAMING TRANSCRIPTION PROXY
+# ============================================================
+# Client sends audio from the browser mic over a FastAPI WebSocket.
+# This endpoint opens a second WebSocket to Deepgram's Nova-2 STT
+# and relays audio/results between the two connections.
+# ============================================================
+
+_active_stream_sessions: set[str] = set()
+
+
+async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: list[str]):
+    """Background task: read Deepgram JSON results and forward to the client."""
+    try:
+        async for raw_msg in dg_ws:
+            try:
+                msg = json.loads(raw_msg)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            msg_type = msg.get("type", "")
+
+            if msg_type == "Results":
+                alt = (msg.get("channel", {})
+                           .get("alternatives", [{}])[0])
+                transcript = alt.get("transcript", "").strip()
+                is_final = msg.get("is_final", False)
+                speech_final = msg.get("speech_final", False)
+
+                if is_final and transcript:
+                    finalized_parts.append(transcript)
+
+                finalized_text = " ".join(finalized_parts)
+                if is_final:
+                    accumulated = finalized_text
+                else:
+                    accumulated = (finalized_text + " " + transcript).strip() if transcript else finalized_text
+
+                if transcript or is_final:
+                    await client_ws.send_json({
+                        "type": "transcription",
+                        "text": transcript,
+                        "accumulated": accumulated,
+                        "is_final": is_final,
+                        "speech_final": speech_final,
+                    })
+
+            elif msg_type == "Metadata":
+                logger.info(f"[Deepgram] Metadata session={session_id}: request_id={msg.get('request_id')}")
+
+    except websockets.exceptions.ConnectionClosedOK:
+        logger.info(f"[Deepgram] Connection closed normally session={session_id}")
+    except websockets.exceptions.ConnectionClosedError as e:
+        logger.warning(f"[Deepgram] Connection closed with error session={session_id}: {e}")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        logger.error(f"[Deepgram] Relay error session={session_id}: {e}")
+
+
+@app.websocket("/ws/transcribe-stream")
+async def websocket_transcribe_stream(websocket: WebSocket):
+    """Deepgram streaming proxy — client sends PCM audio, receives live transcription."""
+    auth = await require_ws_auth(websocket)
+    await websocket.accept()
+    user_id = auth.get("sub")
+    logger.info(f"WebSocket.transcribe_stream connected user={user_id}")
+
+    session_id: str | None = None
+    dg_ws = None
+    relay_task: asyncio.Task | None = None
+    finalized_parts: list[str] = []
+
+    try:
+        start_data = await websocket.receive_json()
+        if start_data.get("action") != "start":
+            await websocket.send_json({"type": "error", "message": "Expected {action: 'start'} as first message"})
+            await websocket.close(code=1008)
             return
 
-        logger.info("===== STARTING RECORDING SESSION =====")
-        self.is_recording     = True
-        self.accumulated_text = ""
-        self.capture_rate     = 0
+        sample_rate = int(start_data.get("sample_rate", 16000))
+        session_id = start_data.get("session_id", f"stream_{int(time.time())}")
+        logger.info(f"[Deepgram] Starting session={session_id} sample_rate={sample_rate}")
 
-        # Drain stale queue data
-        while not self.audio_queue.empty():
-            try: self.audio_queue.get_nowait()
-            except: break
-        logger.info("Audio queue cleared")
+        api_key = DEEPGRAM_API_KEY
+        if not api_key:
+            logger.error("[Deepgram] DEEPGRAM_API_KEY is not set")
+            await websocket.send_json({"type": "error", "message": "Deepgram API key not configured"})
+            await websocket.close(code=1011)
+            return
 
-        self.audio_thread = threading.Thread(
-            target=self._capture_audio, daemon=True, name="audio-capture"
+        dg_url = (
+            "wss://api.deepgram.com/v1/listen?"
+            "model=nova-2&language=en&smart_format=true"
+            "&interim_results=true&utterance_end_ms=1000"
+            "&vad_events=true&endpointing=300"
         )
-        self.audio_thread.start()
-        logger.info("Audio capture thread started")
+        dg_headers = {"Authorization": f"Token {api_key}"}
 
-        self.transcription_thread = threading.Thread(
-            target=self._transcribe_loop, daemon=True, name="transcribe-loop"
-        )
-        self.transcription_thread.start()
-        logger.info("Transcription thread started")
-        logger.info("===== SESSION ACTIVE =====")
-
-    def stop_recording(self):
-        logger.info("===== STOPPING RECORDING SESSION =====")
-        logger.info("stop requested")
-        # Set flag — the capture thread will see this, exit its loop,
-        # and THEN place STOP_SIGNAL on the queue.  This guarantees every
-        # captured chunk is enqueued before the sentinel.
-        self.is_recording = False
-        # Notify UI immediately so it can show "Processing…"
-        if self.event_loop:
-            asyncio.run_coroutine_threadsafe(
-                self.websocket.send_json({"type": "status", "status": "processing"}),
-                self.event_loop
-            )
-
-    # ── audio capture ────────────────────────────────────────────
-
-    def _capture_audio(self):
-        """
-        Record from the default microphone at its NATIVE sample rate.
-
-        Why native rate?  On Windows, WASAPI/MME drivers often ignore
-        rate=16000 and open at 44100 or 48000 Hz anyway, but report
-        success.  The bytes then arrive 2–3× faster than expected, so
-        Whisper hears sped-up speech and hallucinates.  By capturing at
-        the native rate and resampling in software we guarantee correct
-        timing.
-        """
-        audio  = None
-        stream = None
         try:
-            logger.info("Initialising PyAudio …")
-            audio = pyaudio.PyAudio()
-
-            # ── Discover native device rate ─────────────────────
-            try:
-                dev_info = audio.get_default_input_device_info()
-                native_rate = int(dev_info["defaultSampleRate"])
-                dev_name    = dev_info["name"]
-            except Exception as e:
-                logger.info(f"Could not query default device: {e}. Falling back to 44100 Hz")
-                native_rate = 44_100
-                dev_name    = "unknown"
-
-            logger.info(f"Device  : {dev_name}")
-            logger.info(f"Native rate: {native_rate} Hz")
-            logger.info(f"Channels: {CAPTURE_CHANS}  |  Chunk: {CAPTURE_CHUNK} frames")
-
-            self.capture_rate = native_rate
-
-            stream = audio.open(
-                format=pyaudio.paInt16,
-                channels=CAPTURE_CHANS,
-                rate=native_rate,
-                input=True,
-                frames_per_buffer=CAPTURE_CHUNK,
-            )
-            logger.info("Stream opened — recording …")
-
-            chunk_count       = 0
-            debug_chunks_left = 5    # log first N chunks in detail
-
-            stop_signal_sent = False
-
-            while True:
-                try:
-                    raw = stream.read(CAPTURE_CHUNK, exception_on_overflow=False)
-                except IOError as e:
-                    logger.error(f"Stream read error: {e}")
-                    break
-
-                chunk_count += 1
-                chunk_arr = np.frombuffer(raw, dtype=np.int16).copy()
-                rms       = float(np.sqrt(np.mean(chunk_arr.astype(np.float32) ** 2)))
-
-                if debug_chunks_left > 0:
-                    dur_ms = len(chunk_arr) / native_rate * 1000
-                    logger.info(f"chunk #{chunk_count}: "
-                          f"{len(chunk_arr)} samples  {dur_ms:.1f} ms  "
-                          f"RMS={rms:.1f}  min={chunk_arr.min()}  max={chunk_arr.max()}")
-                    debug_chunks_left -= 1
-                elif chunk_count % 50 == 0:
-                    dur_s = chunk_count * CAPTURE_CHUNK / native_rate
-                    logger.info(f"{chunk_count} chunks ({dur_s:.1f}s recorded)  RMS={rms:.1f}")
-
-                # Always enqueue the chunk BEFORE checking the stop flag so
-                # the very last chunk captured is never lost.
-                self.audio_queue.put(chunk_arr)
-
-                if not self.is_recording:
-                    logger.info("stop flag received — exiting capture loop")
-                    break
-
-            logger.info(f"Stopped — {chunk_count} chunks captured "
-                  f"({chunk_count * CAPTURE_CHUNK / native_rate:.1f}s)")
-
-            # Place STOP_SIGNAL *after* the last chunk so the transcription
-            # thread is guaranteed to see every audio frame before the sentinel.
-            self.audio_queue.put(STOP_SIGNAL)
-            stop_signal_sent = True
-            logger.info("STOP_SIGNAL placed after last chunk")
-
+            dg_ws = await websockets.connect(dg_url, additional_headers=dg_headers)
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            logger.error(f"FATAL: {e}")
-            import traceback; traceback.print_exc()
-            if self.event_loop:
-                asyncio.run_coroutine_threadsafe(
-                    self.websocket.send_json({"type": "error",
-                                             "message": f"Microphone error: {e}"}),
-                    self.event_loop
-                )
-        finally:
-            # Guarantee the sentinel is sent even on unexpected errors so the
-            # transcription thread never blocks forever.
-            if not stop_signal_sent:
-                self.audio_queue.put(STOP_SIGNAL)
-                logger.info("STOP_SIGNAL placed in finally (error path)")
-            if stream:
-                try: stream.stop_stream(); stream.close()
-                except: pass
-            if audio:
-                try: audio.terminate()
-                except: pass
-            logger.info("PyAudio cleaned up")
-
-    # ── transcription loop ───────────────────────────────────────
-
-    def _transcribe_loop(self):
-        """
-        Drain audio_queue, accumulate audio, run VAD for endpoint
-        detection, then call Whisper with sliding window overlap.
-        Live partial results are sent while recording; a final
-        result is sent when the session ends.
-        """
-        logger.info("Starting …")
-        model = get_faster_whisper_model()
-
-        # ── Wait for capture thread to open the mic and set capture_rate ──
-        wait_limit = 5.0
-        waited     = 0.0
-        while self.capture_rate == 0 and waited < wait_limit:
-            time.sleep(0.05)
-            waited += 0.05
-
-        if self.capture_rate == 0:
-            logger.info("capture_rate never set after "
-                  f"{wait_limit}s — microphone may not be available")
-            self._flush_final_if_needed(is_final=True)
+            logger.error(f"[Deepgram] Failed to connect: {e}")
+            await websocket.send_json({"type": "error", "message": f"Deepgram connection failed: {e}"})
+            await websocket.close(code=1011)
             return
 
-        cap_rate       = self.capture_rate
-        buffer         = []
-        buffer_frames  = 0
-        max_frames     = int(MAX_SPEECH_S * cap_rate)
-        last_infer_t   = time.time()
-        overlap_frames = int(OVERLAP_SECONDS * cap_rate)
+        _active_stream_sessions.add(session_id)
+        relay_task = asyncio.create_task(
+            _deepgram_relay(dg_ws, websocket, session_id, finalized_parts)
+        )
 
-        # ── VAD endpoint detection state ──────────────────────────
-        speech_active  = False
-        silence_frames = 0
-        SILENCE_ENDPOINT_FRAMES = int(0.6 * cap_rate)
-        has_speech_since_last_emit = False   # prevents hallucinations on tail silence
-
-        # VAD check buffer — accumulate ~300 ms of audio before running
-        # Silero so each VAD call has enough samples for a reliable result.
-        vad_check_buffer = []
-        vad_check_frames = 0
-        VAD_CHECK_INTERVAL = int(0.3 * cap_rate)
-
-        logger.info(f"capture_rate={cap_rate} Hz  "
-              f"max_buffer={MAX_SPEECH_S}s ({max_frames} frames)  "
-              f"silence_endpoint=0.6s ({SILENCE_ENDPOINT_FRAMES} frames)  "
-              f"overlap={OVERLAP_SECONDS}s ({overlap_frames} frames)")
-
-        # ── sentinel-based drain loop ─────────────────────────────
-        while True:
-            try:
-                chunk = self.audio_queue.get(timeout=60.0)  # 60 s hard stop — never block forever
-            except queue.Empty:
-                logger.info("Queue timeout (60 s) — session may be orphaned, exiting")
-                self._flush_final_if_needed(is_final=True)
-                return
-
-            if chunk is STOP_SIGNAL:
-                logger.info("STOP signal received — draining complete")
-                break
-
-            buffer.append(chunk)
-            buffer_frames += len(chunk)
-
-            # Accumulate chunks for batched VAD check
-            vad_check_buffer.append(chunk)
-            vad_check_frames += len(chunk)
-
-            if buffer_frames % (cap_rate * 2) < len(chunk):   # log every ~2 s
-                logger.info(f"buffer={buffer_frames/cap_rate:.1f}s  "
-                      f"queue_size={self.audio_queue.qsize()}  "
-                      f"speech_active={speech_active}")
-
-            # ── VAD check (every ~300 ms of accumulated audio) ────
-            if vad_check_frames >= VAD_CHECK_INTERVAL:
-                vad_audio_int16 = np.concatenate(vad_check_buffer)
-                vad_audio_f32   = _resample(vad_audio_int16, cap_rate)
-                is_speech       = _vad_has_speech(vad_audio_f32)
-
-                if is_speech:
-                    silence_frames = 0
-                    speech_active  = True
-                    has_speech_since_last_emit = True
-                else:
-                    silence_frames += vad_check_frames
-
-                vad_check_buffer = []
-                vad_check_frames = 0
-
-            # ── inference triggers ────────────────────────────────
-
-            # 1. Endpoint trigger: speech followed by sufficient silence
-            #    Buffer is cleared completely — no overlap needed because
-            #    the utterance is finished.
-            if (speech_active
-                    and silence_frames >= SILENCE_ENDPOINT_FRAMES
-                    and buffer_frames > 0):
-                logger.info(f"endpoint trigger "
-                      f"({buffer_frames/cap_rate:.1f}s buffered, "
-                      f"{silence_frames/cap_rate:.2f}s silence)")
-                audio_int16   = np.concatenate(buffer)
-                buffer        = []
-                buffer_frames = 0
-                last_infer_t  = time.time()
-                speech_active = False
-                silence_frames = 0
-                has_speech_since_last_emit = False
-                self._infer(model, audio_int16, cap_rate, is_final=False)
-
-            # 2. Overflow trigger (hard cap to prevent memory growth)
-            elif buffer_frames >= max_frames:
-                logger.info(f"overflow trigger "
-                      f"({buffer_frames/cap_rate:.1f}s buffered)")
-                audio_int16 = np.concatenate(buffer)
-                if len(audio_int16) > overlap_frames:
-                    buffer        = [audio_int16[-overlap_frames:].copy()]
-                    buffer_frames = overlap_frames
-                else:
-                    buffer        = []
-                    buffer_frames = 0
-                last_infer_t = time.time()
-                has_speech_since_last_emit = False
-                self._infer(model, audio_int16, cap_rate, is_final=False)
-
-            # 3. Live trigger during active speech (periodic partial results)
-            #    Keeps overlap so long continuous speech has phonetic continuity.
-            elif (speech_active
-                      and buffer_frames >= int(MIN_SPEECH_S * cap_rate)):
-                elapsed = time.time() - last_infer_t
-                if elapsed >= MIN_SPEECH_S:
-                    logger.info(f"live trigger "
-                          f"({buffer_frames/cap_rate:.1f}s buffered)")
-                    audio_int16 = np.concatenate(buffer)
-                    if len(audio_int16) > overlap_frames:
-                        buffer        = [audio_int16[-overlap_frames:].copy()]
-                        buffer_frames = overlap_frames
-                    else:
-                        buffer        = []
-                        buffer_frames = 0
-                    last_infer_t = time.time()
-                    self._infer(model, audio_int16, cap_rate, is_final=False)
-
-        # ── final inference on remaining buffer ──────────────────
-        # Only run if there is un-emitted speech.  If the endpoint
-        # already fired and nothing new was spoken, skip — otherwise
-        # Whisper hallucinates on the leftover silence.
-        if buffer_frames > 0 and has_speech_since_last_emit:
-            total_s = buffer_frames / cap_rate
-            logger.info(f"final inference on {total_s:.2f}s of audio")
-            audio_int16 = np.concatenate(buffer)
-            self._infer(model, audio_int16, cap_rate, is_final=True)
-        else:
-            if buffer_frames > 0:
-                logger.info(f"Skipping final — no new speech since last emit "
-                      f"({buffer_frames/cap_rate:.2f}s of silence/overlap)")
-            else:
-                logger.info("No audio captured")
-            self._flush_final_if_needed(is_final=True)
-
-        logger.info("Done")
-
-    # ── inference ────────────────────────────────────────────────
-
-    def _infer(self, model: WhisperModel, audio_int16: np.ndarray,
-               cap_rate: int, is_final: bool = False):
-        """
-        Full pipeline for one audio batch:
-          1. Compute quality metrics on the raw (native-rate) buffer
-          2. Save debug WAV if quota allows
-          3. Resample to 16 kHz float32
-          4. Duration gate — skip if too short (bypassed for final)
-          5. RMS gate — skip if too quiet
-          6. Zero-Crossing-Rate (ZCR) log — diagnostic only
-          7. faster-whisper inference with context carryover
-          8. Accumulate + deduplicate + send
-
-        VAD is NOT applied here — it is used for endpoint detection
-        in _transcribe_loop() instead.
-        """
-        tag = "FINAL" if is_final else "live"
-        logger.info(f"CALLED with audio length: {len(audio_int16)}"
-              f" ({len(audio_int16)/cap_rate:.2f}s @ {cap_rate} Hz)")
-
-        # ── 1. Raw buffer quality metrics ────────────────────────────────
-        raw_duration_s = len(audio_int16) / cap_rate
-        raw_rms        = float(np.sqrt(np.mean(audio_int16.astype(np.float32) ** 2)))
-        raw_peak       = int(np.abs(audio_int16).max())
-        raw_db         = 20 * math.log10(raw_rms / 32768.0 + 1e-9)
-
-        logger.info(f"raw buffer  dur={raw_duration_s:.2f}s  "
-              f"RMS={raw_rms:.1f}  peak={raw_peak}  dB={raw_db:.1f}")
-
-        # ── 2. Debug WAV ──────────────────────────────────────────────────
-        _save_debug_wav(audio_int16, cap_rate, tag=f"_{tag.lower()}")
-
-        # ── 3. Resample to WHISPER_RATE ───────────────────────────────────
-        logger.info(f"resampling {cap_rate} Hz -> {WHISPER_RATE} Hz ...")
-        audio_f32 = _resample(audio_int16, cap_rate)
-
-        resampled_dur = len(audio_f32) / WHISPER_RATE
-        resampled_rms = float(np.sqrt(np.mean(audio_f32 ** 2)))
-        logger.info(f"resampled  dur={resampled_dur:.2f}s  "
-              f"RMS_f32={resampled_rms:.4f}  "
-              f"min={audio_f32.min():.4f}  max={audio_f32.max():.4f}")
-
-        # ── 4. Duration gate (bypassed for final inference) ──────────────
-        logger.info(f"duration: {resampled_dur:.3f}s  "
-              f"(minimum: {MIN_INFER_DURATION_S}s)")
-        if resampled_dur < MIN_INFER_DURATION_S and not is_final:
-            logger.info(f"SKIP: duration too short (non-final)")
-            self._flush_final_if_needed(is_final)
-            return
-        if is_final and resampled_dur < 0.3:
-            logger.info(f"SKIP: final segment too short (<0.3s)")
-            self._flush_final_if_needed(is_final)
-            return
-
-        # ── 5. RMS gate ───────────────────────────────────────────────────
-        logger.info(f"RMS: {resampled_rms:.5f}  "
-              f"(threshold: {MIN_INFER_RMS})")
-        if resampled_rms < MIN_INFER_RMS:
-            logger.info(f"SKIP: RMS below threshold (dead signal)")
-            self._flush_final_if_needed(is_final)
-            return
-
-        # ── 6. Zero-Crossing Rate (diagnostic) ───────────────────────────
-        zcr_total  = np.sum(np.abs(np.diff(audio_f32 > 0)))
-        zcr_rate   = zcr_total / max(len(audio_f32) - 1, 1)
-        logger.info(f"ZCR={zcr_rate:.4f} crossings/sample  "
-              f"({zcr_total} total)")
-
-        # ── 7. faster-whisper inference ────────────────────────────────────
-        logger.info(f"starting faster-whisper inference …")
-        t0 = time.time()
-        try:
-            segments_gen, info = model.transcribe(
-                audio_f32,
-                language                   = "en",
-                task                       = "transcribe",
-                beam_size                  = 5,
-                temperature                = 0.0,
-                condition_on_previous_text = False,
-                no_speech_threshold        = 0.6,
-                log_prob_threshold         = -1.0,
-                vad_filter                 = False,
-                without_timestamps         = True,
-            )
-            # Materialise the lazy generator
-            segments = list(segments_gen)
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.error(f"faster-whisper error: {e}")
-            import traceback; traceback.print_exc()
-            self._flush_final_if_needed(is_final)
-            return
-
-        elapsed_ms = int((time.time() - t0) * 1000)
-        detected_lang = getattr(info, "language", "?")
-        lang_prob     = getattr(info, "language_probability", 0.0)
-        logger.info(f"inference done in {elapsed_ms}ms  "
-              f"lang={detected_lang} ({lang_prob:.2f})")
-
-        # Log individual segments
-        raw_parts = []
-        for i, seg in enumerate(segments):
-            nsp = getattr(seg, "no_speech_prob", None)
-            nsp_str = f"{nsp:.3f}" if nsp is not None else "?"
-            text = seg.text.strip()
-            logger.info(f"  segment[{i}]  [{seg.start:.2f}s-{seg.end:.2f}s]  "
-                  f"no_speech={nsp_str}  '{text}'")
-            if text:
-                raw_parts.append(text)
-
-        raw_text = " ".join(raw_parts).strip()
-        logger.info(f"combined result: '{raw_text}'")
-
-        if not raw_text:
-            logger.info(f"empty output — skipping")
-            self._flush_final_if_needed(is_final)
-            return
-
-        # ── 8. Accumulate + word-boundary dedup + send ───────────────────
-        if self.accumulated_text:
-            acc_words = self.accumulated_text.split()
-            new_words = raw_text.split()
-            overlap   = 0
-            for length in range(min(len(acc_words), len(new_words), 8), 0, -1):
-                if acc_words[-length:] == new_words[:length]:
-                    overlap = length
-                    break
-            unique = new_words[overlap:]
-            if unique:
-                self.accumulated_text = (
-                    self.accumulated_text + " " + " ".join(unique)
-                ).strip()
-        else:
-            self.accumulated_text = raw_text
-
-        logger.info(f"accumulated: '{self.accumulated_text}'")
-
-        self._send({
-            "type":        "final" if is_final else "transcription",
-            "text":        raw_text,
-            "accumulated": self.accumulated_text,
+        await websocket.send_json({
+            "type": "status", "status": "listening", "session_id": session_id,
         })
+        logger.info(f"[Deepgram] Session active session={session_id}")
 
-    def _flush_final_if_needed(self, is_final: bool):
-        """If this was the last inference call, still deliver whatever we have."""
-        if is_final:
-            self._send({
-                "type":        "final",
-                "text":        self.accumulated_text,
-                "accumulated": self.accumulated_text,
+        # ── Main receive loop: binary audio or text control messages ──
+        while True:
+            msg = await websocket.receive()
+
+            if "bytes" in msg and msg["bytes"]:
+                try:
+                    await dg_ws.send(msg["bytes"])
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning(f"[Deepgram] WS closed while sending audio session={session_id}")
+                    break
+
+            elif "text" in msg and msg["text"]:
+                try:
+                    data = json.loads(msg["text"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                if data.get("action") == "stop":
+                    logger.info(f"[Deepgram] Client requested stop session={session_id}")
+                    try:
+                        await dg_ws.send(json.dumps({"type": "CloseStream"}))
+                    except websockets.exceptions.ConnectionClosed:
+                        pass
+                    break
+
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket.transcribe_stream disconnected session={session_id}")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        logger.error(f"WebSocket.transcribe_stream error session={session_id}: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        if relay_task and not relay_task.done():
+            try:
+                await asyncio.wait_for(relay_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"[Deepgram] Relay task timed out session={session_id}")
+                relay_task.cancel()
+            except Exception:
+                relay_task.cancel()
+
+        if dg_ws:
+            try:
+                await dg_ws.close()
+            except Exception:
+                pass
+
+        accumulated = " ".join(finalized_parts)
+        try:
+            await websocket.send_json({
+                "type": "final",
+                "text": accumulated,
+                "accumulated": accumulated,
             })
+            await websocket.send_json({"type": "status", "status": "stopped"})
+        except Exception:
+            pass
 
-    # ── helpers ──────────────────────────────────────────────────
+        if session_id:
+            _active_stream_sessions.discard(session_id)
 
-    def _send(self, payload: dict):
-        if self.event_loop:
-            asyncio.run_coroutine_threadsafe(
-                self.websocket.send_json(payload),
-                self.event_loop
-            )
-
-# Active transcription sessions
-active_sessions: dict[str, TranscriptionSession] = {}
+        logger.info(f"[Deepgram] Session ended session={session_id} "
+                    f"accumulated_length={len(accumulated)}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up active sessions on SIGTERM/SIGINT."""
+    """Clean up on SIGTERM/SIGINT."""
     logger.info("[Shutdown] Cleaning up active transcription sessions...")
-    for sid, sess in list(active_sessions.items()):
-        try:
-            sess.stop_recording()
-        except Exception:
-            pass
-    active_sessions.clear()
+    _active_stream_sessions.clear()
     logger.info("[Shutdown] Cleanup complete — server stopping.")
 
-
-@app.websocket("/ws/transcribe")
-async def websocket_transcribe(websocket: WebSocket):
-    """WebSocket endpoint for continuous transcription. Auth via ?token= query param."""
-    auth = await require_ws_auth(websocket)
-    await websocket.accept()
-    logger.info(f"WebSocket.transcription_connected user={auth.get('sub')}")
-    logger.info("Client connected")
-    session_id = None
-    event_loop = asyncio.get_event_loop()
-
-    try:
-        while True:
-            data = await websocket.receive_json()
-            logger.info(f"Received message: {data}")
-
-            if data["action"] == "start":
-                session_id = data.get("session_id", f"session_{int(time.time())}")
-                logger.info(f"WebSocket.transcription_start session_id={session_id}")
-                logger.info(f"Starting transcription session: {session_id}")
-                session = TranscriptionSession(websocket, event_loop)
-                active_sessions[session_id] = session
-                session.start_recording()
-                logger.info(f"Recording started for session: {session_id}")
-                await websocket.send_json({"type": "status", "status": "listening", "session_id": session_id})
-
-            elif data["action"] == "stop":
-                logger.info(f"Received stop request for session: {session_id}")
-                if session_id and session_id in active_sessions:
-                    session = active_sessions[session_id]
-                    session.stop_recording()
-                    logger.info(f"Stopping recording for session: {session_id}")
-
-                    # Wait for the transcription thread to drain the queue and
-                    # deliver the final result — poll in short increments so we
-                    # don't block the event loop, timeout after 30 s.
-                    max_wait_s = 30.0
-                    poll_interval_s = 0.2
-                    waited = 0.0
-                    while waited < max_wait_s:
-                        t = session.transcription_thread
-                        if t is None or not t.is_alive():
-                            break
-                        await asyncio.sleep(poll_interval_s)
-                        waited += poll_interval_s
-
-                    if waited >= max_wait_s:
-                        logger.warning(f"transcription thread did not finish within {max_wait_s}s")
-
-                    logger.info(f"Transcription thread finished after {waited:.1f}s")
-                    del active_sessions[session_id]
-                    await websocket.send_json({"type": "status", "status": "stopped"})
-                else:
-                    logger.warning(f"Stop requested but no active session found: {session_id}")
-
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket.transcription_disconnected session_id={session_id}")
-        logger.info(f"Client disconnected (session: {session_id})")
-        if session_id and session_id in active_sessions:
-            session = active_sessions[session_id]
-            session.stop_recording()
-            del active_sessions[session_id]
-    except Exception as e:
-        logger.error(f"WebSocket.transcription_error session_id={session_id} error={e}")
-        logger.error(f"Error in websocket handler: {e}")
-        import traceback
-        traceback.print_exc()
-        if session_id and session_id in active_sessions:
-            session = active_sessions[session_id]
-            session.stop_recording()
-            del active_sessions[session_id]
 
 @app.get("/")
 async def root():
@@ -1767,7 +1447,8 @@ async def root():
         "endpoints": {
             "optimize": "POST /optimize",
             "health": "GET /health",
-            "transcribe": "WebSocket /ws/transcribe"
+            "transcribe_audio": "POST /transcribe-audio",
+            "transcribe_stream": "WS /ws/transcribe-stream",
         }
     }
 
@@ -1775,5 +1456,4 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
-
 
