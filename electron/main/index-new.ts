@@ -2,9 +2,9 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// In dev mode, .env lives at the project root (3 levels above dist/main/).
+// In dev mode, .env lives at the project root (2 levels above dist/main/).
 // In a packaged app, the project root doesn't exist — load from extraResources.
-const _devEnvPath = path.join(__dirname, '..', '..', '..', '.env');
+const _devEnvPath = path.join(__dirname, '..', '..', '.env');
 dotenv.config({ path: fs.existsSync(_devEnvPath) ? _devEnvPath : path.join(process.resourcesPath, '.env') });
 
 import * as Sentry from '@sentry/electron/main';
