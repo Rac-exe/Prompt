@@ -29,13 +29,13 @@ const MAX_IMAGE_DIMENSION = 1920;
  * If the image is under 4.5 MB, returns its raw base64.
  * Otherwise draws it onto a canvas scaled to 1920px max and re-encodes as JPEG q=0.85.
  */
-export function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number }> {
+export function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number; mimeType: string }> {
   return new Promise((resolve, reject) => {
     if (file.size <= MAX_IMAGE_SIZE) {
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = (reader.result as string).split(',')[1];
-        resolve({ base64, sizeBytes: file.size });
+        resolve({ base64, sizeBytes: file.size, mimeType: file.type || 'image/png' });
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
@@ -61,7 +61,7 @@ export function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeB
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       const base64 = dataUrl.split(',')[1];
       const sizeBytes = Math.round(base64.length * 0.75);
-      resolve({ base64, sizeBytes });
+      resolve({ base64, sizeBytes, mimeType: 'image/jpeg' });
     };
     img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Failed to load image')); };
     img.src = objectUrl;

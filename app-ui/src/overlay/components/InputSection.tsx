@@ -411,8 +411,8 @@ const InputSection: React.FC<InputSectionProps> = ({
       }
       // Images: auto-resize if above 4.5 MB
       try {
-        const { base64, sizeBytes } = await resizeImageIfNeeded(file);
-        newFiles.push({ name: file.name, mimeType: 'image/jpeg', base64, sizeBytes });
+        const { base64, sizeBytes, mimeType } = await resizeImageIfNeeded(file);
+        newFiles.push({ name: file.name, mimeType, base64, sizeBytes });
       } catch {
         console.warn('[Overlay] Failed to process image:', file.name);
       }

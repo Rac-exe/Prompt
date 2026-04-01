@@ -95,8 +95,8 @@ export const PlusMenu = ({
       // Images: auto-resize if above limit
       if (IMAGE_TYPES.includes(file.type)) {
         try {
-          const { base64, sizeBytes } = await resizeImageIfNeeded(file);
-          attached.push({ name: file.name, mimeType: 'image/jpeg', base64, sizeBytes });
+          const { base64, sizeBytes, mimeType } = await resizeImageIfNeeded(file);
+          attached.push({ name: file.name, mimeType, base64, sizeBytes });
         } catch { setFileError(`Failed to process "${file.name}"`); }
       }
     }
@@ -175,14 +175,14 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number }> {
+function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number; mimeType: string }> {
   return new Promise((resolve, reject) => {
     // If small enough, just base64-encode as-is
     if (file.size <= MAX_IMAGE_SIZE) {
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = (reader.result as string).split(',')[1];
-        resolve({ base64, sizeBytes: file.size });
+        resolve({ base64, sizeBytes: file.size, mimeType: file.type || 'image/png' });
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
@@ -209,7 +209,7 @@ function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: n
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       const base64 = dataUrl.split(',')[1];
       const sizeBytes = Math.round(base64.length * 0.75); // approximate decoded size
-      resolve({ base64, sizeBytes });
+      resolve({ base64, sizeBytes, mimeType: 'image/jpeg' });
     };
     img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Failed to load image')); };
     img.src = objectUrl;
