@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, FileText } from "lucide-react";
+import { Copy, Check, FileText } from "@phosphor-icons/react";
 import {
   Dialog,
   DialogContent,
@@ -43,7 +43,7 @@ export const PromptPreviewModal = ({ open, onOpenChange, prompt }: PromptPreview
           <div className="flex items-start gap-4">
             <div className="flex-1">
               <DialogTitle className="flex items-center gap-2 text-foreground text-xl mb-2">
-                <FileText className="w-5 h-5 text-emerald" />
+                <FileText size={20} weight="light" className="text-emerald" />
                 {prompt.title}
               </DialogTitle>
               <DialogDescription className="text-muted-foreground text-sm">
@@ -77,12 +77,12 @@ export const PromptPreviewModal = ({ open, onOpenChange, prompt }: PromptPreview
           >
             {copied ? (
               <>
-                <Check className="w-4 h-4 mr-2" />
+                <Check size={16} weight="light" className="mr-2" />
                 Copied!
               </>
             ) : (
               <>
-                <Copy className="w-4 h-4 mr-2" />
+                <Copy size={16} weight="light" className="mr-2" />
                 Copy to Clipboard
               </>
             )}

@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Logo } from "@/components/ui/Logo";
 import {
-  Zap, Sparkles, MessageSquare, Library, Mic,
-  AtSign, Brain, ChevronRight, MousePointerClick, ArrowRight,
+  Lightning, Sparkle, ChatText, Books, Microphone,
+  At, Brain, CaretRight, CursorClick, ArrowRight,
   Minus, Square, X,
-} from 'lucide-react';
+} from '@phosphor-icons/react';
 
 /* ─────────────────────────────────────────────────────────────
    Feature data
    ───────────────────────────────────────────────────────────── */
 const FEATURES = [
   {
-    icon: AtSign,
+    icon: At,
     glow: 'from-amber-500/30 to-orange-500/20',
     accent: 'text-amber-400',
     accentBg: 'bg-amber-500/10 border-amber-500/20',
@@ -23,7 +23,7 @@ const FEATURES = [
     visual: 'at-prompt',
   },
   {
-    icon: Sparkles,
+    icon: Sparkle,
     glow: 'from-blue-500/30 to-indigo-500/20',
     accent: 'text-blue-400',
     accentBg: 'bg-blue-500/10 border-blue-500/20',
@@ -47,7 +47,7 @@ const FEATURES = [
     visual: 'memory',
   },
   {
-    icon: MessageSquare,
+    icon: ChatText,
     glow: 'from-emerald-500/30 to-teal-500/20',
     accent: 'text-emerald-400',
     accentBg: 'bg-emerald-500/10 border-emerald-500/20',
@@ -59,7 +59,7 @@ const FEATURES = [
     visual: 'chat',
   },
   {
-    icon: Library,
+    icon: Books,
     glow: 'from-rose-500/30 to-pink-500/20',
     accent: 'text-rose-400',
     accentBg: 'bg-rose-500/10 border-rose-500/20',
@@ -71,7 +71,7 @@ const FEATURES = [
     visual: 'library',
   },
   {
-    icon: Mic,
+    icon: Microphone,
     glow: 'from-cyan-500/30 to-sky-500/20',
     accent: 'text-cyan-400',
     accentBg: 'bg-cyan-500/10 border-cyan-500/20',
@@ -112,7 +112,7 @@ function FeatureVisual({ type }: { type: string }) {
             <div className="mt-2 rounded-xl border border-amber-500/25 bg-card/90 backdrop-blur-xl shadow-elevated p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-md bg-amber-500/15 flex items-center justify-center">
-                  <Zap className="w-3 h-3 text-amber-400" />
+                  <Lightning size={12} weight="light" className="text-amber-400" />
                 </div>
                 <span className="text-[11px] font-semibold text-foreground/80">Prmpt</span>
                 <span className="ml-auto text-[8px] text-muted-foreground/30 font-mono bg-secondary/60 px-1.5 py-0.5 rounded">@prompt</span>
@@ -124,7 +124,7 @@ function FeatureVisual({ type }: { type: string }) {
               </div>
               <div className="flex items-center gap-2">
                 <button className="flex items-center gap-1.5 text-[10px] font-semibold text-amber-400 bg-amber-500/12 border border-amber-500/20 px-3 py-1.5 rounded-lg">
-                  <MousePointerClick className="w-3 h-3" />
+                  <CursorClick size={12} weight="light" />
                   Replace
                 </button>
                 <span className="text-[8px] text-muted-foreground/30">One click to insert</span>
@@ -152,7 +152,7 @@ function FeatureVisual({ type }: { type: string }) {
               <span className="w-7 shrink-0" />
               <div className="flex items-center gap-2">
                 <div className="w-8 h-px bg-gradient-to-r from-blue-500/60 to-indigo-500/60 animate-pulse" />
-                <Sparkles className="w-3 h-3 text-blue-400 animate-pulse" />
+                <Sparkle size={12} weight="light" className="text-blue-400 animate-pulse" />
                 <div className="w-8 h-px bg-gradient-to-r from-indigo-500/60 to-blue-500/60 animate-pulse" />
               </div>
             </div>
@@ -170,7 +170,7 @@ function FeatureVisual({ type }: { type: string }) {
         <div className="w-full">
           <div className="rounded-2xl border border-violet-500/15 bg-card/40 backdrop-blur-sm p-5 space-y-3">
             <div className="flex items-center gap-2 mb-2">
-              <Brain className="w-3.5 h-3.5 text-violet-400/80" />
+              <Brain size={14} weight="light" className="text-violet-400/80" />
               <span className="text-[11px] font-medium text-foreground/70">Your Preferences</span>
               <span className="ml-auto text-[8px] text-emerald-400/80 bg-emerald/8 px-1.5 py-0.5 rounded-full font-medium">Active</span>
             </div>
@@ -230,7 +230,7 @@ function FeatureVisual({ type }: { type: string }) {
           ].map((col) => (
             <div key={col.name} className={`rounded-xl border ${col.color} p-3.5 space-y-2`}>
               <div className="flex items-center justify-between">
-                <Library className="w-3.5 h-3.5 text-muted-foreground/50" />
+                <Books size={14} weight="light" className="text-muted-foreground/50" />
                 <span className="text-[9px] text-muted-foreground/40">{col.count} prompts</span>
               </div>
               <p className="text-xs font-medium text-foreground/70">{col.name}</p>
@@ -249,7 +249,7 @@ function FeatureVisual({ type }: { type: string }) {
             <div className="absolute inset-0 rounded-full bg-cyan-500/15 animate-ping" style={{ animationDuration: '2s' }} />
             <div className="absolute -inset-3 rounded-full bg-cyan-500/8 animate-ping" style={{ animationDuration: '2.5s', animationDelay: '0.3s' }} />
             <div className="relative w-14 h-14 rounded-full bg-gradient-to-br from-cyan-500 to-sky-600 flex items-center justify-center shadow-lg shadow-cyan-500/25">
-              <Mic className="w-6 h-6 text-white" />
+              <Microphone size={24} weight="light" className="text-white" />
             </div>
           </div>
           <div className="flex items-end gap-0.5 h-7">
@@ -407,21 +407,21 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
             aria-label="Minimise"
             className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
           >
-            <Minus className="w-3.5 h-3.5" />
+            <Minus size={14} weight="light" />
           </button>
           <button
             onClick={() => window.electronAPI?.windowControls?.maximize()}
             aria-label="Maximise"
             className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
           >
-            <Square className="w-3 h-3" />
+            <Square size={12} weight="light" />
           </button>
           <button
             onClick={() => window.electronAPI?.windowControls?.close()}
             aria-label="Close"
             className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
           >
-            <X className="w-3.5 h-3.5" />
+            <X size={14} weight="light" />
           </button>
         </div>
       </div>
@@ -445,7 +445,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
           className="flex items-center gap-1.5 text-xs text-muted-foreground/40 hover:text-muted-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-secondary"
         >
           Skip
-          <ArrowRight className="w-3 h-3" />
+          <ArrowRight size={12} weight="light" />
         </button>
       </div>
 
@@ -469,7 +469,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
 
               {/* Badge */}
               <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border ${feature.accentBg} mb-5`}>
-                <Icon className={`w-3 h-3 ${feature.accent}`} />
+                <Icon size={12} weight="light" className={feature.accent} />
                 <span className={`text-[10px] font-semibold tracking-wide uppercase ${feature.accent}`}>
                   {feature.badge}
                 </span>
@@ -509,7 +509,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
                   }`}
                 >
                   {isLast ? 'Get Started' : 'Next'}
-                  {isLast ? <Zap className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  {isLast ? <Lightning size={14} weight="light" /> : <CaretRight size={14} weight="light" />}
                 </button>
               </div>
             </div>

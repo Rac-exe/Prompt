@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from "@/components/ui/use-toast";
-import { Zap, ArrowRight, Loader2, Minus, Square, X, Github } from 'lucide-react';
+import { Lightning, ArrowRight, CircleNotch, Minus, Square, X, GithubLogo } from '@phosphor-icons/react';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
@@ -99,9 +99,9 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus className="w-3.5 h-3.5" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square className="w-3 h-3" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X className="w-3.5 h-3.5" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
         </div>
       </div>
       <div className="flex flex-1">
@@ -194,7 +194,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
               className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button flex items-center gap-2.5"
             >
               {oauthLoading === 'google' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -214,9 +214,9 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
               className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button flex items-center gap-2.5"
             >
               {oauthLoading === 'github' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
-                <Github className="w-4 h-4 flex-shrink-0" />
+                <GithubLogo size={16} weight="light" className="flex-shrink-0" />
               )}
               Continue with GitHub
             </Button>
@@ -291,11 +291,11 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
               className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button mt-1"
             >
               {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <span className="flex items-center gap-2">
                   Create Account
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight size={16} weight="light" />
                 </span>
               )}
             </Button>

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Upload, X, Camera, Loader2, User, ImageIcon } from "lucide-react";
+import { UploadSimple, X, Camera, CircleNotch, User, Image as ImageIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -164,14 +164,14 @@ export function AvatarUploadModal({
               <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} />
               {!cameraReady && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  <CircleNotch size={24} weight="light" className="animate-spin text-muted-foreground" />
                 </div>
               )}
             </div>
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => { stopCamera(); setMode("pick"); }}>Cancel</Button>
               <Button onClick={capturePhoto} disabled={!cameraReady} className="bg-primary hover:bg-primary/90 text-white gap-2">
-                <Camera className="w-4 h-4" /> Capture
+                <Camera size={16} weight="light" /> Capture
               </Button>
             </div>
           </div>
@@ -194,12 +194,12 @@ export function AvatarUploadModal({
                   <>
                     <img src={displayImage} alt="Preview" className="w-full h-full object-cover" />
                     <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
-                      <Camera className="w-7 h-7 text-white" />
+                      <Camera size={28} weight="light" className="text-white" />
                     </div>
                   </>
                 ) : (
                   <div className="flex flex-col items-center gap-2 text-muted-foreground/50">
-                    <User className="w-12 h-12" />
+                    <User size={48} weight="light" />
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/40">Avatar Preview</span>
                   </div>
                 )}
@@ -217,7 +217,7 @@ export function AvatarUploadModal({
                 className="flex items-center gap-4 p-4 rounded-xl border border-border/60 hover:border-primary/40 hover:bg-secondary/40 transition-all text-left w-full group"
               >
                 <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 group-hover:bg-primary/10 transition-colors">
-                  <Upload className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                  <UploadSimple size={20} weight="light" className="text-muted-foreground group-hover:text-primary transition-colors" />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">Choose File</p>
@@ -231,7 +231,7 @@ export function AvatarUploadModal({
                 className="flex items-center gap-4 p-4 rounded-xl border border-border/60 hover:border-primary/40 hover:bg-secondary/40 transition-all text-left w-full group"
               >
                 <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 group-hover:bg-primary/10 transition-colors">
-                  <Camera className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                  <Camera size={20} weight="light" className="text-muted-foreground group-hover:text-primary transition-colors" />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">Take Photo</p>
@@ -243,7 +243,7 @@ export function AvatarUploadModal({
               {selectedFile && (
                 <div className="flex items-center gap-3 p-3 rounded-xl bg-primary/5 border border-primary/15">
                   <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <ImageIcon className="w-4 h-4 text-primary" />
+                    <ImageIcon size={16} weight="light" className="text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-foreground truncate">{selectedFile.name}</p>
@@ -253,7 +253,7 @@ export function AvatarUploadModal({
                     onClick={(e) => { e.stopPropagation(); removeFile(); }}
                     className="p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
                   >
-                    <X className="w-4 h-4" />
+                    <X size={16} weight="light" />
                   </button>
                 </div>
               )}
@@ -283,9 +283,9 @@ export function AvatarUploadModal({
               className="bg-primary hover:bg-primary/90 text-white gap-2 font-semibold px-6"
             >
               {isUploading ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</>
+                <><CircleNotch size={16} weight="light" className="animate-spin" /> Saving...</>
               ) : (
-                <><Upload className="w-4 h-4" /> Save Changes</>
+                <><UploadSimple size={16} weight="light" /> Save Changes</>
               )}
             </Button>
           </div>

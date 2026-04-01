@@ -1,9 +1,9 @@
 import { useState, useMemo } from "react";
 import * as Sentry from "@sentry/react";
 import {
-  FolderPlus, Star, Folder, MoreVertical,
-  Pencil, Trash2, Library, Search, Share2, Link,
-} from "lucide-react";
+  FolderPlus, Star, Folder, DotsThreeVertical,
+  PencilSimple, Trash, Books, MagnifyingGlass, ShareNetwork, Link,
+} from "@phosphor-icons/react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -140,7 +140,7 @@ export const PromptLibrary = ({
   }, [prompts, selectedCollection, searchQuery]);
 
   const getCollectionIcon = (collection: Collection) => {
-    if (collection.icon === "all") return Library;
+    if (collection.icon === "all") return Books;
     if (collection.icon === "favorites") return Star;
     return Folder;
   };
@@ -166,7 +166,7 @@ export const PromptLibrary = ({
             {/* Create collection */}
             {isCreating ? (
               <div className="flex items-center gap-2 px-2 py-1.5">
-                <Folder className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                <Folder size={14} weight="light" className="text-muted-foreground flex-shrink-0" />
                 <Input
                   placeholder="Collection name"
                   value={newCollectionName}
@@ -190,7 +190,7 @@ export const PromptLibrary = ({
                 onClick={() => setIsCreating(true)}
                 data-testid="create-collection-button"
               >
-                <FolderPlus className="w-3.5 h-3.5 flex-shrink-0" />
+                <FolderPlus size={14} weight="light" className="flex-shrink-0" />
                 New Collection
               </button>
             )}
@@ -201,7 +201,7 @@ export const PromptLibrary = ({
               onClick={() => { setPastedLink(""); setLinkError(""); setOpenLinkDialogOpen(true); }}
               data-testid="open-share-link-button"
             >
-              <Link className="w-3.5 h-3.5 flex-shrink-0" />
+              <Link size={14} weight="light" className="flex-shrink-0" />
               Open Shared Link
             </button>
 
@@ -223,7 +223,7 @@ export const PromptLibrary = ({
                   onClick={() => !isEditing && setSelectedCollection(collection.id)}
                   data-testid={`collection-${collection.id}`}
                 >
-                  <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", isSelected && "text-emerald")} />
+                  <Icon size={14} weight="light" className={cn("flex-shrink-0", isSelected && "text-emerald")} />
 
                   {isEditing ? (
                     <Input
@@ -256,7 +256,7 @@ export const PromptLibrary = ({
                           className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-smooth text-muted-foreground hover:text-foreground rounded-md"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <MoreVertical className="w-3 h-3" />
+                          <DotsThreeVertical size={12} weight="light" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
@@ -270,7 +270,7 @@ export const PromptLibrary = ({
                             setShareModalCollection(collection);
                           }}
                         >
-                          <Share2 className="w-3 h-3 opacity-60" />
+                          <ShareNetwork size={12} weight="light" className="opacity-60" />
                           Share Library
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -281,14 +281,14 @@ export const PromptLibrary = ({
                             setEditName(collection.name);
                           }}
                         >
-                          <Pencil className="w-3 h-3 opacity-60" />
+                          <PencilSimple size={12} weight="light" className="opacity-60" />
                           Rename
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-xs text-destructive focus:bg-destructive/8 focus:text-destructive gap-2 rounded-lg cursor-pointer font-medium"
                           onClick={(e) => { e.stopPropagation(); onDeleteCollection(collection.id); }}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash size={12} weight="light" />
                           Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -327,7 +327,7 @@ export const PromptLibrary = ({
 
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
+            <MagnifyingGlass size={14} weight="light" className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/60" />
             <Input
               placeholder="Search by title or content…"
               value={searchQuery}
@@ -344,7 +344,7 @@ export const PromptLibrary = ({
             {filteredPrompts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-center animate-fade-in">
                 <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center mb-4">
-                  <Library className="w-6 h-6 text-muted-foreground/40" />
+                  <Books size={24} weight="light" className="text-muted-foreground/40" />
                 </div>
                 <p className="text-sm font-medium text-foreground mb-1">
                   {searchQuery ? "No matching prompts" : "No prompts yet"}
@@ -389,7 +389,7 @@ export const PromptLibrary = ({
       <DialogContent className="sm:max-w-[460px] bg-card border-border">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-foreground">
-            <Link className="w-4 h-4 text-emerald" />
+            <Link size={16} weight="light" className="text-emerald" />
             Open Shared Link
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">

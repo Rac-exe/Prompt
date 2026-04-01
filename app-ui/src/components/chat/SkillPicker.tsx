@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { SKILL_ICON_MAP } from "@/lib/skillIcons";
 import type { SkillInfo } from "@/types/electron";
@@ -73,7 +73,7 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
           <div className="px-4 py-6 text-center text-sm text-muted-foreground/60">No skills found</div>
         ) : skills.map((skill, index) => {
           const isSelected = selectedIndex === index;
-          const Icon = SKILL_ICON_MAP[skill.name] ?? Sparkles;
+          const Icon = SKILL_ICON_MAP[skill.name] ?? Sparkle;
           return (
             <button
               key={skill.name}
@@ -93,7 +93,7 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
 
               {/* Icon square */}
               <div className="w-8 h-8 rounded-lg bg-muted/60 border border-border/50 flex items-center justify-center flex-shrink-0">
-                <Icon className="w-4 h-4 text-emerald" />
+                <Icon size={16} weight="light" className="text-emerald" />
               </div>
 
               {/* Name only — no description inline */}

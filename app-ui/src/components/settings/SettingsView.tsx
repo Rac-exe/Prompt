@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { User, Palette, Moon, Sun, Check, Sparkles, Camera, Brain, Github, Link, Unlink, KeyRound, Loader2, Mail } from "lucide-react";
+import { User, Palette, Moon, Sun, Check, Sparkle, Camera, Brain, GithubLogo, Link, LinkBreak, Key, CircleNotch, Envelope } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -194,21 +194,21 @@ export const SettingsView = () => {
               value="profile"
               className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
             >
-              <User className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+              <User size={14} weight="light" className="mr-1.5 opacity-70" />
               Profile
             </TabsTrigger>
             <TabsTrigger
               value="customize"
               className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
             >
-              <Palette className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+              <Palette size={14} weight="light" className="mr-1.5 opacity-70" />
               Customize
             </TabsTrigger>
             <TabsTrigger
               value="memory"
               className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
             >
-              <Brain className="w-3.5 h-3.5 mr-1.5 opacity-70" />
+              <Brain size={14} weight="light" className="mr-1.5 opacity-70" />
               Memory
             </TabsTrigger>
           </TabsList>
@@ -237,7 +237,7 @@ export const SettingsView = () => {
                         </AvatarFallback>
                       </Avatar>
                       <div className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Camera className="w-5 h-5 text-white" />
+                        <Camera size={20} weight="light" className="text-white" />
                       </div>
                     </div>
 
@@ -252,7 +252,7 @@ export const SettingsView = () => {
                       className="h-8 text-xs flex-shrink-0"
                       onClick={() => setUploadModalOpen(true)}
                     >
-                      <Camera className="w-3.5 h-3.5 mr-1.5" />
+                      <Camera size={14} weight="light" className="mr-1.5" />
                       Change Avatar
                     </Button>
                   </div>
@@ -305,7 +305,7 @@ export const SettingsView = () => {
                           title={identities.length <= 1 ? 'Add another sign-in method first' : undefined}
                           onClick={() => handleUnlinkIdentity(googleIdentity.id, 'Google')}
                         >
-                          {identityLoading === googleIdentity.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlink className="w-3.5 h-3.5 mr-1.5" />}
+                          {identityLoading === googleIdentity.id ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <LinkBreak size={14} weight="light" className="mr-1.5" />}
                           Disconnect
                         </Button>
                       ) : (
@@ -315,7 +315,7 @@ export const SettingsView = () => {
                           disabled={!!identityLoading}
                           onClick={() => handleLinkIdentity('google')}
                         >
-                          {identityLoading === 'google' ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Link className="w-3.5 h-3.5 mr-1.5" />}
+                          {identityLoading === 'google' ? <CircleNotch size={14} weight="light" className="animate-spin mr-1.5" /> : <Link size={14} weight="light" className="mr-1.5" />}
                           Connect
                         </Button>
                       )}
@@ -330,7 +330,7 @@ export const SettingsView = () => {
                     <Row>
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-foreground/8 border border-foreground/12 flex items-center justify-center flex-shrink-0">
-                          <Github className="w-4 h-4 text-foreground" />
+                          <GithubLogo size={16} weight="light" className="text-foreground" />
                         </div>
                         <div>
                           <p className="text-sm font-medium text-foreground">GitHub</p>
@@ -347,7 +347,7 @@ export const SettingsView = () => {
                           title={identities.length <= 1 ? 'Add another sign-in method first' : undefined}
                           onClick={() => handleUnlinkIdentity(githubIdentity.id, 'GitHub')}
                         >
-                          {identityLoading === githubIdentity.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Unlink className="w-3.5 h-3.5 mr-1.5" />}
+                          {identityLoading === githubIdentity.id ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <LinkBreak size={14} weight="light" className="mr-1.5" />}
                           Disconnect
                         </Button>
                       ) : (
@@ -357,7 +357,7 @@ export const SettingsView = () => {
                           disabled={!!identityLoading}
                           onClick={() => handleLinkIdentity('github')}
                         >
-                          {identityLoading === 'github' ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Link className="w-3.5 h-3.5 mr-1.5" />}
+                          {identityLoading === 'github' ? <CircleNotch size={14} weight="light" className="animate-spin mr-1.5" /> : <Link size={14} weight="light" className="mr-1.5" />}
                           Connect
                         </Button>
                       )}
@@ -372,7 +372,7 @@ export const SettingsView = () => {
                     <Row>
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-lg bg-emerald/12 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-                          <KeyRound className="w-4 h-4 text-emerald" />
+                          <Key size={16} weight="light" className="text-emerald" />
                         </div>
                         <div>
                           <p className="text-sm font-medium text-foreground">Email & Password</p>
@@ -387,7 +387,7 @@ export const SettingsView = () => {
                         disabled={identityLoading === 'password'}
                         onClick={handleSetPassword}
                       >
-                        {identityLoading === 'password' ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Mail className="w-3.5 h-3.5 mr-1.5" />}
+                        {identityLoading === 'password' ? <CircleNotch size={14} weight="light" className="animate-spin mr-1.5" /> : <Envelope size={14} weight="light" className="mr-1.5" />}
                         {emailIdentity ? 'Reset Password' : 'Set Password'}
                       </Button>
                     </Row>
@@ -452,14 +452,14 @@ export const SettingsView = () => {
                     hint="Toggle the application color scheme"
                   />
                   <div className="flex items-center gap-2">
-                    <Sun className="w-3.5 h-3.5 text-muted-foreground" />
+                    <Sun size={14} weight="light" className="text-muted-foreground" />
                     <Switch
                       checked={settings.theme === "dark"}
                       onCheckedChange={(checked) => updateSetting("theme", checked ? "dark" : "light")}
                       data-testid="theme-toggle"
                       className="data-[state=checked]:bg-emerald"
                     />
-                    <Moon className="w-3.5 h-3.5 text-muted-foreground" />
+                    <Moon size={14} weight="light" className="text-muted-foreground" />
                   </div>
                 </Row>
               </Section>

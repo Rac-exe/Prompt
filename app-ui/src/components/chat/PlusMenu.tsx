@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { Paperclip, Sparkles } from "lucide-react";
+import { Paperclip, Sparkle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { SkillPicker } from "./SkillPicker";
 import type { AttachedFile } from "@/types/electron";
@@ -141,14 +141,14 @@ export const PlusMenu = ({
               onClick={() => { setFileError(null); fileInputRef.current?.click(); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-secondary transition-colors text-left"
             >
-              <Paperclip className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <Paperclip size={16} weight="light" className="text-muted-foreground flex-shrink-0" />
               <span className="text-[13px] text-foreground">Add photos & files</span>
             </button>
             <button
               onClick={() => setShowSkillPicker(true)}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-secondary transition-colors text-left"
             >
-              <Sparkles className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <Sparkle size={16} weight="light" className="text-muted-foreground flex-shrink-0" />
               <span className="text-[13px] text-foreground">Choose skill</span>
             </button>
           </div>

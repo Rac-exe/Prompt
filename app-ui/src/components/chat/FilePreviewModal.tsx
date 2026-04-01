@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
-  X, Download, FileText, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  ExternalLink, AlertCircle, Image as ImageIcon, File as FileIcon,
-} from "lucide-react";
+  X, DownloadSimple, FileText, CaretLeft, CaretRight, MagnifyingGlassPlus, MagnifyingGlassMinus,
+  ArrowSquareOut, WarningCircle, ImageSquare as ImageIcon, File as FileIcon,
+} from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
         <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-          <AlertCircle className="w-7 h-7 text-red-400" />
+          <WarningCircle size={28} weight="light" className="text-red-400" />
         </div>
         <div>
           <p className="text-white font-medium mb-1">{fileName}</p>
@@ -131,7 +131,7 @@ const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
           onClick={() => downloadFile(base64, "application/pdf", fileName)}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/8 border border-white/12 text-white text-sm hover:bg-white/12 transition-colors"
         >
-          <Download className="w-4 h-4" /> Download to view
+          <DownloadSimple size={16} weight="light" /> Download to view
         </button>
       </div>
     );
@@ -250,7 +250,7 @@ const ImageViewer = ({ base64, cloudinaryUrl, mimeType, name, zoom, setZoom, off
 const UnsupportedViewer = ({ file }: { file: PreviewFile }) => (
   <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
     <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-      <FileIcon className="w-7 h-7 text-white/40" />
+      <FileIcon size={28} weight="light" className="text-white/40" />
     </div>
     <div>
       <p className="text-white font-medium mb-1">{file.name}</p>
@@ -261,7 +261,7 @@ const UnsupportedViewer = ({ file }: { file: PreviewFile }) => (
       onClick={() => file.base64 && downloadFile(file.base64, file.mimeType, file.name)}
       className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/8 border border-white/12 text-white text-sm hover:bg-white/12 transition-colors"
     >
-      <Download className="w-4 h-4" /> Download
+      <DownloadSimple size={16} weight="light" /> Download
     </button>
   </div>
 );
@@ -338,9 +338,9 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
               : isImage ? "border border-white/10 overflow-hidden"
               : "bg-white/5 border border-white/10"
           )}>
-            {isPdf && <FileText className="w-4 h-4 text-red-400" />}
-            {isImage && <ImageIcon className="w-4 h-4 text-white/50" />}
-            {!isPdf && !isImage && <FileIcon className="w-4 h-4 text-white/40" />}
+            {isPdf && <FileText size={16} weight="light" className="text-red-400" />}
+            {isImage && <ImageIcon size={16} weight="light" className="text-white/50" />}
+            {!isPdf && !isImage && <FileIcon size={16} weight="light" className="text-white/40" />}
           </div>
           <div className="min-w-0 flex items-center gap-2.5">
             <div className="min-w-0">
@@ -360,12 +360,12 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
           <div className="flex items-center gap-2 flex-shrink-0">
             <button onClick={goPrev} disabled={!hasPrev}
               className="w-7 h-7 rounded-md flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 disabled:opacity-20 disabled:pointer-events-none transition-colors">
-              <ChevronLeft className="w-4 h-4" />
+              <CaretLeft size={16} weight="light" />
             </button>
             <span className="text-xs text-white/40 tabular-nums">{currentIdx + 1} / {siblings.length}</span>
             <button onClick={goNext} disabled={!hasNext}
               className="w-7 h-7 rounded-md flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 disabled:opacity-20 disabled:pointer-events-none transition-colors">
-              <ChevronRight className="w-4 h-4" />
+              <CaretRight size={16} weight="light" />
             </button>
           </div>
         )}
@@ -377,7 +377,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
             <div className="flex items-center gap-0.5 mr-1.5 border border-white/10 rounded-lg overflow-hidden">
               <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} title="Zoom out (-)"
                 className="w-7 h-7 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 transition-colors">
-                <ZoomOut className="w-3.5 h-3.5" />
+                <MagnifyingGlassMinus size={14} weight="light" />
               </button>
               <button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }} title="Fit to screen (0)"
                 className="px-2 h-7 text-[11px] font-medium text-white/50 hover:text-white hover:bg-white/8 min-w-[44px] text-center tabular-nums transition-colors">
@@ -385,7 +385,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
               </button>
               <button onClick={() => setZoom(z => Math.min(4, z + 0.25))} title="Zoom in (+)"
                 className="w-7 h-7 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 transition-colors">
-                <ZoomIn className="w-3.5 h-3.5" />
+                <MagnifyingGlassPlus size={14} weight="light" />
               </button>
             </div>
           )}
@@ -399,19 +399,19 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
             title="Open in new tab"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ArrowSquareOut size={14} weight="light" />
           </button>
 
           {/* Download */}
           <button onClick={() => active.base64 && downloadFile(active.base64, active.mimeType, active.name)}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors" title="Download">
-            <Download className="w-4 h-4" />
+            <DownloadSimple size={16} weight="light" />
           </button>
 
           {/* Close */}
           <button onClick={onClose}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors" title="Close (Esc)">
-            <X className="w-4 h-4" />
+            <X size={16} weight="light" />
           </button>
         </div>
       </div>
@@ -451,13 +451,13 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
         {siblings.length > 1 && hasPrev && (
           <button onClick={goPrev}
             className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/60 border border-white/10 backdrop-blur-sm flex items-center justify-center text-white/70 hover:text-white hover:bg-black/80 transition-all">
-            <ChevronLeft className="w-5 h-5" />
+            <CaretLeft size={20} weight="light" />
           </button>
         )}
         {siblings.length > 1 && hasNext && (
           <button onClick={goNext}
             className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/60 border border-white/10 backdrop-blur-sm flex items-center justify-center text-white/70 hover:text-white hover:bg-black/80 transition-all">
-            <ChevronRight className="w-5 h-5" />
+            <CaretRight size={20} weight="light" />
           </button>
         )}
       </div>
@@ -490,12 +490,12 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
                 )}
                 {isPdfThumb && (
                   <div className="w-full h-full bg-red-500/10 flex items-center justify-center">
-                    <FileText className="w-4 h-4 text-red-400/80" />
+                    <FileText size={16} weight="light" className="text-red-400/80" />
                   </div>
                 )}
                 {!isImg && !isPdfThumb && (
                   <div className="w-full h-full bg-white/5 flex items-center justify-center">
-                    <FileIcon className="w-4 h-4 text-white/30" />
+                    <FileIcon size={16} weight="light" className="text-white/30" />
                   </div>
                 )}
               </button>
