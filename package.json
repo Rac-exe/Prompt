@@ -18,8 +18,56 @@
     "python:dev:mac": "cd python-service && ./venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
     "python:install": "cd python-service && python -m venv venv && .\\venv\\Scripts\\python.exe -m pip install -r requirements.txt",
     "start": "npm run build && npm run electron",
+    "package:win": "npm run build && electron-builder --win --x64",
     "supabase:migrate": "supabase db push",
     "clean": "rm -rf electron/renderer/app-ui/* dist/"
+  },
+  "build": {
+    "appId": "com.prmpt.desktop",
+    "productName": "Prmpt",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/renderer/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "native/windows-core",
+        "to": "native/windows-core",
+        "filter": [
+          "index.js",
+          "index.d.ts",
+          "windows-core.win32-x64-msvc.node"
+        ]
+      },
+      {
+        "from": "files",
+        "to": "files"
+      },
+      {
+        "from": ".env",
+        "to": ".env"
+      },
+      {
+        "from": "build/tray-icon.png",
+        "to": "tray-icon.png"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "forceCodeSigning": false
+    }
   },
   "keywords": [
     "prompt",
@@ -35,6 +83,9 @@
     "@types/node": "^20.10.0",
     "@types/ws": "^8.18.1",
     "electron": "^28.0.0",
+    "electron-builder": "^26.8.1",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
     "typescript": "^5.3.3"
   },
   "dependencies": {

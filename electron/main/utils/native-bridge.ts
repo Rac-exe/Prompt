@@ -6,6 +6,7 @@
  */
 
 import * as path from 'path';
+import { app } from 'electron';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,10 +52,12 @@ function loadBridge(): NativeBridge {
     _loaded = true;
 
     try {
-        // __dirname in compiled output: <project>/dist/main/utils/
-        // Project root:                 <project>/
-        const projectRoot = path.resolve(__dirname, '..', '..', '..');
-        const nativeIndexPath = path.join(projectRoot, 'native', 'windows-core', 'index.js');
+        // In dev: __dirname = dist/main/utils/ → 3 levels up = project root.
+        // In packaged: native module is in extraResources → process.resourcesPath.
+        const nativeRoot = app.isPackaged
+            ? process.resourcesPath
+            : path.resolve(__dirname, '..', '..', '..');
+        const nativeIndexPath = path.join(nativeRoot, 'native', 'windows-core', 'index.js');
 
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         _bridge = require(nativeIndexPath) as NativeBridge;

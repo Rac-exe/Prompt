@@ -26,7 +26,9 @@ export class AppWindowManager {
   private createWindowHidden() {
     this.isLoaded = false;
 
-    const iconPath = path.join(app.getAppPath(), 'electron', 'resources', 'icon.png');
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'tray-icon.png')
+      : path.join(app.getAppPath(), 'build', 'tray-icon.png');
     const icon = nativeImage.createFromPath(iconPath);
 
     this.window = new BrowserWindow({

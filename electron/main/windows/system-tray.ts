@@ -26,8 +26,12 @@ export class SystemTray {
    * Create the system tray
    */
   create() {
-    const iconPath = path.join(app.getAppPath(), 'electron', 'resources', 'icon.png');
-    const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
+    // In packaged mode the tray icon lives in extraResources.
+    // In dev mode it lives in build/ at the project root (app.getAppPath()).
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'tray-icon.png')
+      : path.join(app.getAppPath(), 'build', 'tray-icon.png');
+    const icon = nativeImage.createFromPath(iconPath).resize({ width: 32, height: 32 });
 
     this.tray = new Tray(icon);
     this.tray.setToolTip('Prmpt');
