@@ -170,6 +170,13 @@ const OverlayApp: React.FC = () => {
       setTimeout(() => setErrorMessage(null), 5000);
     });
 
+    // ── File upload partial failure ──
+    const cleanupUploadFailure = api.overlay?.onUploadPartialFailure?.((data: { failedFiles: string[] }) => {
+      const names = data.failedFiles.join(', ');
+      setErrorMessage(`Some files failed to upload: ${names}. Check your connection and try again.`);
+      setTimeout(() => setErrorMessage(null), 7000);
+    });
+
     // ── Network status ──
     api.onNetworkStatus?.((data: { isOnline: boolean }) => setIsOnline(data.isOnline));
     api.onNetworkReconnected?.(() => setIsOnline(true));
@@ -193,6 +200,7 @@ const OverlayApp: React.FC = () => {
       cleanupChunk?.();
       cleanupComplete?.();
       cleanupError?.();
+      cleanupUploadFailure?.();
       cleanupSettings?.();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

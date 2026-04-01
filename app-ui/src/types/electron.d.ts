@@ -110,6 +110,7 @@ export interface ElectronAPI {
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
+  onUploadPartialFailure?: (callback: (data: { failedFiles: string[] }) => void) => (() => void);
   onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => (() => void);
   onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => (() => void);
   deleteChat: (chatId: string) => void;
@@ -249,6 +250,7 @@ export interface ElectronAPI {
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
     onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
     onOptimizationError: (callback: (data: { error: string }) => void) => void;
+    onUploadPartialFailure?: (callback: (data: { failedFiles: string[] }) => void) => (() => void);
     onCursorPos: (callback: (data: { x: number; y: number }) => void) => void;
     getSettings: () => Promise<any>;
     onSettingsUpdate: (callback: (settings: any) => void) => void;

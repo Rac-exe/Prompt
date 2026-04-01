@@ -650,6 +650,10 @@ export function registerChatHandlers(
                     Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
                     return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
                 });
+                const chatFailedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                if (chatFailedNames.length > 0 && appWindowManager) {
+                    appWindowManager.send('upload-partial-failure', { failedFiles: chatFailedNames });
+                }
             }
 
             // Single INSERT — all metadata (including file refs) in one shot.
