@@ -52,6 +52,7 @@ Sentry.init({
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import OverlayApp from './App';
+import '../index.css';
 import './overlay.css';
 
 window.electronAPI?.onSentryUser?.((user) => {

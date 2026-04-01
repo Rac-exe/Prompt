@@ -96,7 +96,7 @@ const OverlayApp: React.FC = () => {
     const rect = el.getBoundingClientRect();
     const xPct = (x / rect.width) * 100;
     const yPct = (y / rect.height) * 100;
-    el.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--emerald) / 0.8), hsl(var(--emerald) / 0.3) 40%, hsl(var(--border)) 70%)`;
+    el.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--accent) / 0.8), hsl(var(--accent) / 0.3) 40%, hsl(var(--border)) 70%)`;
     clearTimeout(glowTimeoutRef.current);
     glowTimeoutRef.current = setTimeout(() => { el.style.background = 'hsl(var(--border))'; }, 1500);
   }, []);
