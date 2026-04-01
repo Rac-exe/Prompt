@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import type { PythonClient } from '../api/python-client';
 
 export function registerAvatarHandlers(pythonClient: PythonClient) {
@@ -26,6 +27,7 @@ export function registerAvatarHandlers(pythonClient: PythonClient) {
       const url = await pythonClient.uploadImage(rawBase64, data.filename || 'avatar.jpg', mimeType);
       return { success: true, url };
     } catch (err: any) {
+      Sentry.captureException(err, { tags: { component: 'avatar-upload' } });
       console.error('[AvatarUpload] Handler error:', err);
       return { success: false, error: err.message || 'Upload failed' };
     }

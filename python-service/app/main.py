@@ -1670,6 +1670,11 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
         raise HTTPException(status_code=500, detail="Image upload failed")
 
     logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {url}")
+    sentry_sdk.add_breadcrumb(
+        category="file-upload",
+        message=f"Cloudinary upload success: {request.filename}",
+        level="info",
+    )
     return ImageUploadResponse(url=url)
 
 

@@ -453,12 +453,25 @@ export class PythonClient extends EventEmitter {
   }
 
   async uploadImage(base64: string, filename: string, mimeType: string = 'image/jpeg'): Promise<string> {
-    const response = await this.client.post('/upload/image', {
-      base64,
-      filename,
-      mime_type: mimeType,
-    }, { timeout: 30000 });
-    return response.data.url;
+    try {
+      const response = await this.client.post('/upload/image', {
+        base64,
+        filename,
+        mime_type: mimeType,
+      }, { timeout: 30000 });
+      Sentry.addBreadcrumb({
+        category: 'file-upload',
+        message: `Image uploaded via Python proxy: ${filename}`,
+        level: 'info',
+      });
+      return response.data.url;
+    } catch (error) {
+      Sentry.captureException(error, {
+        tags: { component: 'image-upload' },
+        extra: { filename, mimeType },
+      });
+      throw error;
+    }
   }
 
   async transcribeAudio(audioBase64: string): Promise<string> {
