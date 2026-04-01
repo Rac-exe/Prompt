@@ -59,14 +59,23 @@
     "win": {
       "target": [
         {
-          "target": "dir",
-          "arch": [
-            "x64"
-          ]
+          "target": "nsis",
+          "arch": ["x64"]
         }
       ],
       "icon": "build/icon.ico",
       "forceCodeSigning": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Prmpt",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     }
   },
   "keywords": [
