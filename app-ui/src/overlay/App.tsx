@@ -116,6 +116,11 @@ const OverlayApp: React.FC = () => {
     const api = window.electronAPI;
     if (!api) return;
 
+    // ── Pre-warm auth state so AuthGate never flashes on first open ──
+    api.overlay?.checkAuth?.().then((data: { isAuthenticated: boolean }) => {
+      if (data?.isAuthenticated) setIsAuthenticated(true);
+    }).catch(() => {});
+
     // ── Cursor glow via IPC ──
     api.overlay?.onCursorPos?.(({ x, y }: { x: number; y: number }) => updateGlow(x, y));
 
