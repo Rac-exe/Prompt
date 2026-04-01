@@ -48,7 +48,7 @@
         "to": "files"
       },
       {
-        "from": ".env",
+        "from": ".env.packaged",
         "to": ".env"
       },
       {
