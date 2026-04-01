@@ -191,94 +191,31 @@ async function initialize() {
 
   SupabaseClientManager.initialize(SUPABASE_URL, SUPABASE_KEY);
 
-  // Create app window manager and preload it (hidden) for instant first open
+  // Create managers and clients (no windows loaded yet)
   appWindowManager = new AppWindowManager();
-  appWindowManager.preload();
-
-  // Create overlay manager (pre-load hidden window for instant open)
   overlayManager = new OverlayWindowManager();
-  overlayManager.preload();
-
-  // Initialize Python client
   pythonClient = new PythonClient(pythonHttpBase);
-
-  // Fire WebSocket connection immediately in the background — this wakes up Render
-  // before the user sends their first prompt, absorbing cold-start latency at launch.
-  pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
-
-  let pythonHealthy = false;
-  try {
-    const isHealthy = await pythonClient.healthCheck();
-    pythonHealthy = isHealthy;
-    if (isHealthy) {
-      console.log('[Main] Python service connected');
-    } else {
-      console.warn('[Main] Python service not available');
-    }
-  } catch (error) {
-    console.warn('[Main] Could not connect to Python service');
-    Sentry.captureException(error, { level: 'warning', tags: { component: 'python-init' } });
-  }
-
-  // Background health-check loop — detects Python crashes mid-session
-  const HEALTH_CHECK_INTERVAL_MS = 30_000;
-  setInterval(async () => {
-    try {
-      const healthy = await pythonClient.healthCheck();
-      if (!healthy && pythonHealthy) {
-        pythonHealthy = false;
-        appWindowManager.send('python:unavailable', {});
-        overlayManager.send('python:unavailable', {});
-        console.warn('[Main] Python service became unavailable');
-        Sentry.addBreadcrumb({ category: 'python', message: 'Python service became unavailable', level: 'warning' });
-        Sentry.captureMessage('Python service became unavailable', 'warning');
-      } else if (healthy && !pythonHealthy) {
-        pythonHealthy = true;
-        appWindowManager.send('python:recovered', {});
-        overlayManager.send('python:recovered', {});
-        console.log('[Main] Python service recovered');
-        Sentry.addBreadcrumb({ category: 'python', message: 'Python service recovered', level: 'info' });
-      }
-    } catch (healthErr) {
-      if (pythonHealthy) {
-        pythonHealthy = false;
-        appWindowManager.send('python:unavailable', {});
-        overlayManager.send('python:unavailable', {});
-        console.warn('[Main] Python health check failed');
-        Sentry.addBreadcrumb({ category: 'python', message: 'Python health check failed', level: 'warning' });
-        Sentry.captureMessage('Python health check failed', 'warning');
-      }
-    }
-  }, HEALTH_CHECK_INTERVAL_MS);
-
-  // Start network monitor — broadcasts online/offline status to all windows
-  networkMonitor.start(
-    (channel, data) => appWindowManager.send(channel, data),
-    (channel, data) => overlayManager.send(channel, data),
-    () => {
-      // Reconnected: notify renderer, then drain the offline queue
-      appWindowManager.send('network:reconnected', {});
-      syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
-        .catch(e => {
-          console.error('[Main] Prompt-library offline sync failed:', e);
-          Sentry.captureException(e, { tags: { component: 'offline-sync-prompt-library' } });
-        });
-      syncChatMessageQueue(appWindowManager, pythonClient)
-        .catch(e => {
-          console.error('[Main] Chat message offline sync failed:', e);
-          Sentry.captureException(e, { tags: { component: 'offline-sync-chat' } });
-        });
-    }
-  );
-  console.log('[Main] NetworkMonitor started');
-
-  // Initialize Transcription client
   transcriptionClient = new TranscriptionClient(pythonWsBase);
   console.log('[Main] Transcription client initialized');
 
   // ============================================
-  // TRANSCRIPTION IPC HANDLERS (streaming)
+  // REGISTER ALL IPC HANDLERS BEFORE WINDOW PRELOAD
   // ============================================
+  // Handlers must be registered before windows load HTML, otherwise the
+  // renderer fires IPC calls (overlay:get-settings, skills:list, etc.)
+  // before handlers exist — causing silent failures on first attempt.
+  registerAuthHandlers(appWindowManager);
+  registerUserHandlers(appWindowManager);
+  registerSettingsHandlers(overlayManager);
+  registerChatHandlers(appWindowManager, pythonClient);
+  registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
+  registerSkillHandlers();
+  registerAvatarHandlers(pythonClient);
+  registerFileUploadHandlers();
+  registerFeedbackHandlers();
+  registerDeletionHandlers();
+
+  // Transcription IPC handlers (inline — depend on transcriptionClient)
   ipcMain.on('transcription:debug', (_event, msg: string) => {
     console.log(`[Preload] ${msg}`);
   });
@@ -349,18 +286,79 @@ async function initialize() {
   });
 
   // ============================================
-  // REGISTER IPC HANDLERS
+  // NOW preload windows — renderer can safely call any IPC handler
   // ============================================
-  registerAuthHandlers(appWindowManager);
-  registerUserHandlers(appWindowManager);
-  registerSettingsHandlers(overlayManager);
-  registerChatHandlers(appWindowManager, pythonClient);
-  registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
-  registerSkillHandlers();
-  registerAvatarHandlers(pythonClient);
-  registerFileUploadHandlers();
-  registerFeedbackHandlers();
-  registerDeletionHandlers();
+  appWindowManager.preload();
+  overlayManager.preload();
+
+  // Fire WebSocket connection in the background — wakes up Render and absorbs
+  // cold-start latency before the user sends their first prompt.
+  pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
+
+  let pythonHealthy = false;
+  try {
+    const isHealthy = await pythonClient.healthCheck();
+    pythonHealthy = isHealthy;
+    if (isHealthy) {
+      console.log('[Main] Python service connected');
+    } else {
+      console.warn('[Main] Python service not available');
+    }
+  } catch (error) {
+    console.warn('[Main] Could not connect to Python service');
+    Sentry.captureException(error, { level: 'warning', tags: { component: 'python-init' } });
+  }
+
+  // Background health-check loop — detects Python crashes mid-session
+  const HEALTH_CHECK_INTERVAL_MS = 30_000;
+  setInterval(async () => {
+    try {
+      const healthy = await pythonClient.healthCheck();
+      if (!healthy && pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python service became unavailable');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service became unavailable', level: 'warning' });
+        Sentry.captureMessage('Python service became unavailable', 'warning');
+      } else if (healthy && !pythonHealthy) {
+        pythonHealthy = true;
+        appWindowManager.send('python:recovered', {});
+        overlayManager.send('python:recovered', {});
+        console.log('[Main] Python service recovered');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service recovered', level: 'info' });
+      }
+    } catch (healthErr) {
+      if (pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python health check failed');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python health check failed', level: 'warning' });
+        Sentry.captureMessage('Python health check failed', 'warning');
+      }
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
+
+  // Start network monitor — broadcasts online/offline status to all windows
+  networkMonitor.start(
+    (channel, data) => appWindowManager.send(channel, data),
+    (channel, data) => overlayManager.send(channel, data),
+    () => {
+      appWindowManager.send('network:reconnected', {});
+      syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
+        .catch(e => {
+          console.error('[Main] Prompt-library offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-prompt-library' } });
+        });
+      syncChatMessageQueue(appWindowManager, pythonClient)
+        .catch(e => {
+          console.error('[Main] Chat message offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-chat' } });
+        });
+    }
+  );
+  console.log('[Main] NetworkMonitor started');
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)
