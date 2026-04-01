@@ -1,5 +1,11 @@
 import * as dotenv from 'dotenv';
-dotenv.config();
+import * as path from 'path';
+import * as fs from 'fs';
+
+// In dev mode, .env lives at the project root (3 levels above dist/main/).
+// In a packaged app, the project root doesn't exist — load from extraResources.
+const _devEnvPath = path.join(__dirname, '..', '..', '..', '.env');
+dotenv.config({ path: fs.existsSync(_devEnvPath) ? _devEnvPath : path.join(process.resourcesPath, '.env') });
 
 import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
@@ -488,6 +494,10 @@ async function initialize() {
   console.log('[Main] - Press Ctrl+5 to toggle overlay');
   console.log('[Main] - Click tray icon to open app window');
   console.log('[Main] ========================================');
+
+  // Show the main window immediately on launch so the user sees the app
+  // when they double-click the exe, instead of only the tray icon.
+  appWindowManager.show();
 
   Sentry.addBreadcrumb({ category: 'lifecycle', message: 'App startup complete', level: 'info' });
   logger.info(logger.fmt`app.startup_complete platform=${process.platform} nativeBridge=${isNativeBridgeAvailable() ? 'loaded' : 'stub'}`);
