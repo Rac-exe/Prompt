@@ -3,6 +3,25 @@ import { ipcMain, shell } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import { SupabaseClientManager } from '../database/supabase-client';
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  attempts = 3,
+  delaysMs = [1000, 3000, 9000]
+): Promise<T> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === attempts - 1) throw err;
+      console.warn(`[FileUpload] Upload attempt ${i + 1} failed, retrying in ${delaysMs[i]}ms…`);
+      await new Promise(r => setTimeout(r, delaysMs[i]));
+    }
+  }
+  throw new Error('unreachable');
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const BUCKET = 'message-attachments';
@@ -160,7 +179,9 @@ export async function uploadAttachment(
   const buf = Buffer.from(file.base64, 'base64');
 
   if (file.mimeType.startsWith('image/')) {
-    const cloudinaryUrl = await pythonClient.uploadImage(file.base64, file.name, file.mimeType);
+    const cloudinaryUrl = await withRetry(() =>
+      pythonClient.uploadImage(file.base64, file.name, file.mimeType)
+    );
     return { name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, cloudinaryUrl };
   } else {
     // PDF
