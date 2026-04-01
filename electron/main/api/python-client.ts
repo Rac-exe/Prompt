@@ -452,6 +452,15 @@ export class PythonClient extends EventEmitter {
     }
   }
 
+  async uploadImage(base64: string, filename: string, mimeType: string = 'image/jpeg'): Promise<string> {
+    const response = await this.client.post('/upload/image', {
+      base64,
+      filename,
+      mime_type: mimeType,
+    }, { timeout: 30000 });
+    return response.data.url;
+  }
+
   async transcribeAudio(audioBase64: string): Promise<string> {
     try {
       const response = await this.client.post(

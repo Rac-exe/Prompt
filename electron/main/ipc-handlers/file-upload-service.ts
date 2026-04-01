@@ -276,17 +276,21 @@ export async function uploadAttachment(
   file: { name: string; mimeType: string; base64: string; sizeBytes: number },
   userId: string,
   chatId: string,
-  messageId: string
+  messageId: string,
+  pythonClient?: { uploadImage: (base64: string, filename: string, mimeType: string) => Promise<string> }
 ): Promise<StoredFileRef> {
   const buf = Buffer.from(file.base64, 'base64');
 
   if (file.mimeType.startsWith('image/')) {
-    if (isCloudinaryConfigured()) {
+    if (pythonClient) {
+      // Preferred path: proxy through Python service so Cloudinary secrets
+      // stay server-side and are never bundled in the Electron package.
+      const cloudinaryUrl = await pythonClient.uploadImage(file.base64, file.name, file.mimeType);
+      return { name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, cloudinaryUrl };
+    } else if (isCloudinaryConfigured()) {
       const cloudinaryUrl = await uploadImageToCloudinary(buf, file.name, file.mimeType);
       return { name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, cloudinaryUrl };
     } else {
-      // Dev fallback: keep as data URI (same as old behaviour, but at least
-      // the code path is unified and can be switched without touching callers)
       console.warn('[FileUpload] Cloudinary not configured — storing image as data URI fallback');
       const dataUrl = `data:${file.mimeType};base64,${file.base64}`;
       return { name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, cloudinaryUrl: dataUrl };

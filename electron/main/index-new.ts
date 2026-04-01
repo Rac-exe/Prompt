@@ -357,7 +357,7 @@ async function initialize() {
   registerChatHandlers(appWindowManager, pythonClient);
   registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
   registerSkillHandlers();
-  registerAvatarHandlers();
+  registerAvatarHandlers(pythonClient);
   registerFileUploadHandlers();
   registerFeedbackHandlers();
   registerDeletionHandlers();

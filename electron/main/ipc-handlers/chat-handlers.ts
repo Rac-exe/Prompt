@@ -638,7 +638,7 @@ export function registerChatHandlers(
             if (attachedFiles.length > 0 && authState.currentUserId) {
                 const results = await Promise.allSettled(
                     attachedFiles.map(f =>
-                        uploadAttachment(f, authState.currentUserId!, chatId, preGeneratedMessageId)
+                        uploadAttachment(f, authState.currentUserId!, chatId, preGeneratedMessageId, pythonClient)
                     )
                 );
                 filesForDb = results.map((r, i) => {

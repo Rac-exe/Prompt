@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import * as https from 'https';
-import * as http from 'http';
 import * as crypto from 'crypto';
+import type { PythonClient } from '../api/python-client';
 
 // ============================================
 // AVATAR UPLOAD IPC HANDLER
@@ -127,7 +127,7 @@ function uploadToCloudinary(imageBuffer: Buffer, filename: string): Promise<stri
   });
 }
 
-export function registerAvatarHandlers() {
+export function registerAvatarHandlers(pythonClient: PythonClient) {
   /**
    * avatar:upload — Upload an avatar image.
    *
@@ -141,27 +141,35 @@ export function registerAvatarHandlers() {
       }
 
       // Extract raw base64 from data URL (strip "data:image/jpeg;base64," prefix)
-      const base64Match = data.imageData.match(/^data:image\/\w+;base64,(.+)$/);
+      const base64Match = data.imageData.match(/^data:image\/(\w+);base64,(.+)$/);
       if (!base64Match) {
         return { success: false, error: 'Invalid image data format' };
       }
 
-      const imageBuffer = Buffer.from(base64Match[1], 'base64');
-      console.log(`[AvatarUpload] Received image: ${(imageBuffer.length / 1024).toFixed(0)} KB`);
+      const mimeType = `image/${base64Match[1]}`;
+      const rawBase64 = base64Match[2];
+      console.log(`[AvatarUpload] Received image: ${(rawBase64.length * 0.75 / 1024).toFixed(0)} KB`);
+
+      try {
+        // Preferred path: proxy through Python service — keeps Cloudinary secrets off the client
+        const url = await pythonClient.uploadImage(rawBase64, data.filename || 'avatar.jpg', mimeType);
+        return { success: true, url };
+      } catch (proxyErr: any) {
+        console.warn('[AvatarUpload] Python proxy upload failed, trying direct fallback:', proxyErr.message);
+      }
 
       if (isCloudinaryConfigured()) {
         try {
+          const imageBuffer = Buffer.from(rawBase64, 'base64');
           const url = await uploadToCloudinary(imageBuffer, data.filename || 'avatar.jpg');
           return { success: true, url };
         } catch (cloudErr: any) {
-          console.error('[AvatarUpload] Cloudinary failed, returning data URL fallback:', cloudErr.message);
-          // Fall through to data URL
+          console.error('[AvatarUpload] Direct Cloudinary also failed:', cloudErr.message);
         }
-      } else {
-        console.log('[AvatarUpload] Cloudinary not configured, using data URL');
       }
 
-      // Fallback: return the compressed data URL as-is
+      // Last resort: return the data URL as-is
+      console.log('[AvatarUpload] Using data URL fallback');
       return { success: true, url: data.imageData };
     } catch (err: any) {
       console.error('[AvatarUpload] Handler error:', err);

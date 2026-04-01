@@ -367,7 +367,7 @@ export function registerOverlayHandlers(
                 if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
                   const results = await Promise.allSettled(
                     data.attachedFiles.map(f =>
-                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId)
+                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId, pythonClient)
                     )
                   );
                   filesForDb = results.map((r, i) => {
@@ -467,7 +467,7 @@ export function registerOverlayHandlers(
                   const olPreId = crypto.randomUUID();
                   const olResults = await Promise.allSettled(
                     data.attachedFiles.map(f =>
-                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId)
+                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId, pythonClient)
                     )
                   );
                   const olFilesForDb = olResults.map((r, i) => {
