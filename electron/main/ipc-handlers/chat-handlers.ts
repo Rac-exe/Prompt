@@ -621,47 +621,23 @@ export function registerChatHandlers(
                 chat = await chatService.getChat(chatId);
             }
 
-            // ── Upload files to external storage before writing to DB ────────
-            // Images  → Cloudinary (CDN-backed, returns a permanent secure_url)
-            // PDFs    → Supabase Storage (private bucket, accessed via signed URL)
-            //
-            // KEY: pre-generate the messageId so we can use it as the storage
-            // path PREFIX *before* the INSERT, eliminating the INSERT→PATCH race.
-            // base64 is never written to DB — only kept in-memory for the Python call.
+            // ── Insert message + notify renderer FIRST, upload in background ──
+            // Strategy: DB INSERT with file metadata (no URLs) → fire message-sent
+            // → start uploads in parallel with optimization. This ensures the
+            // renderer shows the user message instantly and DB reloads find it.
             const userGroupId = data.groupId || crypto.randomUUID();
             const userVersionIndex = data.versionIndex ?? 0;
             const preGeneratedMessageId = crypto.randomUUID();
 
-            // Upload each file independently — Promise.allSettled means one failure
-            // does NOT discard the refs from files that succeeded.
-            let filesForDb: any[] = [];
-            if (attachedFiles.length > 0 && authState.currentUserId) {
-                const results = await Promise.allSettled(
-                    attachedFiles.map(f =>
-                        uploadAttachment(f, authState.currentUserId!, chatId, preGeneratedMessageId, pythonClient)
-                    )
-                );
-                filesForDb = results.map((r, i) => {
-                    if (r.status === 'fulfilled') return r.value;
-                    // Upload failed for this file — keep name/type/size so the chip
-                    // still renders, but flag it so we don't show a broken URL.
-                    const uploadErr = (r as PromiseRejectedResult).reason;
-                    console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
-                    Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
-                    return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
-                });
-                const chatFailedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
-                if (chatFailedNames.length > 0 && appWindowManager) {
-                    appWindowManager.send('upload-partial-failure', { failedFiles: chatFailedNames });
-                }
-            }
-
-            // Single INSERT — all metadata (including file refs) in one shot.
-            // No subsequent PATCH needed → no race condition.
+            // Insert message to DB with file metadata only (name/type/size).
+            // Cloudinary URLs are backfilled asynchronously after upload completes.
+            const filesMetadataOnly = attachedFiles.map(f => ({
+                name: f.name, mimeType: f.mimeType, sizeBytes: f.sizeBytes,
+            }));
             const userMessage = await chatService.addMessage(
                 chatId, data.content, 'user', undefined,
                 {
-                    attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                    attachedFiles: filesMetadataOnly.length > 0 ? filesMetadataOnly : undefined,
                     selectedSkill: data.forcedSkill || undefined,
                     groupId: userGroupId,
                     versionIndex: userVersionIndex,
@@ -669,14 +645,10 @@ export function registerChatHandlers(
                 preGeneratedMessageId,
             );
 
-            // Send immediate confirmation — include base64 for in-session thumbnails
-            // and cloudinaryUrl/storagePath for future reloads
+            // Notify renderer immediately — base64 is included for in-session thumbnails.
+            // The DB already has the record, so any selectedChatId-triggered reload will
+            // find it (avoiding the blank-screen flash).
             if (appWindowManager) {
-                // Merge base64 (in-memory, for current session) with storage refs (for persistence)
-                const attachedFilesForRenderer = attachedFiles.map((f, i) => ({
-                    ...f,
-                    ...(filesForDb[i] || {}),
-                }));
                 appWindowManager.send('message-sent', {
                     chatId,
                     chat,
@@ -686,12 +658,45 @@ export function registerChatHandlers(
                         role: userMessage.role,
                         content: userMessage.content,
                         createdAt: userMessage.created_at,
-                        attachedFiles: attachedFilesForRenderer,
+                        attachedFiles: attachedFiles.length > 0 ? attachedFiles : undefined,
                         selectedSkill: data.forcedSkill || null,
                         groupId: userGroupId,
                         versionIndex: userVersionIndex,
                     }
                 });
+            }
+
+            // Fire-and-forget: upload files to Cloudinary/Supabase Storage in background.
+            // Results are written back to the DB for future sessions; current session
+            // displays thumbnails from in-memory base64.
+            if (attachedFiles.length > 0 && authState.currentUserId) {
+                const userId = authState.currentUserId;
+                (async () => {
+                    try {
+                        const results = await Promise.allSettled(
+                            attachedFiles.map(f =>
+                                uploadAttachment(f, userId, chatId, preGeneratedMessageId, pythonClient)
+                            )
+                        );
+                        const filesForDb = results.map((r, i) => {
+                            if (r.status === 'fulfilled') return r.value;
+                            const uploadErr = (r as PromiseRejectedResult).reason;
+                            console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
+                            Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
+                            return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
+                        });
+                        await chatService.updateMessageAttachments(userMessage.id, filesForDb);
+                        const succeeded = filesForDb.filter((f: any) => !f.uploadFailed).length;
+                        const chatFailedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                        Sentry.addBreadcrumb({ category: 'chat', message: 'Background uploads complete', level: 'info', data: { messageId: userMessage.id, succeeded, failed: chatFailedNames.length } });
+                        if (chatFailedNames.length > 0 && appWindowManager) {
+                            appWindowManager.send('upload-partial-failure', { failedFiles: chatFailedNames });
+                        }
+                    } catch (bgErr) {
+                        console.error('[Chat] Background upload failed:', bgErr);
+                        Sentry.captureException(bgErr, { tags: { component: 'file-upload-bg' }, extra: { messageId: userMessage.id, chatId } });
+                    }
+                })();
             }
 
             let customInstructions = '';
@@ -721,8 +726,6 @@ export function registerChatHandlers(
             let messagesContext: Array<{role: string, content: string}> = [];
             try {
                 const history = await chatService.getMessages(chatId);
-                // Get the last 10 messages, but EXCLUDE the one we just added (the new prompt)
-                // because the python backend expects the new prompt separately
                 const relevantHistory = history.filter(m => m.id !== userMessage.id).slice(-10);
                 messagesContext = relevantHistory.map(m => ({
                     role: m.role,
@@ -732,9 +735,8 @@ export function registerChatHandlers(
                 console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
             }
 
-            // Trigger streaming optimization
-            // Wrap separately so a Python/network failure saves a paired error
-            // assistant message — prevents an orphaned user message in the DB.
+            // Trigger streaming optimization — uses the original attachedFiles (with
+            // base64) so the LLM sees the image content regardless of upload status.
             activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
             let modelsUsed: ModelsUsed | undefined;
