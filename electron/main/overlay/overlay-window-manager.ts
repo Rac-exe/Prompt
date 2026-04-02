@@ -3,8 +3,6 @@ import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 import { forceFocusWindow } from '../utils/native-bridge';
 
-const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
-
 /**
  * OverlayWindowManager
  *
@@ -96,6 +94,7 @@ export class OverlayWindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        devTools: !app.isPackaged,
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
         // Keep renderer active when parked off-screen so the GPU framebuffer
         // stays current.  Without this, Chromium throttles the renderer and
@@ -108,36 +107,20 @@ export class OverlayWindowManager {
     // 'screen-saver' is the highest z-order level available on Windows/macOS.
     this.window.setAlwaysOnTop(true, 'screen-saver');
 
-    // ── Zoom shortcuts (Ctrl+=, Ctrl+-, Ctrl+0) ───────────────────────────
-    this.window.webContents.on('before-input-event', (_event, input) => {
-      if (!this.window || input.type !== 'keyDown' || !input.control) return;
-      const wc = this.window.webContents;
+    // ── Disable zoom completely ────────────────────────────────────────────
+    // Clamp Chromium's pinch/gesture zoom to 1x so it cannot drift.
+    this.window.webContents.setVisualZoomLevelLimits(1, 1);
 
-      if (input.key === '=' || input.key === '+') {
+    // Block Ctrl+=/+, Ctrl+-, Ctrl+0 — Chromium handles these natively and
+    // they fire even without any JS handler, so we must swallow them here.
+    this.window.webContents.on('before-input-event', (_event, input) => {
+      if (input.type !== 'keyDown' || !input.control) return;
+      if (
+        input.key === '=' || input.key === '+' ||
+        input.key === '-' || input.key === '_' ||
+        input.key === '0'
+      ) {
         _event.preventDefault();
-        const current = wc.getZoomFactor();
-        const next = ZOOM_STEPS.find(s => s > current + 0.001);
-        if (next) {
-          wc.setZoomFactor(next);
-          wc.send('zoom:changed', { percent: Math.round(next * 100) });
-        }
-        return;
-      }
-      if (input.key === '-') {
-        _event.preventDefault();
-        const current = wc.getZoomFactor();
-        const prev = [...ZOOM_STEPS].reverse().find(s => s < current - 0.001);
-        if (prev) {
-          wc.setZoomFactor(prev);
-          wc.send('zoom:changed', { percent: Math.round(prev * 100) });
-        }
-        return;
-      }
-      if (input.key === '0') {
-        _event.preventDefault();
-        wc.setZoomFactor(1.0);
-        wc.send('zoom:changed', { percent: 100 });
-        return;
       }
     });
 

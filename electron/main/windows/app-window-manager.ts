@@ -51,6 +51,7 @@ export class AppWindowManager {
         nodeIntegration: false,
         contextIsolation: true,
         plugins: true, // Enable Chromium PDF viewer for inline PDF preview
+        devTools: !app.isPackaged,
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
       },
     });
