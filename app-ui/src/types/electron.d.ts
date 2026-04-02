@@ -231,6 +231,14 @@ export interface ElectronAPI {
   // Deep link navigation — receives the full React Router route path (e.g. /share/c/<token>)
   onNavigateToShare: (callback: (routePath: string) => void) => (() => void);
 
+  // Auto-update
+  update?: {
+    onAvailable: (callback: (data: { version: string }) => void) => () => void;
+    onProgress: (callback: (data: { percent: number; transferred: number; total: number }) => void) => () => void;
+    onDownloaded: (callback: (data: { version: string }) => void) => () => void;
+    install: () => void;
+  };
+
   // Overlay (available when running inside the overlay renderer)
   overlay?: {
     optimize: (data: {
