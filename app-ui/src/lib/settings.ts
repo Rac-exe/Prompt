@@ -8,9 +8,9 @@ export interface SettingsData {
 
 export const STORAGE_KEY = "prompt-weaver-settings";
 
-// Default settings
+// Default settings — light for first-time users; stored preference takes over on return visits.
 export const DEFAULT_SETTINGS: SettingsData = {
-    theme: "dark",
+    theme: "light",
     fontSize: "medium",
     fontFamily: "inter",
     promptInstructions: "",
@@ -34,7 +34,9 @@ export const loadSettings = async (): Promise<SettingsData> => {
                 promptInstructions: settings.prompt_instructions || DEFAULT_SETTINGS.promptInstructions,
             };
 
-            // Cache in localStorage
+            // Sync localStorage with the authoritative Supabase value so
+            // future launches (and the blocking theme script in index.html)
+            // always use the latest server preference.
             localStorage.setItem(STORAGE_KEY, JSON.stringify(transformed));
 
             return transformed;
@@ -58,6 +60,10 @@ export const loadSettings = async (): Promise<SettingsData> => {
 
 // Save settings to Supabase (via Electron) and localStorage
 export const saveSettings = async (settings: SettingsData): Promise<void> => {
+    // Write locally FIRST so the preference survives sign-out or app close
+    // before the Supabase round-trip completes.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+
     if (isElectron && window.electronAPI.saveSettings) {
         try {
             // Transform camelCase to snake_case for DB
@@ -70,36 +76,20 @@ export const saveSettings = async (settings: SettingsData): Promise<void> => {
 
             // Save to Supabase via Electron
             await window.electronAPI.saveSettings(dbSettings);
-
-            // Also save to localStorage as cache
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-
-            console.log('[Settings] Saved to Supabase and localStorage');
-            return;
         } catch (error) {
             console.error('[Settings] Failed to save to Supabase:', error);
-            // Fallback to localStorage
+            // localStorage already updated — preference is not lost
         }
     }
-
-    // Fallback: Save to localStorage only
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    console.log('[Settings] Saved to localStorage only');
 };
 
 // Apply settings to the DOM
 export const applySettings = (settings: SettingsData) => {
     const root = document.documentElement;
 
-    console.log('[applySettings] Applying settings:', settings);
-
-    // Apply theme
-    console.log('[applySettings] Theme value:', settings.theme);
     if (settings.theme === "dark") {
-        console.log('[applySettings] Adding dark class');
         root.classList.add("dark");
     } else {
-        console.log('[applySettings] Removing dark class (light mode)');
         root.classList.remove("dark");
     }
 
@@ -130,6 +120,4 @@ export const applySettings = (settings: SettingsData) => {
         default:
             root.classList.add('font-sans');
     }
-
-    console.log('[applySettings] ✅ Settings applied. Current classList:', root.classList.toString());
 };

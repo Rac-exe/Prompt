@@ -61,7 +61,6 @@ export class AppWindowManager {
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'index.html');
     this.window.loadFile(htmlPath);
 
-    // Track when the window is fully loaded
     this.window.once('ready-to-show', () => {
       this.isLoaded = true;
     });

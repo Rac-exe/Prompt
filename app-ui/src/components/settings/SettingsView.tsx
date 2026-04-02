@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { User, Palette, Moon, Sun, Check, Sparkle, Camera, Brain, GithubLogo, Link, LinkBreak, Key, CircleNotch, Envelope, ArrowLeft } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,11 +53,12 @@ const RowLabel = ({ label, hint }: { label: string; hint?: string }) => (
 export const SettingsView = () => {
   const { user } = useAuth();
 
-  const [settings, setSettings] = useState<SettingsData>({
-    theme: "dark",
-    fontSize: "medium",
-    fontFamily: "inter",
-    promptInstructions: "",
+  const [settings, setSettings] = useState<SettingsData>(() => {
+    try {
+      const stored = localStorage.getItem('prompt-weaver-settings');
+      if (stored) return JSON.parse(stored) as SettingsData;
+    } catch {}
+    return { theme: "light", fontSize: "medium", fontFamily: "inter", promptInstructions: "" };
   });
   const [isLoading, setIsLoading] = useState(true);
   const [localInstructions, setLocalInstructions] = useState("");
@@ -206,6 +207,8 @@ export const SettingsView = () => {
   const userEmail = user?.profile?.email || "";
   const userInitial = (userName[0] || "U").toUpperCase();
 
+  const settingsReadyRef = useRef(false);
+
   useEffect(() => {
     loadSettings()
       .then((loaded) => {
@@ -213,7 +216,13 @@ export const SettingsView = () => {
         setLocalInstructions(loaded.promptInstructions ?? "");
       })
       .catch((err) => console.error('[SettingsView] Failed to load settings:', err))
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        setIsLoading(false);
+        // Allow saves only after the next animation frame so Radix Switch's
+        // BubbleInput phantom toggle (fired in a useEffect after the re-render
+        // caused by setSettings) is safely discarded.
+        requestAnimationFrame(() => { settingsReadyRef.current = true; });
+      });
   }, []);
 
   const instructionsDirty = localInstructions !== settings.promptInstructions;
@@ -227,6 +236,7 @@ export const SettingsView = () => {
   };
 
   const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
+    if (!settingsReadyRef.current) return;
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
     applySettings(newSettings);

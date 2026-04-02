@@ -27,6 +27,11 @@ function getServices() {
     return { authService, userService, chatService, promptLibraryService };
 }
 
+// Dedup guard: if handleSuccessfulAuth is already in-flight (e.g. auth:check from
+// the renderer racing with checkAndRestoreSession on startup), reuse the existing
+// Promise instead of starting a second parallel Supabase session.
+let _authLoadPromise: Promise<void> | null = null;
+
 /**
  * Check for existing session and restore state
  */
@@ -67,9 +72,27 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
 }
 
 /**
- * Handle successful authentication (updates state, loads data)
+ * Handle successful authentication (updates state, loads data).
+ *
+ * Dedup: if already in-flight (e.g. auth:check from renderer races with
+ * checkAndRestoreSession on startup) the existing Promise is reused instead
+ * of firing a second parallel Supabase session.
  */
-export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
+export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any): Promise<void> {
+    if (_authLoadPromise) {
+        // Already running — piggyback on the in-flight call.
+        return _authLoadPromise;
+    }
+    _authLoadPromise = _runHandleSuccessfulAuth(appWindowManager, cachedUser);
+    try {
+        await _authLoadPromise;
+    } finally {
+        // Reset so future sign-in / re-auth calls work normally.
+        _authLoadPromise = null;
+    }
+}
+
+async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
     const { authService, userService, chatService, promptLibraryService } = getServices();
 
     try {
@@ -94,30 +117,40 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
         authState.currentUserId = user.id;
         authState.currentUserEmail = user.email ?? null;
 
-        // Build user data object
+        // Build user data object — run independent Supabase calls in parallel.
         let userData: any = null;
         if (networkMonitor.isOnline) {
             try {
-                userData = await userService.getCompleteUserData();
-                // Cache avatar for offline use if present
+                // Fetch user profile and identities concurrently (~2-3s saved vs sequential).
+                const [completeUserData, identitiesResult] = await Promise.all([
+                    userService.getCompleteUserData(),
+                    authService.getIdentities().catch(e => {
+                        console.warn('[Auth] Could not load identities:', e);
+                        return { identities: [] as any[], error: null };
+                    }),
+                ]);
+                userData = completeUserData;
+                userData.identities = identitiesResult.identities ?? [];
+
+                // Cache avatar in the background — never block auth:state-changed.
                 if (userData?.profile?.avatar_url) {
-                    try {
-                        const avatarRes = await fetch(userData.profile.avatar_url);
-                        if (avatarRes.ok) {
+                    fetch(userData.profile.avatar_url)
+                        .then(async (avatarRes) => {
+                            if (!avatarRes.ok) return;
                             const arrayBuffer = await avatarRes.arrayBuffer();
                             const buffer = Buffer.from(arrayBuffer);
                             const mimeType = avatarRes.headers.get('content-type') || 'image/jpeg';
                             const base64 = `data:${mimeType};base64,${buffer.toString('base64')}`;
                             localCache.setAvatar(user.id, base64);
                             console.log('[Auth] ✅ Avatar cached for offline use');
-                        }
-                    } catch (avatarErr) {
-                        console.warn('[Auth] Could not cache avatar:', avatarErr);
-                    }
+                        })
+                        .catch(avatarErr => console.warn('[Auth] Could not cache avatar:', avatarErr));
                 }
             } catch (e) {
                 console.warn('[Auth] Could not load user data from network:', e);
             }
+        } else {
+            userData = null;
         }
 
         // Fallback: construct minimal user data from the session user object
@@ -132,27 +165,15 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
                     avatar_url: localCache.getAvatar(user.id) || user.user_metadata?.avatar_url || null,
                 },
                 preferences: {},
+                identities: [],
             };
-        }
-
-        // Attach connected identities when online
-        if (networkMonitor.isOnline) {
-            try {
-                const { identities } = await authService.getIdentities();
-                userData.identities = identities;
-            } catch (e) {
-                console.warn('[Auth] Could not load identities:', e);
-                userData.identities = [];
-            }
-        } else {
-            userData.identities = [];
         }
 
         Sentry.setUser({ id: user.id });
         appWindowManager.send('sentry:set-user', { id: user.id });
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
 
-        // 1. Send Auth State
+        // 1. Send Auth State — UI transitions from loading spinner to app view.
         console.log('[Auth] 📤 Sending authenticated state to renderer');
         appWindowManager.send('auth:state-changed', {
             isAuthenticated: true,
