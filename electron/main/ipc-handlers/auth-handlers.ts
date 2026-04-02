@@ -11,6 +11,7 @@ import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
 import { networkMonitor } from './network-monitor-singleton';
 import { localCache } from '../database/local-cache';
+import { emailService } from '../services/email-service';
 
 // Services (lazy loaded)
 let authService: AuthService | null = null;
@@ -40,6 +41,8 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
             console.log('[Auth] No valid session found');
             authState.isAuthenticated = false;
             authState.currentUserId = null;
+            // Notify renderer so it can leave the loading state
+            appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
             return false;
         }
 
@@ -58,6 +61,7 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
         Sentry.captureException(error);
         authState.isAuthenticated = false;
         authState.currentUserId = null;
+        appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
         return false;
     }
 }
@@ -203,49 +207,166 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
 export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     const { authService } = getServices();
 
+    // Initialize email service for OTP
+    emailService.initialize();
+    // Periodically clean up expired OTPs
+    setInterval(() => emailService.cleanup(), 5 * 60 * 1000);
+
     // ============================================
     // AUTH IPC HANDLERS
     // ============================================
 
-    // Sign Up
-    ipcMain.on('auth:sign-up', async (event, data: { name: string; dob: string; email: string; password: string }) => {
+    // Send Sign-Up OTP (step 1: check email uniqueness, then send OTP)
+    ipcMain.handle('auth:send-signup-otp', async (_event, data: { name: string; dob: string; email: string; password: string }) => {
         try {
-            console.log('[Auth] Sign up request for:', data.email);
+            const email = data.email.toLowerCase().trim();
+            console.log('[Auth] Sending signup OTP to:', email);
 
-            const { user, error } = await authService!.signUp(data);
+            // Check if the email is already registered in auth.users
+            const adminClient = SupabaseClientManager.getAdminClient();
+            if (adminClient) {
+                const { data: exists, error: rpcError } = await adminClient
+                    .rpc('check_email_exists', { email_input: email });
 
-            if (error || !user) {
-                console.error('[Auth] Sign up failed:', error?.message);
-                appWindowManager.send('auth:state-changed', {
-                    isAuthenticated: false,
-                    user: null,
-                    error: error?.message || 'Sign up failed',
-                });
-                return;
+                if (rpcError) {
+                    console.warn('[Auth] Email check RPC failed, falling back:', rpcError.message);
+                } else if (exists) {
+                    return { error: 'An account with this email already exists. Please sign in instead.' };
+                }
             }
 
-            console.log('[Auth] ✅ Sign up successful, signing in...');
+            const result = await emailService.sendSignupOtp(data);
+            if (!result.success) {
+                return { error: result.error };
+            }
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Send signup OTP error:', error);
+            Sentry.captureException(error);
+            return { error: error.message || 'Failed to send verification code' };
+        }
+    });
 
-            // Auto-sign in after signup
-            const { session: signInSession, error: signInError } = await authService!.signIn({
-                email: data.email,
-                password: data.password,
+    // Verify Sign-Up OTP (step 2: verify code, then create Supabase user)
+    ipcMain.handle('auth:verify-signup-otp', async (_event, { email, otp }: { email: string; otp: string }) => {
+        try {
+            console.log('[Auth] Verifying signup OTP for:', email);
+            const verification = emailService.verifySignupOtp(email, otp);
+
+            if (!verification.valid || !verification.data) {
+                return { error: verification.error };
+            }
+
+            const signupData = verification.data;
+            const { user, error } = await authService!.signUp({
+                name: signupData.name,
+                dob: signupData.dob,
+                email: signupData.email,
+                password: signupData.password,
             });
 
-            if (signInError || !signInSession) {
+            if (error || !user) {
+                console.error('[Auth] Sign up failed after OTP:', error?.message);
+                const msg = error?.message?.toLowerCase().includes('already registered')
+                    ? 'An account with this email already exists. Please sign in instead.'
+                    : (error?.message || 'Sign up failed');
+                return { error: msg };
+            }
+
+            console.log('[Auth] Sign up successful after OTP, signing in...');
+
+            const { session, error: signInError } = await authService!.signIn({
+                email: signupData.email,
+                password: signupData.password,
+            });
+
+            if (signInError || !session) {
                 console.error('[Auth] Auto sign-in after signup failed:', signInError?.message);
-                return;
+                return { error: signInError?.message || 'Sign in after signup failed' };
             }
 
             await handleSuccessfulAuth(appWindowManager);
-        } catch (error) {
-            console.error('[Auth] Unexpected sign up error:', error);
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Verify signup OTP error:', error);
             Sentry.captureException(error);
-            appWindowManager.send('auth:state-changed', {
-                isAuthenticated: false,
-                user: null,
-                error: 'Sign up failed',
+            return { error: error.message || 'Verification failed' };
+        }
+    });
+
+    // Resend Sign-Up OTP
+    ipcMain.handle('auth:resend-signup-otp', async (_event, { email }: { email: string }) => {
+        try {
+            console.log('[Auth] Resending signup OTP to:', email);
+            // We need the original signup data, but it may have been cleared
+            // The frontend re-sends the full data via send-signup-otp instead
+            return { error: 'Please use the original sign-up flow to resend.' };
+        } catch (error: any) {
+            return { error: error.message || 'Failed to resend code' };
+        }
+    });
+
+    // Send Password Reset OTP
+    ipcMain.handle('auth:send-reset-otp', async (_event, { email }: { email: string }) => {
+        try {
+            console.log('[Auth] Sending reset OTP to:', email);
+            const result = await emailService.sendResetOtp(email);
+            if (!result.success) {
+                return { error: result.error };
+            }
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Send reset OTP error:', error);
+            Sentry.captureException(error);
+            return { error: error.message || 'Failed to send reset code' };
+        }
+    });
+
+    // Verify Reset OTP and update password
+    ipcMain.handle('auth:verify-reset-otp', async (_event, { email, otp, newPassword }: { email: string; otp: string; newPassword: string }) => {
+        try {
+            console.log('[Auth] Verifying reset OTP for:', email);
+            const verification = emailService.verifyResetOtp(email, otp);
+
+            if (!verification.valid) {
+                return { error: verification.error };
+            }
+
+            // Use admin client to update the user's password
+            const adminClient = SupabaseClientManager.getAdminClient();
+            if (!adminClient) {
+                return { error: 'Password reset is not configured. Contact support.' };
+            }
+
+            // Find user by email
+            const { data: userData, error: listError } = await adminClient.auth.admin.listUsers();
+            if (listError) {
+                console.error('[Auth] Admin listUsers error:', listError);
+                return { error: 'Could not look up user. Please try again.' };
+            }
+
+            const targetUser = userData.users.find(
+                (u: any) => u.email?.toLowerCase() === email.toLowerCase().trim()
+            );
+            if (!targetUser) {
+                return { error: 'No account found with this email address.' };
+            }
+
+            const { error: updateError } = await adminClient.auth.admin.updateUserById(targetUser.id, {
+                password: newPassword,
             });
+
+            if (updateError) {
+                console.error('[Auth] Admin updateUser error:', updateError);
+                return { error: updateError.message || 'Failed to update password' };
+            }
+
+            console.log('[Auth] Password reset successful for:', email);
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Verify reset OTP error:', error);
+            Sentry.captureException(error);
+            return { error: error.message || 'Password reset failed' };
         }
     });
 

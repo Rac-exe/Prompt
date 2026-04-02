@@ -186,6 +186,11 @@ declare global {
       linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
       unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
       resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
+      // OTP API
+      sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
+      verifySignupOtp: (email: string, otp: string) => Promise<{ success?: boolean; error?: string }>;
+      sendResetOtp: (email: string) => Promise<{ success?: boolean; error?: string }>;
+      verifyResetOtp: (email: string, otp: string, newPassword: string) => Promise<{ success?: boolean; error?: string }>;
       updateProfile: (updates: any) => void;
       uploadAvatar: (imageData: string, filename: string) => Promise<{ success: boolean; url?: string; error?: string }>;
       updatePreferences: (updates: any) => void;
@@ -568,6 +573,18 @@ const electronAPI = {
   },
   resetPassword: (email: string) => {
     return ipcRenderer.invoke('auth:reset-password', { email });
+  },
+  sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => {
+    return ipcRenderer.invoke('auth:send-signup-otp', data);
+  },
+  verifySignupOtp: (email: string, otp: string) => {
+    return ipcRenderer.invoke('auth:verify-signup-otp', { email, otp });
+  },
+  sendResetOtp: (email: string) => {
+    return ipcRenderer.invoke('auth:send-reset-otp', { email });
+  },
+  verifyResetOtp: (email: string, otp: string, newPassword: string) => {
+    return ipcRenderer.invoke('auth:verify-reset-otp', { email, otp, newPassword });
   },
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
     ipcRenderer.removeAllListeners('auth:state-changed');
