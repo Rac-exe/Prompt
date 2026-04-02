@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -68,7 +68,11 @@ function parseSkillMetadata(content: string, skillName: string): SkillInfo {
 export function registerSkillHandlers() {
   ipcMain.handle('skills:list', async (): Promise<SkillInfo[]> => {
     try {
-      const skillsDir = path.join(__dirname, '..', '..', '..', 'files');
+      // In dev: __dirname = dist/main/ipc-handlers/ → 3 levels up = project root.
+      // In packaged: files/ is in extraResources → process.resourcesPath.
+      const skillsDir = app.isPackaged
+        ? path.join(process.resourcesPath, 'files')
+        : path.join(__dirname, '..', '..', '..', 'files');
 
       if (!fs.existsSync(skillsDir)) {
         console.error('[SkillHandlers] Skills directory not found:', skillsDir);
