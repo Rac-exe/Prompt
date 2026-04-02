@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { User, Palette, Moon, Sun, Check, Sparkle, Camera, Brain, GithubLogo, Link, LinkBreak, Key, CircleNotch, Envelope } from "@phosphor-icons/react";
+import { User, Palette, Moon, Sun, Check, Sparkle, Camera, Brain, GithubLogo, Link, LinkBreak, Key, CircleNotch, Envelope, ArrowLeft } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,7 @@ import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/s
 import { useAuth } from "@/context/AuthContext";
 import { AvatarUploadModal } from "@/components/profile/AvatarUploadModal";
 import { MemoryView } from "@/components/settings/MemoryView";
+import { OtpVerification } from "@/components/auth/OtpVerification";
 import { cn } from "@/lib/utils";
 
 /* ── Reusable section wrapper ─────────────────────────────── */
@@ -114,20 +115,89 @@ export const SettingsView = () => {
     }
   };
 
+  // OTP password reset flow state
+  type ResetStep = 'idle' | 'otp' | 'new-password';
+  const [resetStep, setResetStep] = useState<ResetStep>('idle');
+  const [resetOtp, setResetOtp] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
+
   const handleSetPassword = async () => {
     if (!userEmail) return;
     setIdentityLoading('password');
     try {
-      const result = await window.electronAPI?.resetPassword(userEmail);
+      const result = await window.electronAPI?.sendResetOtp(userEmail);
       if (result?.error) {
         toast({ title: "Failed", description: result.error, variant: "destructive" });
       } else {
-        toast({ title: "Email sent", description: "Check your inbox for a password reset link." });
+        setResetStep('otp');
+        setOtpError('');
+        toast({ title: "Code sent", description: "Check your inbox for the verification code." });
       }
     } catch {
-      toast({ title: "Error", description: "Failed to send reset email", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to send reset code", variant: "destructive" });
     } finally {
       setIdentityLoading(null);
+    }
+  };
+
+  const handleVerifyResetOtp = async (otp: string) => {
+    setOtpError('');
+    setResetOtp(otp);
+    setResetStep('new-password');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setResetPasswordError('');
+  };
+
+  const handleResendResetOtp = async () => {
+    if (!userEmail) return;
+    try {
+      const result = await window.electronAPI?.sendResetOtp(userEmail);
+      if (result?.error) {
+        setOtpError(result.error);
+      } else {
+        toast({ title: "Code resent", description: "A new verification code has been sent." });
+      }
+    } catch {
+      setOtpError('Failed to resend code.');
+    }
+  };
+
+  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetPasswordError('');
+
+    if (newPassword.length < 6) {
+      setResetPasswordError('Password must be at least 6 characters');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setResetPasswordError('Passwords do not match');
+      return;
+    }
+
+    setResetPasswordLoading(true);
+    try {
+      const result = await window.electronAPI?.verifyResetOtp(userEmail, resetOtp, newPassword);
+      if (result?.error) {
+        setResetPasswordError(result.error);
+        if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
+          setResetStep('otp');
+          setOtpError(result.error);
+        }
+      } else {
+        toast({ title: "Password updated", description: "Your password has been changed successfully." });
+        setResetStep('idle');
+        setResetOtp('');
+      }
+    } catch {
+      setResetPasswordError('Failed to update password. Please try again.');
+    } finally {
+      setResetPasswordLoading(false);
     }
   };
 
@@ -519,6 +589,97 @@ export const SettingsView = () => {
         currentAvatarUrl={avatarUrl}
         onAvatarUploaded={handleAvatarUploaded}
       />
+
+      {/* Password reset OTP flow */}
+      {resetStep !== 'idle' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-[400px] bg-background border border-border rounded-2xl shadow-elevated p-6 space-y-5 animate-slide-up">
+            {resetStep === 'otp' && (
+              <OtpVerification
+                email={userEmail}
+                purpose="reset"
+                isLoading={false}
+                error={otpError}
+                onVerify={handleVerifyResetOtp}
+                onResend={handleResendResetOtp}
+                onBack={() => { setResetStep('idle'); setOtpError(''); }}
+              />
+            )}
+
+            {resetStep === 'new-password' && (
+              <>
+                <button
+                  onClick={() => { setResetStep('otp'); setResetPasswordError(''); }}
+                  disabled={resetPasswordLoading}
+                  className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                >
+                  <ArrowLeft size={16} weight="light" />
+                  Back
+                </button>
+
+                <div className="flex flex-col items-center text-center space-y-3">
+                  <div className="w-14 h-14 rounded-full bg-emerald/10 flex items-center justify-center">
+                    <Key size={28} weight="light" className="text-emerald" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h2 className="text-xl font-bold text-foreground tracking-tight">Set new password</h2>
+                    <p className="text-sm text-muted-foreground">Choose a strong password for your account</p>
+                  </div>
+                </div>
+
+                {resetPasswordError && (
+                  <div className="flex items-start gap-2.5 p-3 rounded-lg bg-destructive/8 border border-destructive/20">
+                    <div className="w-4 h-4 rounded-full bg-destructive/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
+                    </div>
+                    <p className="text-sm text-destructive leading-snug">{resetPasswordError}</p>
+                  </div>
+                )}
+
+                <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-new-pw" className="text-sm font-medium text-foreground">New password</Label>
+                    <Input
+                      id="settings-new-pw" type="password" placeholder="••••••••"
+                      value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                      required minLength={6} disabled={resetPasswordLoading}
+                      className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60"
+                    />
+                    <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settings-confirm-pw" className="text-sm font-medium text-foreground">Confirm new password</Label>
+                    <Input
+                      id="settings-confirm-pw" type="password" placeholder="••••••••"
+                      value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      required minLength={6} disabled={resetPasswordLoading}
+                      className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <Button
+                      type="button" variant="outline"
+                      onClick={() => { setResetStep('idle'); setResetPasswordError(''); }}
+                      disabled={resetPasswordLoading}
+                      className="flex-1 h-10"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit" disabled={resetPasswordLoading}
+                      className="flex-1 h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                    >
+                      {resetPasswordLoading ? (
+                        <CircleNotch size={16} weight="light" className="animate-spin" />
+                      ) : 'Update Password'}
+                    </Button>
+                  </div>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

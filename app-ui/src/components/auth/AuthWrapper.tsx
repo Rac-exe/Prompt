@@ -5,6 +5,7 @@ import { SignupPage } from './SignupPage';
 import { OnboardingPage } from './OnboardingPage';
 import { AuthContext, CompleteUserData } from '@/context/AuthContext';
 import { useToast } from "@/hooks/use-toast";
+import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 interface AuthWrapperProps {
   children: ReactNode;
@@ -185,6 +186,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       signOut: handleSignOut
     }}>
       {renderContent()}
+      {authView !== 'app' && <ZoomIndicator />}
     </AuthContext.Provider>
   );
 }

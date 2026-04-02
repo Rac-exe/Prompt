@@ -9,6 +9,7 @@ import ChatPicker from './components/ChatPicker';
 import CollectionPicker from './components/CollectionPicker';
 import { useTurns } from './hooks/useTurns';
 import type { AttachedFile, SkillInfo, OverlaySettings } from './lib/types';
+import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 // ── Settings helpers ─────────────────────────────────────────────────────────
 
@@ -497,6 +498,8 @@ const OverlayApp: React.FC = () => {
           onSaved={() => {}}
         />
       </div>
+
+      <ZoomIndicator />
     </div>
     </Sentry.ErrorBoundary>
   );

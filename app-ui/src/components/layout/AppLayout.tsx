@@ -1,5 +1,6 @@
 import { ReactNode, useState, useEffect } from "react";
 import { Minus, Square, X, WifiSlash, Warning } from "@phosphor-icons/react";
+import { ZoomIndicator } from "./ZoomIndicator";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -109,6 +110,8 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
         </main>
 
       </div>
+
+      <ZoomIndicator />
     </div>
   );
 };

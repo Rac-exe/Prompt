@@ -287,6 +287,13 @@ declare global {
       // Python service status
       onPythonUnavailable: (callback: () => void) => void;
       onPythonRecovered: (callback: () => void) => void;
+
+      // Zoom API
+      zoom: {
+        get: () => Promise<{ percent: number }>;
+        set: (percent: number) => Promise<void>;
+        onChanged: (callback: (data: { percent: number }) => void) => () => void;
+      };
     };
   }
 }
@@ -797,6 +804,19 @@ const electronAPI = {
   // ============================================
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
+  },
+
+  // ============================================
+  // ZOOM API
+  // ============================================
+  zoom: {
+    get: () => ipcRenderer.invoke('zoom:get'),
+    set: (percent: number) => ipcRenderer.invoke('zoom:set', percent),
+    onChanged: (callback: (data: { percent: number }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('zoom:changed', handler);
+      return () => ipcRenderer.removeListener('zoom:changed', handler);
+    },
   },
 };
 

@@ -1,5 +1,10 @@
-import { BrowserWindow, app, nativeImage } from 'electron';
+import { BrowserWindow, app, nativeImage, ipcMain } from 'electron';
 import * as path from 'path';
+
+const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+const DEFAULT_ZOOM = 1.0;
+const MIN_ZOOM = ZOOM_STEPS[0];
+const MAX_ZOOM = ZOOM_STEPS[ZOOM_STEPS.length - 1];
 
 /**
  * Manages the main application window (ChatGPT-like interface)
@@ -57,16 +62,52 @@ export class AppWindowManager {
       this.isLoaded = true;
     });
 
-    // Disable Ctrl+R / Ctrl+Shift+R (hard reload) so the user can't
-    // accidentally wipe in-memory state by pressing the browser refresh shortcut.
     this.window.webContents.on('before-input-event', (_event, input) => {
-      if (
-        input.control &&
-        (input.key === 'r' || input.key === 'R')
-      ) {
+      if (!this.window) return;
+      const wc = this.window.webContents;
+
+      // Block Ctrl+R / Ctrl+Shift+R hard reload
+      if (input.control && (input.key === 'r' || input.key === 'R')) {
         _event.preventDefault();
+        return;
+      }
+
+      if (input.type !== 'keyDown' || !input.control) return;
+
+      // Zoom in: Ctrl+=, Ctrl+Shift+=, Ctrl+numpad+
+      if (input.key === '=' || input.key === '+') {
+        _event.preventDefault();
+        const current = wc.getZoomFactor();
+        const next = ZOOM_STEPS.find(s => s > current + 0.001);
+        if (next) {
+          wc.setZoomFactor(next);
+          this.broadcastZoom(next);
+        }
+        return;
+      }
+
+      // Zoom out: Ctrl+-, Ctrl+numpad-
+      if (input.key === '-') {
+        _event.preventDefault();
+        const current = wc.getZoomFactor();
+        const prev = [...ZOOM_STEPS].reverse().find(s => s < current - 0.001);
+        if (prev) {
+          wc.setZoomFactor(prev);
+          this.broadcastZoom(prev);
+        }
+        return;
+      }
+
+      // Reset zoom: Ctrl+0
+      if (input.key === '0') {
+        _event.preventDefault();
+        wc.setZoomFactor(DEFAULT_ZOOM);
+        this.broadcastZoom(DEFAULT_ZOOM);
+        return;
       }
     });
+
+    this.registerZoomIpc();
 
     // CRITICAL: Don't quit app when window closes
     this.window.on('close', () => {
@@ -170,5 +211,29 @@ export class AppWindowManager {
       this.window.destroy();
     }
     this.window = null;
+  }
+
+  private broadcastZoom(factor: number) {
+    this.send('zoom:changed', { percent: Math.round(factor * 100) });
+  }
+
+  private registerZoomIpc() {
+    ipcMain.removeHandler('zoom:get');
+    ipcMain.removeHandler('zoom:set');
+
+    ipcMain.handle('zoom:get', (event) => {
+      const wc = event.sender;
+      if (wc.isDestroyed()) return { percent: 100 };
+      return { percent: Math.round(wc.getZoomFactor() * 100) };
+    });
+
+    ipcMain.handle('zoom:set', (event, percent: number) => {
+      const wc = event.sender;
+      if (wc.isDestroyed()) return;
+      const clamped = Math.max(MIN_ZOOM * 100, Math.min(MAX_ZOOM * 100, percent));
+      const factor = clamped / 100;
+      wc.setZoomFactor(factor);
+      wc.send('zoom:changed', { percent: Math.round(factor * 100) });
+    });
   }
 }
