@@ -12,10 +12,9 @@ export const useInitializeSettings = () => {
             try {
                 console.log("[Settings] Loading settings after authentication...");
 
-                // Clear any stale localStorage cache first
-                localStorage.removeItem("prompt-weaver-settings");
-
-                // Load settings from Supabase (or localStorage fallback)
+                // Load settings from Supabase (or localStorage fallback).
+                // Don't clear localStorage first — the cached value is used by
+                // the blocking theme script in index.html to prevent FOUC on restart.
                 const settings = await loadSettings();
 
                 console.log("[Settings] Loaded settings:", settings);

@@ -3,8 +3,10 @@ import { Logo } from "@/components/ui/Logo";
 import {
   Lightning, Sparkle, ChatText, Books, Microphone,
   At, Brain, CaretRight, CursorClick, ArrowRight,
-  Minus, Square, X,
+  Minus, Square, X, Sun, Moon,
 } from '@phosphor-icons/react';
+import { DEFAULT_SETTINGS, STORAGE_KEY, applySettings } from '@/lib/settings';
+import type { SettingsData } from '@/lib/settings';
 
 /* ─────────────────────────────────────────────────────────────
    Feature data
@@ -284,6 +286,10 @@ interface OnboardingPageProps {
 }
 
 export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
+  const [phase, setPhase] = useState<'theme-picker' | 'features'>('theme-picker');
+  const [selectedTheme, setSelectedTheme] = useState<'light' | 'dark'>(() => {
+    return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+  });
   const [activeIndex, setActiveIndex] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -298,6 +304,26 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
     const t = setTimeout(() => setMounted(true), 50);
     return () => clearTimeout(t);
   }, []);
+
+  const handleThemeSelect = useCallback((theme: 'light' | 'dark') => {
+    setSelectedTheme(theme);
+    const settings: SettingsData = { ...DEFAULT_SETTINGS, theme };
+    applySettings(settings);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  }, []);
+
+  const handleThemeContinue = useCallback(() => {
+    const settings: SettingsData = { ...DEFAULT_SETTINGS, theme: selectedTheme };
+    if (window.electronAPI?.saveSettings) {
+      window.electronAPI.saveSettings({
+        theme: selectedTheme,
+        font_size: settings.fontSize,
+        font_family: settings.fontFamily,
+        prompt_instructions: settings.promptInstructions,
+      }).catch(() => {});
+    }
+    setPhase('features');
+  }, [selectedTheme]);
 
   // Step label: "01", "02", etc.
   const stepLabel = useMemo(() => String(activeIndex + 1).padStart(2, '0'), [activeIndex]);
@@ -327,9 +353,10 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
   }, [activeIndex, transitionTo]);
 
   useEffect(() => {
+    if (phase !== 'features') return;
     if (!isTransitioning) scheduleNext();
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [activeIndex, isTransitioning, scheduleNext]);
+  }, [phase, activeIndex, isTransitioning, scheduleNext]);
 
   /* ── Navigation helpers ────────────────────────────────── */
   const goNext = useCallback(() => {
@@ -341,8 +368,9 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
     if (activeIndex > 0) transitionTo(activeIndex - 1);
   }, [activeIndex, transitionTo]);
 
-  /* ── Keyboard navigation ───────────────────────────────── */
+  /* ── Keyboard navigation (only during features phase) ── */
   useEffect(() => {
+    if (phase !== 'features') return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goNext(); }
       if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
@@ -350,11 +378,12 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [goNext, goPrev, onComplete]);
+  }, [phase, goNext, goPrev, onComplete]);
 
-  /* ── Progress bar animation ────────────────────────────── */
+  /* ── Progress bar animation (only during features phase) ── */
   const [progress, setProgress] = useState(0);
   useEffect(() => {
+    if (phase !== 'features') return;
     setProgress(0);
     const start = performance.now();
     let raf: number;
@@ -365,7 +394,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [activeIndex]);
+  }, [phase, activeIndex]);
 
   // Overall progress across all slides
   const overallProgress = (activeIndex + progress) / FEATURES.length;
@@ -378,7 +407,174 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
     ? 'opacity-0 scale-95 translate-y-2'
     : 'opacity-100 scale-100 translate-y-0';
 
-  /* ─── Render ───────────────────────────────────────────── */
+  /* ─── Render: Theme Picker ─────────────────────────────── */
+  if (phase === 'theme-picker') {
+    return (
+      <div
+        className={`fixed inset-0 z-50 flex flex-col bg-background overflow-hidden select-none transition-opacity duration-700 ${mounted ? 'opacity-100' : 'opacity-0'}`}
+      >
+        {/* ── Subtle grid pattern ── */}
+        <div
+          className="absolute inset-0 opacity-[0.02] pointer-events-none"
+          style={{
+            backgroundImage: `linear-gradient(hsl(var(--foreground)) 1px, transparent 1px),
+                              linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)`,
+            backgroundSize: '56px 56px',
+          }}
+        />
+
+        {/* ── Window title bar (draggable) ── */}
+        <div
+          className="absolute top-0 left-0 right-0 h-9 z-30 flex items-center justify-end select-none"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        >
+          <div
+            className="flex items-center h-full"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <button
+              onClick={() => window.electronAPI?.windowControls?.minimize()}
+              aria-label="Minimise"
+              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+            >
+              <Minus size={14} weight="light" />
+            </button>
+            <button
+              onClick={() => window.electronAPI?.windowControls?.maximize()}
+              aria-label="Maximise"
+              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+            >
+              <Square size={12} weight="light" />
+            </button>
+            <button
+              onClick={() => window.electronAPI?.windowControls?.close()}
+              aria-label="Close"
+              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
+            >
+              <X size={14} weight="light" />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Centered content ── */}
+        <div className="flex-1 flex items-center justify-center px-8">
+          <div className="w-full max-w-lg text-center">
+            <Logo size="w-14 h-14 mx-auto" />
+            <h1 className="mt-6 text-3xl font-bold text-foreground tracking-tight">
+              Welcome{userName ? `, ${userName}` : ''}!
+            </h1>
+            <p className="mt-3 text-sm text-muted-foreground/60">
+              Choose your preferred appearance to get started.
+            </p>
+
+            {/* ── Theme cards ── */}
+            <div className="mt-10 flex items-stretch gap-5 justify-center">
+              {/* Light */}
+              <button
+                onClick={() => handleThemeSelect('light')}
+                className={`group relative flex flex-col items-center gap-4 w-48 rounded-2xl border-2 p-6 transition-all duration-200 ${
+                  selectedTheme === 'light'
+                    ? 'border-emerald bg-emerald/5 shadow-lg shadow-emerald/10'
+                    : 'border-border/50 hover:border-border hover:bg-secondary/50'
+                }`}
+              >
+                <div className={`w-24 h-16 rounded-xl border overflow-hidden transition-all ${
+                  selectedTheme === 'light' ? 'border-emerald/30' : 'border-border/40'
+                }`}>
+                  <div className="h-full bg-white flex flex-col">
+                    <div className="h-3 bg-gray-100 border-b border-gray-200 flex items-center px-1.5 gap-0.5">
+                      <div className="w-1 h-1 rounded-full bg-red-400/60" />
+                      <div className="w-1 h-1 rounded-full bg-amber-400/60" />
+                      <div className="w-1 h-1 rounded-full bg-green-400/60" />
+                    </div>
+                    <div className="flex-1 p-1.5 space-y-1">
+                      <div className="h-1 w-full rounded-full bg-gray-200" />
+                      <div className="h-1 w-3/4 rounded-full bg-gray-200" />
+                      <div className="h-1 w-1/2 rounded-full bg-gray-200" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Sun size={16} weight={selectedTheme === 'light' ? 'fill' : 'light'}
+                    className={selectedTheme === 'light' ? 'text-amber-500' : 'text-muted-foreground/50'} />
+                  <span className={`text-sm font-semibold ${
+                    selectedTheme === 'light' ? 'text-foreground' : 'text-muted-foreground/70'
+                  }`}>
+                    Light
+                  </span>
+                </div>
+                {selectedTheme === 'light' && (
+                  <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-emerald flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+
+              {/* Dark */}
+              <button
+                onClick={() => handleThemeSelect('dark')}
+                className={`group relative flex flex-col items-center gap-4 w-48 rounded-2xl border-2 p-6 transition-all duration-200 ${
+                  selectedTheme === 'dark'
+                    ? 'border-emerald bg-emerald/5 shadow-lg shadow-emerald/10'
+                    : 'border-border/50 hover:border-border hover:bg-secondary/50'
+                }`}
+              >
+                <div className={`w-24 h-16 rounded-xl border overflow-hidden transition-all ${
+                  selectedTheme === 'dark' ? 'border-emerald/30' : 'border-border/40'
+                }`}>
+                  <div className="h-full bg-[#1a1a2e] flex flex-col">
+                    <div className="h-3 bg-[#16162a] border-b border-[#2a2a4a] flex items-center px-1.5 gap-0.5">
+                      <div className="w-1 h-1 rounded-full bg-red-400/60" />
+                      <div className="w-1 h-1 rounded-full bg-amber-400/60" />
+                      <div className="w-1 h-1 rounded-full bg-green-400/60" />
+                    </div>
+                    <div className="flex-1 p-1.5 space-y-1">
+                      <div className="h-1 w-full rounded-full bg-[#2a2a4a]" />
+                      <div className="h-1 w-3/4 rounded-full bg-[#2a2a4a]" />
+                      <div className="h-1 w-1/2 rounded-full bg-[#2a2a4a]" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Moon size={16} weight={selectedTheme === 'dark' ? 'fill' : 'light'}
+                    className={selectedTheme === 'dark' ? 'text-blue-400' : 'text-muted-foreground/50'} />
+                  <span className={`text-sm font-semibold ${
+                    selectedTheme === 'dark' ? 'text-foreground' : 'text-muted-foreground/70'
+                  }`}>
+                    Dark
+                  </span>
+                </div>
+                {selectedTheme === 'dark' && (
+                  <div className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-emerald flex items-center justify-center">
+                    <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                      <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+            </div>
+
+            {/* ── Continue ── */}
+            <button
+              onClick={handleThemeContinue}
+              className="mt-10 inline-flex items-center gap-2 text-sm font-semibold py-2.5 px-8 rounded-xl bg-emerald text-white hover:bg-emerald/90 glow-emerald-sm transition-all duration-200"
+            >
+              Continue
+              <ArrowRight size={14} weight="light" />
+            </button>
+
+            <p className="mt-4 text-[11px] text-muted-foreground/30">
+              You can change this anytime in Settings
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ─── Render: Features carousel ──────────────────────────── */
   return (
     <div
       className={`fixed inset-0 z-50 flex flex-col bg-background overflow-hidden select-none transition-opacity duration-700 ${mounted ? 'opacity-100' : 'opacity-0'}`}
