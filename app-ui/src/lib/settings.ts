@@ -1,4 +1,5 @@
-// Settings data structure
+import * as Sentry from '@sentry/react';
+
 export interface SettingsData {
     theme: "light" | "dark";
     fontSize: "small" | "medium" | "large";
@@ -8,9 +9,9 @@ export interface SettingsData {
 
 export const STORAGE_KEY = "prompt-weaver-settings";
 
-// Default settings
+// Default settings — light for first-time users; stored preference takes over on return visits.
 export const DEFAULT_SETTINGS: SettingsData = {
-    theme: "dark",
+    theme: "light",
     fontSize: "medium",
     fontFamily: "inter",
     promptInstructions: "",
@@ -34,13 +35,12 @@ export const loadSettings = async (): Promise<SettingsData> => {
                 promptInstructions: settings.prompt_instructions || DEFAULT_SETTINGS.promptInstructions,
             };
 
-            // Cache in localStorage
             localStorage.setItem(STORAGE_KEY, JSON.stringify(transformed));
-
+            Sentry.addBreadcrumb({ category: 'settings', message: 'Loaded from Supabase', level: 'info', data: { theme: transformed.theme, fontSize: transformed.fontSize, fontFamily: transformed.fontFamily } });
             return transformed;
         } catch (error) {
+            Sentry.captureException(error, { tags: { component: 'settings', op: 'load' } });
             console.error('[Settings] Failed to load from Supabase:', error);
-            // Fallback to localStorage
         }
     }
 
@@ -58,6 +58,10 @@ export const loadSettings = async (): Promise<SettingsData> => {
 
 // Save settings to Supabase (via Electron) and localStorage
 export const saveSettings = async (settings: SettingsData): Promise<void> => {
+    // Write locally FIRST so the preference survives sign-out or app close
+    // before the Supabase round-trip completes.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+
     if (isElectron && window.electronAPI.saveSettings) {
         try {
             // Transform camelCase to snake_case for DB
@@ -68,38 +72,23 @@ export const saveSettings = async (settings: SettingsData): Promise<void> => {
                 prompt_instructions: settings.promptInstructions,
             };
 
-            // Save to Supabase via Electron
             await window.electronAPI.saveSettings(dbSettings);
-
-            // Also save to localStorage as cache
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-
-            console.log('[Settings] Saved to Supabase and localStorage');
-            return;
+            Sentry.addBreadcrumb({ category: 'settings', message: 'Saved to Supabase', level: 'info', data: { theme: settings.theme, fontSize: settings.fontSize } });
         } catch (error) {
+            Sentry.captureException(error, { tags: { component: 'settings', op: 'save' } });
             console.error('[Settings] Failed to save to Supabase:', error);
-            // Fallback to localStorage
         }
     }
-
-    // Fallback: Save to localStorage only
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-    console.log('[Settings] Saved to localStorage only');
 };
 
 // Apply settings to the DOM
 export const applySettings = (settings: SettingsData) => {
     const root = document.documentElement;
+    Sentry.addBreadcrumb({ category: 'settings', message: 'Applied to DOM', level: 'info', data: { theme: settings.theme, fontSize: settings.fontSize, fontFamily: settings.fontFamily } });
 
-    console.log('[applySettings] Applying settings:', settings);
-
-    // Apply theme
-    console.log('[applySettings] Theme value:', settings.theme);
     if (settings.theme === "dark") {
-        console.log('[applySettings] Adding dark class');
         root.classList.add("dark");
     } else {
-        console.log('[applySettings] Removing dark class (light mode)');
         root.classList.remove("dark");
     }
 
@@ -130,6 +119,4 @@ export const applySettings = (settings: SettingsData) => {
         default:
             root.classList.add('font-sans');
     }
-
-    console.log('[applySettings] ✅ Settings applied. Current classList:', root.classList.toString());
 };
