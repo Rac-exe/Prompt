@@ -4,6 +4,56 @@ import {
   ArrowSquareOut, WarningCircle, ImageSquare as ImageIcon, File as FileIcon,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Importing the worker module directly on the main thread registers
+// globalThis.pdfjsWorker.WorkerMessageHandler as a side-effect.
+// pdf.js detects this and uses its built-in main-thread fallback,
+// bypassing Worker creation entirely (which is unreliable under
+// Electron's file:// protocol due to origin / CSP constraints).
+// @ts-ignore — no type declarations for the worker entry point
+import "pdfjs-dist/build/pdf.worker.min.mjs";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Polyfills — pdfjs v5.5 uses newer JS APIs (Chrome 132-134+) that are
+// absent in Electron 32's Chromium 128.
+// ─────────────────────────────────────────────────────────────────────────────
+
+if (typeof Uint8Array.prototype.toHex !== "function") {
+  (Uint8Array.prototype as any).toHex = function (this: Uint8Array) {
+    let out = "";
+    for (let i = 0; i < this.length; i++) out += this[i].toString(16).padStart(2, "0");
+    return out;
+  };
+}
+
+if (typeof Uint8Array.prototype.toBase64 !== "function") {
+  (Uint8Array.prototype as any).toBase64 = function (this: Uint8Array) {
+    let bin = "";
+    for (let i = 0; i < this.length; i++) bin += String.fromCharCode(this[i]);
+    return btoa(bin);
+  };
+}
+
+if (typeof (Uint8Array as any).fromBase64 !== "function") {
+  (Uint8Array as any).fromBase64 = function (b64: string) {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  };
+}
+
+if (typeof Map.prototype.getOrInsertComputed !== "function") {
+  (Map.prototype as any).getOrInsertComputed = function <K, V>(
+    this: Map<K, V>, key: K, callbackFn: (key: K) => V,
+  ): V {
+    if (this.has(key)) return this.get(key)!;
+    const value = callbackFn(key);
+    this.set(key, value);
+    return value;
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -93,8 +143,7 @@ function useDebouncedSetter(delay: number) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF viewer — uses Chromium's native PDF plugin via <embed> + blob URL.
-// Requires `plugins: true` in Electron's BrowserWindow webPreferences.
+// PDF viewer — renders pages to <canvas> via pdf.js (works reliably in Electron)
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PdfViewerProps {
@@ -102,22 +151,80 @@ interface PdfViewerProps {
   fileName: string;
 }
 
+const PDF_SCALE = 1.5;
+
 const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState("");
 
   useEffect(() => {
-    try {
-      const url = base64ToBlobUrl(base64, "application/pdf");
-      setBlobUrl(url);
-      setError(false);
-      return () => URL.revokeObjectURL(url);
-    } catch {
-      setError(true);
-    }
+    let cancelled = false;
+
+    const renderPdf = async () => {
+      try {
+        setLoading(true);
+        setError(false);
+        setProgress("Preparing…");
+
+        const data = base64ToUint8(base64);
+        setProgress("Loading PDF…");
+        const pdf = await pdfjsLib.getDocument({ data }).promise;
+
+        if (cancelled) return;
+
+        const container = containerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+
+        const dpr = window.devicePixelRatio || 1;
+        const total = pdf.numPages;
+
+        for (let i = 1; i <= total; i++) {
+          if (cancelled) return;
+          setProgress(`Rendering page ${i} of ${total}`);
+
+          const page = await pdf.getPage(i);
+          if (cancelled) return;
+
+          const viewport = page.getViewport({ scale: PDF_SCALE });
+
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.floor(viewport.width * dpr);
+          canvas.height = Math.floor(viewport.height * dpr);
+          canvas.style.width = `${Math.floor(viewport.width)}px`;
+          canvas.style.height = `${Math.floor(viewport.height)}px`;
+          canvas.style.display = "block";
+          canvas.style.margin = "12px auto";
+          canvas.style.borderRadius = "4px";
+          canvas.style.boxShadow = "0 2px 12px rgba(0,0,0,0.4)";
+
+          const ctx = canvas.getContext("2d")!;
+          ctx.scale(dpr, dpr);
+
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          if (cancelled) return;
+          container.appendChild(canvas);
+
+          // Let the UI breathe for large PDFs
+          if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+        }
+
+        setLoading(false);
+      } catch (err) {
+        console.error("[PdfViewer] Render error:", err);
+        if (!cancelled) setError(true);
+        setLoading(false);
+      }
+    };
+
+    renderPdf();
+    return () => { cancelled = true; };
   }, [base64]);
 
-  if (error || !blobUrl) {
+  if (error) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
         <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
@@ -138,12 +245,14 @@ const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
   }
 
   return (
-    <div className="flex-1 min-h-0 w-full bg-[#525659]">
-      <embed
-        src={blobUrl}
-        type="application/pdf"
-        className="w-full h-full"
-      />
+    <div className="flex-1 min-h-0 w-full bg-[#525659] overflow-auto relative">
+      {loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 gap-3">
+          <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+          {progress && <p className="text-white/40 text-xs">{progress}</p>}
+        </div>
+      )}
+      <div ref={containerRef} className="py-3" />
     </div>
   );
 };

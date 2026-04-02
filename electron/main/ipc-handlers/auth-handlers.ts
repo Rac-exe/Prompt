@@ -671,6 +671,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                                 logger.warn(logger.fmt`auth.link_exchange_failed provider=${provider} error=${sessionError?.message ?? 'unknown'}`);
                                 Sentry.addBreadcrumb({ category: 'auth', message: `Link exchange failed: ${provider}`, level: 'warning' });
                                 console.error('[Auth] Link identity code exchange failed:', sessionError?.message);
+                                resolve({ error: sessionError?.message || 'Code exchange failed' });
                                 return;
                             }
                             logger.info(logger.fmt`auth.link_success provider=${provider} userId=${session.user.id}`);
@@ -678,9 +679,13 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                             console.log(`[Auth] Identity linked (${provider})`);
                             appWindowManager.show();
                             await handleSuccessfulAuth(appWindowManager, session.user);
+                            resolve({ success: true });
                         } else if (oauthError) {
                             logger.warn(logger.fmt`auth.link_oauth_error provider=${provider} error=${oauthError}`);
                             Sentry.addBreadcrumb({ category: 'auth', message: `Link identity OAuth error: ${provider}`, level: 'warning' });
+                            resolve({ error: oauthError });
+                        } else {
+                            resolve({ error: 'No authorization code received' });
                         }
                     } catch (err) {
                         console.error('[Auth] Link identity callback error:', err);
@@ -712,7 +717,6 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                         }
                         await shell.openExternal(url);
                         console.log(`[Auth] Link identity flow started for ${provider} — callback on port ${actualPort}`);
-                        resolve({ success: true });
                     } catch (err: any) {
                         closeServer();
                         clearTimeout(timeout);

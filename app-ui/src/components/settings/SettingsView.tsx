@@ -88,7 +88,7 @@ export const SettingsView = () => {
         toast({ title: "Connection failed", description: result.error, variant: "destructive" });
       } else {
         toast({ title: `${provider === 'google' ? 'Google' : 'GitHub'} connected`, description: "Your account has been linked." });
-        setTimeout(fetchIdentities, 2000);
+        await fetchIdentities();
       }
     } catch {
       toast({ title: "Error", description: "Failed to connect account", variant: "destructive" });
