@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Copy, Check, Bookmark, BookmarkCheck, User, Sparkles, Pencil, RotateCcw, FileText, Image, ZoomIn, Paperclip, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
+import { Copy, Check, BookmarkSimple, User, Sparkle, PencilSimple, ArrowCounterClockwise, FileText, ImageSquare, MagnifyingGlassPlus, Paperclip, CaretLeft, CaretRight, WarningCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -115,7 +115,7 @@ export const MessageBubble = ({
                   "w-full rounded-2xl rounded-br-sm px-4 py-3",
                   "bg-emerald/10 border border-emerald/30",
                   "text-sm text-foreground leading-relaxed resize-none outline-none overflow-hidden",
-                  "focus:border-emerald/50 focus:shadow-[0_0_0_2px_hsl(var(--emerald)/0.1)]",
+                  "focus:border-emerald/50 focus:shadow-[0_0_0_2px_hsl(var(--accent)/0.1)]",
                 )}
                 style={{ minWidth: "280px" }}
               />
@@ -168,7 +168,7 @@ export const MessageBubble = ({
                         >
                           <img src={src} alt={file.name} className="w-full h-full object-cover" />
                           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                            <ZoomIn className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                            <MagnifyingGlassPlus size={20} weight="light" className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
                           </div>
                         </button>
                       );
@@ -177,7 +177,7 @@ export const MessageBubble = ({
                     if (isImage) {
                       return (
                         <div key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald/8 border border-emerald/20 text-xs">
-                          <Image className="h-3.5 w-3.5 text-emerald flex-shrink-0" />
+                          <ImageSquare size={14} weight="light" className="text-emerald flex-shrink-0" />
                           <span className="max-w-[100px] truncate text-emerald/90 font-medium">{file.name}</span>
                         </div>
                       );
@@ -193,7 +193,7 @@ export const MessageBubble = ({
                           title={`${file.name} — click to preview`}
                         >
                           <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-                            <FileText className="h-4 w-4 text-red-400" />
+                            <FileText size={16} weight="light" className="text-red-400" />
                           </div>
                           <div className="min-w-0 text-left">
                             <p className="text-xs font-medium text-foreground truncate max-w-[140px] group-hover:underline">{file.name}</p>
@@ -219,7 +219,7 @@ export const MessageBubble = ({
                           title={`${file.name} — click to open`}
                         >
                           <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-                            <FileText className="h-4 w-4 text-red-400" />
+                            <FileText size={16} weight="light" className="text-red-400" />
                           </div>
                           <div className="min-w-0 text-left">
                             <p className="text-xs font-medium text-foreground truncate max-w-[140px] group-hover:underline">{file.name}</p>
@@ -235,7 +235,7 @@ export const MessageBubble = ({
                     return (
                       <div key={idx} className="flex items-center gap-2.5 h-14 px-3 rounded-xl bg-secondary border border-border max-w-[220px]">
                         <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-                          <FileText className="h-4 w-4 text-red-400" />
+                          <FileText size={16} weight="light" className="text-red-400" />
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs font-medium text-foreground truncate max-w-[140px]">{file.name}</p>
@@ -252,10 +252,10 @@ export const MessageBubble = ({
               
               {/* Selected skill pill — same icon as composer / skill picker */}
               {message.selectedSkill && (() => {
-                const SkillIcon = SKILL_ICON_MAP[message.selectedSkill] ?? Sparkles;
+                const SkillIcon = SKILL_ICON_MAP[message.selectedSkill] ?? Sparkle;
                 return (
                   <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
-                    <SkillIcon className="h-3 w-3 text-emerald" />
+                    <SkillIcon size={12} weight="light" className="text-emerald" />
                     <span className="text-emerald font-medium capitalize">{message.selectedSkill}</span>
                   </div>
                 );
@@ -281,7 +281,7 @@ export const MessageBubble = ({
                         )}
                         aria-label="Previous version"
                       >
-                        <ChevronLeft className="w-3 h-3" />
+                        <CaretLeft size={12} weight="light" />
                       </button>
                       <span className="text-[10px] text-muted-foreground/50 font-medium tabular-nums min-w-[2rem] text-center select-none">
                         {versionInfo.current}/{versionInfo.total}
@@ -297,7 +297,7 @@ export const MessageBubble = ({
                         )}
                         aria-label="Next version"
                       >
-                        <ChevronRight className="w-3 h-3" />
+                        <CaretRight size={12} weight="light" />
                       </button>
                     </div>
                   )}
@@ -308,7 +308,7 @@ export const MessageBubble = ({
                       className="inline-flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium text-muted-foreground/60 hover:text-foreground hover:bg-secondary transition-colors"
                       title="Edit message"
                     >
-                      <Pencil className="w-3 h-3" />
+                      <PencilSimple size={12} weight="light" />
                       Edit
                     </button>
                   )}
@@ -321,7 +321,7 @@ export const MessageBubble = ({
           <img src={avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover flex-shrink-0 mt-0.5 border border-border" />
         ) : (
           <div className="w-7 h-7 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 mt-0.5">
-            <User className="w-3.5 h-3.5 text-muted-foreground" />
+            <User size={14} weight="light" className="text-muted-foreground" />
           </div>
         )}
       </div>
@@ -360,7 +360,7 @@ export const MessageBubble = ({
           {/* File context indicator — shown when files were included */}
           {fileContextCount != null && fileContextCount > 0 && (
             <div className="flex items-center gap-1.5 px-4 pt-3 pb-0">
-              <Paperclip className="w-3 h-3 text-emerald/70 flex-shrink-0" />
+              <Paperclip size={12} weight="light" className="text-emerald/70 flex-shrink-0" />
               <span className="text-[11px] text-emerald/70 font-medium">
                 {fileContextCount === 1 ? "Using attached file" : `Using ${fileContextCount} attached files`}
               </span>
@@ -369,7 +369,7 @@ export const MessageBubble = ({
           {/* Content — error state or normal text */}
           {message.isError ? (
             <div className="flex items-start gap-2.5 px-4 py-3.5">
-              <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+              <WarningCircle size={16} weight="light" className="text-destructive flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <p className="text-sm font-medium text-destructive">Response failed</p>
                 {message.errorMessage && (
@@ -399,9 +399,9 @@ export const MessageBubble = ({
               data-testid="copy-prompt-button"
             >
               {copied ? (
-                <><Check className="w-3 h-3" />Copied</>
+                <><Check size={12} weight="light" />Copied</>
               ) : (
-                <><Copy className="w-3 h-3" />Copy</>
+                <><Copy size={12} weight="light" />Copy</>
               )}
             </Button>
 
@@ -418,9 +418,9 @@ export const MessageBubble = ({
               data-testid="save-prompt-button"
             >
               {isSaved ? (
-                <><BookmarkCheck className="w-3 h-3" />Saved</>
+                <><BookmarkSimple size={12} weight="fill" />Saved</>
               ) : (
-                <><Bookmark className="w-3 h-3" />Save</>
+                <><BookmarkSimple size={12} weight="light" />Save</>
               )}
             </Button>
 
@@ -431,7 +431,7 @@ export const MessageBubble = ({
                 className="h-7 px-2.5 text-xs rounded-md font-medium transition-smooth gap-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary"
                 onClick={() => onRegenerate(message.id)}
               >
-                <RotateCcw className="w-3 h-3" />
+                <ArrowCounterClockwise size={12} weight="light" />
                 Regenerate
               </Button>
             )}

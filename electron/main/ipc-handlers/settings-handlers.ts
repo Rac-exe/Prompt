@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import { SettingsService } from '../database/services/settings-service';
 import { authState } from '../utils/auth-state';
 import { localCache } from '../database/local-cache';
@@ -40,6 +41,7 @@ export function registerSettingsHandlers(overlayManager: OverlayWindowManager) {
             console.log('[Settings] ✅ Settings loaded for user:', authState.currentUserId);
             return settings;
         } catch (error) {
+            Sentry.captureException(error, { tags: { component: 'settings-handlers', op: 'settings:load' }, extra: { userId: authState.currentUserId } });
             console.error('[Settings] Error loading settings:', error);
             // Try cached settings first, then defaults
             if (authState.currentUserId) {
@@ -65,10 +67,12 @@ export function registerSettingsHandlers(overlayManager: OverlayWindowManager) {
             overlayManager.send('overlay:settings-update', settings);
 
             const saved = await service.upsertUserSettings(authState.currentUserId, settings);
+            Sentry.addBreadcrumb({ category: 'settings', message: 'Settings saved', level: 'info', data: { userId: authState.currentUserId } });
             console.log('[Settings] ✅ Settings saved for user:', authState.currentUserId);
 
             return saved;
         } catch (error) {
+            Sentry.captureException(error, { tags: { component: 'settings-handlers', op: 'settings:save' }, extra: { userId: authState.currentUserId } });
             console.error('[Settings] Error saving settings:', error);
             throw error;
         }

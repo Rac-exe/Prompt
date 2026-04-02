@@ -1,9 +1,59 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
-  X, Download, FileText, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  ExternalLink, AlertCircle, Image as ImageIcon, File as FileIcon,
-} from "lucide-react";
+  X, DownloadSimple, FileText, CaretLeft, CaretRight, MagnifyingGlassPlus, MagnifyingGlassMinus,
+  ArrowSquareOut, WarningCircle, ImageSquare as ImageIcon, File as FileIcon,
+} from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Importing the worker module directly on the main thread registers
+// globalThis.pdfjsWorker.WorkerMessageHandler as a side-effect.
+// pdf.js detects this and uses its built-in main-thread fallback,
+// bypassing Worker creation entirely (which is unreliable under
+// Electron's file:// protocol due to origin / CSP constraints).
+// @ts-ignore — no type declarations for the worker entry point
+import "pdfjs-dist/build/pdf.worker.min.mjs";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Polyfills — pdfjs v5.5 uses newer JS APIs (Chrome 132-134+) that are
+// absent in Electron 32's Chromium 128.
+// ─────────────────────────────────────────────────────────────────────────────
+
+if (typeof Uint8Array.prototype.toHex !== "function") {
+  (Uint8Array.prototype as any).toHex = function (this: Uint8Array) {
+    let out = "";
+    for (let i = 0; i < this.length; i++) out += this[i].toString(16).padStart(2, "0");
+    return out;
+  };
+}
+
+if (typeof Uint8Array.prototype.toBase64 !== "function") {
+  (Uint8Array.prototype as any).toBase64 = function (this: Uint8Array) {
+    let bin = "";
+    for (let i = 0; i < this.length; i++) bin += String.fromCharCode(this[i]);
+    return btoa(bin);
+  };
+}
+
+if (typeof (Uint8Array as any).fromBase64 !== "function") {
+  (Uint8Array as any).fromBase64 = function (b64: string) {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr;
+  };
+}
+
+if (typeof Map.prototype.getOrInsertComputed !== "function") {
+  (Map.prototype as any).getOrInsertComputed = function <K, V>(
+    this: Map<K, V>, key: K, callbackFn: (key: K) => V,
+  ): V {
+    if (this.has(key)) return this.get(key)!;
+    const value = callbackFn(key);
+    this.set(key, value);
+    return value;
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -93,8 +143,7 @@ function useDebouncedSetter(delay: number) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF viewer — uses Chromium's native PDF plugin via <embed> + blob URL.
-// Requires `plugins: true` in Electron's BrowserWindow webPreferences.
+// PDF viewer — renders pages to <canvas> via pdf.js (works reliably in Electron)
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PdfViewerProps {
@@ -102,26 +151,84 @@ interface PdfViewerProps {
   fileName: string;
 }
 
+const PDF_SCALE = 1.5;
+
 const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState("");
 
   useEffect(() => {
-    try {
-      const url = base64ToBlobUrl(base64, "application/pdf");
-      setBlobUrl(url);
-      setError(false);
-      return () => URL.revokeObjectURL(url);
-    } catch {
-      setError(true);
-    }
+    let cancelled = false;
+
+    const renderPdf = async () => {
+      try {
+        setLoading(true);
+        setError(false);
+        setProgress("Preparing…");
+
+        const data = base64ToUint8(base64);
+        setProgress("Loading PDF…");
+        const pdf = await pdfjsLib.getDocument({ data }).promise;
+
+        if (cancelled) return;
+
+        const container = containerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+
+        const dpr = window.devicePixelRatio || 1;
+        const total = pdf.numPages;
+
+        for (let i = 1; i <= total; i++) {
+          if (cancelled) return;
+          setProgress(`Rendering page ${i} of ${total}`);
+
+          const page = await pdf.getPage(i);
+          if (cancelled) return;
+
+          const viewport = page.getViewport({ scale: PDF_SCALE });
+
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.floor(viewport.width * dpr);
+          canvas.height = Math.floor(viewport.height * dpr);
+          canvas.style.width = `${Math.floor(viewport.width)}px`;
+          canvas.style.height = `${Math.floor(viewport.height)}px`;
+          canvas.style.display = "block";
+          canvas.style.margin = "12px auto";
+          canvas.style.borderRadius = "4px";
+          canvas.style.boxShadow = "0 2px 12px rgba(0,0,0,0.4)";
+
+          const ctx = canvas.getContext("2d")!;
+          ctx.scale(dpr, dpr);
+
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          if (cancelled) return;
+          container.appendChild(canvas);
+
+          // Let the UI breathe for large PDFs
+          if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+        }
+
+        setLoading(false);
+      } catch (err) {
+        console.error("[PdfViewer] Render error:", err);
+        if (!cancelled) setError(true);
+        setLoading(false);
+      }
+    };
+
+    renderPdf();
+    return () => { cancelled = true; };
   }, [base64]);
 
-  if (error || !blobUrl) {
+  if (error) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
         <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-          <AlertCircle className="w-7 h-7 text-red-400" />
+          <WarningCircle size={28} weight="light" className="text-red-400" />
         </div>
         <div>
           <p className="text-white font-medium mb-1">{fileName}</p>
@@ -131,19 +238,21 @@ const PdfViewer = ({ base64, fileName }: PdfViewerProps) => {
           onClick={() => downloadFile(base64, "application/pdf", fileName)}
           className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/8 border border-white/12 text-white text-sm hover:bg-white/12 transition-colors"
         >
-          <Download className="w-4 h-4" /> Download to view
+          <DownloadSimple size={16} weight="light" /> Download to view
         </button>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 min-h-0 w-full bg-[#525659]">
-      <embed
-        src={blobUrl}
-        type="application/pdf"
-        className="w-full h-full"
-      />
+    <div className="flex-1 min-h-0 w-full bg-[#525659] overflow-auto relative">
+      {loading && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 gap-3">
+          <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin" />
+          {progress && <p className="text-white/40 text-xs">{progress}</p>}
+        </div>
+      )}
+      <div ref={containerRef} className="py-3" />
     </div>
   );
 };
@@ -250,7 +359,7 @@ const ImageViewer = ({ base64, cloudinaryUrl, mimeType, name, zoom, setZoom, off
 const UnsupportedViewer = ({ file }: { file: PreviewFile }) => (
   <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
     <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-      <FileIcon className="w-7 h-7 text-white/40" />
+      <FileIcon size={28} weight="light" className="text-white/40" />
     </div>
     <div>
       <p className="text-white font-medium mb-1">{file.name}</p>
@@ -261,7 +370,7 @@ const UnsupportedViewer = ({ file }: { file: PreviewFile }) => (
       onClick={() => file.base64 && downloadFile(file.base64, file.mimeType, file.name)}
       className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/8 border border-white/12 text-white text-sm hover:bg-white/12 transition-colors"
     >
-      <Download className="w-4 h-4" /> Download
+      <DownloadSimple size={16} weight="light" /> Download
     </button>
   </div>
 );
@@ -338,9 +447,9 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
               : isImage ? "border border-white/10 overflow-hidden"
               : "bg-white/5 border border-white/10"
           )}>
-            {isPdf && <FileText className="w-4 h-4 text-red-400" />}
-            {isImage && <ImageIcon className="w-4 h-4 text-white/50" />}
-            {!isPdf && !isImage && <FileIcon className="w-4 h-4 text-white/40" />}
+            {isPdf && <FileText size={16} weight="light" className="text-red-400" />}
+            {isImage && <ImageIcon size={16} weight="light" className="text-white/50" />}
+            {!isPdf && !isImage && <FileIcon size={16} weight="light" className="text-white/40" />}
           </div>
           <div className="min-w-0 flex items-center gap-2.5">
             <div className="min-w-0">
@@ -360,12 +469,12 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
           <div className="flex items-center gap-2 flex-shrink-0">
             <button onClick={goPrev} disabled={!hasPrev}
               className="w-7 h-7 rounded-md flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 disabled:opacity-20 disabled:pointer-events-none transition-colors">
-              <ChevronLeft className="w-4 h-4" />
+              <CaretLeft size={16} weight="light" />
             </button>
             <span className="text-xs text-white/40 tabular-nums">{currentIdx + 1} / {siblings.length}</span>
             <button onClick={goNext} disabled={!hasNext}
               className="w-7 h-7 rounded-md flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 disabled:opacity-20 disabled:pointer-events-none transition-colors">
-              <ChevronRight className="w-4 h-4" />
+              <CaretRight size={16} weight="light" />
             </button>
           </div>
         )}
@@ -377,7 +486,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
             <div className="flex items-center gap-0.5 mr-1.5 border border-white/10 rounded-lg overflow-hidden">
               <button onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} title="Zoom out (-)"
                 className="w-7 h-7 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 transition-colors">
-                <ZoomOut className="w-3.5 h-3.5" />
+                <MagnifyingGlassMinus size={14} weight="light" />
               </button>
               <button onClick={() => { setZoom(1); setOffset({ x: 0, y: 0 }); }} title="Fit to screen (0)"
                 className="px-2 h-7 text-[11px] font-medium text-white/50 hover:text-white hover:bg-white/8 min-w-[44px] text-center tabular-nums transition-colors">
@@ -385,7 +494,7 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
               </button>
               <button onClick={() => setZoom(z => Math.min(4, z + 0.25))} title="Zoom in (+)"
                 className="w-7 h-7 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/8 transition-colors">
-                <ZoomIn className="w-3.5 h-3.5" />
+                <MagnifyingGlassPlus size={14} weight="light" />
               </button>
             </div>
           )}
@@ -399,19 +508,19 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors"
             title="Open in new tab"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
+            <ArrowSquareOut size={14} weight="light" />
           </button>
 
           {/* Download */}
           <button onClick={() => active.base64 && downloadFile(active.base64, active.mimeType, active.name)}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors" title="Download">
-            <Download className="w-4 h-4" />
+            <DownloadSimple size={16} weight="light" />
           </button>
 
           {/* Close */}
           <button onClick={onClose}
             className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white hover:bg-white/8 transition-colors" title="Close (Esc)">
-            <X className="w-4 h-4" />
+            <X size={16} weight="light" />
           </button>
         </div>
       </div>
@@ -451,13 +560,13 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
         {siblings.length > 1 && hasPrev && (
           <button onClick={goPrev}
             className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/60 border border-white/10 backdrop-blur-sm flex items-center justify-center text-white/70 hover:text-white hover:bg-black/80 transition-all">
-            <ChevronLeft className="w-5 h-5" />
+            <CaretLeft size={20} weight="light" />
           </button>
         )}
         {siblings.length > 1 && hasNext && (
           <button onClick={goNext}
             className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/60 border border-white/10 backdrop-blur-sm flex items-center justify-center text-white/70 hover:text-white hover:bg-black/80 transition-all">
-            <ChevronRight className="w-5 h-5" />
+            <CaretRight size={20} weight="light" />
           </button>
         )}
       </div>
@@ -490,12 +599,12 @@ export const FilePreviewModal = ({ file, onClose, allFiles }: FilePreviewModalPr
                 )}
                 {isPdfThumb && (
                   <div className="w-full h-full bg-red-500/10 flex items-center justify-center">
-                    <FileText className="w-4 h-4 text-red-400/80" />
+                    <FileText size={16} weight="light" className="text-red-400/80" />
                   </div>
                 )}
                 {!isImg && !isPdfThumb && (
                   <div className="w-full h-full bg-white/5 flex items-center justify-center">
-                    <FileIcon className="w-4 h-4 text-white/30" />
+                    <FileIcon size={16} weight="light" className="text-white/30" />
                   </div>
                 )}
               </button>

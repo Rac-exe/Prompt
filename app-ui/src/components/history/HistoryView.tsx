@@ -1,4 +1,4 @@
-import { Clock, MessageSquare, ChevronRight } from "lucide-react";
+import { Clock, ChatText, CaretRight } from "@phosphor-icons/react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -52,7 +52,7 @@ export const HistoryView = ({ items, onSelectItem, selectedId }: HistoryViewProp
           {items.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center animate-fade-in">
               <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center mb-4">
-                <Clock className="w-6 h-6 text-muted-foreground/40" />
+                <Clock size={24} weight="light" className="text-muted-foreground/40" />
               </div>
               <p className="text-sm font-medium text-foreground mb-1">No history yet</p>
               <p className="text-xs text-muted-foreground">Start a chat to see your optimization sessions here</p>
@@ -84,16 +84,16 @@ export const HistoryView = ({ items, onSelectItem, selectedId }: HistoryViewProp
                               {item.preview}
                             </p>
                           </div>
-                          <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-emerald transition-smooth flex-shrink-0 mt-0.5" />
+                          <CaretRight size={16} weight="light" className="text-muted-foreground/40 group-hover:text-emerald transition-smooth flex-shrink-0 mt-0.5" />
                         </div>
 
                         <div className="flex items-center gap-4 mt-2.5">
                           <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
-                            <Clock className="w-2.5 h-2.5" />
+                            <Clock size={10} weight="light" />
                             <span>{item.date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
                           </div>
                           <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
-                            <MessageSquare className="w-2.5 h-2.5" />
+                            <ChatText size={10} weight="light" />
                             <span>{item.messageCount} messages</span>
                           </div>
                         </div>

@@ -333,6 +333,96 @@ export class AuthService {
   }
 
   /**
+   * Get all identities (providers) linked to the current user
+   */
+  async getIdentities(): Promise<{ identities: any[]; error: AuthError | null }> {
+    try {
+      const { data, error } = await this.client.auth.getUserIdentities();
+
+      if (error) {
+        console.error('[AuthService] Get identities error:', error);
+        return { identities: [], error };
+      }
+
+      return { identities: data.identities ?? [], error: null };
+    } catch (error) {
+      console.error('[AuthService] Unexpected get identities error:', error);
+      return {
+        identities: [],
+        error: new Error(error instanceof Error ? error.message : 'Get identities failed') as AuthError,
+      };
+    }
+  }
+
+  /**
+   * Link a new OAuth provider to the current session (PKCE flow).
+   * Returns the provider URL to open in the system browser.
+   */
+  async linkIdentity(
+    provider: 'google' | 'github',
+    redirectTo: string = 'http://127.0.0.1:54321/auth/callback',
+  ): Promise<{ url: string | null; error: AuthError | null }> {
+    try {
+      const { data, error } = await this.client.auth.linkIdentity({
+        provider,
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      });
+
+      if (error) {
+        console.error(`[AuthService] Link identity error (${provider}):`, error);
+        return { url: null, error };
+      }
+
+      console.log(`[AuthService] Link identity URL generated for ${provider}`);
+      return { url: data.url, error: null };
+    } catch (error) {
+      console.error('[AuthService] Unexpected link identity error:', error);
+      return {
+        url: null,
+        error: new Error(error instanceof Error ? error.message : 'Link identity failed') as AuthError,
+      };
+    }
+  }
+
+  /**
+   * Unlink an OAuth provider from the current user.
+   * Requires the identity object from getUserIdentities().
+   */
+  async unlinkIdentity(identityId: string): Promise<{ error: AuthError | null }> {
+    try {
+      const { identities, error: fetchError } = await this.getIdentities();
+      if (fetchError) return { error: fetchError };
+
+      const identity = identities.find((i: any) => i.id === identityId);
+      if (!identity) {
+        return { error: new Error('Identity not found') as AuthError };
+      }
+
+      if (identities.length <= 1) {
+        return { error: new Error('Cannot remove last sign-in method') as AuthError };
+      }
+
+      const { error } = await this.client.auth.unlinkIdentity(identity);
+
+      if (error) {
+        console.error('[AuthService] Unlink identity error:', error);
+        return { error };
+      }
+
+      console.log(`[AuthService] Identity unlinked: ${identity.provider}`);
+      return { error: null };
+    } catch (error) {
+      console.error('[AuthService] Unexpected unlink identity error:', error);
+      return {
+        error: new Error(error instanceof Error ? error.message : 'Unlink identity failed') as AuthError,
+      };
+    }
+  }
+
+  /**
    * Send password reset email
    */
   async resetPasswordForEmail(email: string): Promise<{ error: AuthError | null }> {

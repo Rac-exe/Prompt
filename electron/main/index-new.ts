@@ -2,9 +2,9 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// In dev mode, .env lives at the project root (3 levels above dist/main/).
+// In dev mode, .env lives at the project root (2 levels above dist/main/).
 // In a packaged app, the project root doesn't exist — load from extraResources.
-const _devEnvPath = path.join(__dirname, '..', '..', '..', '.env');
+const _devEnvPath = path.join(__dirname, '..', '..', '.env');
 dotenv.config({ path: fs.existsSync(_devEnvPath) ? _devEnvPath : path.join(process.resourcesPath, '.env') });
 
 import * as Sentry from '@sentry/electron/main';
@@ -191,94 +191,31 @@ async function initialize() {
 
   SupabaseClientManager.initialize(SUPABASE_URL, SUPABASE_KEY);
 
-  // Create app window manager and preload it (hidden) for instant first open
+  // Create managers and clients (no windows loaded yet)
   appWindowManager = new AppWindowManager();
-  appWindowManager.preload();
-
-  // Create overlay manager (pre-load hidden window for instant open)
   overlayManager = new OverlayWindowManager();
-  overlayManager.preload();
-
-  // Initialize Python client
   pythonClient = new PythonClient(pythonHttpBase);
-
-  // Fire WebSocket connection immediately in the background — this wakes up Render
-  // before the user sends their first prompt, absorbing cold-start latency at launch.
-  pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
-
-  let pythonHealthy = false;
-  try {
-    const isHealthy = await pythonClient.healthCheck();
-    pythonHealthy = isHealthy;
-    if (isHealthy) {
-      console.log('[Main] Python service connected');
-    } else {
-      console.warn('[Main] Python service not available');
-    }
-  } catch (error) {
-    console.warn('[Main] Could not connect to Python service');
-    Sentry.captureException(error, { level: 'warning', tags: { component: 'python-init' } });
-  }
-
-  // Background health-check loop — detects Python crashes mid-session
-  const HEALTH_CHECK_INTERVAL_MS = 30_000;
-  setInterval(async () => {
-    try {
-      const healthy = await pythonClient.healthCheck();
-      if (!healthy && pythonHealthy) {
-        pythonHealthy = false;
-        appWindowManager.send('python:unavailable', {});
-        overlayManager.send('python:unavailable', {});
-        console.warn('[Main] Python service became unavailable');
-        Sentry.addBreadcrumb({ category: 'python', message: 'Python service became unavailable', level: 'warning' });
-        Sentry.captureMessage('Python service became unavailable', 'warning');
-      } else if (healthy && !pythonHealthy) {
-        pythonHealthy = true;
-        appWindowManager.send('python:recovered', {});
-        overlayManager.send('python:recovered', {});
-        console.log('[Main] Python service recovered');
-        Sentry.addBreadcrumb({ category: 'python', message: 'Python service recovered', level: 'info' });
-      }
-    } catch (healthErr) {
-      if (pythonHealthy) {
-        pythonHealthy = false;
-        appWindowManager.send('python:unavailable', {});
-        overlayManager.send('python:unavailable', {});
-        console.warn('[Main] Python health check failed');
-        Sentry.addBreadcrumb({ category: 'python', message: 'Python health check failed', level: 'warning' });
-        Sentry.captureMessage('Python health check failed', 'warning');
-      }
-    }
-  }, HEALTH_CHECK_INTERVAL_MS);
-
-  // Start network monitor — broadcasts online/offline status to all windows
-  networkMonitor.start(
-    (channel, data) => appWindowManager.send(channel, data),
-    (channel, data) => overlayManager.send(channel, data),
-    () => {
-      // Reconnected: notify renderer, then drain the offline queue
-      appWindowManager.send('network:reconnected', {});
-      syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
-        .catch(e => {
-          console.error('[Main] Prompt-library offline sync failed:', e);
-          Sentry.captureException(e, { tags: { component: 'offline-sync-prompt-library' } });
-        });
-      syncChatMessageQueue(appWindowManager, pythonClient)
-        .catch(e => {
-          console.error('[Main] Chat message offline sync failed:', e);
-          Sentry.captureException(e, { tags: { component: 'offline-sync-chat' } });
-        });
-    }
-  );
-  console.log('[Main] NetworkMonitor started');
-
-  // Initialize Transcription client
   transcriptionClient = new TranscriptionClient(pythonWsBase);
   console.log('[Main] Transcription client initialized');
 
   // ============================================
-  // TRANSCRIPTION IPC HANDLERS (streaming)
+  // REGISTER ALL IPC HANDLERS BEFORE WINDOW PRELOAD
   // ============================================
+  // Handlers must be registered before windows load HTML, otherwise the
+  // renderer fires IPC calls (overlay:get-settings, skills:list, etc.)
+  // before handlers exist — causing silent failures on first attempt.
+  registerAuthHandlers(appWindowManager);
+  registerUserHandlers(appWindowManager);
+  registerSettingsHandlers(overlayManager);
+  registerChatHandlers(appWindowManager, pythonClient);
+  registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
+  registerSkillHandlers();
+  registerAvatarHandlers(pythonClient);
+  registerFileUploadHandlers();
+  registerFeedbackHandlers();
+  registerDeletionHandlers();
+
+  // Transcription IPC handlers (inline — depend on transcriptionClient)
   ipcMain.on('transcription:debug', (_event, msg: string) => {
     console.log(`[Preload] ${msg}`);
   });
@@ -349,18 +286,79 @@ async function initialize() {
   });
 
   // ============================================
-  // REGISTER IPC HANDLERS
+  // NOW preload windows — renderer can safely call any IPC handler
   // ============================================
-  registerAuthHandlers(appWindowManager);
-  registerUserHandlers(appWindowManager);
-  registerSettingsHandlers(overlayManager);
-  registerChatHandlers(appWindowManager, pythonClient);
-  registerOverlayHandlers(overlayManager, pythonClient, appWindowManager);
-  registerSkillHandlers();
-  registerAvatarHandlers();
-  registerFileUploadHandlers();
-  registerFeedbackHandlers();
-  registerDeletionHandlers();
+  appWindowManager.preload();
+  overlayManager.preload();
+
+  // Fire WebSocket connection in the background — wakes up Render and absorbs
+  // cold-start latency before the user sends their first prompt.
+  pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
+
+  let pythonHealthy = false;
+  try {
+    const isHealthy = await pythonClient.healthCheck();
+    pythonHealthy = isHealthy;
+    if (isHealthy) {
+      console.log('[Main] Python service connected');
+    } else {
+      console.warn('[Main] Python service not available');
+    }
+  } catch (error) {
+    console.warn('[Main] Could not connect to Python service');
+    Sentry.captureException(error, { level: 'warning', tags: { component: 'python-init' } });
+  }
+
+  // Background health-check loop — detects Python crashes mid-session
+  const HEALTH_CHECK_INTERVAL_MS = 30_000;
+  setInterval(async () => {
+    try {
+      const healthy = await pythonClient.healthCheck();
+      if (!healthy && pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python service became unavailable');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service became unavailable', level: 'warning' });
+        Sentry.captureMessage('Python service became unavailable', 'warning');
+      } else if (healthy && !pythonHealthy) {
+        pythonHealthy = true;
+        appWindowManager.send('python:recovered', {});
+        overlayManager.send('python:recovered', {});
+        console.log('[Main] Python service recovered');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python service recovered', level: 'info' });
+      }
+    } catch (healthErr) {
+      if (pythonHealthy) {
+        pythonHealthy = false;
+        appWindowManager.send('python:unavailable', {});
+        overlayManager.send('python:unavailable', {});
+        console.warn('[Main] Python health check failed');
+        Sentry.addBreadcrumb({ category: 'python', message: 'Python health check failed', level: 'warning' });
+        Sentry.captureMessage('Python health check failed', 'warning');
+      }
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
+
+  // Start network monitor — broadcasts online/offline status to all windows
+  networkMonitor.start(
+    (channel, data) => appWindowManager.send(channel, data),
+    (channel, data) => overlayManager.send(channel, data),
+    () => {
+      appWindowManager.send('network:reconnected', {});
+      syncOfflineQueue((ch, data) => appWindowManager.send(ch, data))
+        .catch(e => {
+          console.error('[Main] Prompt-library offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-prompt-library' } });
+        });
+      syncChatMessageQueue(appWindowManager, pythonClient)
+        .catch(e => {
+          console.error('[Main] Chat message offline sync failed:', e);
+          Sentry.captureException(e, { tags: { component: 'offline-sync-chat' } });
+        });
+    }
+  );
+  console.log('[Main] NetworkMonitor started');
 
   // ============================================
   // WINDOW CONTROL IPC HANDLERS (frameless window)
@@ -397,63 +395,6 @@ async function initialize() {
   });
 
   // ============================================
-  // SESSION MANAGEMENT & AUTH STATE SYNC
-  // ============================================
-  try {
-    const authService = new AuthService();
-    const hasSession = await checkAndRestoreSession(appWindowManager);
-
-    if (hasSession) {
-      console.log('[Main] Session restored, user logged in');
-    } else {
-      console.log('[Main] No session found, user needs to log in');
-    }
-
-    // Listen for auth state changes and sync to overlay
-    authService.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_IN' && session) {
-        authState.isAuthenticated = true;
-        authState.currentUserId = session.user.id;
-        authState.currentUserEmail = session.user.email ?? null;
-        authState.currentAccessToken = session.access_token ?? null;
-        Sentry.setUser({ id: session.user.id });
-        overlayManager.sendAuthState(true);
-      } else if (event === 'SIGNED_OUT') {
-        // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT
-        // refresh poller failing due to no network — NOT a real sign-out.
-        // Ignore it so the offline session remains valid.
-        if (!networkMonitor.isOnline) {
-          console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
-          return;
-        }
-
-        authState.isAuthenticated = false;
-        authState.currentUserId = null;
-        authState.currentUserEmail = null;
-        authState.currentAccessToken = null;
-        Sentry.setUser(null);
-        if (appWindowManager) appWindowManager.send('sentry:set-user', null);
-
-        if (appWindowManager) {
-          appWindowManager.send('auth:state-changed', {
-            isAuthenticated: false,
-            user: null,
-          });
-        }
-        overlayManager.sendAuthState(false);
-      } else if (event === 'TOKEN_REFRESHED' && session) {
-        console.log('[Main] Session token refreshed — updating auth state');
-        authState.currentAccessToken = session.access_token ?? null;
-        // Reconnect WebSocket so it carries the refreshed token
-        pythonClient.reconnect();
-      }
-    });
-  } catch (error) {
-    console.error('[Main] Auth initialization error:', error);
-    Sentry.captureException(error, { tags: { component: 'auth-init' } });
-  }
-
-  // ============================================
   // KEYSTROKE DETECTION
   // ============================================
   startKeystrokeDetection();
@@ -488,6 +429,10 @@ async function initialize() {
   );
   systemTray.create();
 
+  // Show the main window immediately — auth resolves in the background
+  // so the user sees the loading spinner within ~2s instead of ~10s.
+  appWindowManager.show();
+
   console.log('[Main] ========================================');
   console.log('[Main] Prompt Optimizer ready!');
   console.log('[Main] - Type @prompt anywhere to open overlay');
@@ -495,9 +440,69 @@ async function initialize() {
   console.log('[Main] - Click tray icon to open app window');
   console.log('[Main] ========================================');
 
-  // Show the main window immediately on launch so the user sees the app
-  // when they double-click the exe, instead of only the tray icon.
-  appWindowManager.show();
+  // ============================================
+  // SESSION MANAGEMENT & AUTH STATE SYNC
+  // (runs in background — window is already visible with a loading spinner)
+  // ============================================
+
+  // Set up the auth state change listener synchronously so it is active
+  // before the session restore promise resolves or rejects.
+  const authService = new AuthService();
+  authService.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session) {
+      authState.isAuthenticated = true;
+      authState.currentUserId = session.user.id;
+      authState.currentUserEmail = session.user.email ?? null;
+      authState.currentAccessToken = session.access_token ?? null;
+      Sentry.setUser({ id: session.user.id });
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_IN', level: 'info', data: { userId: session.user.id } });
+      overlayManager.sendAuthState(true);
+    } else if (event === 'SIGNED_OUT') {
+      if (!networkMonitor.isOnline) {
+        console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Ignored spurious SIGNED_OUT (offline)', level: 'warning' });
+        return;
+      }
+
+      authState.isAuthenticated = false;
+      authState.currentUserId = null;
+      authState.currentUserEmail = null;
+      authState.currentAccessToken = null;
+      Sentry.setUser(null);
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_OUT', level: 'info' });
+      if (appWindowManager) appWindowManager.send('sentry:set-user', null);
+
+      if (appWindowManager) {
+        appWindowManager.send('auth:state-changed', {
+          isAuthenticated: false,
+          user: null,
+        });
+      }
+      overlayManager.sendAuthState(false);
+    } else if (event === 'TOKEN_REFRESHED' && session) {
+      console.log('[Main] Session token refreshed — updating auth state');
+      authState.currentAccessToken = session.access_token ?? null;
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Token refreshed', level: 'info' });
+      pythonClient.reconnect();
+    }
+  });
+
+  // Fire session restore without blocking — sends auth:state-changed when done,
+  // which moves the UI from the loading spinner to the authenticated app view.
+  checkAndRestoreSession(appWindowManager)
+    .then(hasSession => {
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Session restore complete', level: 'info', data: { hasSession } });
+      if (hasSession) {
+        console.log('[Main] Session restored, user logged in');
+        overlayManager.sendAuthState(true);
+      } else {
+        console.log('[Main] No session found, user needs to log in');
+      }
+    })
+    .catch(err => {
+      console.error('[Main] Auth initialization error:', err);
+      Sentry.captureException(err, { tags: { component: 'auth-init' } });
+    });
 
   Sentry.addBreadcrumb({ category: 'lifecycle', message: 'App startup complete', level: 'info' });
   logger.info(logger.fmt`app.startup_complete platform=${process.platform} nativeBridge=${isNativeBridgeAvailable() ? 'loaded' : 'stub'}`);

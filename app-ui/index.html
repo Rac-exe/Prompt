@@ -14,8 +14,10 @@
 
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- CRITICAL: Blocking theme script — runs BEFORE first paint to prevent flash of wrong theme -->
-    <!-- Reads theme from localStorage and applies it immediately, before React loads -->
+    <!-- CRITICAL: Blocking theme script — runs BEFORE first paint to prevent FOUC.
+         Light is the default (no class on <html>).
+         Only adds "dark" when the user has an explicit stored dark preference.
+         First-time users: no localStorage → stays light. -->
     <script>
       (function() {
         try {
@@ -25,15 +27,8 @@
             if (settings.theme === 'dark') {
               document.documentElement.classList.add('dark');
             }
-            // Note: light theme = no class needed (default)
-          } else {
-            // No settings stored yet — default to dark
-            document.documentElement.classList.add('dark');
           }
-        } catch (e) {
-          // If anything fails, default to dark
-          document.documentElement.classList.add('dark');
-        }
+        } catch (e) { }
       })();
     </script>
   </head>

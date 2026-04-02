@@ -1,4 +1,4 @@
-import { Settings, HelpCircle, LogOut, MessageSquarePlus } from "lucide-react";
+import { GearSix, Question, SignOut, ChatText } from "@phosphor-icons/react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -77,7 +77,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, col
           onClick={onSettingsClick}
           className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
         >
-          <Settings className="w-3.5 h-3.5 opacity-60" />
+          <GearSix size={14} weight="light" className="opacity-60" />
           Settings
         </DropdownMenuItem>
 
@@ -85,7 +85,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, col
           onClick={onHelpClick}
           className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
         >
-          <HelpCircle className="w-3.5 h-3.5 opacity-60" />
+          <Question size={14} weight="light" className="opacity-60" />
           Help & Docs
         </DropdownMenuItem>
 
@@ -94,7 +94,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, col
             onClick={onFeedbackClick}
             className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
           >
-            <MessageSquarePlus className="w-3.5 h-3.5 opacity-60" />
+            <ChatText size={14} weight="light" className="opacity-60" />
             Send Feedback
           </DropdownMenuItem>
         )}
@@ -105,7 +105,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, col
           onClick={signOut}
           className="cursor-pointer text-sm text-destructive focus:bg-destructive/8 focus:text-destructive gap-2.5 rounded-lg px-2 py-1.5 font-medium"
         >
-          <LogOut className="w-3.5 h-3.5" />
+          <SignOut size={14} weight="light" />
           Sign Out
         </DropdownMenuItem>
       </DropdownMenuContent>

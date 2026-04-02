@@ -4,98 +4,9 @@
    Uses the same CSS custom-properties as design-system.css.
    =================================================================== */
 
-/* ---------- design-system variables — kept in sync with app-ui/src/index.css ---------- */
-:root {
-  /* Base canvas — warm peach (#FFF4ED) */
-  --background:         23 100% 96%;
-  --foreground:         217 33% 17%;
-
-  /* Cards */
-  --card:               20 100% 98%;
-  --card-foreground:    217 33% 17%;
-
-  --popover:            20 100% 98%;
-  --popover-foreground: 217 33% 17%;
-
-  /* Primary — dark accent matching dark-logo */
-  --primary:            220 10% 15%;
-  --primary-foreground: 0   0% 100%;
-
-  /* Secondary — soft peach */
-  --secondary:          20 60% 95%;
-  --secondary-foreground: 215 20% 35%;
-
-  /* Muted */
-  --muted:              20 50% 94%;
-  --muted-foreground:   215 20% 38%;
-
-  /* Accent — dark tone matching dark-logo vibe */
-  --accent:             20 30% 92%;
-  --accent-foreground:  220 10% 15%;
-
-  --destructive:        0 68% 50%;
-  --destructive-foreground: 0 0% 100%;
-
-  /* Borders */
-  --border:             18 58% 88%;
-  --input:              21 52% 81%;
-  --ring:               220 10% 15%;
-
-  --radius: 0.625rem;
-
-  /* Custom surface tokens */
-  --surface:            20 100% 97%;
-  --surface-hover:      19 100% 94%;
-  --surface-elevated:   20 100% 98%;
-
-  /* Dark accent mapped to emerald tokens — matches dark-logo vibe */
-  --emerald:            220 10% 15%;
-  --emerald-soft:       220 8% 25%;
-  --emerald-muted:      20 30% 92%;
-}
-
-.dark {
-  /* Near-black background, electric-blue accent — matches app dark mode */
-  --background:         220  8%  5%;
-  --foreground:         210 20% 93%;
-
-  --card:               220 10% 10%;
-  --card-foreground:    210 20% 93%;
-
-  --popover:            220 10% 10%;
-  --popover-foreground: 210 20% 93%;
-
-  --primary:            217 91% 60%;
-  --primary-foreground: 0   0% 100%;
-
-  --secondary:          220 10%  9%;
-  --secondary-foreground: 210 20% 93%;
-
-  --muted:              220 10% 11%;
-  --muted-foreground:   215 16% 58%;
-
-  --accent:             220 10% 13%;
-  --accent-foreground:  210 20% 93%;
-
-  --destructive:        0 72% 51%;
-  --destructive-foreground: 0 0% 100%;
-
-  --border:             220 10% 14%;
-  --input:              220 10% 14%;
-  --ring:               217 91% 60%;
-
-  --radius: 0.625rem;
-
-  /* Custom surface tokens */
-  --surface:            220 10%  8%;
-  --surface-hover:      220 10% 10%;
-  --surface-elevated:   220 10% 12%;
-
-  /* Brand accent (blue, NOT green) */
-  --emerald:            217 91% 60%;
-  --emerald-soft:       217 78% 72%;
-  --emerald-muted:      217 30% 15%;
-}
+/* SINGLE SOURCE OF TRUTH: app-ui/src/index.css
+   All CSS custom-properties are defined there and loaded via index.css.
+   This file only adds overlay-specific styles. */
 
 /* ---------- reset ---------- */
 *,
@@ -109,7 +20,7 @@
 html { height: 100%; }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
   background: transparent;
   overflow: hidden;
   color: hsl(var(--foreground));
@@ -158,7 +69,7 @@ body {
   left: 24px;
   right: 24px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.5), transparent);
+  background: linear-gradient(90deg, transparent, hsl(var(--accent) / 0.5), transparent);
   z-index: 10;
 }
 
@@ -203,7 +114,7 @@ body {
 }
 
 @keyframes flash-success {
-  0% { background-color: hsl(var(--emerald) / 0.15); }
+  0% { background-color: hsl(var(--accent) / 0.15); }
   100% { background-color: transparent; }
 }
 .flash-success { animation: flash-success 1.5s ease-out; }
@@ -213,7 +124,7 @@ textarea { min-height: 40px; }
 
 /* ======== BUTTON STYLES ======== */
 .btn-primary {
-  background: linear-gradient(135deg, hsl(var(--emerald)), hsl(217 91% 50%));
+  background: linear-gradient(135deg, hsl(var(--accent)), hsl(217 91% 50%));
   color: white;
   font-weight: 600;
   border: none;
@@ -222,7 +133,7 @@ textarea { min-height: 40px; }
   overflow: hidden;
   transition: all 0.2s ease;
 }
-.btn-primary:hover { filter: brightness(1.1); box-shadow: 0 0 20px hsl(var(--emerald) / 0.35); }
+.btn-primary:hover { filter: brightness(1.1); box-shadow: 0 0 20px hsl(var(--accent) / 0.35); }
 .btn-primary:active { transform: scale(0.98); }
 .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; filter: none; box-shadow: none; }
 
@@ -268,8 +179,8 @@ textarea { min-height: 40px; }
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .input-area:focus-within {
-  border-color: hsl(var(--emerald) / 0.4);
-  box-shadow: 0 0 0 3px hsl(var(--emerald) / 0.08);
+  border-color: hsl(var(--accent) / 0.4);
+  box-shadow: 0 0 0 3px hsl(var(--accent) / 0.08);
 }
 
 /* ======== DIVIDER ======== */
@@ -368,8 +279,8 @@ textarea { min-height: 40px; }
 }
 
 .user-bubble {
-  background: hsl(var(--emerald) / 0.06);
-  border: 1px solid hsl(var(--emerald) / 0.15);
+  background: hsl(var(--accent) / 0.06);
+  border: 1px solid hsl(var(--accent) / 0.15);
 }
 
 .user-message-actions {
@@ -409,8 +320,8 @@ textarea { min-height: 40px; }
 
 .user-edit-textarea {
   width: 100%;
-  background: hsl(var(--emerald) / 0.06);
-  border: 1px solid hsl(var(--emerald) / 0.35);
+  background: hsl(var(--accent) / 0.06);
+  border: 1px solid hsl(var(--accent) / 0.35);
   border-radius: 12px;
   padding: 10px 14px;
   color: hsl(var(--foreground));
@@ -423,8 +334,8 @@ textarea { min-height: 40px; }
   box-sizing: border-box;
 }
 .user-edit-textarea:focus {
-  border-color: hsl(var(--emerald) / 0.5);
-  box-shadow: 0 0 0 2px hsl(var(--emerald) / 0.08);
+  border-color: hsl(var(--accent) / 0.5);
+  box-shadow: 0 0 0 2px hsl(var(--accent) / 0.08);
 }
 
 .user-edit-actions {
@@ -493,9 +404,9 @@ textarea { min-height: 40px; }
 .btn-msg-action:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
 .btn-msg-action:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-msg-action.action-success {
-  background: hsl(var(--emerald) / 0.12);
-  border-color: hsl(var(--emerald) / 0.3);
-  color: hsl(var(--emerald));
+  background: hsl(var(--accent) / 0.12);
+  border-color: hsl(var(--accent) / 0.3);
+  color: hsl(var(--accent));
   pointer-events: none;
 }
 
@@ -512,7 +423,7 @@ textarea { min-height: 40px; }
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: hsl(var(--emerald) / 0.6);
+  background: hsl(var(--accent) / 0.6);
   animation: bounce-dot 1.4s ease-in-out infinite;
 }
 .loading-indicator .dot:nth-child(2) { animation-delay: 0.15s; }
@@ -569,8 +480,8 @@ textarea { min-height: 40px; }
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .chat-input-box:focus-within {
-  border-color: hsl(var(--emerald) / 0.4);
-  box-shadow: 0 0 0 2px hsl(var(--emerald) / 0.08);
+  border-color: hsl(var(--accent) / 0.4);
+  box-shadow: 0 0 0 2px hsl(var(--accent) / 0.08);
 }
 
 .chat-input-box textarea {
@@ -673,7 +584,7 @@ textarea { min-height: 40px; }
 .mode-dropdown-item:hover { background: hsl(var(--muted)); }
 .mode-dropdown-item.selected { background: hsl(var(--secondary)); }
 .mode-dropdown-item .mode-icon { width: 16px; height: 16px; margin-top: 1px; flex-shrink: 0; }
-.mode-dropdown-item .mode-check { margin-left: auto; color: hsl(var(--emerald)); font-size: 14px; margin-top: 1px; }
+.mode-dropdown-item .mode-check { margin-left: auto; color: hsl(var(--accent)); font-size: 14px; margin-top: 1px; }
 
 /* Send button (circular) */
 .btn-send {
@@ -770,8 +681,8 @@ textarea { min-height: 40px; }
 }
 .collection-item:hover { background: hsl(var(--muted)); }
 .collection-item.selected {
-  background: hsl(var(--emerald) / 0.08);
-  border-color: hsl(var(--emerald) / 0.4);
+  background: hsl(var(--accent) / 0.08);
+  border-color: hsl(var(--accent) / 0.4);
 }
 
 .collection-name {
@@ -802,7 +713,7 @@ textarea { min-height: 40px; }
   outline: none;
   transition: border-color 0.15s ease;
 }
-.new-collection-input:focus { border-color: hsl(var(--emerald) / 0.5); }
+.new-collection-input:focus { border-color: hsl(var(--accent) / 0.5); }
 .new-collection-input::placeholder { color: hsl(var(--muted-foreground)); }
 
 .btn-add-collection {
@@ -841,11 +752,11 @@ textarea { min-height: 40px; }
   gap: 6px;
   padding: 4px 10px 4px 8px;
   border-radius: 20px;
-  background: hsl(var(--emerald) / 0.08);
-  border: 1px solid hsl(var(--emerald) / 0.25);
+  background: hsl(var(--accent) / 0.08);
+  border: 1px solid hsl(var(--accent) / 0.25);
   font-size: 11px;
   font-weight: 500;
-  color: hsl(var(--emerald));
+  color: hsl(var(--accent));
   cursor: default;
   max-width: 100%;
 }
@@ -863,7 +774,7 @@ textarea { min-height: 40px; }
   background: none;
   border: none;
   cursor: pointer;
-  color: hsl(var(--emerald) / 0.6);
+  color: hsl(var(--accent) / 0.6);
   padding: 0;
   line-height: 1;
   font-size: 14px;
@@ -873,7 +784,7 @@ textarea { min-height: 40px; }
   transition: color 0.15s ease;
   flex-shrink: 0;
 }
-.context-pill-remove:hover { color: hsl(var(--emerald)); }
+.context-pill-remove:hover { color: hsl(var(--accent)); }
 
 .btn-attach-context {
   display: inline-flex;
@@ -892,9 +803,9 @@ textarea { min-height: 40px; }
   transition: all 0.15s ease;
 }
 .btn-attach-context:hover {
-  border-color: hsl(var(--emerald) / 0.4);
-  color: hsl(var(--emerald));
-  background: hsl(var(--emerald) / 0.05);
+  border-color: hsl(var(--accent) / 0.4);
+  color: hsl(var(--accent));
+  background: hsl(var(--accent) / 0.05);
 }
 
 /* ======== PLUS MENU POPUP ======== */
@@ -1087,11 +998,11 @@ textarea { min-height: 40px; }
   height: 24px;
   padding: 0 7px;
   border-radius: 20px;
-  background: hsl(var(--emerald) / 0.1);
-  border: 1px solid hsl(var(--emerald) / 0.25);
+  background: hsl(var(--accent) / 0.1);
+  border: 1px solid hsl(var(--accent) / 0.25);
   font-size: 11px;
   font-weight: 500;
-  color: hsl(var(--emerald));
+  color: hsl(var(--accent));
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -1100,7 +1011,7 @@ textarea { min-height: 40px; }
   background: none;
   border: none;
   cursor: pointer;
-  color: hsl(var(--emerald) / 0.6);
+  color: hsl(var(--accent) / 0.6);
   padding: 0;
   display: flex;
   align-items: center;
@@ -1109,7 +1020,7 @@ textarea { min-height: 40px; }
   transition: color 0.12s ease;
   font-family: inherit;
 }
-.skill-pill-remove:hover { color: hsl(var(--emerald)); }
+.skill-pill-remove:hover { color: hsl(var(--accent)); }
 
 /* ======== CHAT PICKER MODAL ======== */
 .chat-picker-panel {
@@ -1138,7 +1049,7 @@ textarea { min-height: 40px; }
   outline: none;
   transition: border-color 0.15s ease;
 }
-.chat-picker-search:focus { border-color: hsl(var(--emerald) / 0.5); }
+.chat-picker-search:focus { border-color: hsl(var(--accent) / 0.5); }
 .chat-picker-search::placeholder { color: hsl(var(--muted-foreground) / 0.5); }
 
 .chat-list {
@@ -1171,8 +1082,8 @@ textarea { min-height: 40px; }
 }
 .chat-list-item:hover { background: hsl(var(--muted)); }
 .chat-list-item.selected {
-  background: hsl(var(--emerald) / 0.08);
-  border-color: hsl(var(--emerald) / 0.4);
+  background: hsl(var(--accent) / 0.08);
+  border-color: hsl(var(--accent) / 0.4);
 }
 
 /* ======== AUTH VIEW ======== */
@@ -1191,6 +1102,6 @@ textarea { min-height: 40px; }
   position: absolute;
   inset: -2px;
   border-radius: 50%;
-  background: linear-gradient(135deg, hsl(var(--emerald) / 0.3), transparent);
+  background: linear-gradient(135deg, hsl(var(--accent) / 0.3), transparent);
   z-index: -1;
 }

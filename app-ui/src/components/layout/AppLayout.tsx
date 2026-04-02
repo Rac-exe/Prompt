@@ -1,5 +1,6 @@
 import { ReactNode, useState, useEffect } from "react";
-import { Minus, Square, X, WifiOff, AlertTriangle } from "lucide-react";
+import { Minus, Square, X, WifiSlash, Warning } from "@phosphor-icons/react";
+import { ZoomIndicator } from "./ZoomIndicator";
 
 interface AppLayoutProps {
   children: ReactNode;
@@ -30,7 +31,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
   }, []);
 
   return (
-    <div className="h-screen flex w-full bg-background overflow-hidden">
+    <div className="min-h-[100dvh] h-screen flex w-full bg-background overflow-hidden">
 
       {/* ── Sidebar (full height, no title bar above it) ── */}
       <div className="flex-shrink-0 h-full">{sidebar}</div>
@@ -58,7 +59,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          text-muted-foreground/50 hover:text-foreground
                          hover:bg-white/5 transition-colors duration-150"
             >
-              <Minus className="w-3.5 h-3.5" />
+              <Minus size={14} weight="light" />
             </button>
 
             <button
@@ -68,7 +69,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          text-muted-foreground/50 hover:text-foreground
                          hover:bg-white/5 transition-colors duration-150"
             >
-              <Square className="w-3 h-3" />
+              <Square size={12} weight="light" />
             </button>
 
             <button
@@ -78,7 +79,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          text-muted-foreground/50 hover:text-white
                          hover:bg-red-500/80 transition-colors duration-150"
             >
-              <X className="w-3.5 h-3.5" />
+              <X size={14} weight="light" />
             </button>
           </div>
         </div>
@@ -88,7 +89,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
           <div className="flex items-center justify-center gap-2 px-4 py-1.5
                          bg-amber-500/10 border-b border-amber-500/20 text-amber-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
-            <WifiOff className="w-3 h-3 flex-shrink-0" />
+            <WifiSlash size={12} weight="light" className="flex-shrink-0" />
             <span>You're offline — Prompt optimization unavailable.</span>
           </div>
         )}
@@ -98,7 +99,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
           <div className="flex items-center justify-center gap-2 px-4 py-1.5
                          bg-red-500/10 border-b border-red-500/20 text-red-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
-            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+            <Warning size={12} weight="light" className="flex-shrink-0" />
             <span>AI service unavailable — please restart the application.</span>
           </div>
         )}
@@ -109,6 +110,8 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
         </main>
 
       </div>
+
+      <ZoomIndicator />
     </div>
   );
 };

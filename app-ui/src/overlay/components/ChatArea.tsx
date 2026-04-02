@@ -65,14 +65,14 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
                 <img
                   src={src}
                   alt={f.name}
-                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: '1px solid hsl(var(--emerald)/0.2)', display: 'block' }}
+                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: '1px solid hsl(var(--accent)/0.2)', display: 'block' }}
                 />
               </div>
             );
           }
           // Image with no src yet — placeholder chip
           return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8, background: 'hsl(var(--emerald)/0.06)', border: '1px solid hsl(var(--emerald)/0.15)', maxWidth: 160, flexShrink: 0 }}>
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8, background: 'hsl(var(--accent)/0.06)', border: '1px solid hsl(var(--accent)/0.15)', maxWidth: 160, flexShrink: 0 }}>
               <span style={{ fontSize: 11, fontWeight: 500, color: 'hsl(var(--foreground))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
             </div>
           );
@@ -87,7 +87,7 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
               tabIndex={0}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8,
-                background: 'hsl(var(--emerald)/0.06)', border: '1px solid hsl(var(--emerald)/0.15)', maxWidth: 160, flexShrink: 0,
+                background: 'hsl(var(--accent)/0.06)', border: '1px solid hsl(var(--accent)/0.15)', maxWidth: 160, flexShrink: 0,
                 cursor: 'pointer',
               }}
               onClick={async () => {
@@ -97,7 +97,7 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
               }}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click(); }}
             >
-              <svg style={{ width: 12, height: 12, flexShrink: 0, color: 'hsl(var(--emerald))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg style={{ width: 12, height: 12, flexShrink: 0, color: 'hsl(var(--accent))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <span style={{ fontSize: 11, fontWeight: 500, color: 'hsl(var(--foreground))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -113,10 +113,10 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
             key={i}
             style={{
               display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8,
-              background: 'hsl(var(--emerald)/0.06)', border: '1px solid hsl(var(--emerald)/0.15)', maxWidth: 160, flexShrink: 0,
+              background: 'hsl(var(--accent)/0.06)', border: '1px solid hsl(var(--accent)/0.15)', maxWidth: 160, flexShrink: 0,
             }}
           >
-            <svg style={{ width: 12, height: 12, flexShrink: 0, color: 'hsl(var(--emerald))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg style={{ width: 12, height: 12, flexShrink: 0, color: 'hsl(var(--accent))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             <span style={{ fontSize: 11, fontWeight: 500, color: 'hsl(var(--foreground))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -137,12 +137,12 @@ const SkillTag: React.FC<{ skill?: string | null; skillLabel?: string | null }> 
     <div
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 8, height: 20, padding: '0 7px',
-        borderRadius: 20, background: 'hsl(var(--emerald)/0.1)', border: '1px solid hsl(var(--emerald)/0.25)',
-        fontSize: 10, fontWeight: 600, color: 'hsl(var(--emerald))', letterSpacing: '0.02em',
+        borderRadius: 20, background: 'hsl(var(--accent)/0.1)', border: '1px solid hsl(var(--accent)/0.25)',
+        fontSize: 10, fontWeight: 600, color: 'hsl(var(--accent))', letterSpacing: '0.02em',
       }}
     >
       <svg
-        style={{ width: 9, height: 9, flexShrink: 0, color: 'hsl(var(--emerald))' }}
+        style={{ width: 9, height: 9, flexShrink: 0, color: 'hsl(var(--accent))' }}
         fill="none"
         stroke="currentColor"
         viewBox="0 0 24 24"
@@ -496,11 +496,11 @@ const ChatArea: React.FC<ChatAreaProps> = ({
             style={{ width: 52, height: 52, objectFit: 'contain' }}
           />
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'hsl(var(--emerald))', marginBottom: 4, letterSpacing: '-0.01em' }}>
-              Prompt Optimizer
+            <div className="text-gradient-primary" style={{ fontSize: 20, fontWeight: 700, marginBottom: 6, letterSpacing: '-0.02em' }}>
+              Welcome to Prmpt!!
             </div>
             <div style={{ fontSize: 12, color: 'hsl(var(--muted-foreground))', lineHeight: 1.5 }}>
-              Type your prompt below to get an<br />optimized version. Refine with follow-ups.
+              Transform rough ideas into precisely engineered prompts.
             </div>
           </div>
         </div>

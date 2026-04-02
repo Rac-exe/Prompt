@@ -1,3 +1,6 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,8 +9,6 @@
    Prompt Weaver — Premium Design System v2
    Clean, minimal, professional SaaS aesthetic
    ============================================================ */
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;600;700&display=swap');
 
 @layer base {
   :root {
@@ -60,10 +61,10 @@
     --surface-hover:      19 100% 94%;
     --surface-elevated:   20 100% 98%;
 
-    /* Dark accent mapped to emerald tokens — matches dark-logo vibe */
-    --emerald:            220 10% 15%;
-    --emerald-soft:       220 8% 25%;
-    --emerald-muted:      20 30% 92%;
+    /* Dark accent mapped to accent tokens — matches dark-logo vibe */
+    --accent:             220 10% 15%;
+    --accent-soft:        220 8% 25%;
+    --accent-muted:       20 30% 92%;
 
     /* ── Sidebar — deeper peach surface (#FFEDE3) ── */
     --sidebar-background:         21 100% 95%;
@@ -116,9 +117,9 @@
     --surface:            220 10%  8%;
     --surface-hover:      220 10% 10%;
     --surface-elevated:   220 10% 12%;
-    --emerald:            217 91% 60%;
-    --emerald-soft:       217 78% 72%;
-    --emerald-muted:      217 30% 15%;
+    --accent:             217 91% 60%;
+    --accent-soft:        217 78% 72%;
+    --accent-muted:       217 30% 15%;
 
     /* Sidebar — Dark — blue-tinted hover to match light-logo */
     --sidebar-background:         220 10%  4%;
@@ -179,7 +180,7 @@
 
   /* ─── Selection ─── */
   ::selection {
-    background: hsl(var(--emerald) / 0.2);
+    background: hsl(var(--accent) / 0.2);
     color: hsl(var(--foreground));
   }
 }
@@ -187,17 +188,17 @@
 /* ─── Utility Layer ─────────────────────────────────────────── */
 @layer utilities {
 
-  /* ── Glow effects — blue accent ── */
+  /* ── Glow effects — inner-border + diffusion (no neon halos) ── */
   .glow-emerald {
     box-shadow:
-      0 0 0 1px hsl(var(--emerald) / 0.2),
-      0 0 16px hsl(var(--emerald) / 0.2),
-      0 0 32px hsl(var(--emerald) / 0.08);
+      inset 0 1px 0 rgba(255,255,255,0.08),
+      0 4px 16px hsl(var(--accent) / 0.08),
+      0 1px 4px  hsl(var(--accent) / 0.06);
   }
   .glow-emerald-sm {
     box-shadow:
-      0 0 0 1px hsl(var(--emerald) / 0.15),
-      0 0 8px  hsl(var(--emerald) / 0.18);
+      inset 0 1px 0 rgba(255,255,255,0.06),
+      0 2px 8px  hsl(var(--accent) / 0.08);
   }
   .glow-primary { @apply glow-emerald; }
 
@@ -205,8 +206,8 @@
   .text-gradient-primary {
     background: linear-gradient(
       135deg,
-      hsl(var(--emerald)) 0%,
-      hsl(var(--emerald-soft)) 100%
+      hsl(var(--accent)) 0%,
+      hsl(var(--accent-soft)) 100%
     );
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -215,7 +216,7 @@
 
   /* ── Backgrounds ── */
   .bg-gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+    background: linear-gradient(135deg, hsl(var(--accent)) 0%, hsl(var(--accent-soft)) 100%);
   }
   .bg-glass {
     background: hsl(var(--surface) / 0.8);

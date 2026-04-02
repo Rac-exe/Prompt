@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import * as Sentry from "@sentry/react";
-import { Share2, Check, Link as LinkIcon, Loader2, Smartphone } from "lucide-react";
+import { ShareNetwork, Check, Link as LinkIcon, CircleNotch, DeviceMobile } from "@phosphor-icons/react";
 import {
   Dialog,
   DialogContent,
@@ -105,7 +105,7 @@ export const ShareCollectionModal = ({
       <DialogContent className="sm:max-w-[500px] bg-card border-border">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-foreground">
-            <Share2 className="w-5 h-5 text-emerald" />
+            <ShareNetwork size={20} weight="light" className="text-emerald" />
             Share Library
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
@@ -118,14 +118,14 @@ export const ShareCollectionModal = ({
         <div className="space-y-4 pt-2">
           {loading ? (
             <div className="flex items-center justify-center py-6 gap-2 text-muted-foreground text-sm">
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <CircleNotch size={16} weight="light" className="animate-spin" />
               Generating share link…
             </div>
           ) : (
             <>
               <div className="space-y-2">
                 <Label htmlFor="share-url" className="text-foreground text-sm flex items-center gap-1.5">
-                  <Smartphone className="w-3.5 h-3.5 text-emerald" />
+                  <DeviceMobile size={14} weight="light" className="text-emerald" />
                   App Share Link
                 </Label>
                 <div className="flex gap-2">
@@ -142,9 +142,9 @@ export const ShareCollectionModal = ({
                     disabled={!shareUrl}
                   >
                     {copied ? (
-                      <Check className="w-4 h-4 text-emerald" />
+                      <Check size={16} weight="light" className="text-emerald" />
                     ) : (
-                      <LinkIcon className="w-4 h-4" />
+                      <LinkIcon size={16} weight="light" />
                     )}
                   </Button>
                 </div>

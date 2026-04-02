@@ -14,8 +14,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Geist', 'system-ui', 'sans-serif'],
+        display: ['Geist', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'monospace'],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -59,9 +60,9 @@ export default {
           foreground: "hsl(var(--success-foreground))",
         },
         emerald: {
-          DEFAULT: "hsl(var(--emerald))",
-          soft: "hsl(var(--emerald-soft))",
-          muted: "hsl(var(--emerald-muted))",
+          DEFAULT: "hsl(var(--accent))",
+          soft: "hsl(var(--accent-soft))",
+          muted: "hsl(var(--accent-muted))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
@@ -99,8 +100,8 @@ export default {
         shimmer: "shimmer 2s infinite linear",
       },
       boxShadow: {
-        glow: "0 0 20px hsl(217 91% 60% / 0.25), 0 0 40px hsl(217 91% 60% / 0.1)",
-        "glow-sm": "0 0 10px hsl(217 91% 60% / 0.18)",
+        glow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 16px hsl(217 91% 60% / 0.08), 0 1px 4px hsl(217 91% 60% / 0.06)",
+        "glow-sm": "inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px hsl(217 91% 60% / 0.08)",
         card: "0 1px 3px hsl(215 30% 10% / 0.12), 0 1px 2px hsl(215 30% 10% / 0.06)",
         "card-hover": "0 4px 12px hsl(215 30% 10% / 0.16), 0 2px 4px hsl(215 30% 10% / 0.08)",
         elevated: "0 8px 24px hsl(215 30% 10% / 0.2), 0 2px 8px hsl(215 30% 10% / 0.1)",

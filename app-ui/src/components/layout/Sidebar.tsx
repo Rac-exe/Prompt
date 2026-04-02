@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { Logo } from "@/components/ui/Logo";
 import {
-  Zap, Plus, Library, MessageSquare,
-  PanelLeftClose, PanelLeftOpen,
-  Loader2, AlertCircle, MoreHorizontal,
-  Trash2, Pencil, Check, X,
-} from "lucide-react";
+  Lightning, Plus, Books,
+  SidebarSimple,
+  CircleNotch, WarningCircle, DotsThree,
+  Trash, PencilSimple, Check, X,
+} from "@phosphor-icons/react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -65,7 +65,7 @@ export const Sidebar = ({
 
   const navItems = [
     { id: "chat" as const, label: "New Chat", icon: Plus, action: onNewChat },
-    { id: "library" as const, label: "Prompt Library", icon: Library },
+    { id: "library" as const, label: "Prompt Library", icon: Books },
   ];
 
   useEffect(() => {
@@ -135,9 +135,8 @@ export const Sidebar = ({
           onClick={() => { onSelectChat(chat.id); onViewChange("chat"); }}
           data-testid={`chat-${chat.id}`}
         >
-          <MessageSquare className="w-3.5 h-3.5 flex-shrink-0 opacity-70" />
           {!collapsed && (
-            <span className="truncate text-left">{shortTitle(chat.title)}</span>
+            <span className="truncate text-left" title={chat.title}>{shortTitle(chat.title)}</span>
           )}
         </button>
 
@@ -151,10 +150,10 @@ export const Sidebar = ({
             <DropdownMenu onOpenChange={(open) => setOpenDropdownChatId(open ? chat.id : null)}>
               <DropdownMenuTrigger asChild>
                 <button
-                  className="inline-flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-sidebar-accent focus:outline-none transition-smooth"
+                  className="inline-flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/10 dark:hover:bg-sidebar-accent hover:shadow-sm focus:outline-none transition-smooth"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <MoreHorizontal className="h-3.5 w-3.5" />
+                  <DotsThree size={14} weight="light" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -165,7 +164,7 @@ export const Sidebar = ({
                   className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2 rounded-md"
                   onClick={(e) => { e.stopPropagation(); startRename(chat.id, chat.title); }}
                 >
-                  <Pencil className="h-3.5 w-3.5 opacity-70" />
+                  <PencilSimple size={14} weight="light" className="opacity-70" />
                   Rename
                 </DropdownMenuItem>
                 <DropdownMenuSeparator className="bg-border my-1" />
@@ -173,7 +172,7 @@ export const Sidebar = ({
                   className="cursor-pointer text-sm text-destructive focus:bg-destructive/8 focus:text-destructive gap-2 rounded-md"
                   onClick={(e) => { e.stopPropagation(); requestDelete(chat.id); }}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <Trash size={14} weight="light" />
                   Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -203,13 +202,13 @@ export const Sidebar = ({
             className="w-6 h-6 flex items-center justify-center rounded-md text-emerald hover:bg-emerald/10 transition-smooth flex-shrink-0"
             onMouseDown={(e) => { e.preventDefault(); confirmRename(); }}
           >
-            <Check className="h-3 w-3" />
+            <Check size={12} weight="light" />
           </button>
           <button
             className="w-6 h-6 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground transition-smooth flex-shrink-0"
             onMouseDown={(e) => { e.preventDefault(); cancelRename(); }}
           >
-            <X className="h-3 w-3" />
+            <X size={12} weight="light" />
           </button>
         </div>
       );
@@ -248,7 +247,7 @@ export const Sidebar = ({
             <Logo size="w-8 h-8" />
             {!collapsed && (
               <div className="min-w-0 animate-fade-in">
-                <p className="text-[13px] font-bold text-foreground leading-none tracking-tight">Prmpt</p>
+                <p className="text-[13px] font-bold text-gradient-primary leading-none tracking-tight">Prmpt</p>
                 <p className="label-xs mt-0.5">Studio</p>
               </div>
             )}
@@ -261,7 +260,7 @@ export const Sidebar = ({
               onClick={() => setCollapsed(true)}
               style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             >
-              <PanelLeftClose className="w-4 h-4" />
+              <SidebarSimple size={16} weight="light" />
             </Button>
           )}
         </div>
@@ -276,7 +275,7 @@ export const Sidebar = ({
                   className="h-8 w-full text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-smooth"
             onClick={() => setCollapsed(false)}
           >
-                  <PanelLeftOpen className="w-4 h-4" />
+                  <SidebarSimple size={16} weight="light" />
           </Button>
               </TooltipTrigger>
               <TooltipContent side="right" className="text-xs">Expand sidebar</TooltipContent>
@@ -306,7 +305,7 @@ export const Sidebar = ({
                 }}
                 data-testid={`nav-${item.id}`}
               >
-                <Icon className="w-4 h-4 flex-shrink-0" />
+                <Icon size={16} weight="light" className="flex-shrink-0" />
                 {!collapsed && <span>{item.label}</span>}
               </button>
             );
@@ -337,11 +336,11 @@ export const Sidebar = ({
             <div className="space-y-0.5 pb-4">
               {chatsLoading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-4 h-4 animate-spin text-emerald" />
+                  <CircleNotch size={16} weight="light" className="animate-spin text-emerald" />
                 </div>
               ) : chatsError ? (
                 <div className="flex flex-col items-center justify-center py-8 px-3">
-                  <AlertCircle className="w-4 h-4 text-destructive mb-1.5" />
+                  <WarningCircle size={16} weight="light" className="text-destructive mb-1.5" />
                   {!collapsed && <p className="text-xs text-destructive text-center">Failed to load chats</p>}
                 </div>
               ) : recentChats.length === 0 ? (

@@ -1,34 +1,35 @@
 import { useEffect } from "react";
-import { loadSettings, applySettings } from "@/lib/settings";
+import * as Sentry from '@sentry/react';
+import { loadSettings, applySettings, DEFAULT_SETTINGS, STORAGE_KEY } from "@/lib/settings";
 
 /**
  * Hook to initialize and apply user settings on app startup.
- * This ensures settings persist across app restarts.
- * Only runs when the app is mounted (after authentication).
+ *
+ * Strategy:
+ *   1. Apply whatever is in localStorage immediately (no flash on startup).
+ *   2. Then load from Supabase in the background and apply + persist the
+ *      authoritative server value. This self-heals any stale localStorage
+ *      without a visible flash because the window is typically still hidden
+ *      or the themes already match.
+ *   The SettingsView phantom-toggle guard ensures the Radix Switch can't
+ *   accidentally revert the theme during this sync.
  */
 export const useInitializeSettings = () => {
     useEffect(() => {
-        const initSettings = async () => {
-            try {
-                console.log("[Settings] Loading settings after authentication...");
-
-                // Clear any stale localStorage cache first
-                localStorage.removeItem("prompt-weaver-settings");
-
-                // Load settings from Supabase (or localStorage fallback)
-                const settings = await loadSettings();
-
-                console.log("[Settings] Loaded settings:", settings);
-
-                // Apply settings to DOM
-                applySettings(settings);
-
-                console.log("[Settings] ✅ Settings applied to DOM");
-            } catch (error) {
-                console.error("[Settings] Initialization error:", error);
+        try {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                applySettings(JSON.parse(stored));
             }
-        };
+        } catch (_) {
+            // Corrupt localStorage — fall through
+        }
 
-        initSettings();
-    }, []); // Empty dependency array - run only once on mount
+        loadSettings()
+            .then(applySettings)
+            .catch((error) => {
+                Sentry.captureException(error, { tags: { component: 'settings', op: 'init' } });
+                console.error("[Settings] Initialization error:", error);
+            });
+    }, []);
 };

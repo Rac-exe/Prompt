@@ -28,7 +28,7 @@ const ModeDropdown: React.FC<ModeDropdownProps> = ({ currentMode, open, anchorRe
   return (
     <div className="mode-dropdown open" style={style}>
       <button className={`mode-dropdown-item${currentMode === 'fast' ? ' selected' : ''}`} type="button" onClick={() => onSelect('fast')}>
-        <svg className="mode-icon" fill="none" stroke="hsl(var(--emerald))" viewBox="0 0 24 24">
+        <svg className="mode-icon" fill="none" stroke="hsl(var(--accent))" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
         </svg>
         <div style={{ flex: 1 }}>
@@ -38,7 +38,7 @@ const ModeDropdown: React.FC<ModeDropdownProps> = ({ currentMode, open, anchorRe
         {currentMode === 'fast' && <span className="mode-check">✓</span>}
       </button>
       <button className={`mode-dropdown-item${currentMode === 'thinking' ? ' selected' : ''}`} type="button" onClick={() => onSelect('thinking')}>
-        <svg className="mode-icon" fill="none" stroke="hsl(var(--emerald))" viewBox="0 0 24 24">
+        <svg className="mode-icon" fill="none" stroke="hsl(var(--accent))" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
@@ -117,10 +117,10 @@ const SkillPicker: React.FC<SkillPickerProps> = ({ skills, onSelect }) => {
               onMouseLeave={() => setTooltipSkill(null)}
             >
               {isHighlighted && (
-                <span style={{ position: 'absolute', left: 0, top: 6, bottom: 6, width: 3, borderRadius: 2, background: 'hsl(var(--emerald))' }} />
+                <span style={{ position: 'absolute', left: 0, top: 6, bottom: 6, width: 3, borderRadius: 2, background: 'hsl(var(--accent))' }} />
               )}
               <div style={{ width: 32, height: 32, borderRadius: 8, background: 'hsl(var(--muted)/0.6)', border: '1px solid hsl(var(--border)/0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <svg style={{ width: 14, height: 14, color: 'hsl(var(--emerald))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: iconPath }} />
+                <svg style={{ width: 14, height: 14, color: 'hsl(var(--accent))' }} fill="none" stroke="currentColor" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: iconPath }} />
               </div>
               <span className="skill-item-name">{skill.label}</span>
             </button>
@@ -411,8 +411,8 @@ const InputSection: React.FC<InputSectionProps> = ({
       }
       // Images: auto-resize if above 4.5 MB
       try {
-        const { base64, sizeBytes } = await resizeImageIfNeeded(file);
-        newFiles.push({ name: file.name, mimeType: 'image/jpeg', base64, sizeBytes });
+        const { base64, sizeBytes, mimeType } = await resizeImageIfNeeded(file);
+        newFiles.push({ name: file.name, mimeType, base64, sizeBytes });
       } catch {
         console.warn('[Overlay] Failed to process image:', file.name);
       }

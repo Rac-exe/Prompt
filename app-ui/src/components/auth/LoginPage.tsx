@@ -4,7 +4,8 @@ import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Zap, ArrowRight, Loader2, Minus, Square, X, Github } from 'lucide-react';
+import { Lightning, ArrowRight, ArrowLeft, CircleNotch, Minus, Square, X, GithubLogo, Key } from '@phosphor-icons/react';
+import { OtpVerification } from './OtpVerification';
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
@@ -12,23 +13,119 @@ interface LoginPageProps {
   error?: string | null;
 }
 
+type LoginView = 'login' | 'reset-otp' | 'reset-password';
+
 export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalError }: LoginPageProps) {
+  const [view, setView] = useState<LoginView>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'github' | null>(null);
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
   const { toast } = useToast();
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      toast({ variant: 'destructive', title: 'Enter your email', description: 'Type your email address above first.' });
+      return;
+    }
+    setResetLoading(true);
+    try {
+      const result = await window.electronAPI?.sendResetOtp(email.trim());
+      if (result?.error) {
+        toast({ variant: 'destructive', title: 'Failed', description: result.error });
+      } else {
+        setResetEmail(email.trim());
+        setView('reset-otp');
+        setOtpError('');
+        toast({ title: 'Code sent', description: 'Check your inbox for the reset code.' });
+      }
+    } catch {
+      toast({ variant: 'destructive', title: 'Error', description: 'Could not send reset code.' });
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleVerifyResetOtp = async (otp: string) => {
+    setOtpError('');
+    setView('reset-password');
+    setNewPassword('');
+    setConfirmNewPassword('');
+    setResetPasswordError('');
+    (window as any).__resetOtp = otp;
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetPasswordError('');
+
+    if (newPassword.length < 6) {
+      setResetPasswordError('Password must be at least 6 characters');
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setResetPasswordError('Passwords do not match');
+      return;
+    }
+
+    setResetPasswordLoading(true);
+    try {
+      const otp = (window as any).__resetOtp;
+      const result = await window.electronAPI?.verifyResetOtp(resetEmail, otp, newPassword);
+      if (result?.error) {
+        setResetPasswordError(result.error);
+        if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
+          setView('reset-otp');
+          setOtpError(result.error);
+        }
+      } else {
+        delete (window as any).__resetOtp;
+        toast({ title: 'Password updated', description: 'You can now sign in with your new password.' });
+        setView('login');
+        setPassword('');
+        setEmail(resetEmail);
+      }
+    } catch {
+      setResetPasswordError('Failed to update password. Please try again.');
+    } finally {
+      setResetPasswordLoading(false);
+    }
+  };
+
+  const handleResendResetOtp = async () => {
+    try {
+      const result = await window.electronAPI?.sendResetOtp(resetEmail);
+      if (result?.error) {
+        setOtpError(result.error);
+      } else {
+        toast({ title: 'Code resent', description: 'A new reset code has been sent.' });
+      }
+    } catch {
+      setOtpError('Failed to resend code.');
+    }
+  };
 
   useEffect(() => {
     if (externalError) {
       setIsLoading(false);
       setPassword('');
       setEmail('');
+
+      const isInvalidCreds = externalError.toLowerCase().includes('invalid login credentials');
       toast({
         variant: "destructive",
         title: "Login Failed",
-        description: externalError,
-        duration: 4000,
+        description: isInvalidCreds
+          ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
+          : externalError,
+        duration: 5000,
       });
     }
   }, [externalError, toast]);
@@ -79,23 +176,121 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
     }
   };
 
+  const windowTitleBar = (
+    <div
+      className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+    >
+      <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+        <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+        <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
+      </div>
+    </div>
+  );
+
+  if (view === 'reset-otp') {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        {windowTitleBar}
+        <div className="flex-1 flex items-center justify-center p-8">
+          <OtpVerification
+            email={resetEmail}
+            purpose="reset"
+            isLoading={false}
+            error={otpError}
+            onVerify={handleVerifyResetOtp}
+            onResend={handleResendResetOtp}
+            onBack={() => { setView('login'); setOtpError(''); }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'reset-password') {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        {windowTitleBar}
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="w-full max-w-[380px] space-y-7 animate-fade-in">
+            <button
+              onClick={() => { setView('reset-otp'); setResetPasswordError(''); }}
+              disabled={resetPasswordLoading}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+            >
+              <ArrowLeft size={16} weight="light" />
+              Back
+            </button>
+
+            <div className="flex flex-col items-center text-center space-y-3">
+              <div className="w-14 h-14 rounded-full bg-emerald/10 flex items-center justify-center">
+                <Key size={28} weight="light" className="text-emerald" />
+              </div>
+              <div className="space-y-1.5">
+                <h2 className="text-2xl font-bold text-foreground tracking-tight">Set new password</h2>
+                <p className="text-sm text-muted-foreground">Choose a strong password for your account</p>
+              </div>
+            </div>
+
+            {resetPasswordError && (
+              <div className="flex items-start gap-2.5 p-3.5 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
+                <div className="w-4 h-4 rounded-full bg-destructive/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
+                </div>
+                <p className="text-sm text-destructive leading-snug">{resetPasswordError}</p>
+              </div>
+            )}
+
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="newPassword" className="text-sm font-medium text-foreground">New password</Label>
+                <Input
+                  id="newPassword" type="password" placeholder="••••••••"
+                  value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
+                  required minLength={6} disabled={resetPasswordLoading}
+                  className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
+                />
+                <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="confirmNewPassword" className="text-sm font-medium text-foreground">Confirm new password</Label>
+                <Input
+                  id="confirmNewPassword" type="password" placeholder="••••••••"
+                  value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  required minLength={6} disabled={resetPasswordLoading}
+                  className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60 transition-button"
+                />
+              </div>
+
+              <Button
+                type="submit" disabled={resetPasswordLoading}
+                className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button mt-1"
+              >
+                {resetPasswordLoading ? (
+                  <CircleNotch size={16} weight="light" className="animate-spin" />
+                ) : (
+                  <span className="flex items-center gap-2">
+                    Update Password
+                    <ArrowRight size={16} weight="light" />
+                  </span>
+                )}
+              </Button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* ── Window title bar ── */}
-      <div
-        className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
-        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-      >
-        <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus className="w-3.5 h-3.5" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square className="w-3 h-3" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X className="w-3.5 h-3.5" /></button>
-        </div>
-      </div>
+      {windowTitleBar}
       <div className="flex flex-1">
       {/* Left decorative panel */}
       <div className="hidden lg:flex lg:w-[42%] bg-sidebar flex-col justify-between p-12 border-r border-sidebar-border relative overflow-hidden">
-        {/* Subtle grid pattern */}
         <div
           className="absolute inset-0 opacity-[0.03]"
           style={{
@@ -173,7 +368,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
               className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button flex items-center gap-2.5"
             >
               {oauthLoading === 'google' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -193,9 +388,9 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
               className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button flex items-center gap-2.5"
             >
               {oauthLoading === 'github' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
-                <Github className="w-4 h-4 flex-shrink-0" />
+                <GithubLogo size={16} weight="light" className="flex-shrink-0" />
               )}
               Continue with GitHub
             </Button>
@@ -235,6 +430,14 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
                 <Label htmlFor="password" className="text-sm font-medium text-foreground">
                   Password
                 </Label>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={resetLoading}
+                  className="text-xs text-emerald hover:text-emerald/80 font-medium transition-colors disabled:opacity-50"
+                >
+                  {resetLoading ? 'Sending...' : 'Forgot password?'}
+                </button>
               </div>
               <Input
                 id="password"
@@ -256,11 +459,11 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
               className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button"
             >
               {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <span className="flex items-center gap-2">
                   Sign In
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight size={16} weight="light" />
                 </span>
               )}
             </Button>

@@ -11,6 +11,7 @@ import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
 import { networkMonitor } from './network-monitor-singleton';
 import { localCache } from '../database/local-cache';
+import { emailService } from '../services/email-service';
 
 // Services (lazy loaded)
 let authService: AuthService | null = null;
@@ -26,6 +27,11 @@ function getServices() {
     return { authService, userService, chatService, promptLibraryService };
 }
 
+// Dedup guard: if handleSuccessfulAuth is already in-flight (e.g. auth:check from
+// the renderer racing with checkAndRestoreSession on startup), reuse the existing
+// Promise instead of starting a second parallel Supabase session.
+let _authLoadPromise: Promise<void> | null = null;
+
 /**
  * Check for existing session and restore state
  */
@@ -40,6 +46,8 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
             console.log('[Auth] No valid session found');
             authState.isAuthenticated = false;
             authState.currentUserId = null;
+            // Notify renderer so it can leave the loading state
+            appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
             return false;
         }
 
@@ -58,14 +66,33 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
         Sentry.captureException(error);
         authState.isAuthenticated = false;
         authState.currentUserId = null;
+        appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
         return false;
     }
 }
 
 /**
- * Handle successful authentication (updates state, loads data)
+ * Handle successful authentication (updates state, loads data).
+ *
+ * Dedup: if already in-flight (e.g. auth:check from renderer races with
+ * checkAndRestoreSession on startup) the existing Promise is reused instead
+ * of firing a second parallel Supabase session.
  */
-export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
+export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any): Promise<void> {
+    if (_authLoadPromise) {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'handleSuccessfulAuth dedup — reusing in-flight call', level: 'info' });
+        return _authLoadPromise;
+    }
+    _authLoadPromise = _runHandleSuccessfulAuth(appWindowManager, cachedUser);
+    try {
+        await _authLoadPromise;
+    } finally {
+        // Reset so future sign-in / re-auth calls work normally.
+        _authLoadPromise = null;
+    }
+}
+
+async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any) {
     const { authService, userService, chatService, promptLibraryService } = getServices();
 
     try {
@@ -90,30 +117,42 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
         authState.currentUserId = user.id;
         authState.currentUserEmail = user.email ?? null;
 
-        // Build user data object
         let userData: any = null;
         if (networkMonitor.isOnline) {
             try {
-                userData = await userService.getCompleteUserData();
-                // Cache avatar for offline use if present
+                const [completeUserData, identitiesResult] = await Sentry.startSpan(
+                    { name: 'auth.load-user-data', op: 'http.parallel', attributes: { userId: user.id } },
+                    () => Promise.all([
+                        userService.getCompleteUserData(),
+                        authService.getIdentities().catch(e => {
+                            console.warn('[Auth] Could not load identities:', e);
+                            return { identities: [] as any[], error: null };
+                        }),
+                    ])
+                );
+                userData = completeUserData;
+                userData.identities = identitiesResult.identities ?? [];
+                Sentry.addBreadcrumb({ category: 'auth', message: 'User data loaded (parallel)', level: 'info', data: { userId: user.id, identityCount: userData.identities.length } });
+
                 if (userData?.profile?.avatar_url) {
-                    try {
-                        const avatarRes = await fetch(userData.profile.avatar_url);
-                        if (avatarRes.ok) {
+                    fetch(userData.profile.avatar_url)
+                        .then(async (avatarRes) => {
+                            if (!avatarRes.ok) return;
                             const arrayBuffer = await avatarRes.arrayBuffer();
                             const buffer = Buffer.from(arrayBuffer);
                             const mimeType = avatarRes.headers.get('content-type') || 'image/jpeg';
                             const base64 = `data:${mimeType};base64,${buffer.toString('base64')}`;
                             localCache.setAvatar(user.id, base64);
                             console.log('[Auth] ✅ Avatar cached for offline use');
-                        }
-                    } catch (avatarErr) {
-                        console.warn('[Auth] Could not cache avatar:', avatarErr);
-                    }
+                        })
+                        .catch(avatarErr => console.warn('[Auth] Could not cache avatar:', avatarErr));
                 }
             } catch (e) {
+                Sentry.captureException(e, { tags: { component: 'auth', op: 'load-user-data' }, extra: { userId: user.id } });
                 console.warn('[Auth] Could not load user data from network:', e);
             }
+        } else {
+            userData = null;
         }
 
         // Fallback: construct minimal user data from the session user object
@@ -128,6 +167,7 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
                     avatar_url: localCache.getAvatar(user.id) || user.user_metadata?.avatar_url || null,
                 },
                 preferences: {},
+                identities: [],
             };
         }
 
@@ -135,7 +175,7 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
         appWindowManager.send('sentry:set-user', { id: user.id });
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
 
-        // 1. Send Auth State
+        // 1. Send Auth State — UI transitions from loading spinner to app view.
         console.log('[Auth] 📤 Sending authenticated state to renderer');
         appWindowManager.send('auth:state-changed', {
             isAuthenticated: true,
@@ -190,49 +230,174 @@ export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, c
 export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     const { authService } = getServices();
 
+    // Initialize email service for OTP
+    emailService.initialize();
+    // Periodically clean up expired OTPs
+    setInterval(() => emailService.cleanup(), 5 * 60 * 1000);
+
     // ============================================
     // AUTH IPC HANDLERS
     // ============================================
 
-    // Sign Up
-    ipcMain.on('auth:sign-up', async (event, data: { name: string; dob: string; email: string; password: string }) => {
+    // Send Sign-Up OTP (step 1: check email uniqueness, then send OTP)
+    ipcMain.handle('auth:send-signup-otp', async (_event, data: { name: string; dob: string; email: string; password: string }) => {
         try {
-            console.log('[Auth] Sign up request for:', data.email);
+            const email = data.email.toLowerCase().trim();
+            console.log('[Auth] Sending signup OTP to:', email);
 
-            const { user, error } = await authService!.signUp(data);
+            // Check if the email is already registered in auth.users
+            const adminClient = SupabaseClientManager.getAdminClient();
+            if (adminClient) {
+                const { data: exists, error: rpcError } = await adminClient
+                    .rpc('check_email_exists', { email_input: email });
+
+                if (rpcError) {
+                    console.warn('[Auth] Email check RPC failed, falling back:', rpcError.message);
+                } else if (exists) {
+                    return { error: 'An account with this email already exists. Please sign in instead.' };
+                }
+            }
+
+            const result = await emailService.sendSignupOtp(data);
+            if (!result.success) {
+                return { error: result.error };
+            }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Signup OTP sent', level: 'info', data: { email } });
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Send signup OTP error:', error);
+            Sentry.captureException(error, { tags: { op: 'auth:send-signup-otp' } });
+            return { error: error.message || 'Failed to send verification code' };
+        }
+    });
+
+    // Verify Sign-Up OTP (step 2: verify code, then create Supabase user)
+    ipcMain.handle('auth:verify-signup-otp', async (_event, { email, otp }: { email: string; otp: string }) => {
+        try {
+            console.log('[Auth] Verifying signup OTP for:', email);
+            const verification = emailService.verifySignupOtp(email, otp);
+
+            if (!verification.valid || !verification.data) {
+                return { error: verification.error };
+            }
+
+            const signupData = verification.data;
+            const { user, error } = await authService!.signUp({
+                name: signupData.name,
+                dob: signupData.dob,
+                email: signupData.email,
+                password: signupData.password,
+            });
 
             if (error || !user) {
-                console.error('[Auth] Sign up failed:', error?.message);
-                appWindowManager.send('auth:state-changed', {
-                    isAuthenticated: false,
-                    user: null,
-                    error: error?.message || 'Sign up failed',
-                });
-                return;
+                console.error('[Auth] Sign up failed after OTP:', error?.message);
+                const msg = error?.message?.toLowerCase().includes('already registered')
+                    ? 'An account with this email already exists. Please sign in instead.'
+                    : (error?.message || 'Sign up failed');
+                return { error: msg };
             }
 
-            console.log('[Auth] ✅ Sign up successful, signing in...');
+            console.log('[Auth] Sign up successful after OTP, signing in...');
 
-            // Auto-sign in after signup
-            const { session: signInSession, error: signInError } = await authService!.signIn({
-                email: data.email,
-                password: data.password,
+            const { session, error: signInError } = await authService!.signIn({
+                email: signupData.email,
+                password: signupData.password,
             });
 
-            if (signInError || !signInSession) {
+            if (signInError || !session) {
                 console.error('[Auth] Auto sign-in after signup failed:', signInError?.message);
-                return;
+                return { error: signInError?.message || 'Sign in after signup failed' };
             }
 
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Signup OTP verified — user created', level: 'info' });
             await handleSuccessfulAuth(appWindowManager);
-        } catch (error) {
-            console.error('[Auth] Unexpected sign up error:', error);
-            Sentry.captureException(error);
-            appWindowManager.send('auth:state-changed', {
-                isAuthenticated: false,
-                user: null,
-                error: 'Sign up failed',
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Verify signup OTP error:', error);
+            Sentry.captureException(error, { tags: { op: 'auth:verify-signup-otp' } });
+            return { error: error.message || 'Verification failed' };
+        }
+    });
+
+    // Resend Sign-Up OTP
+    ipcMain.handle('auth:resend-signup-otp', async (_event, { email }: { email: string }) => {
+        try {
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Resend signup OTP requested', level: 'info', data: { email } });
+            console.log('[Auth] Resending signup OTP to:', email);
+            // We need the original signup data, but it may have been cleared
+            // The frontend re-sends the full data via send-signup-otp instead
+            return { error: 'Please use the original sign-up flow to resend.' };
+        } catch (error: any) {
+            Sentry.captureException(error, { tags: { op: 'auth:resend-signup-otp' } });
+            return { error: error.message || 'Failed to resend code' };
+        }
+    });
+
+    // Send Password Reset OTP
+    ipcMain.handle('auth:send-reset-otp', async (_event, { email }: { email: string }) => {
+        try {
+            console.log('[Auth] Sending reset OTP to:', email);
+            const result = await emailService.sendResetOtp(email);
+            if (!result.success) {
+                return { error: result.error };
+            }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP sent', level: 'info', data: { email } });
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Send reset OTP error:', error);
+            Sentry.captureException(error, { tags: { op: 'auth:send-reset-otp' } });
+            return { error: error.message || 'Failed to send reset code' };
+        }
+    });
+
+    // Verify Reset OTP and update password
+    ipcMain.handle('auth:verify-reset-otp', async (_event, { email, otp, newPassword }: { email: string; otp: string; newPassword: string }) => {
+        try {
+            console.log('[Auth] Verifying reset OTP for:', email);
+            const verification = emailService.verifyResetOtp(email, otp);
+
+            if (!verification.valid) {
+                return { error: verification.error };
+            }
+
+            // Use admin client to update the user's password
+            const adminClient = SupabaseClientManager.getAdminClient();
+            if (!adminClient) {
+                return { error: 'Password reset is not configured. Contact support.' };
+            }
+
+            // Find user by email
+            const { data: userData, error: listError } = await adminClient.auth.admin.listUsers();
+            if (listError) {
+                Sentry.captureException(listError, { tags: { op: 'auth:verify-reset-otp', step: 'listUsers' } });
+                console.error('[Auth] Admin listUsers error:', listError);
+                return { error: 'Could not look up user. Please try again.' };
+            }
+
+            const targetUser = userData.users.find(
+                (u: any) => u.email?.toLowerCase() === email.toLowerCase().trim()
+            );
+            if (!targetUser) {
+                return { error: 'No account found with this email address.' };
+            }
+
+            const { error: updateError } = await adminClient.auth.admin.updateUserById(targetUser.id, {
+                password: newPassword,
             });
+
+            if (updateError) {
+                Sentry.captureException(updateError, { tags: { op: 'auth:verify-reset-otp', step: 'updateUserById' } });
+                console.error('[Auth] Admin updateUser error:', updateError);
+                return { error: updateError.message || 'Failed to update password' };
+            }
+
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info', data: { email } });
+            console.log('[Auth] Password reset successful for:', email);
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Verify reset OTP error:', error);
+            Sentry.captureException(error, { tags: { op: 'auth:verify-reset-otp' } });
+            return { error: error.message || 'Password reset failed' };
         }
     });
 
@@ -451,6 +616,190 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             console.error('[Auth] OAuth sign-in failed:', err.message);
             Sentry.captureException(err);
             return { error: err.message || 'OAuth sign-in failed' };
+        }
+    });
+
+    // Get Connected Identities
+    ipcMain.handle('auth:get-identities', async () => {
+        try {
+            const { authService } = getServices();
+            const { identities, error } = await authService.getIdentities();
+            if (error) {
+                logger.warn(logger.fmt`auth.get_identities_failed error=${error.message}`);
+                return { identities: [], error: error.message };
+            }
+            return { identities, error: null };
+        } catch (error: any) {
+            console.error('[Auth] Get identities error:', error);
+            logger.warn(logger.fmt`auth.get_identities_error error=${error.message ?? 'unknown'}`);
+            Sentry.captureException(error);
+            return { identities: [], error: error.message || 'Failed to get identities' };
+        }
+    });
+
+    // Link a new OAuth provider to the current account
+    ipcMain.handle('auth:link-identity', async (_event, { provider }: { provider: 'google' | 'github' }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: `Link identity started: ${provider}`, level: 'info' });
+        logger.info(logger.fmt`auth.link_started provider=${provider}`);
+        try {
+            return await new Promise<{ success?: boolean; error?: string }>((resolve, reject) => {
+                let serverClosed = false;
+                const closeServer = () => {
+                    if (!serverClosed) { serverClosed = true; server.close(); }
+                };
+                const timeout = setTimeout(() => {
+                    closeServer();
+                    resolve({ error: 'Link identity timed out' });
+                }, 10 * 60 * 1000);
+
+                const server = http.createServer(async (req, res) => {
+                    const actualPort = (server.address() as { port: number } | null)?.port ?? 0;
+                    try {
+                        const reqUrl = new URL(req.url!, `http://127.0.0.1:${actualPort}`);
+                        if (reqUrl.pathname !== '/auth/callback') {
+                            res.writeHead(404); res.end(); return;
+                        }
+
+                        const code = reqUrl.searchParams.get('code');
+                        const oauthError = reqUrl.searchParams.get('error');
+
+                        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+                        if (code) {
+                            res.end(`<!DOCTYPE html><html><head><title>Connected — Prmpt</title>
+                              <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
+                              .card{text-align:center;padding:40px;max-width:360px}.title{font-size:22px;font-weight:600;margin-bottom:8px}
+                              .sub{color:#888;font-size:14px}</style></head>
+                              <body><div class="card">
+                              <div class="title">Account connected!</div>
+                              <div class="sub">You can close this tab and return to Prmpt.</div>
+                              </div><script>setTimeout(()=>window.close(),2500)</script></body></html>`);
+                        } else {
+                            res.end(`<!DOCTYPE html><html><head><title>Connection failed — Prmpt</title>
+                              <style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#fff}
+                              .card{text-align:center;padding:40px;max-width:360px}.title{font-size:22px;font-weight:600;margin-bottom:8px}
+                              .sub{color:#888;font-size:14px}</style></head>
+                              <body><div class="card">
+                              <div class="title">Connection failed</div>
+                              <div class="sub">${oauthError || 'No authorization code received.'}</div>
+                              </div></body></html>`);
+                        }
+
+                        clearTimeout(timeout);
+                        closeServer();
+
+                        if (code) {
+                            const { authService } = getServices();
+                            const { session, error: sessionError } = await authService.exchangeCodeForSession(code);
+                            if (sessionError || !session) {
+                                logger.warn(logger.fmt`auth.link_exchange_failed provider=${provider} error=${sessionError?.message ?? 'unknown'}`);
+                                Sentry.addBreadcrumb({ category: 'auth', message: `Link exchange failed: ${provider}`, level: 'warning' });
+                                console.error('[Auth] Link identity code exchange failed:', sessionError?.message);
+                                resolve({ error: sessionError?.message || 'Code exchange failed' });
+                                return;
+                            }
+                            logger.info(logger.fmt`auth.link_success provider=${provider} userId=${session.user.id}`);
+                            Sentry.addBreadcrumb({ category: 'auth', message: `Link identity success: ${provider}`, level: 'info' });
+                            console.log(`[Auth] Identity linked (${provider})`);
+                            appWindowManager.show();
+                            await handleSuccessfulAuth(appWindowManager, session.user);
+                            resolve({ success: true });
+                        } else if (oauthError) {
+                            logger.warn(logger.fmt`auth.link_oauth_error provider=${provider} error=${oauthError}`);
+                            Sentry.addBreadcrumb({ category: 'auth', message: `Link identity OAuth error: ${provider}`, level: 'warning' });
+                            resolve({ error: oauthError });
+                        } else {
+                            resolve({ error: 'No authorization code received' });
+                        }
+                    } catch (err) {
+                        console.error('[Auth] Link identity callback error:', err);
+                        logger.warn(logger.fmt`auth.link_callback_error provider=${provider}`);
+                        Sentry.captureException(err);
+                        res.writeHead(500); res.end();
+                        clearTimeout(timeout);
+                        closeServer();
+                    }
+                });
+
+                server.on('error', (err: NodeJS.ErrnoException) => {
+                    Sentry.captureException(err);
+                    clearTimeout(timeout);
+                    reject(err);
+                });
+
+                server.listen(0, '127.0.0.1', async () => {
+                    const actualPort = (server.address() as { port: number }).port;
+                    const redirectTo = `http://127.0.0.1:${actualPort}/auth/callback`;
+                    try {
+                        const { authService } = getServices();
+                        const { url, error } = await authService.linkIdentity(provider, redirectTo);
+                        if (error || !url) {
+                            closeServer();
+                            clearTimeout(timeout);
+                            resolve({ error: error?.message || 'Failed to generate link URL' });
+                            return;
+                        }
+                        await shell.openExternal(url);
+                        console.log(`[Auth] Link identity flow started for ${provider} — callback on port ${actualPort}`);
+                    } catch (err: any) {
+                        closeServer();
+                        clearTimeout(timeout);
+                        resolve({ error: err.message || 'Link identity failed' });
+                    }
+                });
+            });
+        } catch (err: any) {
+            console.error('[Auth] Link identity failed:', err.message);
+            logger.warn(logger.fmt`auth.link_failed provider=${provider} error=${err.message ?? 'unknown'}`);
+            Sentry.addBreadcrumb({ category: 'auth', message: `Link identity failed: ${provider}`, level: 'error' });
+            Sentry.captureException(err);
+            return { error: err.message || 'Link identity failed' };
+        }
+    });
+
+    // Unlink an OAuth provider from the current account
+    ipcMain.handle('auth:unlink-identity', async (_event, { identityId }: { identityId: string }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Unlink identity started', level: 'info' });
+        logger.info(logger.fmt`auth.unlink_started identityId=${identityId}`);
+        try {
+            const { authService } = getServices();
+            const { error } = await authService.unlinkIdentity(identityId);
+            if (error) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'Unlink identity failed', level: 'warning' });
+                logger.warn(logger.fmt`auth.unlink_failed identityId=${identityId} error=${error.message}`);
+                return { error: error.message };
+            }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Unlink identity success', level: 'info' });
+            logger.info(logger.fmt`auth.unlink_success identityId=${identityId}`);
+            await handleSuccessfulAuth(appWindowManager);
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Unlink identity error:', error);
+            logger.warn(logger.fmt`auth.unlink_error identityId=${identityId} error=${error.message ?? 'unknown'}`);
+            Sentry.captureException(error);
+            return { error: error.message || 'Failed to unlink identity' };
+        }
+    });
+
+    // Reset password (send email)
+    ipcMain.handle('auth:reset-password', async (_event, { email }: { email: string }) => {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset requested', level: 'info' });
+        logger.info(logger.fmt`auth.password_reset_requested email=${email}`);
+        try {
+            const { authService } = getServices();
+            const { error } = await authService.resetPasswordForEmail(email);
+            if (error) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset failed', level: 'warning' });
+                logger.warn(logger.fmt`auth.password_reset_failed email=${email} error=${error.message}`);
+                return { error: error.message };
+            }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset email sent', level: 'info' });
+            logger.info(logger.fmt`auth.password_reset_sent email=${email}`);
+            return { success: true };
+        } catch (error: any) {
+            console.error('[Auth] Reset password error:', error);
+            logger.warn(logger.fmt`auth.password_reset_error email=${email} error=${error.message ?? 'unknown'}`);
+            Sentry.captureException(error);
+            return { error: error.message || 'Failed to send reset email' };
         }
     });
 

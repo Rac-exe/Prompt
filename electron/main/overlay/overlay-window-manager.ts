@@ -44,6 +44,11 @@ export class OverlayWindowManager {
    *  pre-heat is complete.  Only then may the overlay be opened. */
   private isLoaded = false;
 
+  /** true while preheatCompositor() is mid-flight (async).
+   *  Prevents the fallback timer and the overlay:ready IPC from both
+   *  entering preheatCompositor() concurrently before isLoaded is set. */
+  private isPreheating = false;
+
   /** true when the user triggered open() before isLoaded became true.
    *  showAndFocus() will be called automatically once loading completes. */
   private shouldShowOnReady = false;
@@ -94,6 +99,7 @@ export class OverlayWindowManager {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        devTools: !app.isPackaged,
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
         // Keep renderer active when parked off-screen so the GPU framebuffer
         // stays current.  Without this, Chromium throttles the renderer and
@@ -105,6 +111,23 @@ export class OverlayWindowManager {
     // Keep overlay above screenshot tools and screen-capture UIs.
     // 'screen-saver' is the highest z-order level available on Windows/macOS.
     this.window.setAlwaysOnTop(true, 'screen-saver');
+
+    // ── Disable zoom completely ────────────────────────────────────────────
+    // Clamp Chromium's pinch/gesture zoom to 1x so it cannot drift.
+    this.window.webContents.setVisualZoomLevelLimits(1, 1);
+
+    // Block Ctrl+=/+, Ctrl+-, Ctrl+0 — Chromium handles these natively and
+    // they fire even without any JS handler, so we must swallow them here.
+    this.window.webContents.on('before-input-event', (_event, input) => {
+      if (input.type !== 'keyDown' || !input.control) return;
+      if (
+        input.key === '=' || input.key === '+' ||
+        input.key === '-' || input.key === '_' ||
+        input.key === '0'
+      ) {
+        _event.preventDefault();
+      }
+    });
 
     // ── Renderer-driven readiness ──────────────────────────────────────────
     // The React app sends 'overlay:ready' after it has mounted and painted
@@ -168,8 +191,9 @@ export class OverlayWindowManager {
    *   5. Mark as loaded — future opens just move the window on-screen
    */
   private async preheatCompositor() {
-    if (this.isLoaded) return; // Already done (e.g. by fallback timer)
-    if (!this.window || this.window.isDestroyed()) return;
+    if (this.isLoaded || this.isPreheating) return; // Already done or in-flight
+    this.isPreheating = true; // Set synchronously before first await to block concurrent calls
+    if (!this.window || this.window.isDestroyed()) { this.isPreheating = false; return; }
 
     // Force a fresh render so the framebuffer is up-to-date
     this.window.webContents.invalidate();
@@ -183,14 +207,15 @@ export class OverlayWindowManager {
       await this.window.webContents.executeJavaScript(
         'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
       );
-    } catch {
-      // Renderer unresponsive — proceed anyway
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-window-manager', op: 'preheatCompositor' } });
     }
 
     // Guard: window may have been destroyed during the await
     if (!this.window || this.window.isDestroyed()) return;
 
     this.isLoaded = true;
+    this.isPreheating = false;
     console.log('[OverlayWindowManager] Compositor pre-heated — overlay ready');
 
     // If the user already triggered open() before we finished, show now
@@ -361,7 +386,9 @@ export class OverlayWindowManager {
       if (this.window && !this.window.isDestroyed() && this.window.webContents && !this.window.webContents.isDestroyed()) {
         this.window.webContents.send(channel, data);
       }
-    } catch (_) {}
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-window-manager', op: 'send' }, extra: { channel } });
+    }
   }
 
   /**

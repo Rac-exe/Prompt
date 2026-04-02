@@ -240,6 +240,7 @@ export function registerOverlayHandlers(
             }
           }
         } catch (settingsErr) {
+          Sentry.captureException(settingsErr, { tags: { component: 'overlay-ipc', op: 'fetch-custom-instructions' } });
           console.warn('[Overlay] Failed to fetch custom instructions:', settingsErr);
         }
       }
@@ -253,7 +254,9 @@ export function registerOverlayHandlers(
             const memCtx = await getMemoryService().buildMemoryContext();
             if (memCtx) customInstructions = customInstructions ? `${customInstructions}\n\n${memCtx}` : memCtx;
           }
-        } catch { /* non-critical */ }
+        } catch (memErr) {
+          Sentry.captureException(memErr, { tags: { component: 'overlay-ipc', op: 'build-memory-context' } });
+        }
       }
 
       // ── Build history context ──────────────────────────────────────
@@ -271,6 +274,7 @@ export function registerOverlayHandlers(
           historyContext = recent.map((m: any) => ({ role: m.role, content: m.content }));
           console.log(`[Overlay] Using chat context from chatId=${data.chatId} (${historyContext.length} msgs)`);
         } catch (ctxErr) {
+          Sentry.captureException(ctxErr, { tags: { component: 'overlay-ipc', op: 'load-chat-context' } });
           console.warn('[Overlay] Failed to load chat context, falling back to session history:', ctxErr);
           historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
         }
@@ -367,7 +371,7 @@ export function registerOverlayHandlers(
                 if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
                   const results = await Promise.allSettled(
                     data.attachedFiles.map(f =>
-                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId)
+                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId, pythonClient)
                     )
                   );
                   filesForDb = results.map((r, i) => {
@@ -377,6 +381,10 @@ export function registerOverlayHandlers(
                     Sentry.captureException(reason, { tags: { component: 'file-upload', context: 'overlay-context-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
+                  const failedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                  if (failedNames.length > 0) {
+                    overlayManager.send('overlay:upload-partial-failure', { failedFiles: failedNames });
+                  }
                 }
                 userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
                   groupId: userGroupId,
@@ -419,6 +427,7 @@ export function registerOverlayHandlers(
                   localCache.setChats(userId, chats as any);
                   appWindowManager.send('chats-loaded', { chats });
                 } catch (touchErr) {
+                  Sentry.captureException(touchErr, { tags: { component: 'overlay-ipc', op: 'touch-chat' } });
                   console.warn('[Overlay] Failed to touch chat updated_at:', touchErr);
                 }
               }
@@ -451,6 +460,7 @@ export function registerOverlayHandlers(
                         console.log(`[Overlay] Smart title generated: "${smartTitle}"`);
                       }
                     } catch (err) {
+                      Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'smart-title-generation' } });
                       console.warn('[Overlay] Smart title generation failed (non-critical):', err);
                     }
                   })();
@@ -467,7 +477,7 @@ export function registerOverlayHandlers(
                   const olPreId = crypto.randomUUID();
                   const olResults = await Promise.allSettled(
                     data.attachedFiles.map(f =>
-                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId)
+                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId, pythonClient)
                     )
                   );
                   const olFilesForDb = olResults.map((r, i) => {
@@ -477,6 +487,10 @@ export function registerOverlayHandlers(
                     Sentry.captureException(olReason, { tags: { component: 'file-upload', context: 'overlay-session-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
+                  const olFailedNames = olFilesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                  if (olFailedNames.length > 0) {
+                    overlayManager.send('overlay:upload-partial-failure', { failedFiles: olFailedNames });
+                  }
                   await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
                     groupId: olUserGroupId,
                     versionIndex: olUserVersionIndex,
@@ -602,7 +616,10 @@ export function registerOverlayHandlers(
     // Notify the app window so its prompt library refreshes in real-time
     service.getFullLibrary()
       .then(library => appWindowManager.send('prompt-library:loaded', library))
-      .catch(err => console.error('[Overlay] Failed to refresh prompt library in app:', err));
+      .catch(err => {
+        Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'refresh-prompt-library' } });
+        console.error('[Overlay] Failed to refresh prompt library in app:', err);
+      });
 
     return { promptId: saved.id, collectionId };
   });

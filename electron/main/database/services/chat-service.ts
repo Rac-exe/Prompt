@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/electron/main';
 import { SupabaseClientManager } from '../supabase-client';
 
 export interface Chat {
@@ -282,5 +283,37 @@ export class ChatService {
         .eq('user_id', userData.user.id);
         
     if (updateError) throw updateError;
+  }
+
+  /**
+   * Update only the attachedFiles metadata on an existing message.
+   * Used to backfill Cloudinary/Supabase URLs after background uploads complete.
+   */
+  async updateMessageAttachments(messageId: string, attachedFiles: any[]): Promise<void> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    const { data: current, error: fetchError } = await this.client
+        .from('messages')
+        .select('metadata')
+        .eq('id', messageId)
+        .eq('user_id', userData.user.id)
+        .single();
+
+    if (fetchError) {
+      Sentry.captureException(fetchError, { tags: { component: 'chat-service', op: 'updateMessageAttachments-fetch' }, extra: { messageId } });
+      throw fetchError;
+    }
+
+    const { error: updateError } = await this.client
+        .from('messages')
+        .update({ metadata: { ...(current?.metadata || {}), attachedFiles } })
+        .eq('id', messageId)
+        .eq('user_id', userData.user.id);
+
+    if (updateError) {
+      Sentry.captureException(updateError, { tags: { component: 'chat-service', op: 'updateMessageAttachments-update' }, extra: { messageId } });
+      throw updateError;
+    }
   }
 }

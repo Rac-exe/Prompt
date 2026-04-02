@@ -9,6 +9,7 @@ import ChatPicker from './components/ChatPicker';
 import CollectionPicker from './components/CollectionPicker';
 import { useTurns } from './hooks/useTurns';
 import type { AttachedFile, SkillInfo, OverlaySettings } from './lib/types';
+import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 // ── Settings helpers ─────────────────────────────────────────────────────────
 
@@ -96,7 +97,7 @@ const OverlayApp: React.FC = () => {
     const rect = el.getBoundingClientRect();
     const xPct = (x / rect.width) * 100;
     const yPct = (y / rect.height) * 100;
-    el.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--emerald) / 0.8), hsl(var(--emerald) / 0.3) 40%, hsl(var(--border)) 70%)`;
+    el.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--accent) / 0.8), hsl(var(--accent) / 0.3) 40%, hsl(var(--border)) 70%)`;
     clearTimeout(glowTimeoutRef.current);
     glowTimeoutRef.current = setTimeout(() => { el.style.background = 'hsl(var(--border))'; }, 1500);
   }, []);
@@ -115,6 +116,11 @@ const OverlayApp: React.FC = () => {
   useEffect(() => {
     const api = window.electronAPI;
     if (!api) return;
+
+    // ── Pre-warm auth state so AuthGate never flashes on first open ──
+    api.overlay?.checkAuth?.().then((data: { isAuthenticated: boolean }) => {
+      if (data?.isAuthenticated) setIsAuthenticated(true);
+    }).catch(() => {});
 
     // ── Cursor glow via IPC ──
     api.overlay?.onCursorPos?.(({ x, y }: { x: number; y: number }) => updateGlow(x, y));
@@ -170,6 +176,13 @@ const OverlayApp: React.FC = () => {
       setTimeout(() => setErrorMessage(null), 5000);
     });
 
+    // ── File upload partial failure ──
+    const cleanupUploadFailure = api.overlay?.onUploadPartialFailure?.((data: { failedFiles: string[] }) => {
+      const names = data.failedFiles.join(', ');
+      setErrorMessage(`Some files failed to upload: ${names}. Check your connection and try again.`);
+      setTimeout(() => setErrorMessage(null), 7000);
+    });
+
     // ── Network status ──
     api.onNetworkStatus?.((data: { isOnline: boolean }) => setIsOnline(data.isOnline));
     api.onNetworkReconnected?.(() => setIsOnline(true));
@@ -193,6 +206,7 @@ const OverlayApp: React.FC = () => {
       cleanupChunk?.();
       cleanupComplete?.();
       cleanupError?.();
+      cleanupUploadFailure?.();
       cleanupSettings?.();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -484,6 +498,8 @@ const OverlayApp: React.FC = () => {
           onSaved={() => {}}
         />
       </div>
+
+      <ZoomIndicator />
     </div>
     </Sentry.ErrorBoundary>
   );

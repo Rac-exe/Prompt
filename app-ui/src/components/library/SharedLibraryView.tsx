@@ -2,15 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import * as Sentry from "@sentry/react";
 import {
   User,
-  Library,
+  Books,
   Copy,
   Check,
-  BookmarkPlus,
-  BookmarkCheck,
+  BookmarkSimple,
   ArrowLeft,
-  Loader2,
-  Calendar,
-} from "lucide-react";
+  CircleNotch,
+  CalendarBlank,
+} from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
@@ -71,14 +70,14 @@ const SharedPromptRow = ({ prompt }: { prompt: SharedPrompt }) => {
           )}
           onClick={handleCopy}
         >
-          {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          {copied ? <Check size={12} weight="light" /> : <Copy size={12} weight="light" />}
         </Button>
       </div>
       <p className="text-xs text-muted-foreground line-clamp-2 mb-3 leading-relaxed">
         {prompt.content}
       </p>
       <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
-        <Calendar className="w-2.5 h-2.5" />
+        <CalendarBlank size={10} weight="light" />
         <span>{new Date(prompt.created_at).toLocaleDateString()}</span>
       </div>
     </div>
@@ -172,7 +171,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
     return (
       <div className="flex-1 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="w-8 h-8 animate-spin text-emerald" />
+          <CircleNotch size={32} weight="light" className="animate-spin text-emerald" />
           <p className="text-sm">Loading shared library…</p>
         </div>
       </div>
@@ -185,7 +184,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
       <div className="flex-1 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-center max-w-xs">
           <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center">
-            <Library className="w-6 h-6 text-muted-foreground/40" />
+            <Books size={24} weight="light" className="text-muted-foreground/40" />
           </div>
           <p className="text-sm font-medium text-foreground">Library not found</p>
           <p className="text-xs text-muted-foreground">
@@ -193,7 +192,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
           </p>
           {onBack && (
             <Button variant="outline" size="sm" onClick={onBack} className="mt-2">
-              <ArrowLeft className="w-3.5 h-3.5 mr-2" />
+              <ArrowLeft size={14} weight="light" className="mr-2" />
               Go back
             </Button>
           )}
@@ -212,7 +211,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
             onClick={onBack}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-3 transition-smooth"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
+            <ArrowLeft size={14} weight="light" />
             Back to Library
           </button>
         )}
@@ -221,7 +220,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
           <div className="min-w-0">
             {/* Creator attribution — always shown */}
             <div className="flex items-center gap-1.5 text-[11px] text-emerald font-medium mb-1.5">
-              <User className="w-3 h-3" />
+              <User size={12} weight="light" />
               <span>Library created by {library.owner_name}</span>
             </div>
 
@@ -247,17 +246,17 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
           >
             {saving ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
                 Saving…
               </>
             ) : saved ? (
               <>
-                <BookmarkCheck className="w-4 h-4" />
+                <BookmarkSimple size={16} weight="fill" />
                 Saved ✓
               </>
             ) : (
               <>
-                <BookmarkPlus className="w-4 h-4" />
+                <BookmarkSimple size={16} weight="light" />
                 Save Library
               </>
             )}
@@ -271,7 +270,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
           {library.prompts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center animate-fade-in">
               <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center mb-4">
-                <Library className="w-6 h-6 text-muted-foreground/40" />
+                <Books size={24} weight="light" className="text-muted-foreground/40" />
               </div>
               <p className="text-sm font-medium text-foreground mb-1">No prompts yet</p>
               <p className="text-xs text-muted-foreground max-w-xs">

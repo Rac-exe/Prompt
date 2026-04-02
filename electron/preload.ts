@@ -182,6 +182,15 @@ declare global {
       signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
+      getIdentities: () => Promise<{ identities: any[]; error?: string | null }>;
+      linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
+      unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
+      resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
+      // OTP API
+      sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
+      verifySignupOtp: (email: string, otp: string) => Promise<{ success?: boolean; error?: string }>;
+      sendResetOtp: (email: string) => Promise<{ success?: boolean; error?: string }>;
+      verifyResetOtp: (email: string, otp: string, newPassword: string) => Promise<{ success?: boolean; error?: string }>;
       updateProfile: (updates: any) => void;
       uploadAvatar: (imageData: string, filename: string) => Promise<{ success: boolean; url?: string; error?: string }>;
       updatePreferences: (updates: any) => void;
@@ -278,6 +287,13 @@ declare global {
       // Python service status
       onPythonUnavailable: (callback: () => void) => void;
       onPythonRecovered: (callback: () => void) => void;
+
+      // Zoom API
+      zoom: {
+        get: () => Promise<{ percent: number }>;
+        set: (percent: number) => Promise<void>;
+        onChanged: (callback: (data: { percent: number }) => void) => () => void;
+      };
     };
   }
 }
@@ -345,6 +361,11 @@ const electronAPI = {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('overlay:optimization-error', handler);
       return () => ipcRenderer.removeListener('overlay:optimization-error', handler);
+    },
+    onUploadPartialFailure: (callback: (data: { failedFiles: string[] }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:upload-partial-failure', handler);
+      return () => ipcRenderer.removeListener('overlay:upload-partial-failure', handler);
     },
     onCursorPos: (callback: (data: { x: number; y: number }) => void) => {
       ipcRenderer.on('overlay:cursor-pos', (_event, data) => callback(data));
@@ -499,6 +520,11 @@ const electronAPI = {
     ipcRenderer.on('message-send-error', handler);
     return () => ipcRenderer.removeListener('message-send-error', handler);
   },
+  onUploadPartialFailure: (callback: (data: { failedFiles: string[] }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('upload-partial-failure', handler);
+    return () => ipcRenderer.removeListener('upload-partial-failure', handler);
+  },
   onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('send-message-queued', handler);
@@ -553,11 +579,35 @@ const electronAPI = {
   checkAuth: () => {
     ipcRenderer.send('auth:check');
   },
+  getIdentities: () => {
+    return ipcRenderer.invoke('auth:get-identities');
+  },
+  linkIdentity: (provider: 'google' | 'github') => {
+    return ipcRenderer.invoke('auth:link-identity', { provider });
+  },
+  unlinkIdentity: (identityId: string) => {
+    return ipcRenderer.invoke('auth:unlink-identity', { identityId });
+  },
+  resetPassword: (email: string) => {
+    return ipcRenderer.invoke('auth:reset-password', { email });
+  },
+  sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => {
+    return ipcRenderer.invoke('auth:send-signup-otp', data);
+  },
+  verifySignupOtp: (email: string, otp: string) => {
+    return ipcRenderer.invoke('auth:verify-signup-otp', { email, otp });
+  },
+  sendResetOtp: (email: string) => {
+    return ipcRenderer.invoke('auth:send-reset-otp', { email });
+  },
+  verifyResetOtp: (email: string, otp: string, newPassword: string) => {
+    return ipcRenderer.invoke('auth:verify-reset-otp', { email, otp, newPassword });
+  },
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.removeAllListeners('auth:state-changed');
-    ipcRenderer.on('auth:state-changed', (_event, data) => {
-      callback(data);
-    });
+    ipcRenderer.on('auth:state-changed', handler);
+    return () => ipcRenderer.removeListener('auth:state-changed', handler);
   },
   updateProfile: (updates: any) => {
     ipcRenderer.send('user:update-profile', updates);
@@ -674,8 +724,10 @@ const electronAPI = {
   // SENTRY USER SYNC
   // ============================================
   onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => {
+    const handler = (_event: any, user: any) => callback(user);
     ipcRenderer.removeAllListeners('sentry:set-user');
-    ipcRenderer.on('sentry:set-user', (_event, user) => callback(user));
+    ipcRenderer.on('sentry:set-user', handler);
+    return () => ipcRenderer.removeListener('sentry:set-user', handler);
   },
 
   // ============================================
@@ -754,6 +806,19 @@ const electronAPI = {
   // ============================================
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
+  },
+
+  // ============================================
+  // ZOOM API
+  // ============================================
+  zoom: {
+    get: () => ipcRenderer.invoke('zoom:get'),
+    set: (percent: number) => ipcRenderer.invoke('zoom:set', percent),
+    onChanged: (callback: (data: { percent: number }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('zoom:changed', handler);
+      return () => ipcRenderer.removeListener('zoom:changed', handler);
+    },
   },
 };
 

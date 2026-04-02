@@ -72,6 +72,14 @@ export interface ElectronAPI {
   signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
   checkAuth: () => void;
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any; error?: string }) => void) => void;
+  getIdentities: () => Promise<{ identities: any[]; error?: string | null }>;
+  linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
+  unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
+  resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
+  sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
+  verifySignupOtp: (email: string, otp: string) => Promise<{ success?: boolean; error?: string }>;
+  sendResetOtp: (email: string) => Promise<{ success?: boolean; error?: string }>;
+  verifyResetOtp: (email: string, otp: string, newPassword: string) => Promise<{ success?: boolean; error?: string }>;
   signOut: () => void;
 
   // Chat
@@ -106,6 +114,7 @@ export interface ElectronAPI {
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
+  onUploadPartialFailure?: (callback: (data: { failedFiles: string[] }) => void) => (() => void);
   onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => (() => void);
   onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => (() => void);
   deleteChat: (chatId: string) => void;
@@ -212,6 +221,13 @@ export interface ElectronAPI {
   // Stop generation
   stopGeneration: () => void;
 
+  // Zoom
+  zoom: {
+    get: () => Promise<{ percent: number }>;
+    set: (percent: number) => Promise<void>;
+    onChanged: (callback: (data: { percent: number }) => void) => () => void;
+  };
+
   // Deep link navigation — receives the full React Router route path (e.g. /share/c/<token>)
   onNavigateToShare: (callback: (routePath: string) => void) => (() => void);
 
@@ -245,6 +261,7 @@ export interface ElectronAPI {
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => void;
     onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => void;
     onOptimizationError: (callback: (data: { error: string }) => void) => void;
+    onUploadPartialFailure?: (callback: (data: { failedFiles: string[] }) => void) => (() => void);
     onCursorPos: (callback: (data: { x: number; y: number }) => void) => void;
     getSettings: () => Promise<any>;
     onSettingsUpdate: (callback: (settings: any) => void) => void;

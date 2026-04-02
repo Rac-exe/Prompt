@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThumbsUp, ThumbsDown } from "@phosphor-icons/react";
 import {
     Dialog,
     DialogContent,
@@ -91,7 +91,7 @@ export const FeedbackModal = ({
                                         : "border-border hover:bg-secondary"
                                     }`}
                             >
-                                <ThumbsUp className="w-5 h-5" />
+                                <ThumbsUp size={20} weight="light" />
                                 Good
                             </Button>
                             <Button
@@ -103,7 +103,7 @@ export const FeedbackModal = ({
                                         : "border-border hover:bg-secondary"
                                     }`}
                             >
-                                <ThumbsDown className="w-5 h-5" />
+                                <ThumbsDown size={20} weight="light" />
                                 Not Good
                             </Button>
                         </div>
@@ -144,7 +144,7 @@ export const FeedbackModal = ({
                 ) : (
                     <div className="py-8 text-center animate-in zoom-in duration-300">
                         <div className="w-16 h-16 bg-emerald/20 rounded-full flex items-center justify-center mx-auto mb-3">
-                            <ThumbsUp className="w-8 h-8 text-emerald" />
+                            <ThumbsUp size={32} weight="light" className="text-emerald" />
                         </div>
                         <p className="text-foreground font-medium">Feedback received!</p>
                     </div>

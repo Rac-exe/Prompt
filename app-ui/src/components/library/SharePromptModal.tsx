@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Share2, Copy, Check, Download, Link as LinkIcon } from "lucide-react";
+import { ShareNetwork, Copy, Check, DownloadSimple, Link as LinkIcon } from "@phosphor-icons/react";
 import {
   Dialog,
   DialogContent,
@@ -57,7 +57,7 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
       <DialogContent className="sm:max-w-[500px] bg-card border-border">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-foreground">
-            <Share2 className="w-5 h-5 text-emerald" />
+            <ShareNetwork size={20} weight="light" className="text-emerald" />
             Share Prompt
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
@@ -89,9 +89,9 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
                   variant="outline"
                 >
                   {copied ? (
-                    <Check className="w-4 h-4 text-emerald" />
+                    <Check size={16} weight="light" className="text-emerald" />
                   ) : (
-                    <LinkIcon className="w-4 h-4" />
+                    <LinkIcon size={16} weight="light" />
                   )}
                 </Button>
               </div>
@@ -115,7 +115,7 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
                 onClick={handleExport}
                 className="w-full bg-emerald text-white hover:bg-emerald/90"
               >
-                <Download className="w-4 h-4 mr-2" />
+                <DownloadSimple size={16} weight="light" className="mr-2" />
                 Export as Markdown
               </Button>
             </div>

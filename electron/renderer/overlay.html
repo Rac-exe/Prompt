@@ -85,7 +85,7 @@
       left: 24px;
       right: 24px;
       height: 1px;
-      background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.5), transparent);
+      background: linear-gradient(90deg, transparent, hsl(var(--accent) / 0.5), transparent);
       z-index: 10;
     }
 
@@ -164,7 +164,7 @@
     }
 
     @keyframes flash-success {
-      0% { background-color: hsl(var(--emerald) / 0.15); }
+      0% { background-color: hsl(var(--accent) / 0.15); }
       100% { background-color: transparent; }
     }
 
@@ -179,7 +179,7 @@
 
     /* ======== BUTTON STYLES ======== */
     .btn-primary {
-      background: linear-gradient(135deg, hsl(var(--emerald)), hsl(217 91% 50%));
+      background: linear-gradient(135deg, hsl(var(--accent)), hsl(217 91% 50%));
       color: white;
       font-weight: 600;
       border: none;
@@ -191,7 +191,7 @@
 
     .btn-primary:hover {
       filter: brightness(1.1);
-      box-shadow: 0 0 20px hsl(var(--emerald) / 0.35);
+      box-shadow: 0 0 20px hsl(var(--accent) / 0.35);
     }
 
     .btn-primary:active {
@@ -263,8 +263,8 @@
     }
 
     .input-area:focus-within {
-      border-color: hsl(var(--emerald) / 0.4);
-      box-shadow: 0 0 0 3px hsl(var(--emerald) / 0.08);
+      border-color: hsl(var(--accent) / 0.4);
+      box-shadow: 0 0 0 3px hsl(var(--accent) / 0.08);
     }
 
     /* ======== DIVIDER ======== */
@@ -377,8 +377,8 @@
     }
 
     .user-bubble {
-      background: hsl(var(--emerald) / 0.06);
-      border: 1px solid hsl(var(--emerald) / 0.15);
+      background: hsl(var(--accent) / 0.06);
+      border: 1px solid hsl(var(--accent) / 0.15);
     }
 
     /* ── User message action row (edit / retry) — always visible ── */
@@ -432,8 +432,8 @@
 
     .user-edit-textarea {
       width: 100%;
-      background: hsl(var(--emerald) / 0.06);
-      border: 1px solid hsl(var(--emerald) / 0.35);
+      background: hsl(var(--accent) / 0.06);
+      border: 1px solid hsl(var(--accent) / 0.35);
       border-radius: 12px;
       padding: 10px 14px;
       color: hsl(var(--foreground));
@@ -447,8 +447,8 @@
     }
 
     .user-edit-textarea:focus {
-      border-color: hsl(var(--emerald) / 0.5);
-      box-shadow: 0 0 0 2px hsl(var(--emerald) / 0.08);
+      border-color: hsl(var(--accent) / 0.5);
+      box-shadow: 0 0 0 2px hsl(var(--accent) / 0.08);
     }
 
     .user-edit-actions {
@@ -510,7 +510,7 @@
       display: block;
       height: 1px;
       margin: 0 14px;
-      background: linear-gradient(90deg, transparent, hsl(var(--emerald) / 0.15), transparent);
+      background: linear-gradient(90deg, transparent, hsl(var(--accent) / 0.15), transparent);
     }
 
     .message-actions {
@@ -546,9 +546,9 @@
     }
 
     .btn-msg-action.action-success {
-      background: hsl(var(--emerald) / 0.12);
-      border-color: hsl(var(--emerald) / 0.3);
-      color: hsl(var(--emerald));
+      background: hsl(var(--accent) / 0.12);
+      border-color: hsl(var(--accent) / 0.3);
+      color: hsl(var(--accent));
       pointer-events: none;
     }
 
@@ -570,7 +570,7 @@
       width: 6px;
       height: 6px;
       border-radius: 50%;
-      background: hsl(var(--emerald) / 0.6);
+      background: hsl(var(--accent) / 0.6);
       animation: bounce-dot 1.4s ease-in-out infinite;
     }
 
@@ -633,8 +633,8 @@
     }
 
     .chat-input-box:focus-within {
-      border-color: hsl(var(--emerald) / 0.4);
-      box-shadow: 0 0 0 2px hsl(var(--emerald) / 0.08);
+      border-color: hsl(var(--accent) / 0.4);
+      box-shadow: 0 0 0 2px hsl(var(--accent) / 0.08);
     }
 
     .chat-input-box textarea {
@@ -778,7 +778,7 @@
 
     .mode-dropdown-item .mode-check {
       margin-left: auto;
-      color: hsl(var(--emerald));
+      color: hsl(var(--accent));
       font-size: 14px;
       margin-top: 1px;
     }
@@ -899,8 +899,8 @@
     }
 
     .collection-item.selected {
-      background: hsl(var(--emerald) / 0.08);
-      border-color: hsl(var(--emerald) / 0.4);
+      background: hsl(var(--accent) / 0.08);
+      border-color: hsl(var(--accent) / 0.4);
     }
 
     .collection-name {
@@ -933,7 +933,7 @@
     }
 
     .new-collection-input:focus {
-      border-color: hsl(var(--emerald) / 0.5);
+      border-color: hsl(var(--accent) / 0.5);
     }
 
     .new-collection-input::placeholder {
@@ -983,11 +983,11 @@
       gap: 6px;
       padding: 4px 10px 4px 8px;
       border-radius: 20px;
-      background: hsl(var(--emerald) / 0.08);
-      border: 1px solid hsl(var(--emerald) / 0.25);
+      background: hsl(var(--accent) / 0.08);
+      border: 1px solid hsl(var(--accent) / 0.25);
       font-size: 11px;
       font-weight: 500;
-      color: hsl(var(--emerald));
+      color: hsl(var(--accent));
       cursor: default;
       max-width: 100%;
     }
@@ -1005,7 +1005,7 @@
       background: none;
       border: none;
       cursor: pointer;
-      color: hsl(var(--emerald) / 0.6);
+      color: hsl(var(--accent) / 0.6);
       padding: 0;
       line-height: 1;
       font-size: 14px;
@@ -1017,7 +1017,7 @@
     }
 
     .context-pill-remove:hover {
-      color: hsl(var(--emerald));
+      color: hsl(var(--accent));
     }
 
     /* Attach context button (shown when no context selected) */
@@ -1039,9 +1039,9 @@
     }
 
     .btn-attach-context:hover {
-      border-color: hsl(var(--emerald) / 0.4);
-      color: hsl(var(--emerald));
-      background: hsl(var(--emerald) / 0.05);
+      border-color: hsl(var(--accent) / 0.4);
+      color: hsl(var(--accent));
+      background: hsl(var(--accent) / 0.05);
     }
 
     /* ======== PLUS MENU POPUP ======== */
@@ -1264,11 +1264,11 @@
       height: 24px;
       padding: 0 7px;
       border-radius: 20px;
-      background: hsl(var(--emerald) / 0.1);
-      border: 1px solid hsl(var(--emerald) / 0.25);
+      background: hsl(var(--accent) / 0.1);
+      border: 1px solid hsl(var(--accent) / 0.25);
       font-size: 11px;
       font-weight: 500;
-      color: hsl(var(--emerald));
+      color: hsl(var(--accent));
       white-space: nowrap;
       flex-shrink: 0;
     }
@@ -1277,7 +1277,7 @@
       background: none;
       border: none;
       cursor: pointer;
-      color: hsl(var(--emerald) / 0.6);
+      color: hsl(var(--accent) / 0.6);
       padding: 0;
       display: flex;
       align-items: center;
@@ -1288,7 +1288,7 @@
     }
 
     .skill-pill-remove:hover {
-      color: hsl(var(--emerald));
+      color: hsl(var(--accent));
     }
 
     /* ======== CHAT PICKER MODAL ======== */
@@ -1320,7 +1320,7 @@
     }
 
     .chat-picker-search:focus {
-      border-color: hsl(var(--emerald) / 0.5);
+      border-color: hsl(var(--accent) / 0.5);
     }
 
     .chat-picker-search::placeholder {
@@ -1361,8 +1361,8 @@
     }
 
     .chat-list-item.selected {
-      background: hsl(var(--emerald) / 0.08);
-      border-color: hsl(var(--emerald) / 0.4);
+      background: hsl(var(--accent) / 0.08);
+      border-color: hsl(var(--accent) / 0.4);
     }
 
     /* ======== AUTH VIEW ======== */
@@ -1382,7 +1382,7 @@
       position: absolute;
       inset: -2px;
       border-radius: 50%;
-      background: linear-gradient(135deg, hsl(var(--emerald) / 0.3), transparent);
+      background: linear-gradient(135deg, hsl(var(--accent) / 0.3), transparent);
       z-index: -1;
     }
   </style>
@@ -1399,7 +1399,7 @@
         <div style="display: flex; align-items: center; gap: 10px;">
           <!-- Logo -->
           <div
-            style="width: 28px; height: 28px; border-radius: 10px; background: linear-gradient(135deg, hsl(var(--emerald)), hsl(217 91% 50%)); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px hsl(var(--emerald) / 0.3);">
+            style="width: 28px; height: 28px; border-radius: 10px; background: linear-gradient(135deg, hsl(var(--accent)), hsl(217 91% 50%)); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px hsl(var(--accent) / 0.3);">
             <svg style="width: 14px; height: 14px; color: white;" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
             </svg>
@@ -1475,8 +1475,8 @@
           <!-- Empty state (shown when no messages) -->
           <div id="empty-state" class="empty-state">
             <div
-              style="width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, hsl(var(--emerald) / 0.12), hsl(217 91% 50% / 0.12)); display: flex; align-items: center; justify-content: center;">
-              <svg style="width: 20px; height: 20px; color: hsl(var(--emerald));" fill="currentColor"
+              style="width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, hsl(var(--accent) / 0.12), hsl(217 91% 50% / 0.12)); display: flex; align-items: center; justify-content: center;">
+              <svg style="width: 20px; height: 20px; color: hsl(var(--accent));" fill="currentColor"
                 viewBox="0 0 24 24">
                 <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
               </svg>
@@ -1582,7 +1582,7 @@
                 <!-- Mode dropdown menu -->
                 <div id="mode-dropdown" class="mode-dropdown">
                   <button class="mode-dropdown-item" data-mode="fast" type="button">
-                    <svg class="mode-icon" fill="none" stroke="hsl(var(--emerald))" viewBox="0 0 24 24">
+                    <svg class="mode-icon" fill="none" stroke="hsl(var(--accent))" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                     </svg>
                     <div style="flex: 1;">
@@ -1901,7 +1901,7 @@
       const xPct = (x / rect.width) * 100;
       const yPct = (y / rect.height) * 100;
 
-      panelGlowWrapper.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--emerald) / 0.8), hsl(var(--emerald) / 0.3) 40%, hsl(var(--border)) 70%)`;
+      panelGlowWrapper.style.background = `radial-gradient(circle 200px at ${xPct}% ${yPct}%, hsl(var(--accent) / 0.8), hsl(var(--accent) / 0.3) 40%, hsl(var(--border)) 70%)`;
 
       clearTimeout(glowTimeout);
       glowTimeout = setTimeout(() => {
@@ -2065,13 +2065,13 @@
           return (
             '<div style="position:relative;width:48px;height:48px;flex-shrink:0;">' +
               '<img src="data:' + file.mimeType + ';base64,' + file.base64 + '" alt="' + escapeHtml(file.name) + '" ' +
-                'style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--emerald)/0.2);display:block;">' +
+                'style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid hsl(var(--accent)/0.2);display:block;">' +
             '</div>'
           );
         } else {
           return (
-            '<div style="display:flex;align-items:center;gap:6px;height:38px;padding:0 8px;border-radius:8px;background:hsl(var(--emerald)/0.06);border:1px solid hsl(var(--emerald)/0.15);max-width:160px;flex-shrink:0;">' +
-              '<svg style="width:12px;height:12px;flex-shrink:0;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+            '<div style="display:flex;align-items:center;gap:6px;height:38px;padding:0 8px;border-radius:8px;background:hsl(var(--accent)/0.06);border:1px solid hsl(var(--accent)/0.15);max-width:160px;flex-shrink:0;">' +
+              '<svg style="width:12px;height:12px;flex-shrink:0;color:hsl(var(--accent));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
                 '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>' +
               '</svg>' +
               '<span style="font-size:11px;font-weight:500;color:hsl(var(--foreground));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escapeHtml(file.name) + '</span>' +
@@ -2087,7 +2087,7 @@
       if (!skill) return '';
       const label = skillLabel || skill;
       return (
-        '<div style="display:inline-flex;align-items:center;gap:4px;margin-bottom:8px;height:20px;padding:0 7px;border-radius:20px;background:hsl(var(--emerald)/0.1);border:1px solid hsl(var(--emerald)/0.25);font-size:10px;font-weight:600;color:hsl(var(--emerald));letter-spacing:0.02em;">' +
+        '<div style="display:inline-flex;align-items:center;gap:4px;margin-bottom:8px;height:20px;padding:0 7px;border-radius:20px;background:hsl(var(--accent)/0.1);border:1px solid hsl(var(--accent)/0.25);font-size:10px;font-weight:600;color:hsl(var(--accent));letter-spacing:0.02em;">' +
           '<svg style="width:9px;height:9px;flex-shrink:0;" fill="currentColor" viewBox="0 0 24 24">' +
             '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
           '</svg>' +
@@ -2148,7 +2148,7 @@
       el.id = 'msg-el-' + msg.id;
       el.innerHTML =
         '<div class="message-label">' +
-          '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
+          '<svg style="width: 10px; height: 10px; color: hsl(var(--accent));" fill="currentColor" viewBox="0 0 24 24">' +
             '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
           '</svg>' +
           ' Optimized Prompt' +
@@ -2191,7 +2191,7 @@
       el.id = 'streaming-message';
       el.innerHTML =
         '<div class="message-label">' +
-          '<svg style="width: 10px; height: 10px; color: hsl(var(--emerald));" fill="currentColor" viewBox="0 0 24 24">' +
+          '<svg style="width: 10px; height: 10px; color: hsl(var(--accent));" fill="currentColor" viewBox="0 0 24 24">' +
             '<path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/>' +
           '</svg>' +
           ' Optimized Prompt' +
@@ -3271,11 +3271,11 @@
         btn.innerHTML =
           // Left accent bar (shown when highlighted)
           (isHighlighted
-            ? '<span class="skill-accent" style="position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--emerald));"></span>'
+            ? '<span class="skill-accent" style="position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--accent));"></span>'
             : '') +
           // Icon square
           '<div style="width:32px;height:32px;border-radius:8px;background:hsl(var(--muted)/0.6);border:1px solid hsl(var(--border)/0.5);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' +
-            '<svg style="width:14px;height:14px;color:hsl(var(--emerald));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+            '<svg style="width:14px;height:14px;color:hsl(var(--accent));" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
               iconPath +
             '</svg>' +
           '</div>' +
@@ -3299,7 +3299,7 @@
               if (!accent) {
                 const bar = document.createElement('span');
                 bar.className = 'skill-accent';
-                bar.style.cssText = 'position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--emerald));';
+                bar.style.cssText = 'position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:2px;background:hsl(var(--accent));';
                 el.insertBefore(bar, el.firstChild);
               }
             } else {

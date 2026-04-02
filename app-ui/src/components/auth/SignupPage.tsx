@@ -4,14 +4,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from "@/components/ui/use-toast";
-import { Zap, ArrowRight, Loader2, Minus, Square, X, Github } from 'lucide-react';
+import { Lightning, ArrowRight, CircleNotch, Minus, Square, X, GithubLogo } from '@phosphor-icons/react';
+import { OtpVerification } from './OtpVerification';
 
 interface SignupPageProps {
   onSwitchToLogin: () => void;
   onSignupSuccess: () => void;
 }
 
+type SignupStep = 'form' | 'otp';
+
 export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps) {
+  const [step, setStep] = useState<SignupStep>('form');
   const [formData, setFormData] = useState({
     name: '',
     dob: '',
@@ -22,6 +26,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
   const [isLoading, setIsLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | 'github' | null>(null);
   const [error, setError] = useState('');
+  const [otpError, setOtpError] = useState('');
   const { toast } = useToast();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,22 +79,94 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
 
     setIsLoading(true);
     try {
-      if (window.electronAPI) {
-        window.electronAPI.signUp({
-          name: formData.name,
-          dob: formData.dob,
-          email: formData.email,
-          password: formData.password,
-        });
-      } else {
+      if (!window.electronAPI?.sendSignupOtp) {
         setError('This app requires Electron to run');
         setIsLoading(false);
+        return;
+      }
+
+      const result = await window.electronAPI.sendSignupOtp({
+        name: formData.name,
+        dob: formData.dob,
+        email: formData.email,
+        password: formData.password,
+      });
+
+      if (result?.error) {
+        setError(result.error);
+      } else {
+        setStep('otp');
+        setOtpError('');
+        toast({ title: 'Code sent', description: 'Check your inbox for the verification code.' });
       }
     } catch {
       setError('An unexpected error occurred');
+    } finally {
       setIsLoading(false);
     }
   };
+
+  const handleVerifyOtp = async (otp: string) => {
+    setOtpError('');
+    setIsLoading(true);
+    try {
+      const result = await window.electronAPI?.verifySignupOtp(formData.email, otp);
+      if (result?.error) {
+        setOtpError(result.error);
+      }
+      // On success, auth state change will be triggered by the backend
+    } catch {
+      setOtpError('Verification failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    try {
+      const result = await window.electronAPI?.sendSignupOtp({
+        name: formData.name,
+        dob: formData.dob,
+        email: formData.email,
+        password: formData.password,
+      });
+      if (result?.error) {
+        setOtpError(result.error);
+      } else {
+        toast({ title: 'Code resent', description: 'A new verification code has been sent.' });
+      }
+    } catch {
+      setOtpError('Failed to resend code.');
+    }
+  };
+
+  if (step === 'otp') {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <div
+          className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+        >
+          <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+            <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+            <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-8">
+          <OtpVerification
+            email={formData.email}
+            purpose="signup"
+            isLoading={isLoading}
+            error={otpError}
+            onVerify={handleVerifyOtp}
+            onResend={handleResendOtp}
+            onBack={() => { setStep('form'); setOtpError(''); }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -99,9 +176,9 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
         <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus className="w-3.5 h-3.5" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square className="w-3 h-3" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X className="w-3.5 h-3.5" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
         </div>
       </div>
       <div className="flex flex-1">
@@ -194,7 +271,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
               className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button flex items-center gap-2.5"
             >
               {oauthLoading === 'google' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -214,9 +291,9 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
               className="w-full h-10 border-border text-foreground hover:bg-secondary font-medium transition-button flex items-center gap-2.5"
             >
               {oauthLoading === 'github' ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
-                <Github className="w-4 h-4 flex-shrink-0" />
+                <GithubLogo size={16} weight="light" className="flex-shrink-0" />
               )}
               Continue with GitHub
             </Button>
@@ -291,11 +368,11 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
               className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button mt-1"
             >
               {isLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <span className="flex items-center gap-2">
                   Create Account
-                  <ArrowRight className="w-4 h-4" />
+                  <ArrowRight size={16} weight="light" />
                 </span>
               )}
             </Button>

@@ -1,110 +1,27 @@
-/* Prompt Weaver - Premium Blue Design System */
-/* Copied from app-ui/src/index.css to ensure consistency between App and Floating Panel */
+/* Prompt Weaver - Premium Design System */
+/* SINGLE SOURCE OF TRUTH: app-ui/src/index.css
+   This file only carries utility classes for the overlay.
+   All CSS custom-properties are defined in index.css and inherited at runtime. */
 
-:root {
-  /* Light mode — warm peach theme, no pure white, blue accent */
-  --background: 23 100% 96%;
-  --foreground: 217 33% 17%;
-
-  --card: 20 100% 98%;
-  --card-foreground: 217 33% 17%;
-
-  --popover: 20 100% 98%;
-  --popover-foreground: 217 33% 17%;
-
-  --primary: 217 91% 60%;
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 20 60% 95%;
-  --secondary-foreground: 215 20% 35%;
-
-  --muted: 20 50% 94%;
-  --muted-foreground: 215 20% 65%;
-
-  --accent: 214 95% 93%;
-  --accent-foreground: 217 91% 60%;
-
-  --destructive: 0 68% 50%;
-  --destructive-foreground: 0 0% 100%;
-
-  --border: 18 58% 88%;
-  --input: 21 52% 81%;
-  --ring: 217 91% 60%;
-
-  --radius: 0.75rem;
-
-  /* Custom tokens - Light */
-  --surface: 20 100% 97%;
-  --surface-hover: 19 100% 94%;
-  --glow-primary: 217 91% 60%;
-  --success: 150 60% 45%;
-  --success-foreground: 0 0% 100%;
-  --emerald: 217 91% 60%;
-  --emerald-soft: 221 83% 53%;
-  --glass-overlay: 217 91% 60% / 0.06;
-}
-
-.dark {
-  /* Dark mode — near-black with electric-blue accent */
-  --background: 220 8% 5%;
-  --foreground: 210 20% 93%;
-
-  --card: 220 10% 10%;
-  --card-foreground: 210 20% 93%;
-
-  --popover: 220 10% 10%;
-  --popover-foreground: 210 20% 93%;
-
-  --primary: 217 91% 60%;
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 220 10% 9%;
-  --secondary-foreground: 210 20% 93%;
-
-  --muted: 220 10% 11%;
-  --muted-foreground: 215 16% 58%;
-
-  --accent: 220 10% 13%;
-  --accent-foreground: 210 20% 93%;
-
-  --destructive: 0 72% 51%;
-  --destructive-foreground: 0 0% 100%;
-
-  --border: 220 10% 14%;
-  --input: 220 10% 14%;
-  --ring: 217 91% 60%;
-
-  --radius: 0.75rem;
-
-  /* Custom tokens - Dark */
-  --surface: 220 10% 8%;
-  --surface-hover: 220 10% 10%;
-  --glow-primary: 217 91% 60%;
-  --success: 150 60% 45%;
-  --success-foreground: 0 0% 100%;
-  --emerald: 217 91% 60%;
-  --emerald-soft: 217 78% 72%;
-  --glass-overlay: 217 91% 60% / 0.06;
-}
-
-
-/* Utility Classes for Glows (Matching app-ui) */
+/* Utility Classes for Glows */
 .glow-primary {
-  box-shadow: 0 0 20px hsl(var(--emerald) / 0.25),
-              0 0 40px hsl(var(--emerald) / 0.1);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08),
+              0 4px 16px hsl(var(--accent) / 0.08),
+              0 1px 4px  hsl(var(--accent) / 0.06);
 }
 
 .glow-primary-subtle {
-  box-shadow: 0 0 10px hsl(var(--emerald) / 0.18);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06),
+              0 2px 8px hsl(var(--accent) / 0.08);
 }
 
 .text-gradient-primary {
-  background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+  background: linear-gradient(135deg, hsl(var(--accent)) 0%, hsl(var(--accent-soft)) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
 .bg-gradient-primary {
-  background: linear-gradient(135deg, hsl(var(--emerald)) 0%, hsl(var(--emerald-soft)) 100%);
+  background: linear-gradient(135deg, hsl(var(--accent)) 0%, hsl(var(--accent-soft)) 100%);
 }

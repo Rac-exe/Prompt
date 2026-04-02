@@ -1,4 +1,5 @@
 import { Tray, Menu, nativeImage, app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 
 
@@ -26,24 +27,30 @@ export class SystemTray {
    * Create the system tray
    */
   create() {
-    // In packaged mode the tray icon lives in extraResources.
-    // In dev mode it lives in build/ at the project root (app.getAppPath()).
-    const iconPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'tray-icon.png')
-      : path.join(app.getAppPath(), 'build', 'tray-icon.png');
-    const icon = nativeImage.createFromPath(iconPath).resize({ width: 32, height: 32 });
+    try {
+      // In packaged mode the tray icon lives in extraResources.
+      // In dev mode it lives in build/ at the project root (app.getAppPath()).
+      const iconPath = app.isPackaged
+        ? path.join(process.resourcesPath, 'tray-icon.png')
+        : path.join(app.getAppPath(), 'build', 'tray-icon.png');
+      const icon = nativeImage.createFromPath(iconPath).resize({ width: 32, height: 32 });
 
-    this.tray = new Tray(icon);
-    this.tray.setToolTip('Prmpt');
+      this.tray = new Tray(icon);
+      this.tray.setToolTip('Prmpt');
 
-    this.updateMenu();
+      this.updateMenu();
 
-    // Click on tray icon opens app window
-    this.tray.on('click', () => {
-      this.onOpenApp();
-    });
+      // Click on tray icon opens app window
+      this.tray.on('click', () => {
+        this.onOpenApp();
+      });
 
-    console.log('[SystemTray] System tray created');
+      Sentry.addBreadcrumb({ category: 'system-tray', message: 'System tray created', level: 'info' });
+      console.log('[SystemTray] System tray created');
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'system-tray', op: 'create' } });
+      console.error('[SystemTray] Failed to create system tray:', err);
+    }
   }
 
   /**

@@ -1589,6 +1589,95 @@ async def websocket_transcribe_stream(websocket: WebSocket):
                     f"audio_chunks={audio_chunks_received}")
 
 
+# ── Cloudinary image upload ────────────────────────────────────────────────────
+
+class ImageUploadRequest(BaseModel):
+    base64: str       # raw base64, no data-URL prefix
+    filename: str
+    mime_type: str = "image/jpeg"
+
+class ImageUploadResponse(BaseModel):
+    url: str
+
+def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -> str:
+    """Synchronous Cloudinary multipart upload — run in a thread executor."""
+    import hashlib
+    import urllib.request
+    import json as json_lib
+    import time as time_lib
+
+    cloud_name = os.environ.get("VITE_CLOUDINARY_CLOUD_NAME", "")
+    api_key    = os.environ.get("CLOUDINARY_API_KEY", "")
+    api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
+
+    if not (cloud_name and api_key and api_secret):
+        raise ValueError("Cloudinary credentials not configured on the server")
+
+    boundary  = f"----UploadBoundary{int(time_lib.time() * 1000)}"
+    timestamp = str(int(time_lib.time()))
+    signature = hashlib.sha1(f"timestamp={timestamp}{api_secret}".encode()).hexdigest()
+
+    parts: list[bytes] = []
+    for name, value in [("timestamp", timestamp), ("api_key", api_key), ("signature", signature)]:
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
+        )
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {mime_type}\r\n\r\n".encode()
+        + image_bytes
+        + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+
+    upload_url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
+    req = urllib.request.Request(
+        upload_url,
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json_lib.loads(resp.read().decode())
+
+    if "secure_url" not in result:
+        msg = result.get("error", {}).get("message", "Cloudinary upload failed — no secure_url")
+        raise ValueError(msg)
+
+    return result["secure_url"]
+
+
+@app.post("/upload/image", response_model=ImageUploadResponse)
+async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(require_auth)):
+    """Upload a base64-encoded image to Cloudinary. Returns the secure CDN URL."""
+    import asyncio
+    import base64 as base64_lib
+
+    try:
+        image_bytes = base64_lib.b64decode(request.base64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image data")
+
+    try:
+        loop = asyncio.get_event_loop()
+        url = await loop.run_in_executor(
+            None, _sync_cloudinary_upload, image_bytes, request.filename, request.mime_type
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        logger.error(f"[CloudinaryUpload] Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Image upload failed")
+
+    logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {url}")
+    sentry_sdk.add_breadcrumb(
+        category="file-upload",
+        message=f"Cloudinary upload success: {request.filename}",
+        level="info",
+    )
+    return ImageUploadResponse(url=url)
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up on SIGTERM/SIGINT."""
