@@ -6,7 +6,8 @@ python-service/**/__pycache__/
 
 # Build outputs
 dist/
-build/
+build/*.js
+build/*.js.map
 *.log
 
 # OS files
