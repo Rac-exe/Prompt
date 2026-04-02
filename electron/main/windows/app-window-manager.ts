@@ -125,6 +125,7 @@ export class AppWindowManager {
       this.isLoaded = false;
     });
 
+    Sentry.addBreadcrumb({ category: 'window', message: 'Main app window created', level: 'info' });
     console.log('[AppWindowManager] Main app window created');
   }
 
@@ -159,11 +160,7 @@ export class AppWindowManager {
       this.create();
     } else if (this.isLoaded) {
       if (!this.window.isVisible()) {
-        // Window was hidden — DWM may have released its compositor surface.
-        // Show at opacity 0 so DWM recreates the surface invisibly, then
-        // reveal after Chromium has delivered a fresh composited frame (~50ms).
-        // This eliminates the 1-2 frame white flash that occurs when DWM
-        // recreates its surface before Chromium paints the background.
+        Sentry.addBreadcrumb({ category: 'window', message: 'App window show (opacity fade-in)', level: 'info' });
         const win = this.window;
         win.setOpacity(0);
         win.show();

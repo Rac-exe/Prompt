@@ -1,4 +1,5 @@
-// Settings data structure
+import * as Sentry from '@sentry/react';
+
 export interface SettingsData {
     theme: "light" | "dark";
     fontSize: "small" | "medium" | "large";
@@ -34,15 +35,12 @@ export const loadSettings = async (): Promise<SettingsData> => {
                 promptInstructions: settings.prompt_instructions || DEFAULT_SETTINGS.promptInstructions,
             };
 
-            // Sync localStorage with the authoritative Supabase value so
-            // future launches (and the blocking theme script in index.html)
-            // always use the latest server preference.
             localStorage.setItem(STORAGE_KEY, JSON.stringify(transformed));
-
+            Sentry.addBreadcrumb({ category: 'settings', message: 'Loaded from Supabase', level: 'info', data: { theme: transformed.theme, fontSize: transformed.fontSize, fontFamily: transformed.fontFamily } });
             return transformed;
         } catch (error) {
+            Sentry.captureException(error, { tags: { component: 'settings', op: 'load' } });
             console.error('[Settings] Failed to load from Supabase:', error);
-            // Fallback to localStorage
         }
     }
 
@@ -74,11 +72,11 @@ export const saveSettings = async (settings: SettingsData): Promise<void> => {
                 prompt_instructions: settings.promptInstructions,
             };
 
-            // Save to Supabase via Electron
             await window.electronAPI.saveSettings(dbSettings);
+            Sentry.addBreadcrumb({ category: 'settings', message: 'Saved to Supabase', level: 'info', data: { theme: settings.theme, fontSize: settings.fontSize } });
         } catch (error) {
+            Sentry.captureException(error, { tags: { component: 'settings', op: 'save' } });
             console.error('[Settings] Failed to save to Supabase:', error);
-            // localStorage already updated — preference is not lost
         }
     }
 };
@@ -86,6 +84,7 @@ export const saveSettings = async (settings: SettingsData): Promise<void> => {
 // Apply settings to the DOM
 export const applySettings = (settings: SettingsData) => {
     const root = document.documentElement;
+    Sentry.addBreadcrumb({ category: 'settings', message: 'Applied to DOM', level: 'info', data: { theme: settings.theme, fontSize: settings.fontSize, fontFamily: settings.fontFamily } });
 
     if (settings.theme === "dark") {
         root.classList.add("dark");

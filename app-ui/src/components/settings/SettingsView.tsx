@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import * as Sentry from '@sentry/react';
 import { User, Palette, Moon, Sun, Check, Sparkle, Camera, Brain, GithubLogo, Link, LinkBreak, Key, CircleNotch, Envelope, ArrowLeft } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -237,10 +238,12 @@ export const SettingsView = () => {
 
   const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
     if (!settingsReadyRef.current) return;
+    Sentry.addBreadcrumb({ category: 'settings', message: `Setting changed: ${key}`, level: 'info', data: { key, value } });
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
     applySettings(newSettings);
     saveSettings(newSettings).catch((err) => {
+      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'auto-save' }, extra: { key } });
       console.error('[SettingsView] Failed to auto-save:', err);
       toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
     });

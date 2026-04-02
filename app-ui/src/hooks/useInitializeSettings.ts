@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import * as Sentry from '@sentry/react';
 import { loadSettings, applySettings, DEFAULT_SETTINGS, STORAGE_KEY } from "@/lib/settings";
 
 /**
@@ -26,6 +27,9 @@ export const useInitializeSettings = () => {
 
         loadSettings()
             .then(applySettings)
-            .catch((error) => console.error("[Settings] Initialization error:", error));
+            .catch((error) => {
+                Sentry.captureException(error, { tags: { component: 'settings', op: 'init' } });
+                console.error("[Settings] Initialization error:", error);
+            });
     }, []);
 };

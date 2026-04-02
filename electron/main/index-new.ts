@@ -455,13 +455,12 @@ async function initialize() {
       authState.currentUserEmail = session.user.email ?? null;
       authState.currentAccessToken = session.access_token ?? null;
       Sentry.setUser({ id: session.user.id });
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_IN', level: 'info', data: { userId: session.user.id } });
       overlayManager.sendAuthState(true);
     } else if (event === 'SIGNED_OUT') {
-      // Guard: if we're offline, this SIGNED_OUT is Supabase's internal JWT
-      // refresh poller failing due to no network — NOT a real sign-out.
-      // Ignore it so the offline session remains valid.
       if (!networkMonitor.isOnline) {
         console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Ignored spurious SIGNED_OUT (offline)', level: 'warning' });
         return;
       }
 
@@ -470,6 +469,7 @@ async function initialize() {
       authState.currentUserEmail = null;
       authState.currentAccessToken = null;
       Sentry.setUser(null);
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_OUT', level: 'info' });
       if (appWindowManager) appWindowManager.send('sentry:set-user', null);
 
       if (appWindowManager) {
@@ -482,7 +482,7 @@ async function initialize() {
     } else if (event === 'TOKEN_REFRESHED' && session) {
       console.log('[Main] Session token refreshed — updating auth state');
       authState.currentAccessToken = session.access_token ?? null;
-      // Reconnect WebSocket so it carries the refreshed token
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Token refreshed', level: 'info' });
       pythonClient.reconnect();
     }
   });
@@ -491,6 +491,7 @@ async function initialize() {
   // which moves the UI from the loading spinner to the authenticated app view.
   checkAndRestoreSession(appWindowManager)
     .then(hasSession => {
+      Sentry.addBreadcrumb({ category: 'auth', message: 'Session restore complete', level: 'info', data: { hasSession } });
       if (hasSession) {
         console.log('[Main] Session restored, user logged in');
         overlayManager.sendAuthState(true);

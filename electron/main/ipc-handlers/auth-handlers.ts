@@ -80,7 +80,7 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
  */
 export async function handleSuccessfulAuth(appWindowManager: AppWindowManager, cachedUser?: any): Promise<void> {
     if (_authLoadPromise) {
-        // Already running — piggyback on the in-flight call.
+        Sentry.addBreadcrumb({ category: 'auth', message: 'handleSuccessfulAuth dedup — reusing in-flight call', level: 'info' });
         return _authLoadPromise;
     }
     _authLoadPromise = _runHandleSuccessfulAuth(appWindowManager, cachedUser);
@@ -117,22 +117,23 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
         authState.currentUserId = user.id;
         authState.currentUserEmail = user.email ?? null;
 
-        // Build user data object — run independent Supabase calls in parallel.
         let userData: any = null;
         if (networkMonitor.isOnline) {
             try {
-                // Fetch user profile and identities concurrently (~2-3s saved vs sequential).
-                const [completeUserData, identitiesResult] = await Promise.all([
-                    userService.getCompleteUserData(),
-                    authService.getIdentities().catch(e => {
-                        console.warn('[Auth] Could not load identities:', e);
-                        return { identities: [] as any[], error: null };
-                    }),
-                ]);
+                const [completeUserData, identitiesResult] = await Sentry.startSpan(
+                    { name: 'auth.load-user-data', op: 'http.parallel', attributes: { userId: user.id } },
+                    () => Promise.all([
+                        userService.getCompleteUserData(),
+                        authService.getIdentities().catch(e => {
+                            console.warn('[Auth] Could not load identities:', e);
+                            return { identities: [] as any[], error: null };
+                        }),
+                    ])
+                );
                 userData = completeUserData;
                 userData.identities = identitiesResult.identities ?? [];
+                Sentry.addBreadcrumb({ category: 'auth', message: 'User data loaded (parallel)', level: 'info', data: { userId: user.id, identityCount: userData.identities.length } });
 
-                // Cache avatar in the background — never block auth:state-changed.
                 if (userData?.profile?.avatar_url) {
                     fetch(userData.profile.avatar_url)
                         .then(async (avatarRes) => {
@@ -147,6 +148,7 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
                         .catch(avatarErr => console.warn('[Auth] Could not cache avatar:', avatarErr));
                 }
             } catch (e) {
+                Sentry.captureException(e, { tags: { component: 'auth', op: 'load-user-data' }, extra: { userId: user.id } });
                 console.warn('[Auth] Could not load user data from network:', e);
             }
         } else {
