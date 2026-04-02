@@ -604,10 +604,10 @@ const electronAPI = {
     return ipcRenderer.invoke('auth:verify-reset-otp', { email, otp, newPassword });
   },
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.removeAllListeners('auth:state-changed');
-    ipcRenderer.on('auth:state-changed', (_event, data) => {
-      callback(data);
-    });
+    ipcRenderer.on('auth:state-changed', handler);
+    return () => ipcRenderer.removeListener('auth:state-changed', handler);
   },
   updateProfile: (updates: any) => {
     ipcRenderer.send('user:update-profile', updates);
@@ -724,8 +724,10 @@ const electronAPI = {
   // SENTRY USER SYNC
   // ============================================
   onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => {
+    const handler = (_event: any, user: any) => callback(user);
     ipcRenderer.removeAllListeners('sentry:set-user');
-    ipcRenderer.on('sentry:set-user', (_event, user) => callback(user));
+    ipcRenderer.on('sentry:set-user', handler);
+    return () => ipcRenderer.removeListener('sentry:set-user', handler);
   },
 
   // ============================================
