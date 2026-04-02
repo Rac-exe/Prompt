@@ -294,6 +294,14 @@ declare global {
         set: (percent: number) => Promise<void>;
         onChanged: (callback: (data: { percent: number }) => void) => () => void;
       };
+
+      // Auto-update API
+      update: {
+        onAvailable: (callback: (data: { version: string }) => void) => () => void;
+        onProgress: (callback: (data: { percent: number; transferred: number; total: number }) => void) => () => void;
+        onDownloaded: (callback: (data: { version: string }) => void) => () => void;
+        install: () => void;
+      };
     };
   }
 }
@@ -819,6 +827,28 @@ const electronAPI = {
       ipcRenderer.on('zoom:changed', handler);
       return () => ipcRenderer.removeListener('zoom:changed', handler);
     },
+  },
+
+  // ============================================
+  // AUTO-UPDATE API
+  // ============================================
+  update: {
+    onAvailable: (callback: (data: { version: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('update:available', handler);
+      return () => ipcRenderer.removeListener('update:available', handler);
+    },
+    onProgress: (callback: (data: { percent: number; transferred: number; total: number }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('update:progress', handler);
+      return () => ipcRenderer.removeListener('update:progress', handler);
+    },
+    onDownloaded: (callback: (data: { version: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('update:downloaded', handler);
+      return () => ipcRenderer.removeListener('update:downloaded', handler);
+    },
+    install: () => ipcRenderer.send('update:install'),
   },
 };
 

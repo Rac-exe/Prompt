@@ -51,6 +51,7 @@ Sentry.init({
 });
 
 import { app, globalShortcut, ipcMain, session, shell } from 'electron';
+import { autoUpdater } from 'electron-updater';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
@@ -142,6 +143,55 @@ function toggleOverlay() {
   Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay toggled', level: 'info', data: { isAuthenticated: authState.isAuthenticated } });
   overlayManager.toggle(authState.isAuthenticated, sentryUser);
 }
+
+// ============================================
+// AUTO-UPDATER
+// ============================================
+function setupAutoUpdater() {
+  // In dev mode there's nothing to update — bail silently.
+  if (!app.isPackaged) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[Updater] Update available: ${info.version}`);
+    Sentry.addBreadcrumb({ category: 'updater', message: `Update available: ${info.version}`, level: 'info' });
+    appWindowManager?.send('update:available', { version: info.version });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[Updater] App is up to date.');
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    appWindowManager?.send('update:progress', {
+      percent: Math.round(progress.percent),
+      transferred: progress.transferred,
+      total: progress.total,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[Updater] Update downloaded: ${info.version}`);
+    Sentry.addBreadcrumb({ category: 'updater', message: `Update downloaded: ${info.version}`, level: 'info' });
+    appWindowManager?.send('update:downloaded', { version: info.version });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('[Updater] Error:', err.message);
+    Sentry.captureException(err, { tags: { component: 'auto-updater' } });
+  });
+
+  // Check 5 seconds after launch so the window is ready, then every 4 hours.
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5_000);
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1_000);
+}
+
+// IPC: renderer asks us to quit and install the downloaded update.
+ipcMain.on('update:install', () => {
+  autoUpdater.quitAndInstall(false, true);
+});
 
 // ============================================
 // INITIALIZATION
@@ -681,6 +731,7 @@ if (!gotTheLock) {
       });
     }
     await initialize();
+    setupAutoUpdater();
   });
 
   // CRITICAL: Keep running in background when all windows closed
