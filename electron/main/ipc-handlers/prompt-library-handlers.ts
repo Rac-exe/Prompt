@@ -63,6 +63,7 @@ export async function syncOfflineQueue(appWindowSend?: (channel: string, data: a
                 console.log('[OfflineSync] ✅ Synced create-collection-and-save');
             }
         } catch (err) {
+            Sentry.captureException(err, { tags: { component: 'prompt-library-handlers', op: 'offline-sync-pass1', opType: op.type }, extra: { opId: op.id } });
             console.warn('[OfflineSync] Failed to sync op', op.id, '— will retry:', err);
             offlineQueue.incrementRetry(op.id);
         }
@@ -109,6 +110,7 @@ export async function syncOfflineQueue(appWindowSend?: (channel: string, data: a
             offlineQueue.remove(op.id);
             console.log('[OfflineSync] ✅ Synced save-prompt:', saved.id);
         } catch (err) {
+            Sentry.captureException(err, { tags: { component: 'prompt-library-handlers', op: 'offline-sync-pass2', opType: op.type }, extra: { opId: op.id } });
             console.warn('[OfflineSync] Failed to sync op', op.id, '— will retry:', err);
             offlineQueue.incrementRetry(op.id);
         }
@@ -162,6 +164,7 @@ ipcMain.handle('prompt-library:get-collections', async () => {
             console.warn('[IPC] Offline — returning', cached.length, 'cached collections');
             return cached;
         }
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:get-collections' } });
         console.error('[IPC] ❌ Error loading collections:', error);
         throw error;
     }
@@ -195,6 +198,7 @@ ipcMain.handle('prompt-library:get-all', async () => {
             console.warn('[IPC] Offline — returning', cached.length, 'cached prompts');
             return cached;
         }
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:get-prompts' } });
         console.error('[IPC] ❌ Error loading prompts:', error);
         throw error;
     }
@@ -227,6 +231,7 @@ ipcMain.handle('prompt-library:create-collection', async (event, { name, icon })
         console.log('[IPC] ✅ Collection created:', collection.id);
         return collection;
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:create-collection' } });
         console.error('[IPC] ❌ Error creating collection:', error);
         throw error;
     }
@@ -240,6 +245,7 @@ ipcMain.handle('prompt-library:rename-collection', async (event, { collectionId,
         console.log('[IPC] ✅ Collection renamed');
         return collection;
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:rename-collection' } });
         console.error('[IPC] ❌ Error renaming collection:', error);
         throw error;
     }
@@ -253,6 +259,7 @@ ipcMain.handle('prompt-library:delete-collection', async (event, { collectionId 
         console.log('[IPC] ✅ Collection deleted');
         return { success: true };
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:delete-collection' } });
         console.error('[IPC] ❌ Error deleting collection:', error);
         throw error;
     }
@@ -291,6 +298,7 @@ ipcMain.handle('prompt-library:save-prompt', async (event, { collectionId, title
         console.log('[IPC] ✅ Prompt saved:', prompt.id);
         return prompt;
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:save-prompt' } });
         console.error('[IPC] ❌ Error saving prompt:', error);
         throw error;
     }
@@ -339,6 +347,7 @@ ipcMain.handle('prompt-library:create-collection-and-save', async (event, { coll
         console.log('[IPC] ✅ Collection and prompt created');
         return { collection, prompt };
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:create-collection-and-save' } });
         console.error('[IPC] ❌ Error creating collection and saving prompt:', error);
         throw error;
     }
@@ -351,6 +360,7 @@ ipcMain.handle('prompt-library:update-prompt', async (event, { promptId, updates
         console.log('[IPC] ✅ Prompt updated');
         return prompt;
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:update-prompt' } });
         console.error('[IPC] ❌ Error updating prompt:', error);
         throw error;
     }
@@ -363,6 +373,7 @@ ipcMain.handle('prompt-library:delete-prompt', async (event, { promptId }) => {
         console.log('[IPC] ✅ Prompt deleted');
         return { success: true };
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:delete-prompt' } });
         console.error('[IPC] ❌ Error deleting prompt:', error);
         throw error;
     }
@@ -375,6 +386,7 @@ ipcMain.handle('prompt-library:toggle-favorite', async (event, { promptId }) => 
         console.log('[IPC] ✅ Favorite toggled');
         return prompt;
     } catch (error: any) {
+        Sentry.captureException(error, { tags: { component: 'prompt-library-handlers', op: 'prompt-library:toggle-favorite' } });
         console.error('[IPC] ❌ Error toggling favorite:', error);
         throw error;
     }

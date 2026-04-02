@@ -1,5 +1,6 @@
 import * as nodemailer from 'nodemailer';
 import * as crypto from 'crypto';
+import * as Sentry from '@sentry/electron/main';
 
 interface PendingOtp {
   otp: string;
@@ -39,14 +40,19 @@ export class EmailService {
       return;
     }
 
-    this.transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-    });
-
-    console.log('[EmailService] SMTP transport created:', host);
+    try {
+      this.transporter = nodemailer.createTransport({
+        host,
+        port,
+        secure: port === 465,
+        auth: { user, pass },
+      });
+      Sentry.addBreadcrumb({ category: 'email', message: 'SMTP transport created', level: 'info', data: { host } });
+      console.log('[EmailService] SMTP transport created:', host);
+    } catch (err: any) {
+      Sentry.captureException(err, { tags: { component: 'email-service', op: 'initialize' } });
+      console.error('[EmailService] Failed to create SMTP transport:', err);
+    }
   }
 
   private generateOtp(): string {
@@ -132,8 +138,10 @@ export class EmailService {
 
     try {
       await this.sendOtpEmail(email, otp, 'signup');
+      Sentry.addBreadcrumb({ category: 'email', message: 'Signup OTP sent', level: 'info', data: { email } });
       return { success: true };
     } catch (err: any) {
+      Sentry.captureException(err, { tags: { component: 'email-service', op: 'sendSignupOtp' }, extra: { email } });
       console.error('[EmailService] Failed to send signup OTP:', err);
       this.pendingSignups.delete(email);
       return { success: false, error: 'Failed to send verification email. Please try again.' };
@@ -181,8 +189,10 @@ export class EmailService {
 
     try {
       await this.sendOtpEmail(key, otp, 'reset');
+      Sentry.addBreadcrumb({ category: 'email', message: 'Reset OTP sent', level: 'info', data: { email: key } });
       return { success: true };
     } catch (err: any) {
+      Sentry.captureException(err, { tags: { component: 'email-service', op: 'sendResetOtp' }, extra: { email: key } });
       console.error('[EmailService] Failed to send reset OTP:', err);
       this.pendingResets.delete(key);
       return { success: false, error: 'Failed to send reset email. Please try again.' };

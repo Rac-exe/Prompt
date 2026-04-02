@@ -1,4 +1,5 @@
 import { BrowserWindow, app, nativeImage, ipcMain } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 
 const ZOOM_STEPS = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
@@ -193,7 +194,9 @@ export class AppWindowManager {
       if (this.window && !this.window.isDestroyed() && this.window.webContents && !this.window.webContents.isDestroyed()) {
         this.window.webContents.send(channel, ...args);
       }
-    } catch (_) {}
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'app-window-manager', op: 'send' }, extra: { channel } });
+    }
   }
 
   /**
@@ -214,6 +217,7 @@ export class AppWindowManager {
   }
 
   private broadcastZoom(factor: number) {
+    Sentry.addBreadcrumb({ category: 'zoom', message: 'Zoom level changed', level: 'info', data: { percent: Math.round(factor * 100) } });
     this.send('zoom:changed', { percent: Math.round(factor * 100) });
   }
 

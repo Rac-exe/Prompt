@@ -218,8 +218,8 @@ export class OverlayWindowManager {
       await this.window.webContents.executeJavaScript(
         'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
       );
-    } catch {
-      // Renderer unresponsive — proceed anyway
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-window-manager', op: 'preheatCompositor' } });
     }
 
     // Guard: window may have been destroyed during the await
@@ -396,7 +396,9 @@ export class OverlayWindowManager {
       if (this.window && !this.window.isDestroyed() && this.window.webContents && !this.window.webContents.isDestroyed()) {
         this.window.webContents.send(channel, data);
       }
-    } catch (_) {}
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-window-manager', op: 'send' }, extra: { channel } });
+    }
   }
 
   /**

@@ -239,10 +239,11 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             if (!result.success) {
                 return { error: result.error };
             }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Signup OTP sent', level: 'info', data: { email } });
             return { success: true };
         } catch (error: any) {
             console.error('[Auth] Send signup OTP error:', error);
-            Sentry.captureException(error);
+            Sentry.captureException(error, { tags: { op: 'auth:send-signup-otp' } });
             return { error: error.message || 'Failed to send verification code' };
         }
     });
@@ -285,11 +286,12 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 return { error: signInError?.message || 'Sign in after signup failed' };
             }
 
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Signup OTP verified — user created', level: 'info' });
             await handleSuccessfulAuth(appWindowManager);
             return { success: true };
         } catch (error: any) {
             console.error('[Auth] Verify signup OTP error:', error);
-            Sentry.captureException(error);
+            Sentry.captureException(error, { tags: { op: 'auth:verify-signup-otp' } });
             return { error: error.message || 'Verification failed' };
         }
     });
@@ -297,11 +299,13 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     // Resend Sign-Up OTP
     ipcMain.handle('auth:resend-signup-otp', async (_event, { email }: { email: string }) => {
         try {
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Resend signup OTP requested', level: 'info', data: { email } });
             console.log('[Auth] Resending signup OTP to:', email);
             // We need the original signup data, but it may have been cleared
             // The frontend re-sends the full data via send-signup-otp instead
             return { error: 'Please use the original sign-up flow to resend.' };
         } catch (error: any) {
+            Sentry.captureException(error, { tags: { op: 'auth:resend-signup-otp' } });
             return { error: error.message || 'Failed to resend code' };
         }
     });
@@ -314,10 +318,11 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             if (!result.success) {
                 return { error: result.error };
             }
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP sent', level: 'info', data: { email } });
             return { success: true };
         } catch (error: any) {
             console.error('[Auth] Send reset OTP error:', error);
-            Sentry.captureException(error);
+            Sentry.captureException(error, { tags: { op: 'auth:send-reset-otp' } });
             return { error: error.message || 'Failed to send reset code' };
         }
     });
@@ -341,6 +346,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             // Find user by email
             const { data: userData, error: listError } = await adminClient.auth.admin.listUsers();
             if (listError) {
+                Sentry.captureException(listError, { tags: { op: 'auth:verify-reset-otp', step: 'listUsers' } });
                 console.error('[Auth] Admin listUsers error:', listError);
                 return { error: 'Could not look up user. Please try again.' };
             }
@@ -357,15 +363,17 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             });
 
             if (updateError) {
+                Sentry.captureException(updateError, { tags: { op: 'auth:verify-reset-otp', step: 'updateUserById' } });
                 console.error('[Auth] Admin updateUser error:', updateError);
                 return { error: updateError.message || 'Failed to update password' };
             }
 
+            Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info', data: { email } });
             console.log('[Auth] Password reset successful for:', email);
             return { success: true };
         } catch (error: any) {
             console.error('[Auth] Verify reset OTP error:', error);
-            Sentry.captureException(error);
+            Sentry.captureException(error, { tags: { op: 'auth:verify-reset-otp' } });
             return { error: error.message || 'Password reset failed' };
         }
     });
