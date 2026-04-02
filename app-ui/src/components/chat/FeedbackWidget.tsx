@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
+import { ThumbsUp, ThumbsDown } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 interface FeedbackWidgetProps {
@@ -37,7 +37,7 @@ export const FeedbackWidget = ({ messageId, onFeedback, onDismiss, initialRating
               : "hover:bg-secondary hover:text-foreground"
           )}
         >
-          <ThumbsUp className="w-3 h-3" />
+          <ThumbsUp size={12} weight="light" />
         </button>
         <button
           onClick={() => handleRate("negative")}
@@ -49,7 +49,7 @@ export const FeedbackWidget = ({ messageId, onFeedback, onDismiss, initialRating
               : "hover:bg-secondary hover:text-foreground"
           )}
         >
-          <ThumbsDown className="w-3 h-3" />
+          <ThumbsDown size={12} weight="light" />
         </button>
       </div>
     </div>

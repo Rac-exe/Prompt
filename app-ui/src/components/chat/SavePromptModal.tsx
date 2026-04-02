@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, FolderPlus, Check, Loader2 } from "lucide-react";
+import { X, FolderPlus, Check, CircleNotch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -119,7 +119,7 @@ export const SavePromptModal = ({
                 className="text-emerald hover:text-emerald/80 transition-button"
                 onClick={() => setIsCreatingNew(true)}
               >
-                <FolderPlus className="w-4 h-4 mr-2" />
+                <FolderPlus size={16} weight="light" className="mr-2" />
                 Create new collection
               </Button>
             </div>
@@ -165,10 +165,10 @@ export const SavePromptModal = ({
               data-testid="save-prompt-confirm-button"
             >
               {isSaving ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <CircleNotch size={16} weight="light" className="animate-spin" />
               ) : (
                 <>
-                  <Check className="w-4 h-4 mr-2" />
+                  <Check size={16} weight="light" className="mr-2" />
                   Save
                 </>
               )}

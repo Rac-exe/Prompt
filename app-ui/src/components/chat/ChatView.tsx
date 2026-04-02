@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as Sentry from "@sentry/react";
-import { Send, Sparkles, Mic, MicOff, Zap, AlertCircle, ChevronDown, Plus, WifiOff, Square, X, FileText, Image, ZoomIn, Loader2, Brain, ArrowDown } from "lucide-react";
+import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Lightning, WarningCircle, CaretDown, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, Brain, ArrowDown } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
@@ -230,14 +230,14 @@ export const ChatView = ({
         className={cn(
           "relative flex flex-col bg-surface border rounded-2xl transition-all overflow-hidden",
           isOnline
-            ? "border-border focus-within:border-emerald/40 focus-within:shadow-[0_0_0_1px_hsl(var(--emerald)/0.1)]"
+            ? "border-border focus-within:border-emerald/40 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.1)]"
             : "border-amber-500/20"
         )}
       >
         {/* Offline pill — sits flush at the very top of the box */}
         {!isOnline && (
           <div className="flex items-center gap-1.5 px-4 py-2 border-b border-amber-500/15 bg-amber-500/5">
-            <WifiOff className="w-3 h-3 text-amber-400/80 flex-shrink-0" />
+            <WifiSlash size={12} weight="light" className="text-amber-400/80 flex-shrink-0" />
             <span className="text-[11px] text-amber-400/80 font-medium">
               You're offline — messaging is unavailable
             </span>
@@ -268,7 +268,7 @@ export const ChatView = ({
                       className="w-full h-full object-cover"
                       />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 rounded-xl transition-colors flex items-center justify-center">
-                      <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                      <MagnifyingGlassPlus size={16} weight="light" className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
                     </div>
                   </button>
                       <button
@@ -276,7 +276,7 @@ export const ChatView = ({
                     onClick={removeFile}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
                       >
-                        <X className="h-2.5 w-2.5" />
+                        <X size={10} weight="light" />
                       </button>
                     </div>
                   ) : (
@@ -289,7 +289,7 @@ export const ChatView = ({
                     title={`${file.name} — click to preview`}
                   >
                     <div className="w-8 h-8 rounded-lg bg-red-500/12 border border-red-500/20 flex items-center justify-center flex-shrink-0">
-                      <FileText className="h-4 w-4 text-red-400" />
+                      <FileText size={16} weight="light" className="text-red-400" />
                     </div>
                     <div className="min-w-0 text-left">
                       <p className="text-xs font-medium text-foreground truncate max-w-[140px]">{file.name}</p>
@@ -303,7 +303,7 @@ export const ChatView = ({
                     onClick={removeFile}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border shadow flex items-center justify-center hover:bg-destructive hover:border-destructive hover:text-white transition-colors z-10"
                       >
-                    <X className="h-2.5 w-2.5" />
+                    <X size={10} weight="light" />
                       </button>
                 </div>
               );
@@ -367,7 +367,7 @@ export const ChatView = ({
               className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
               title="Add files or pick skill"
             >
-              <Plus className="w-5 h-5" />
+              <Plus size={20} weight="light" />
             </button>
             
             {/* Plus Menu */}
@@ -391,12 +391,12 @@ export const ChatView = ({
                   className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
                 >
                   {mode === "fast" ? (
-                    <Zap className="w-3.5 h-3.5" />
+                    <Lightning size={14} weight="light" />
                   ) : (
-                    <Brain className="w-3.5 h-3.5" />
+                    <Brain size={14} weight="light" />
                   )}
                   <span>{modeLabel}</span>
-                  <ChevronDown className="w-3 h-3 opacity-50" />
+                  <CaretDown size={12} weight="light" className="opacity-50" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" sideOffset={8} className="w-60 bg-popover border-border shadow-elevated rounded-xl p-1">
@@ -407,7 +407,7 @@ export const ChatView = ({
                     mode === "fast" && "bg-secondary"
                   )}
                 >
-                  <Zap className="w-4 h-4 text-emerald mt-0.5 flex-shrink-0" />
+                  <Lightning size={16} weight="light" className="text-emerald mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">Fast</p>
                     <p className="text-xs text-muted-foreground">Most efficient for everyday tasks</p>
@@ -421,7 +421,7 @@ export const ChatView = ({
                     mode === "thinking" && "bg-secondary"
                   )}
                 >
-                  <Brain className="w-4 h-4 text-emerald mt-0.5 flex-shrink-0" />
+                  <Brain size={16} weight="light" className="text-emerald mt-0.5 flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">Thinking</p>
                     <p className="text-xs text-muted-foreground">Think longer for complex tasks</p>
@@ -433,16 +433,16 @@ export const ChatView = ({
 
             {/* Skill pill — shows skill-specific icon */}
             {selectedSkill && (() => {
-              const SkillIcon = SKILL_ICON_MAP[selectedSkill] ?? Sparkles;
+              const SkillIcon = SKILL_ICON_MAP[selectedSkill] ?? Sparkle;
               return (
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-xs text-emerald-500 border border-emerald-500/20 ml-1">
-                  <SkillIcon className="h-3 w-3" />
+                  <SkillIcon size={12} weight="light" />
                   <span className="capitalize">{selectedSkill}</span>
                   <button
                     onClick={() => setSelectedSkill(null)}
                     className="hover:text-emerald-400 transition-colors"
                   >
-                    <X className="h-3 w-3" />
+                    <X size={12} weight="light" />
                   </button>
                 </div>
               );
@@ -457,7 +457,7 @@ export const ChatView = ({
             )}
             {voiceState === "processing" && (
               <div className="flex items-center gap-1.5 ml-1 animate-fade-in">
-                <Loader2 className="w-3 h-3 animate-spin text-emerald" />
+                <CircleNotch size={12} weight="light" className="animate-spin text-emerald" />
                 <span className="text-[11px] text-emerald font-medium">Transcribing…</span>
               </div>
             )}
@@ -479,9 +479,9 @@ export const ChatView = ({
               )}
               title={voiceState === "listening" ? "Stop recording" : "Voice input"}
             >
-              {voiceState === "listening" ? <MicOff className="w-4 h-4" /> :
-               voiceState === "processing" ? <Loader2 className="w-4 h-4 animate-spin" /> :
-               <Mic className="w-4 h-4" />}
+              {voiceState === "listening" ? <MicrophoneSlash size={16} weight="light" /> :
+               voiceState === "processing" ? <CircleNotch size={16} weight="light" className="animate-spin" /> :
+               <Microphone size={16} weight="light" />}
             </button>
 
             {/* Send / Stop button (circular) */}
@@ -493,7 +493,7 @@ export const ChatView = ({
                            bg-foreground text-background hover:bg-foreground/80"
                 title="Stop generation"
               >
-                <Square className="w-3 h-3 fill-current" />
+                <Square size={12} weight="fill" />
               </button>
             ) : (
               <button
@@ -520,7 +520,7 @@ export const ChatView = ({
       {/* Status strip — voice errors or send errors, never a toast */}
       {(voiceError || sendError) && (
         <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
-          <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+          <WarningCircle size={14} weight="light" className="text-destructive flex-shrink-0" />
           <span className="text-[12px] text-destructive leading-snug">
             {sendError || voiceError}
           </span>
@@ -537,7 +537,7 @@ export const ChatView = ({
           <div className="flex flex-col items-center gap-5 text-center max-w-xs">
             {/* Icon */}
             <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-              <WifiOff className="w-6 h-6 text-amber-400" />
+              <WifiSlash size={24} weight="light" className="text-amber-400" />
             </div>
 
             {/* Text */}
@@ -574,14 +574,14 @@ export const ChatView = ({
   if (isEmpty) {
     return (
       <div className="flex-1 flex flex-col h-full bg-background">
-        <div className="flex-1 flex flex-col items-center justify-center px-6 animate-fade-in-slow">
-          <div className="w-full max-w-4xl mx-auto flex flex-col items-center gap-10">
+        <div className="flex-1 flex flex-col items-center px-6 pt-[12%] pb-8 animate-fade-in-slow">
+          <div className="w-full max-w-4xl mx-auto flex flex-col items-center gap-8">
             {/* Hero */}
             <div className="flex flex-col items-center gap-5 text-center">
               <Logo size="w-20 h-20" />
               <div className="space-y-2">
                 <h2 className="text-[28px] font-bold text-gradient-primary tracking-tight leading-none">
-                  Prompt Optimization Studio
+                  Welcome to Prmpt!!
                 </h2>
                 <p className="text-[14px] text-muted-foreground/70 leading-relaxed">
                   Transform rough ideas into precisely engineered prompts.
@@ -698,7 +698,7 @@ export const ChatView = ({
                        transition-all duration-150"
             aria-label="Scroll to bottom"
           >
-            <ArrowDown className="w-4 h-4" />
+            <ArrowDown size={16} weight="light" />
           </button>
         )}
       </div>

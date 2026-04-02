@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, Pencil, Trash2, Calendar, MessageSquare, Download, User, Share2 } from "lucide-react";
+import { Copy, Check, PencilSimple, Trash, CalendarBlank, ChatText, DownloadSimple, User, ShareNetwork } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -83,7 +83,7 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
               onClick={handleCopy}
               data-testid="prompt-copy-button"
             >
-              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              {copied ? <Check size={12} weight="light" /> : <Copy size={12} weight="light" />}
             </Button>
             <Button
               variant="ghost" size="icon"
@@ -91,7 +91,7 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
               onClick={handleDownload}
               data-testid="prompt-download-button"
             >
-              <Download className="w-3 h-3" />
+              <DownloadSimple size={12} weight="light" />
             </Button>
             <Button
               variant="ghost" size="icon"
@@ -100,7 +100,7 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
               data-testid="prompt-share-button"
               title="Share prompt"
             >
-              <Share2 className="w-3 h-3" />
+              <ShareNetwork size={12} weight="light" />
             </Button>
             <Button
               variant="ghost" size="icon"
@@ -108,7 +108,7 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
               onClick={(e) => { e.stopPropagation(); setEditOpen(true); }}
               data-testid="prompt-edit-button"
             >
-              <Pencil className="w-3 h-3" />
+              <PencilSimple size={12} weight="light" />
             </Button>
             <Button
               variant="ghost" size="icon"
@@ -116,7 +116,7 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
               onClick={(e) => { e.stopPropagation(); setDeleteOpen(true); }}
               data-testid="prompt-delete-button"
             >
-              <Trash2 className="w-3 h-3" />
+              <Trash size={12} weight="light" />
             </Button>
           </div>
         </div>
@@ -129,18 +129,18 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
         {/* Meta row */}
         <div className="flex items-center gap-3.5 flex-wrap">
           <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50">
-            <Calendar className="w-2.5 h-2.5" />
+            <CalendarBlank size={10} weight="light" />
             <span>{prompt.createdAt.toLocaleDateString()}</span>
           </div>
           {prompt.sourceChat && (
             <div className="flex items-center gap-1 text-[10px] text-muted-foreground/50 min-w-0">
-              <MessageSquare className="w-2.5 h-2.5 flex-shrink-0" />
+              <ChatText size={10} weight="light" className="flex-shrink-0" />
               <span className="truncate max-w-[160px]">{prompt.sourceChat}</span>
             </div>
           )}
           {prompt.originalCreatorName && (
             <div className="flex items-center gap-1 text-[10px] text-emerald/70 min-w-0">
-              <User className="w-2.5 h-2.5 flex-shrink-0" />
+              <User size={10} weight="light" className="flex-shrink-0" />
               <span className="truncate max-w-[160px]">
                 Original by <span className="font-semibold">{prompt.originalCreatorName}</span>
               </span>

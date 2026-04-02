@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CaretLeft, CaretRight } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 interface VersionNavigatorProps {
@@ -33,7 +33,7 @@ export const VersionNavigator = ({ current, total, onPrev, onNext, align = "cent
         )}
         aria-label="Previous version"
       >
-        <ChevronLeft className="w-3.5 h-3.5" />
+        <CaretLeft size={14} weight="light" />
       </button>
       <span className="text-[11px] text-muted-foreground/70 font-medium tabular-nums min-w-[2.5rem] text-center select-none">
         {current} / {total}
@@ -49,7 +49,7 @@ export const VersionNavigator = ({ current, total, onPrev, onNext, align = "cent
         )}
         aria-label="Next version"
       >
-        <ChevronRight className="w-3.5 h-3.5" />
+        <CaretRight size={14} weight="light" />
       </button>
     </div>
   );

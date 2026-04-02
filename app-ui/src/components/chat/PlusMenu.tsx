@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { Paperclip, Sparkles } from "lucide-react";
+import { Paperclip, Sparkle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { SkillPicker } from "./SkillPicker";
 import type { AttachedFile } from "@/types/electron";
@@ -95,8 +95,8 @@ export const PlusMenu = ({
       // Images: auto-resize if above limit
       if (IMAGE_TYPES.includes(file.type)) {
         try {
-          const { base64, sizeBytes } = await resizeImageIfNeeded(file);
-          attached.push({ name: file.name, mimeType: 'image/jpeg', base64, sizeBytes });
+          const { base64, sizeBytes, mimeType } = await resizeImageIfNeeded(file);
+          attached.push({ name: file.name, mimeType, base64, sizeBytes });
         } catch { setFileError(`Failed to process "${file.name}"`); }
       }
     }
@@ -141,14 +141,14 @@ export const PlusMenu = ({
               onClick={() => { setFileError(null); fileInputRef.current?.click(); }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-secondary transition-colors text-left"
             >
-              <Paperclip className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <Paperclip size={16} weight="light" className="text-muted-foreground flex-shrink-0" />
               <span className="text-[13px] text-foreground">Add photos & files</span>
             </button>
             <button
               onClick={() => setShowSkillPicker(true)}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-secondary transition-colors text-left"
             >
-              <Sparkles className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+              <Sparkle size={16} weight="light" className="text-muted-foreground flex-shrink-0" />
               <span className="text-[13px] text-foreground">Choose skill</span>
             </button>
           </div>
@@ -175,14 +175,14 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number }> {
+function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: number; mimeType: string }> {
   return new Promise((resolve, reject) => {
     // If small enough, just base64-encode as-is
     if (file.size <= MAX_IMAGE_SIZE) {
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = (reader.result as string).split(',')[1];
-        resolve({ base64, sizeBytes: file.size });
+        resolve({ base64, sizeBytes: file.size, mimeType: file.type || 'image/png' });
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
@@ -209,7 +209,7 @@ function resizeImageIfNeeded(file: File): Promise<{ base64: string; sizeBytes: n
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       const base64 = dataUrl.split(',')[1];
       const sizeBytes = Math.round(base64.length * 0.75); // approximate decoded size
-      resolve({ base64, sizeBytes });
+      resolve({ base64, sizeBytes, mimeType: 'image/jpeg' });
     };
     img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Failed to load image')); };
     img.src = objectUrl;

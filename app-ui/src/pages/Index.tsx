@@ -533,6 +533,17 @@ const Index = () => {
     }
   }, []);
 
+  // Listen for partial file upload failures (image uploads that failed after all retries)
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onUploadPartialFailure) return;
+    const cleanup = window.electronAPI.onUploadPartialFailure((data) => {
+      const names = data.failedFiles.join(', ');
+      setSendError(`Some files failed to upload: ${names}. Check your connection and try again.`);
+      setTimeout(() => setSendError(null), 7000);
+    });
+    return cleanup;
+  }, []);
+
   // Listen for offline-queued send confirmation
   useEffect(() => {
     if (!isElectron || !window.electronAPI?.onSendMessageQueued) return;

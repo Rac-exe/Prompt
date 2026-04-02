@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Pencil, Loader2 } from "lucide-react";
+import { PencilSimple, CircleNotch } from "@phosphor-icons/react";
 import {
   Dialog,
   DialogContent,
@@ -70,7 +70,7 @@ export const EditPromptModal = ({
       <DialogContent className="sm:max-w-[420px] bg-card border-border">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-foreground">
-            <Pencil className="w-4 h-4 text-emerald" />
+            <PencilSimple size={16} weight="light" className="text-emerald" />
             Edit Prompt
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
@@ -128,7 +128,7 @@ export const EditPromptModal = ({
             >
               {saving ? (
                 <>
-                  <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                  <CircleNotch size={14} weight="light" className="mr-2 animate-spin" />
                   Saving…
                 </>
               ) : (

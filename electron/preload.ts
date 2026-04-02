@@ -355,6 +355,11 @@ const electronAPI = {
       ipcRenderer.on('overlay:optimization-error', handler);
       return () => ipcRenderer.removeListener('overlay:optimization-error', handler);
     },
+    onUploadPartialFailure: (callback: (data: { failedFiles: string[] }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:upload-partial-failure', handler);
+      return () => ipcRenderer.removeListener('overlay:upload-partial-failure', handler);
+    },
     onCursorPos: (callback: (data: { x: number; y: number }) => void) => {
       ipcRenderer.on('overlay:cursor-pos', (_event, data) => callback(data));
     },
@@ -507,6 +512,11 @@ const electronAPI = {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-send-error', handler);
     return () => ipcRenderer.removeListener('message-send-error', handler);
+  },
+  onUploadPartialFailure: (callback: (data: { failedFiles: string[] }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('upload-partial-failure', handler);
+    return () => ipcRenderer.removeListener('upload-partial-failure', handler);
   },
   onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);

@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Trash } from "@phosphor-icons/react";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +26,7 @@ export const DeleteConfirmModal = ({
       <DialogContent className="sm:max-w-[380px] bg-card border-border">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-foreground">
-            <Trash2 className="w-4 h-4 text-destructive" />
+            <Trash size={16} weight="light" className="text-destructive" />
             Delete Prompt
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">

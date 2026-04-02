@@ -163,7 +163,7 @@ const CollectionPicker: React.FC<CollectionPickerProps> = ({ open, promptContent
               </div>
               <span className="collection-name">{col.name}</span>
               {col.id === selectedId && (
-                <svg style={{ width: 14, height: 14, color: 'hsl(var(--emerald))', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg style={{ width: 14, height: 14, color: 'hsl(var(--accent))', flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
                 </svg>
               )}

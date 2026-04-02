@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import * as Sentry from "@sentry/react";
-import { Copy, Check, ArrowLeft, Loader2, FileText, User, Calendar } from "lucide-react";
+import { Copy, Check, ArrowLeft, CircleNotch, FileText, User, CalendarBlank } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
@@ -77,7 +77,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
     return (
       <div className="flex-1 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="w-8 h-8 animate-spin text-emerald" />
+          <CircleNotch size={32} weight="light" className="animate-spin text-emerald" />
           <p className="text-sm">Loading shared prompt…</p>
         </div>
       </div>
@@ -90,7 +90,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
       <div className="flex-1 flex items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3 text-center max-w-xs">
           <div className="w-14 h-14 rounded-xl bg-secondary flex items-center justify-center">
-            <FileText className="w-6 h-6 text-muted-foreground/40" />
+            <FileText size={24} weight="light" className="text-muted-foreground/40" />
           </div>
           <p className="text-sm font-medium text-foreground">Prompt not found</p>
           <p className="text-xs text-muted-foreground">
@@ -98,7 +98,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
           </p>
           {onBack && (
             <Button variant="outline" size="sm" onClick={onBack} className="mt-2">
-              <ArrowLeft className="w-3.5 h-3.5 mr-2" />
+              <ArrowLeft size={14} weight="light" className="mr-2" />
               Go back
             </Button>
           )}
@@ -117,7 +117,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
             onClick={onBack}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-3 transition-smooth"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
+            <ArrowLeft size={14} weight="light" />
             Back
           </button>
         )}
@@ -126,17 +126,17 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
           <div className="min-w-0">
             {/* Creator attribution */}
             <div className="flex items-center gap-1.5 text-[11px] text-emerald font-medium mb-1.5">
-              <User className="w-3 h-3" />
+              <User size={12} weight="light" />
               <span>Shared by {prompt.owner_name}</span>
             </div>
 
             <h1 className="text-xl font-bold text-foreground tracking-tight truncate flex items-center gap-2">
-              <FileText className="w-5 h-5 text-emerald flex-shrink-0" />
+              <FileText size={20} weight="light" className="text-emerald flex-shrink-0" />
               {prompt.title}
             </h1>
 
             <div className="flex items-center gap-1 text-[11px] text-muted-foreground/60 mt-1.5">
-              <Calendar className="w-3 h-3" />
+              <CalendarBlank size={12} weight="light" />
               <span>Created {new Date(prompt.created_at).toLocaleDateString()}</span>
             </div>
           </div>
@@ -153,12 +153,12 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
           >
             {copied ? (
               <>
-                <Check className="w-4 h-4" />
+                <Check size={16} weight="light" />
                 Copied!
               </>
             ) : (
               <>
-                <Copy className="w-4 h-4" />
+                <Copy size={16} weight="light" />
                 Copy Prompt
               </>
             )}

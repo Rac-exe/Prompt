@@ -367,7 +367,7 @@ export function registerOverlayHandlers(
                 if (data.attachedFiles && data.attachedFiles.length > 0 && authState.currentUserId) {
                   const results = await Promise.allSettled(
                     data.attachedFiles.map(f =>
-                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId)
+                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId, pythonClient)
                     )
                   );
                   filesForDb = results.map((r, i) => {
@@ -377,6 +377,10 @@ export function registerOverlayHandlers(
                     Sentry.captureException(reason, { tags: { component: 'file-upload', context: 'overlay-context-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
+                  const failedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                  if (failedNames.length > 0) {
+                    overlayManager.send('overlay:upload-partial-failure', { failedFiles: failedNames });
+                  }
                 }
                 userMsg = await svc.addMessage(targetChatId, data.text, 'user', undefined, {
                   groupId: userGroupId,
@@ -467,7 +471,7 @@ export function registerOverlayHandlers(
                   const olPreId = crypto.randomUUID();
                   const olResults = await Promise.allSettled(
                     data.attachedFiles.map(f =>
-                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId)
+                      uploadAttachment(f, authState.currentUserId!, currentOverlayChatId!, olPreId, pythonClient)
                     )
                   );
                   const olFilesForDb = olResults.map((r, i) => {
@@ -477,6 +481,10 @@ export function registerOverlayHandlers(
                     Sentry.captureException(olReason, { tags: { component: 'file-upload', context: 'overlay-session-chat' }, extra: { fileName: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType } });
                     return { name: data.attachedFiles![i].name, mimeType: data.attachedFiles![i].mimeType, sizeBytes: data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
+                  const olFailedNames = olFilesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                  if (olFailedNames.length > 0) {
+                    overlayManager.send('overlay:upload-partial-failure', { failedFiles: olFailedNames });
+                  }
                   await svc.addMessage(currentOverlayChatId, data.text, 'user', undefined, {
                     groupId: olUserGroupId,
                     versionIndex: olUserVersionIndex,

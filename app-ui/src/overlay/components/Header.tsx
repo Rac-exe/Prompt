@@ -29,7 +29,7 @@ const Header: React.FC<HeaderProps> = ({ onClose, onNewSession }) => {
         style={{ width: 28, height: 28, objectFit: 'contain', flexShrink: 0 }}
       />
       <div>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'hsl(var(--foreground))', letterSpacing: '-0.01em' }}>
+        <span className="text-gradient-primary" style={{ fontSize: 13, fontWeight: 700, letterSpacing: '-0.01em' }}>
           Prmpt
         </span>
         <span

@@ -1,23 +1,23 @@
 import type { ElementType } from "react";
 import {
-  Settings2,
+  GearSix,
   Briefcase,
-  MessageSquare,
+  ChatText,
   Palette,
   GraduationCap,
-  FlaskConical,
-  Code2,
-  ImageIcon,
-} from "lucide-react";
+  Flask,
+  Code,
+  ImageSquare,
+} from "@phosphor-icons/react";
 
-/** Lucide icon per skill id — shared by composer, message bubbles, and pickers */
+/** Phosphor icon per skill id — shared by composer, message bubbles, and pickers */
 export const SKILL_ICON_MAP: Record<string, ElementType> = {
-  automation: Settings2,
+  automation: GearSix,
   business: Briefcase,
-  communication: MessageSquare,
+  communication: ChatText,
   creative: Palette,
   educational: GraduationCap,
-  research: FlaskConical,
-  technical: Code2,
-  visual: ImageIcon,
+  research: Flask,
+  technical: Code,
+  visual: ImageSquare,
 };
