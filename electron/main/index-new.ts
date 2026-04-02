@@ -402,7 +402,7 @@ async function initialize() {
     const hasSession = await checkAndRestoreSession(appWindowManager);
 
     if (hasSession) {
-      console.log('[Main] Session restored, user logged in');
+      console.log(`[Main] Session restored, user logged in`);
       overlayManager.sendAuthState(true);
     } else {
       console.log('[Main] No session found, user needs to log in');

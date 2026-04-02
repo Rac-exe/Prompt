@@ -32,10 +32,12 @@ export class AppWindowManager {
   private createWindowHidden() {
     this.isLoaded = false;
 
-    const iconPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'tray-icon.png')
-      : path.join(app.getAppPath(), 'build', 'tray-icon.png');
-    const icon = nativeImage.createFromPath(iconPath);
+    // Dev: use icon.ico (multi-size ICO — Windows reads natively, no conversion flash).
+    // Packaged: omit icon entirely — Windows automatically uses the icon embedded in the
+    //   .exe by electron-builder (build/icon.ico), so no extra file copy needed.
+    const icon = !app.isPackaged
+      ? nativeImage.createFromPath(path.join(app.getAppPath(), 'build', 'icon.ico'))
+      : undefined;
 
     this.window = new BrowserWindow({
       width: 1400,
@@ -46,7 +48,7 @@ export class AppWindowManager {
       frame: false,          // removes native title bar + menu bar entirely
       autoHideMenuBar: true, // belt-and-suspenders: also hides the menu bar
       backgroundColor: '#0d1117',
-      icon,
+      ...(icon && !icon.isEmpty() ? { icon } : {}),
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
@@ -157,11 +159,26 @@ export class AppWindowManager {
     if (!this.window || this.window.isDestroyed()) {
       this.create();
     } else if (this.isLoaded) {
-      // Already fully loaded — show instantly
-      this.window.show();
-      this.window.focus();
+      if (!this.window.isVisible()) {
+        // Window was hidden — DWM may have released its compositor surface.
+        // Show at opacity 0 so DWM recreates the surface invisibly, then
+        // reveal after Chromium has delivered a fresh composited frame (~50ms).
+        // This eliminates the 1-2 frame white flash that occurs when DWM
+        // recreates its surface before Chromium paints the background.
+        const win = this.window;
+        win.setOpacity(0);
+        win.show();
+        setTimeout(() => {
+          if (win && !win.isDestroyed()) {
+            win.setOpacity(1);
+            win.focus();
+          }
+        }, 50);
+      } else {
+        this.window.show();
+        this.window.focus();
+      }
     } else {
-      // Window exists but still loading — wait for ready-to-show
       this.window.once('ready-to-show', () => {
         if (this.window) {
           this.window.show();

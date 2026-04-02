@@ -44,6 +44,11 @@ export class OverlayWindowManager {
    *  pre-heat is complete.  Only then may the overlay be opened. */
   private isLoaded = false;
 
+  /** true while preheatCompositor() is mid-flight (async).
+   *  Prevents the fallback timer and the overlay:ready IPC from both
+   *  entering preheatCompositor() concurrently before isLoaded is set. */
+  private isPreheating = false;
+
   /** true when the user triggered open() before isLoaded became true.
    *  showAndFocus() will be called automatically once loading completes. */
   private shouldShowOnReady = false;
@@ -186,8 +191,9 @@ export class OverlayWindowManager {
    *   5. Mark as loaded — future opens just move the window on-screen
    */
   private async preheatCompositor() {
-    if (this.isLoaded) return; // Already done (e.g. by fallback timer)
-    if (!this.window || this.window.isDestroyed()) return;
+    if (this.isLoaded || this.isPreheating) return; // Already done or in-flight
+    this.isPreheating = true; // Set synchronously before first await to block concurrent calls
+    if (!this.window || this.window.isDestroyed()) { this.isPreheating = false; return; }
 
     // Force a fresh render so the framebuffer is up-to-date
     this.window.webContents.invalidate();
@@ -209,6 +215,7 @@ export class OverlayWindowManager {
     if (!this.window || this.window.isDestroyed()) return;
 
     this.isLoaded = true;
+    this.isPreheating = false;
     console.log('[OverlayWindowManager] Compositor pre-heated — overlay ready');
 
     // If the user already triggered open() before we finished, show now
