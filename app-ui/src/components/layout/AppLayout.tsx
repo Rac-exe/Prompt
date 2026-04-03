@@ -1,4 +1,5 @@
 import { ReactNode, useState, useEffect } from "react";
+import * as Sentry from "@sentry/react";
 import { Minus, Square, X, WifiSlash, Warning, ArrowCircleUp } from "@phosphor-icons/react";
 import { ZoomIndicator } from "./ZoomIndicator";
 
@@ -37,14 +38,34 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
     const unsubAvailable = window.electronAPI?.update?.onAvailable?.((data) => {
       setUpdateVersion(data.version);
       setUpdateState('available');
+      Sentry.addBreadcrumb({
+        category: 'updater',
+        message: 'Renderer: update available',
+        level: 'info',
+        data: { newVersion: data.version },
+      });
     });
     const unsubProgress = window.electronAPI?.update?.onProgress?.((data) => {
       setDownloadPercent(data.percent);
       setUpdateState('downloading');
+      if (data.percent === 100 || data.percent % 25 === 0) {
+        Sentry.addBreadcrumb({
+          category: 'updater',
+          message: `Renderer: download progress ${data.percent}%`,
+          level: 'info',
+          data: { percent: data.percent, transferred: data.transferred, total: data.total },
+        });
+      }
     });
     const unsubDownloaded = window.electronAPI?.update?.onDownloaded?.((data) => {
       setUpdateVersion(data.version);
       setUpdateState('ready');
+      Sentry.addBreadcrumb({
+        category: 'updater',
+        message: 'Renderer: update downloaded — showing restart banner',
+        level: 'info',
+        data: { version: data.version },
+      });
     });
 
     return () => {
@@ -146,7 +167,19 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
             <ArrowCircleUp size={12} weight="light" className="flex-shrink-0" />
             <span>Prmpt {updateVersion} is ready —</span>
             <button
-              onClick={() => window.electronAPI?.update?.install?.()}
+              onClick={() => {
+                Sentry.addBreadcrumb({
+                  category: 'updater',
+                  message: 'User clicked Restart & update',
+                  level: 'info',
+                  data: { version: updateVersion },
+                });
+                Sentry.withScope((scope) => {
+                  scope.setTag('updater_action', 'quit_and_install');
+                  scope.setExtra('update_version', updateVersion);
+                  window.electronAPI?.update?.install?.();
+                });
+              }}
               className="underline underline-offset-2 hover:text-emerald-300 transition-colors"
             >
               Restart &amp; update
