@@ -149,24 +149,68 @@ function toggleOverlay() {
 // ============================================
 function setupAutoUpdater() {
   // In dev mode there's nothing to update — bail silently.
-  if (!app.isPackaged) return;
+  if (!app.isPackaged) {
+    console.log('[Updater] Skipping auto-update — not a packaged build.');
+    return;
+  }
 
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
+  Sentry.setTag('updater', 'enabled');
+  logger.info('updater.initialized autoDownload=true autoInstallOnAppQuit=true');
+
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[Updater] Checking for updates...');
+    Sentry.addBreadcrumb({
+      category: 'updater',
+      message: 'Checking for update',
+      level: 'info',
+      data: { currentVersion: app.getVersion() },
+    });
+    logger.info(logger.fmt`updater.checking currentVersion=${app.getVersion()}`);
+  });
+
   autoUpdater.on('update-available', (info) => {
     console.log(`[Updater] Update available: ${info.version}`);
-    Sentry.addBreadcrumb({ category: 'updater', message: `Update available: ${info.version}`, level: 'info' });
+    Sentry.addBreadcrumb({
+      category: 'updater',
+      message: 'Update available',
+      level: 'info',
+      data: { currentVersion: app.getVersion(), newVersion: info.version, releaseDate: info.releaseDate },
+    });
+    Sentry.setTag('update_available', info.version);
+    logger.info(logger.fmt`updater.update_available newVersion=${info.version} currentVersion=${app.getVersion()}`);
     appWindowManager?.send('update:available', { version: info.version });
   });
 
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater.on('update-not-available', (info) => {
     console.log('[Updater] App is up to date.');
+    Sentry.addBreadcrumb({
+      category: 'updater',
+      message: 'App is up to date',
+      level: 'info',
+      data: { currentVersion: app.getVersion(), latestVersion: info.version },
+    });
+    logger.info(logger.fmt`updater.up_to_date version=${app.getVersion()}`);
   });
 
   autoUpdater.on('download-progress', (progress) => {
+    const percent = Math.round(progress.percent);
+    console.log(`[Updater] Download progress: ${percent}%`);
+    Sentry.addBreadcrumb({
+      category: 'updater',
+      message: `Download progress: ${percent}%`,
+      level: 'info',
+      data: {
+        percent,
+        bytesPerSecond: Math.round(progress.bytesPerSecond),
+        transferred: progress.transferred,
+        total: progress.total,
+      },
+    });
     appWindowManager?.send('update:progress', {
-      percent: Math.round(progress.percent),
+      percent,
       transferred: progress.transferred,
       total: progress.total,
     });
@@ -174,23 +218,51 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log(`[Updater] Update downloaded: ${info.version}`);
-    Sentry.addBreadcrumb({ category: 'updater', message: `Update downloaded: ${info.version}`, level: 'info' });
+    Sentry.addBreadcrumb({
+      category: 'updater',
+      message: 'Update downloaded — ready to install',
+      level: 'info',
+      data: { version: info.version, releaseDate: info.releaseDate },
+    });
+    Sentry.setTag('update_downloaded', info.version);
+    logger.info(logger.fmt`updater.downloaded version=${info.version}`);
     appWindowManager?.send('update:downloaded', { version: info.version });
   });
 
   autoUpdater.on('error', (err) => {
     console.error('[Updater] Error:', err.message);
-    Sentry.captureException(err, { tags: { component: 'auto-updater' } });
+    Sentry.captureException(err, {
+      level: 'warning',
+      tags: { component: 'auto-updater' },
+      extra: { currentVersion: app.getVersion() },
+    });
+    logger.error(logger.fmt`updater.error ${err.message}`);
   });
 
   // Check 5 seconds after launch so the window is ready, then every 4 hours.
-  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 5_000);
-  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1_000);
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      Sentry.captureException(err, { level: 'warning', tags: { component: 'auto-updater', trigger: 'startup-check' } });
+    });
+  }, 5_000);
+
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      Sentry.captureException(err, { level: 'warning', tags: { component: 'auto-updater', trigger: 'interval-check' } });
+    });
+  }, 4 * 60 * 60 * 1_000);
 }
 
 // IPC: renderer asks us to quit and install the downloaded update.
 ipcMain.on('update:install', () => {
-  autoUpdater.quitAndInstall(false, true);
+  Sentry.addBreadcrumb({
+    category: 'updater',
+    message: 'User triggered quit-and-install',
+    level: 'info',
+    data: { currentVersion: app.getVersion() },
+  });
+  logger.info(logger.fmt`updater.install_triggered version=${app.getVersion()}`);
+  Sentry.flush(2000).then(() => autoUpdater.quitAndInstall(false, true));
 });
 
 // ============================================
