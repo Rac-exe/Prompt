@@ -37,6 +37,7 @@ export interface UserProfile {
   avatar_url: string | null;
   created_at: string;
   updated_at: string;
+  role: 'user' | 'dev' | 'admin';
 }
 
 export interface UserPreferences {
@@ -271,3 +272,33 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
 export const OPTIMIZATION_SOURCES = ['overlay', 'app_window', 'api'] as const;
 export const MESSAGE_ROLES = ['user', 'assistant', 'system'] as const;
 export const THEMES = ['light', 'dark', 'system'] as const;
+
+// ============================================
+// ANALYTICS TYPES
+// ============================================
+
+export const ANALYTICS_EVENT_TYPES = [
+  'ai_response',
+  'optimization',
+  'overlay_optimization',
+  'overlay_open',
+] as const;
+
+export type AnalyticsEventType = (typeof ANALYTICS_EVENT_TYPES)[number];
+
+export interface AnalyticsEvent {
+  user_id: string;
+  event_type: AnalyticsEventType;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AppSession {
+  id: string;
+  user_id: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  app_version: string | null;
+  platform: string;
+}
