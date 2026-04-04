@@ -176,14 +176,20 @@ export class RateLimitService {
 
             if (error) {
                 console.error('[RateLimitService] Error counting messages:', error);
-                Sentry.captureMessage('Rate limit fail-closed: DB error', 'warning');
+                Sentry.captureException(error, {
+                    tags: { component: 'rate-limit', op: 'count-messages', failMode: 'closed' },
+                    extra: { userId },
+                });
                 return Infinity;
             }
 
             return count ?? 0;
         } catch (err) {
             console.error('[RateLimitService] Unexpected error counting messages:', err);
-            Sentry.captureMessage('Rate limit fail-closed: unexpected error', 'warning');
+            Sentry.captureException(err, {
+                tags: { component: 'rate-limit', op: 'count-messages', failMode: 'closed' },
+                extra: { userId },
+            });
             return Infinity;
         }
     }

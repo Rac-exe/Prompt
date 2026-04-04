@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/electron/main';
 import { SupabaseClientManager } from '../supabase-client';
 import { DeletionService } from './deletion-service';
 
@@ -112,6 +113,10 @@ export class UserService {
 
     if (profileError) {
       console.error('[UserService] Error ensuring profile exists:', profileError);
+      Sentry.captureException(profileError, {
+        tags: { component: 'user-service', op: 'ensure-profile:profile-upsert' },
+        extra: { userId: user.id },
+      });
     }
 
     const { error: prefsError } = await this.client
@@ -120,6 +125,10 @@ export class UserService {
 
     if (prefsError) {
       console.error('[UserService] Error ensuring preferences exist:', prefsError);
+      Sentry.captureException(prefsError, {
+        tags: { component: 'user-service', op: 'ensure-profile:prefs-upsert' },
+        extra: { userId: user.id },
+      });
     }
   }
 
@@ -139,6 +148,12 @@ export class UserService {
 
       if (error || !data) {
         console.warn('[UserService] Profile missing — re-creating for user', userData.user.id);
+        Sentry.addBreadcrumb({
+          category: 'user',
+          message: 'Zombie profile detected — re-creating',
+          level: 'warning',
+          data: { userId: userData.user.id },
+        });
         await this.ensureProfileExists(userData.user);
 
         const retry = await this.client
@@ -152,6 +167,10 @@ export class UserService {
 
         if (error || !data) {
           console.error('[UserService] Still cannot fetch profile after re-creation:', error);
+          Sentry.captureException(error ?? new Error('Profile missing after re-creation'), {
+            tags: { component: 'user-service', op: 'get-complete-user-data:retry-failed' },
+            extra: { userId: userData.user.id },
+          });
           return null;
         }
       }
@@ -176,6 +195,7 @@ export class UserService {
       return { profile, preferences };
     } catch (error) {
       console.error('[UserService] Unexpected error fetching complete user data:', error);
+      Sentry.captureException(error, { tags: { component: 'user-service', op: 'get-complete-user-data' } });
       return null;
     }
   }
@@ -313,8 +333,20 @@ export class UserService {
    * Actual data wipe is handled server-side by the process-deletions Edge Function.
    */
   async deleteAccount(reason?: string): Promise<{ scheduledAt: string }> {
-    const svc = new DeletionService();
-    const req = await svc.requestDeletion(reason);
-    return { scheduledAt: req.scheduled_deletion_at };
+    Sentry.addBreadcrumb({ category: 'user', message: 'Account deletion requested', level: 'info' });
+    try {
+      const svc = new DeletionService();
+      const req = await svc.requestDeletion(reason);
+      Sentry.addBreadcrumb({
+        category: 'user',
+        message: 'Account deletion scheduled',
+        level: 'info',
+        data: { scheduledAt: req.scheduled_deletion_at },
+      });
+      return { scheduledAt: req.scheduled_deletion_at };
+    } catch (error) {
+      Sentry.captureException(error, { tags: { component: 'user-service', op: 'delete-account' } });
+      throw error;
+    }
   }
 }
