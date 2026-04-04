@@ -41,10 +41,10 @@ interface ChatSession {
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 const Index = () => {
-  // Initialize settings after authentication
-  useInitializeSettings();
-
   const { user, signOut } = useAuth();
+
+  // Initialize settings after authentication, scoped to user
+  useInitializeSettings(user?.profile?.id);
 
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");

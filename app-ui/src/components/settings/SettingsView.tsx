@@ -242,7 +242,7 @@ export const SettingsView = () => {
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
     applySettings(newSettings);
-    saveSettings(newSettings).catch((err) => {
+    saveSettings(newSettings, user?.profile?.id).catch((err) => {
       Sentry.captureException(err, { tags: { component: 'settings-view', op: 'auto-save' }, extra: { key } });
       console.error('[SettingsView] Failed to auto-save:', err);
       toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
