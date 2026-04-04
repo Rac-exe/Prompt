@@ -30,7 +30,6 @@ interface Window {
     };
 
     // Auth
-    signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
     signIn: (data: { email: string; password: string }) => void;
     checkAuth: () => void;
     onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any; error?: string }) => void) => void;

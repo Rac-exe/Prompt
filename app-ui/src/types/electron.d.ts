@@ -67,7 +67,6 @@ export interface SharedPromptView {
 
 export interface ElectronAPI {
   // Auth
-  signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
   signIn: (data: { email: string; password: string }) => void;
   signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
   checkAuth: () => void;

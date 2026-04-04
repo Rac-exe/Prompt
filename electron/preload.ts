@@ -575,9 +575,6 @@ const electronAPI = {
   // ============================================
   // AUTH API
   // ============================================
-  signUp: (data: { name: string; dob: string; email: string; password: string }) => {
-    ipcRenderer.send('auth:sign-up', data);
-  },
   signIn: (data: { email: string; password: string }) => {
     ipcRenderer.send('auth:sign-in', data);
   },
