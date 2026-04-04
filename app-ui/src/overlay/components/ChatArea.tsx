@@ -5,6 +5,7 @@ import { useIsDark } from "@/hooks/useIsDark";
 import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON } from '../lib/constants';
 import { useScrollController } from '../../hooks/useScrollController';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
 
 // ── Inline sub-components (small, tightly coupled to overlay) ────────────────
 
@@ -304,7 +305,7 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
         {' '}Optimized Prompt
       </div>
       <div className="message-bubble assistant-bubble">
-        <div className="message-text">{msg.content}</div>
+        <MarkdownContent content={msg.content} size="xs" className="message-text" />
       </div>
       <div className="message-actions">
         {/* Copy */}
@@ -366,7 +367,7 @@ const StreamingMessage: React.FC<{ content: string }> = ({ content }) => (
       {' '}Optimized Prompt
     </div>
     <div className="message-bubble assistant-bubble">
-      <div className="message-text">{content}</div>
+      <MarkdownContent content={content} size="xs" className="message-text" />
     </div>
   </div>
 );

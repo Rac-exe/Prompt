@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Copy, Check, BookmarkSimple, User, Sparkle, PencilSimple, ArrowCounterClockwise, FileText, ImageSquare, MagnifyingGlassPlus, Paperclip, CaretLeft, CaretRight, WarningCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/Logo";
+import { MarkdownContent } from "@/components/ui/MarkdownContent";
 import { cn } from "@/lib/utils";
 import { SKILL_ICON_MAP } from "@/lib/skillIcons";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -379,7 +380,7 @@ export const MessageBubble = ({
             </div>
           ) : (
           <div className="px-4 py-3.5">
-            <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
+            <MarkdownContent content={message.content} size="sm" />
           </div>
           )}
 
