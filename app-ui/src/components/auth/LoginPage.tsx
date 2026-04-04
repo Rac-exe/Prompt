@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Logo } from "@/components/ui/Logo";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [resetPasswordError, setResetPasswordError] = useState('');
   const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
+  const resetOtpRef = useRef<string | null>(null);
   const { toast } = useToast();
 
   const handleForgotPassword = async () => {
@@ -59,7 +60,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
     setNewPassword('');
     setConfirmNewPassword('');
     setResetPasswordError('');
-    (window as any).__resetOtp = otp;
+    resetOtpRef.current = otp;
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -77,7 +78,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
 
     setResetPasswordLoading(true);
     try {
-      const otp = (window as any).__resetOtp;
+      const otp = resetOtpRef.current;
       const result = await window.electronAPI?.verifyResetOtp(resetEmail, otp, newPassword);
       if (result?.error) {
         setResetPasswordError(result.error);
@@ -86,7 +87,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
           setOtpError(result.error);
         }
       } else {
-        delete (window as any).__resetOtp;
+        resetOtpRef.current = null;
         toast({ title: 'Password updated', description: 'You can now sign in with your new password.' });
         setView('login');
         setPassword('');
