@@ -96,9 +96,12 @@ sentry_sdk.init(
     send_default_pii=False,
     before_send=_scrub_prompts,
     integrations=[
-        # Explicitly configure LoggingIntegration: INFO → breadcrumbs, ERROR → Sentry events.
+        # INFO → breadcrumbs, ERROR → Sentry events.
         LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
     ],
+    _experiments={
+        "enable_logs": True,
+    },
 )
 
 import json
