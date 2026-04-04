@@ -582,7 +582,9 @@ async function initialize() {
       overlayManager.sendAuthState(true);
 
       analyticsService.initialize(session.user.id);
-      analyticsService.startSession(appVersion).catch(() => {});
+      analyticsService.startSession(appVersion).catch((err) => {
+        Sentry.captureException(err, { level: 'warning', tags: { component: 'analytics', trigger: 'signed-in' } });
+      });
     } else if (event === 'SIGNED_OUT') {
       if (!networkMonitor.isOnline) {
         console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
@@ -624,7 +626,9 @@ async function initialize() {
 
         if (authState.currentUserId) {
           analyticsService.initialize(authState.currentUserId);
-          analyticsService.startSession(appVersion).catch(() => {});
+          analyticsService.startSession(appVersion).catch((err) => {
+            Sentry.captureException(err, { level: 'warning', tags: { component: 'analytics', trigger: 'session-restore' } });
+          });
         }
       } else {
         console.log('[Main] No session found, user needs to log in');

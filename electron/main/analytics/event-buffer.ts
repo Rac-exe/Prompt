@@ -1,6 +1,8 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 import { SupabaseClientManager } from '../database/supabase-client';
 import type { AnalyticsEvent } from '../types/user-types';
 
@@ -52,16 +54,23 @@ export class EventBuffer {
     if (this.buffer.length === 0) return;
 
     const batch = this.buffer.splice(0);
+    const batchSize = batch.length;
 
     try {
       const client = SupabaseClientManager.getClient();
       const { error } = await client.from('usage_events').insert(batch);
 
       if (error) {
+        Sentry.addBreadcrumb({ category: 'analytics-buffer', message: 'Flush to Supabase failed', level: 'error', data: { batchSize, error: error.message } });
+        Sentry.captureMessage('EventBuffer flush failed: ' + error.message, 'warning');
         console.error('[EventBuffer] Supabase insert failed:', error.message);
         this.persistToOfflineCache(batch);
+        return;
       }
+
+      logger.info(logger.fmt`analytics.buffer_flushed count=${batchSize}`);
     } catch (err) {
+      Sentry.captureException(err, { level: 'warning', tags: { component: 'analytics-buffer', operation: 'flush' }, extra: { batchSize } });
       console.error('[EventBuffer] Flush failed:', err instanceof Error ? err.message : err);
       this.persistToOfflineCache(batch);
     }
@@ -98,17 +107,22 @@ export class EventBuffer {
         return;
       }
 
+      Sentry.addBreadcrumb({ category: 'analytics-buffer', message: 'Draining offline queue', level: 'info', data: { count: events.length } });
+
       const client = SupabaseClientManager.getClient();
       const { error } = await client.from('usage_events').insert(events);
 
       if (error) {
+        Sentry.addBreadcrumb({ category: 'analytics-buffer', message: 'Offline drain failed', level: 'warning', data: { count: events.length, error: error.message } });
         console.warn('[EventBuffer] Offline drain failed — will retry next cycle:', error.message);
         return;
       }
 
       unlinkSync(filePath);
+      logger.info(logger.fmt`analytics.offline_drained count=${events.length}`);
       console.log(`[EventBuffer] Drained ${events.length} offline events`);
     } catch (err) {
+      Sentry.captureException(err, { level: 'warning', tags: { component: 'analytics-buffer', operation: 'drain-offline' } });
       console.warn('[EventBuffer] Failed to read offline queue:', err instanceof Error ? err.message : err);
     }
   }
@@ -129,8 +143,11 @@ export class EventBuffer {
 
       const merged = existing.concat(events);
       writeFileSync(filePath, JSON.stringify(merged), 'utf-8');
+      Sentry.addBreadcrumb({ category: 'analytics-buffer', message: 'Events persisted to offline cache', level: 'warning', data: { newEvents: events.length, totalCached: merged.length } });
+      logger.info(logger.fmt`analytics.offline_persisted newEvents=${events.length} totalCached=${merged.length}`);
       console.log(`[EventBuffer] Persisted ${events.length} events to offline cache (total: ${merged.length})`);
     } catch (err) {
+      Sentry.captureException(err, { level: 'error', tags: { component: 'analytics-buffer', operation: 'persist-offline' } });
       console.error('[EventBuffer] Failed to persist to offline cache:', err instanceof Error ? err.message : err);
     }
   }
