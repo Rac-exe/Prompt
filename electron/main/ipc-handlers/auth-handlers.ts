@@ -12,6 +12,7 @@ import { authState } from '../utils/auth-state';
 import { networkMonitor } from './network-monitor-singleton';
 import { localCache } from '../database/local-cache';
 import { emailService } from '../services/email-service';
+import { clearOverlayHistory } from './overlay-ipc-handlers';
 
 // Services (lazy loaded)
 let authService: AuthService | null = null;
@@ -446,8 +447,10 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             await authService!.signOut();
 
             authState.isAuthenticated = false;
+            authState.currentAccessToken = null;
             authState.currentUserId = null;
             authState.currentUserEmail = null;
+            clearOverlayHistory();
             Sentry.setUser(null);
             appWindowManager.send('sentry:set-user', null);
 
@@ -472,8 +475,10 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             await authService!.signOut();
 
             authState.isAuthenticated = false;
+            authState.currentAccessToken = null;
             authState.currentUserId = null;
             authState.currentUserEmail = null;
+            clearOverlayHistory();
             Sentry.setUser(null);
             appWindowManager.send('sentry:set-user', null);
 

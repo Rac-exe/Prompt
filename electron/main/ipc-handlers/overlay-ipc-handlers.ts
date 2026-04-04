@@ -134,8 +134,8 @@ function getRateLimitService(): RateLimitService {
   return rateLimitService;
 }
 
-/** Clear overlay conversation history and reset chat session (called on "New Session"). */
-function clearOverlayHistory() {
+/** Clear overlay conversation history and reset chat session (called on "New Session" or sign-out). */
+export function clearOverlayHistory() {
   inMemoryOverlayHistory.length = 0;
   currentOverlayChatId = null;
   console.log('[OverlayHandlers] Overlay session history cleared');
