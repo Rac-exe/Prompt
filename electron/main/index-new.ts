@@ -76,6 +76,7 @@ import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
 import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
+import { analyticsService } from './analytics/analytics-service';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -579,6 +580,9 @@ async function initialize() {
       Sentry.setUser({ id: session.user.id });
       Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_IN', level: 'info', data: { userId: session.user.id } });
       overlayManager.sendAuthState(true);
+
+      analyticsService.initialize(session.user.id);
+      analyticsService.startSession(appVersion).catch(() => {});
     } else if (event === 'SIGNED_OUT') {
       if (!networkMonitor.isOnline) {
         console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
@@ -617,6 +621,11 @@ async function initialize() {
       if (hasSession) {
         console.log('[Main] Session restored, user logged in');
         overlayManager.sendAuthState(true);
+
+        if (authState.currentUserId) {
+          analyticsService.initialize(authState.currentUserId);
+          analyticsService.startSession(appVersion).catch(() => {});
+        }
       } else {
         console.log('[Main] No session found, user needs to log in');
       }
@@ -651,6 +660,9 @@ async function shutdown() {
   if (systemTray) {
     systemTray.destroy();
   }
+
+  // Flush analytics events and close the session before Sentry flushes.
+  await analyticsService.shutdown();
 
   // Flush buffered Sentry events before the process exits so nothing is dropped.
   await Sentry.flush(2000);

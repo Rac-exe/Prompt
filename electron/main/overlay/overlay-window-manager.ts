@@ -2,6 +2,7 @@ import { BrowserWindow, screen, app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 import { forceFocusWindow } from '../utils/native-bridge';
+import { analyticsService } from '../analytics/analytics-service';
 
 /**
  * OverlayWindowManager
@@ -286,6 +287,7 @@ export class OverlayWindowManager {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
+    analyticsService.logEvent('overlay_open');
     this.focusWindow();
   }
 

@@ -21,6 +21,7 @@ import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt } from './chat-handlers';
+import { analyticsService } from '../analytics/analytics-service';
 
 function humanizeLlmError(err: unknown): string {
     const raw: string = ((err as any)?.message ?? (err as any)?.code ?? String(err)).toLowerCase();
@@ -313,6 +314,8 @@ export function registerOverlayHandlers(
         original: data.text,
         optimized: optimizedText,
       });
+
+      analyticsService.logEvent('overlay_optimization', { source: 'overlay' });
 
         // Save to DB (fire-and-forget, non-blocking)
       if (authState.isAuthenticated) {

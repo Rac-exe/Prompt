@@ -17,6 +17,7 @@ import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
 import { RateLimitService } from '../database/services/rate-limit-service';
+import { analyticsService } from '../analytics/analytics-service';
 
 // ── Model metadata helper ─────────────────────────────────────────────────────
 function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
@@ -306,6 +307,8 @@ export function registerChatHandlers(
                     optimized: optimizedText,
                 });
             }
+
+            analyticsService.logEvent('optimization', { source: 'app' });
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
@@ -829,6 +832,8 @@ export function registerChatHandlers(
                 });
             }
 
+            analyticsService.logEvent('ai_response', { source: 'app', model: modelsUsed?.optimizer });
+
             // Invalidate rate-limit cache so the next check reflects the new message
             if (authState.currentUserId && rateLimitService) {
                 rateLimitService.invalidateCache(authState.currentUserId);
@@ -1005,6 +1010,8 @@ export function registerChatHandlers(
                     }
                 });
             }
+
+            analyticsService.logEvent('ai_response', { source: 'app', regeneration: true });
 
             // Invalidate rate-limit cache after regeneration
             if (authState.currentUserId && rateLimitService) {
