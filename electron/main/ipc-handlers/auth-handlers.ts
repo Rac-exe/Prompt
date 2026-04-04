@@ -367,17 +367,23 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 return { error: 'Password reset is not configured. Contact support.' };
             }
 
-            // Find user by email
-            const { data: userData, error: listError } = await adminClient.auth.admin.listUsers();
-            if (listError) {
-                Sentry.captureException(listError, { tags: { op: 'auth:verify-reset-otp', step: 'listUsers' } });
-                console.error('[Auth] Admin listUsers error:', listError);
-                return { error: 'Could not look up user. Please try again.' };
+            // Find user by email — paginate to avoid missing users beyond page 1
+            const normalizedEmail = email.toLowerCase().trim();
+            let targetUser: any = null;
+            const perPage = 1000;
+            for (let page = 1; !targetUser; page++) {
+                const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({ page, perPage });
+                if (listError) {
+                    Sentry.captureException(listError, { tags: { op: 'auth:verify-reset-otp', step: 'listUsers' } });
+                    console.error('[Auth] Admin listUsers error:', listError);
+                    return { error: 'Could not look up user. Please try again.' };
+                }
+                targetUser = userData.users.find(
+                    (u: any) => u.email?.toLowerCase() === normalizedEmail
+                );
+                if (userData.users.length < perPage) break;
             }
 
-            const targetUser = userData.users.find(
-                (u: any) => u.email?.toLowerCase() === email.toLowerCase().trim()
-            );
             if (!targetUser) {
                 return { error: 'No account found with this email address.' };
             }
