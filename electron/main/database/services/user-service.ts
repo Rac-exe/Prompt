@@ -1,4 +1,5 @@
 import { SupabaseClientManager } from '../supabase-client';
+import { DeletionService } from './deletion-service';
 
 export interface UserProfile {
   id: string;
@@ -97,6 +98,32 @@ export class UserService {
   }
 
   /**
+   * Re-create profile and preferences rows when they've been deleted
+   * but the auth.users entry still exists (e.g. manual DB cleanup).
+   */
+  private async ensureProfileExists(user: { id: string; email?: string; user_metadata?: Record<string, any> }): Promise<void> {
+    const { error: profileError } = await this.client
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        email: user.email ?? '',
+        name: user.user_metadata?.name || user.user_metadata?.full_name || 'User',
+      }, { onConflict: 'id', ignoreDuplicates: true });
+
+    if (profileError) {
+      console.error('[UserService] Error ensuring profile exists:', profileError);
+    }
+
+    const { error: prefsError } = await this.client
+      .from('user_preferences')
+      .upsert({ user_id: user.id }, { onConflict: 'user_id', ignoreDuplicates: true });
+
+    if (prefsError) {
+      console.error('[UserService] Error ensuring preferences exist:', prefsError);
+    }
+  }
+
+  /**
    * Get complete user data (profile + preferences)
    */
   async getCompleteUserData(): Promise<CompleteUserData | null> {
@@ -104,19 +131,31 @@ export class UserService {
       const { data: userData } = await this.client.auth.getUser();
       if (!userData.user) return null;
 
-      // Use the view for optimized query
-      const { data, error } = await this.client
+      let { data, error } = await this.client
         .from('user_full_profile')
         .select('*')
         .eq('id', userData.user.id)
         .single();
 
-      if (error) {
-        console.error('[UserService] Error fetching complete user data:', error);
-        return null;
+      if (error || !data) {
+        console.warn('[UserService] Profile missing — re-creating for user', userData.user.id);
+        await this.ensureProfileExists(userData.user);
+
+        const retry = await this.client
+          .from('user_full_profile')
+          .select('*')
+          .eq('id', userData.user.id)
+          .single();
+
+        data = retry.data;
+        error = retry.error;
+
+        if (error || !data) {
+          console.error('[UserService] Still cannot fetch profile after re-creation:', error);
+          return null;
+        }
       }
 
-      // Transform the flat view data into structured format
       const profile: UserProfile = {
         id: data.id,
         name: data.name,
@@ -270,26 +309,12 @@ export class UserService {
   }
 
   /**
-   * Delete user account and all associated data
+   * Submit a 30-day deferred deletion request via the GDPR flow.
+   * Actual data wipe is handled server-side by the process-deletions Edge Function.
    */
-  async deleteAccount(): Promise<void> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) throw new Error('Not authenticated');
-
-      // Note: Deleting from auth.users will cascade delete all user data
-      // due to ON DELETE CASCADE constraints
-      
-      // This requires admin privileges or a database function
-      // For now, just sign out and mark account for deletion
-      console.warn('[UserService] Account deletion requires admin action');
-      
-      // In production, you would call an edge function or admin API here
-      
-      throw new Error('Account deletion not implemented yet');
-    } catch (error) {
-      console.error('[UserService] Error deleting account:', error);
-      throw error;
-    }
+  async deleteAccount(reason?: string): Promise<{ scheduledAt: string }> {
+    const svc = new DeletionService();
+    const req = await svc.requestDeletion(reason);
+    return { scheduledAt: req.scheduled_deletion_at };
   }
 }
