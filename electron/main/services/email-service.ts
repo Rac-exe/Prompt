@@ -1,6 +1,7 @@
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import * as crypto from 'crypto';
 import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 
 interface PendingOtp {
   otp: string;
@@ -20,38 +21,48 @@ interface PendingSignup {
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_ATTEMPTS = 5;
-const OTP_LENGTH = 6;
 
 export class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
+  private resend: Resend | null = null;
   private pendingSignups = new Map<string, PendingSignup>();
   private pendingResets = new Map<string, PendingOtp>();
-  private fromAddress: string = '';
+  private fromAddress: string = 'TryPrmpt <no-reply@tryprmpt.com>';
 
   initialize() {
-    const host = process.env.SMTP_HOST;
-    const port = parseInt(process.env.SMTP_PORT || '587', 10);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    this.fromAddress = process.env.SMTP_FROM || user || 'noreply@prmpt.app';
+    const apiKey = process.env.RESEND_API_KEY;
 
-    if (!host || !user || !pass) {
-      console.warn('[EmailService] SMTP not configured — OTP emails will be logged to console only');
+    Sentry.addBreadcrumb({
+      category: 'email',
+      message: 'EmailService.initialize called',
+      level: 'info',
+      data: { hasApiKey: !!apiKey },
+    });
+
+    if (!apiKey) {
+      Sentry.captureMessage('RESEND_API_KEY not configured — OTP emails disabled', 'warning');
+      console.warn('[EmailService] RESEND_API_KEY not configured — OTP emails will be logged to console only');
       return;
     }
 
     try {
-      this.transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: { user, pass },
+      this.resend = new Resend(apiKey);
+      Sentry.addBreadcrumb({
+        category: 'email',
+        message: 'Resend client created',
+        level: 'info',
+        data: { from: this.fromAddress },
       });
-      Sentry.addBreadcrumb({ category: 'email', message: 'SMTP transport created', level: 'info', data: { host } });
-      console.log('[EmailService] SMTP transport created:', host);
+      Sentry.setContext('email_service', { provider: 'resend', from: this.fromAddress, initialized: true });
+      logger.info(logger.fmt`email.initialized provider=resend from=${this.fromAddress}`);
+      console.log('[EmailService] Resend client initialized');
     } catch (err: any) {
-      Sentry.captureException(err, { tags: { component: 'email-service', op: 'initialize' } });
-      console.error('[EmailService] Failed to create SMTP transport:', err);
+      Sentry.withScope((scope) => {
+        scope.setTag('component', 'email-service');
+        scope.setTag('op', 'initialize');
+        scope.setLevel('error');
+        Sentry.captureException(err);
+      });
+      console.error('[EmailService] Failed to create Resend client:', err);
     }
   }
 
@@ -107,132 +118,332 @@ export class EmailService {
 
     const html = this.buildOtpHtml(otp, purpose);
 
-    if (!this.transporter) {
-      console.log(`[EmailService] (no SMTP) OTP for ${to}: ${otp}`);
+    if (!this.resend) {
+      Sentry.addBreadcrumb({
+        category: 'email',
+        message: 'sendOtpEmail skipped — no Resend client',
+        level: 'warning',
+        data: { to, purpose },
+      });
+      console.log(`[EmailService] (no Resend client) OTP for ${to}: ${otp}`);
       return;
     }
 
-    await this.transporter.sendMail({
-      from: this.fromAddress,
-      to,
-      subject,
-      html,
-    });
+    await Sentry.startSpan(
+      {
+        name: 'email.send-otp',
+        op: 'http.client',
+        attributes: { purpose, to },
+      },
+      async (span) => {
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: `Sending OTP email (${purpose})`,
+          level: 'info',
+          data: { to, subject, from: this.fromAddress },
+        });
 
-    console.log(`[EmailService] OTP email sent to ${to} (${purpose})`);
+        const t0 = Date.now();
+        const { error } = await this.resend!.emails.send({
+          from: this.fromAddress,
+          to,
+          subject,
+          html,
+        });
+        const elapsed = Date.now() - t0;
+
+        span.setAttribute('resend.latency_ms', elapsed);
+
+        if (error) {
+          span.setAttribute('resend.error', error.message);
+          Sentry.addBreadcrumb({
+            category: 'email',
+            message: 'Resend API returned error',
+            level: 'error',
+            data: { to, purpose, error: error.message, elapsed_ms: elapsed },
+          });
+          throw new Error(`Resend error: ${error.message}`);
+        }
+
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: `OTP email delivered (${purpose})`,
+          level: 'info',
+          data: { to, elapsed_ms: elapsed },
+        });
+        logger.info(logger.fmt`email.otp_sent purpose=${purpose} elapsed_ms=${elapsed}`);
+        console.log(`[EmailService] OTP email sent to ${to} (${purpose}) in ${elapsed}ms`);
+      },
+    );
   }
 
   // ── Sign-up OTP ─────────────────────────────────────────────────────────
 
   async sendSignupOtp(data: { name: string; dob: string; email: string; password: string }): Promise<{ success: boolean; error?: string }> {
     const email = data.email.toLowerCase().trim();
-    const otp = this.generateOtp();
 
-    this.pendingSignups.set(email, {
-      ...data,
-      email,
-      otp,
-      expiresAt: Date.now() + OTP_EXPIRY_MS,
-      attempts: 0,
-    });
+    return Sentry.startSpan(
+      {
+        name: 'email.send-signup-otp',
+        op: 'email.signup',
+        attributes: { email },
+      },
+      async (span) => {
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: 'sendSignupOtp initiated',
+          level: 'info',
+          data: { email },
+        });
 
-    try {
-      await this.sendOtpEmail(email, otp, 'signup');
-      Sentry.addBreadcrumb({ category: 'email', message: 'Signup OTP sent', level: 'info', data: { email } });
-      return { success: true };
-    } catch (err: any) {
-      Sentry.captureException(err, { tags: { component: 'email-service', op: 'sendSignupOtp' }, extra: { email } });
-      console.error('[EmailService] Failed to send signup OTP:', err);
-      this.pendingSignups.delete(email);
-      return { success: false, error: 'Failed to send verification email. Please try again.' };
-    }
+        const otp = this.generateOtp();
+
+        this.pendingSignups.set(email, {
+          ...data,
+          email,
+          otp,
+          expiresAt: Date.now() + OTP_EXPIRY_MS,
+          attempts: 0,
+        });
+
+        span.setAttribute('pending_signups', this.pendingSignups.size);
+
+        try {
+          await this.sendOtpEmail(email, otp, 'signup');
+          span.setAttribute('success', true);
+          Sentry.addBreadcrumb({
+            category: 'email',
+            message: 'Signup OTP sent successfully',
+            level: 'info',
+            data: { email },
+          });
+          logger.info(logger.fmt`email.signup_otp_sent email=${email}`);
+          return { success: true };
+        } catch (err: any) {
+          span.setAttribute('success', false);
+          Sentry.withScope((scope) => {
+            scope.setTag('component', 'email-service');
+            scope.setTag('op', 'sendSignupOtp');
+            scope.setLevel('error');
+            scope.setContext('otp_request', { email, purpose: 'signup' });
+            Sentry.captureException(err);
+          });
+          console.error('[EmailService] Failed to send signup OTP:', err);
+          this.pendingSignups.delete(email);
+          return { success: false, error: 'Failed to send verification email. Please try again.' };
+        }
+      },
+    );
   }
 
   verifySignupOtp(email: string, otp: string): { valid: boolean; data?: PendingSignup; error?: string } {
-    const key = email.toLowerCase().trim();
-    const pending = this.pendingSignups.get(key);
+    return Sentry.startSpanManual(
+      {
+        name: 'email.verify-signup-otp',
+        op: 'email.verify',
+        attributes: { email },
+      },
+      (span, finish) => {
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: 'verifySignupOtp attempt',
+          level: 'info',
+          data: { email },
+        });
 
-    if (!pending) {
-      return { valid: false, error: 'No verification pending for this email. Please sign up again.' };
-    }
+        const key = email.toLowerCase().trim();
+        const pending = this.pendingSignups.get(key);
 
-    if (Date.now() > pending.expiresAt) {
-      this.pendingSignups.delete(key);
-      return { valid: false, error: 'Code has expired. Please request a new one.' };
-    }
+        if (!pending) {
+          span.setAttribute('result', 'no_pending');
+          Sentry.addBreadcrumb({ category: 'email', message: 'No pending signup for email', level: 'warning', data: { email } });
+          finish();
+          return { valid: false, error: 'No verification pending for this email. Please sign up again.' };
+        }
 
-    pending.attempts++;
-    if (pending.attempts > MAX_ATTEMPTS) {
-      this.pendingSignups.delete(key);
-      return { valid: false, error: 'Too many failed attempts. Please request a new code.' };
-    }
+        if (Date.now() > pending.expiresAt) {
+          this.pendingSignups.delete(key);
+          span.setAttribute('result', 'expired');
+          Sentry.addBreadcrumb({ category: 'email', message: 'Signup OTP expired', level: 'warning', data: { email } });
+          finish();
+          return { valid: false, error: 'Code has expired. Please request a new one.' };
+        }
 
-    if (pending.otp !== otp.trim()) {
-      return { valid: false, error: `Invalid code. ${MAX_ATTEMPTS - pending.attempts} attempts remaining.` };
-    }
+        pending.attempts++;
+        span.setAttribute('attempt', pending.attempts);
 
-    this.pendingSignups.delete(key);
-    return { valid: true, data: pending };
+        if (pending.attempts > MAX_ATTEMPTS) {
+          this.pendingSignups.delete(key);
+          span.setAttribute('result', 'max_attempts');
+          Sentry.captureMessage(`Signup OTP max attempts exceeded for ${email}`, 'warning');
+          finish();
+          return { valid: false, error: 'Too many failed attempts. Please request a new code.' };
+        }
+
+        if (pending.otp !== otp.trim()) {
+          span.setAttribute('result', 'invalid_code');
+          Sentry.addBreadcrumb({
+            category: 'email',
+            message: 'Invalid signup OTP entered',
+            level: 'warning',
+            data: { email, attempts: pending.attempts, remaining: MAX_ATTEMPTS - pending.attempts },
+          });
+          finish();
+          return { valid: false, error: `Invalid code. ${MAX_ATTEMPTS - pending.attempts} attempts remaining.` };
+        }
+
+        this.pendingSignups.delete(key);
+        span.setAttribute('result', 'success');
+        Sentry.addBreadcrumb({ category: 'email', message: 'Signup OTP verified', level: 'info', data: { email } });
+        logger.info(logger.fmt`email.signup_otp_verified email=${email}`);
+        finish();
+        return { valid: true, data: pending };
+      },
+    );
   }
 
   // ── Password Reset OTP ──────────────────────────────────────────────────
 
   async sendResetOtp(email: string): Promise<{ success: boolean; error?: string }> {
     const key = email.toLowerCase().trim();
-    const otp = this.generateOtp();
 
-    this.pendingResets.set(key, {
-      otp,
-      expiresAt: Date.now() + OTP_EXPIRY_MS,
-      attempts: 0,
-    });
+    return Sentry.startSpan(
+      {
+        name: 'email.send-reset-otp',
+        op: 'email.reset',
+        attributes: { email: key },
+      },
+      async (span) => {
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: 'sendResetOtp initiated',
+          level: 'info',
+          data: { email: key },
+        });
 
-    try {
-      await this.sendOtpEmail(key, otp, 'reset');
-      Sentry.addBreadcrumb({ category: 'email', message: 'Reset OTP sent', level: 'info', data: { email: key } });
-      return { success: true };
-    } catch (err: any) {
-      Sentry.captureException(err, { tags: { component: 'email-service', op: 'sendResetOtp' }, extra: { email: key } });
-      console.error('[EmailService] Failed to send reset OTP:', err);
-      this.pendingResets.delete(key);
-      return { success: false, error: 'Failed to send reset email. Please try again.' };
-    }
+        const otp = this.generateOtp();
+
+        this.pendingResets.set(key, {
+          otp,
+          expiresAt: Date.now() + OTP_EXPIRY_MS,
+          attempts: 0,
+        });
+
+        span.setAttribute('pending_resets', this.pendingResets.size);
+
+        try {
+          await this.sendOtpEmail(key, otp, 'reset');
+          span.setAttribute('success', true);
+          Sentry.addBreadcrumb({
+            category: 'email',
+            message: 'Reset OTP sent successfully',
+            level: 'info',
+            data: { email: key },
+          });
+          logger.info(logger.fmt`email.reset_otp_sent email=${key}`);
+          return { success: true };
+        } catch (err: any) {
+          span.setAttribute('success', false);
+          Sentry.withScope((scope) => {
+            scope.setTag('component', 'email-service');
+            scope.setTag('op', 'sendResetOtp');
+            scope.setLevel('error');
+            scope.setContext('otp_request', { email: key, purpose: 'reset' });
+            Sentry.captureException(err);
+          });
+          console.error('[EmailService] Failed to send reset OTP:', err);
+          this.pendingResets.delete(key);
+          return { success: false, error: 'Failed to send reset email. Please try again.' };
+        }
+      },
+    );
   }
 
   verifyResetOtp(email: string, otp: string): { valid: boolean; error?: string } {
-    const key = email.toLowerCase().trim();
-    const pending = this.pendingResets.get(key);
+    return Sentry.startSpanManual(
+      {
+        name: 'email.verify-reset-otp',
+        op: 'email.verify',
+        attributes: { email },
+      },
+      (span, finish) => {
+        Sentry.addBreadcrumb({
+          category: 'email',
+          message: 'verifyResetOtp attempt',
+          level: 'info',
+          data: { email },
+        });
 
-    if (!pending) {
-      return { valid: false, error: 'No reset pending for this email. Please request a new code.' };
-    }
+        const key = email.toLowerCase().trim();
+        const pending = this.pendingResets.get(key);
 
-    if (Date.now() > pending.expiresAt) {
-      this.pendingResets.delete(key);
-      return { valid: false, error: 'Code has expired. Please request a new one.' };
-    }
+        if (!pending) {
+          span.setAttribute('result', 'no_pending');
+          Sentry.addBreadcrumb({ category: 'email', message: 'No pending reset for email', level: 'warning', data: { email } });
+          finish();
+          return { valid: false, error: 'No reset pending for this email. Please request a new code.' };
+        }
 
-    pending.attempts++;
-    if (pending.attempts > MAX_ATTEMPTS) {
-      this.pendingResets.delete(key);
-      return { valid: false, error: 'Too many failed attempts. Please request a new code.' };
-    }
+        if (Date.now() > pending.expiresAt) {
+          this.pendingResets.delete(key);
+          span.setAttribute('result', 'expired');
+          Sentry.addBreadcrumb({ category: 'email', message: 'Reset OTP expired', level: 'warning', data: { email } });
+          finish();
+          return { valid: false, error: 'Code has expired. Please request a new one.' };
+        }
 
-    if (pending.otp !== otp.trim()) {
-      return { valid: false, error: `Invalid code. ${MAX_ATTEMPTS - pending.attempts} attempts remaining.` };
-    }
+        pending.attempts++;
+        span.setAttribute('attempt', pending.attempts);
 
-    this.pendingResets.delete(key);
-    return { valid: true };
+        if (pending.attempts > MAX_ATTEMPTS) {
+          this.pendingResets.delete(key);
+          span.setAttribute('result', 'max_attempts');
+          Sentry.captureMessage(`Reset OTP max attempts exceeded for ${email}`, 'warning');
+          finish();
+          return { valid: false, error: 'Too many failed attempts. Please request a new code.' };
+        }
+
+        if (pending.otp !== otp.trim()) {
+          span.setAttribute('result', 'invalid_code');
+          Sentry.addBreadcrumb({
+            category: 'email',
+            message: 'Invalid reset OTP entered',
+            level: 'warning',
+            data: { email, attempts: pending.attempts, remaining: MAX_ATTEMPTS - pending.attempts },
+          });
+          finish();
+          return { valid: false, error: `Invalid code. ${MAX_ATTEMPTS - pending.attempts} attempts remaining.` };
+        }
+
+        this.pendingResets.delete(key);
+        span.setAttribute('result', 'success');
+        Sentry.addBreadcrumb({ category: 'email', message: 'Reset OTP verified', level: 'info', data: { email } });
+        logger.info(logger.fmt`email.reset_otp_verified email=${email}`);
+        finish();
+        return { valid: true };
+      },
+    );
   }
 
   cleanup() {
     const now = Date.now();
+    let expiredSignups = 0;
+    let expiredResets = 0;
+
     for (const [key, val] of this.pendingSignups) {
-      if (now > val.expiresAt) this.pendingSignups.delete(key);
+      if (now > val.expiresAt) { this.pendingSignups.delete(key); expiredSignups++; }
     }
     for (const [key, val] of this.pendingResets) {
-      if (now > val.expiresAt) this.pendingResets.delete(key);
+      if (now > val.expiresAt) { this.pendingResets.delete(key); expiredResets++; }
+    }
+
+    if (expiredSignups > 0 || expiredResets > 0) {
+      Sentry.addBreadcrumb({
+        category: 'email',
+        message: 'OTP cleanup ran',
+        level: 'info',
+        data: { expiredSignups, expiredResets, remainingSignups: this.pendingSignups.size, remainingResets: this.pendingResets.size },
+      });
     }
   }
 }
