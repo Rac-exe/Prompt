@@ -32,12 +32,12 @@ export class AppWindowManager {
   private createWindowHidden() {
     this.isLoaded = false;
 
-    // Dev: use icon.ico (multi-size ICO — Windows reads natively, no conversion flash).
-    // Packaged: omit icon entirely — Windows automatically uses the icon embedded in the
-    //   .exe by electron-builder (build/icon.ico), so no extra file copy needed.
-    const icon = !app.isPackaged
-      ? nativeImage.createFromPath(path.join(app.getAppPath(), 'build', 'icon.ico'))
-      : undefined;
+    // Load the app icon for the taskbar / dock.
+    // Use the ICO on Windows (multi-size, native) and PNG elsewhere.
+    const iconPath = process.platform === 'win32'
+      ? path.join(app.getAppPath(), 'build', 'icon.ico')
+      : path.join(app.getAppPath(), 'electron', 'resources', 'icon.png');
+    const icon = nativeImage.createFromPath(iconPath);
 
     this.window = new BrowserWindow({
       width: 1400,
@@ -57,6 +57,12 @@ export class AppWindowManager {
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
       },
     });
+
+    // Explicitly set icon after creation — Windows taskbar requires this
+    // in addition to the constructor option to reliably show the correct icon.
+    if (icon && !icon.isEmpty()) {
+      this.window.setIcon(icon);
+    }
 
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'index.html');
     this.window.loadFile(htmlPath);

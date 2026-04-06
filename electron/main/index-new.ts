@@ -806,7 +806,7 @@ if (!gotTheLock) {
   // ============================================
   app.setName('Prmpt');
   if (process.platform === 'win32') {
-    app.setAppUserModelId('Prmpt');
+    app.setAppUserModelId('com.prmpt.desktop');
   }
 
   app.whenReady().then(async () => {
