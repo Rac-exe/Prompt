@@ -768,7 +768,8 @@ export function registerChatHandlers(
             if (!isWeakMessage(data.content)) {
                 try {
                     const clarifyResult = await pythonClient.clarify(data.content);
-                    console.log(`[Chat] Clarify result: should_clarify=${clarifyResult.should_clarify}, questions=${clarifyResult.questions.length}`);
+                    Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarify check complete', level: 'info', data: { chatId, should_clarify: clarifyResult.should_clarify, questions: clarifyResult.questions.length, is_complex: clarifyResult.is_complex } });
+                    logger.info(logger.fmt`chat.clarify_result chatId=${chatId ?? ''} should_clarify=${clarifyResult.should_clarify} questions=${clarifyResult.questions.length}`);
                     if (clarifyResult.should_clarify && clarifyResult.questions.length > 0) {
                         pendingClarifications.set(chatId!, {
                             data,
@@ -776,13 +777,15 @@ export function registerChatHandlers(
                             customInstructions,
                             messagesContext,
                         });
+                        Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarification required — pausing optimization', level: 'info', data: { chatId, questionCount: clarifyResult.questions.length } });
                         if (appWindowManager) {
                             appWindowManager.send('clarification-required', { chatId, ...clarifyResult });
                         }
                         return;
                     }
-                } catch {
-                    // Non-blocking: proceed to optimize on any failure
+                } catch (clarifyErr) {
+                    Sentry.captureException(clarifyErr, { tags: { component: 'chat-handlers', op: 'clarify' }, level: 'warning' });
+                    logger.warn(logger.fmt`chat.clarify_failed chatId=${chatId ?? ''} error=${clarifyErr instanceof Error ? clarifyErr.message : String(clarifyErr)}`);
                 }
             }
 
@@ -915,13 +918,15 @@ export function registerChatHandlers(
         const pending = pendingClarifications.get(data.chatId);
         if (!pending) {
             console.warn('[Chat] submit-clarification: no pending optimization for chatId', data.chatId);
+            Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'submit-clarification: no pending optimization', level: 'warning', data: { chatId: data.chatId } });
             return;
         }
         pendingClarifications.delete(data.chatId);
 
         const formattedAnswers = formatClarificationAnswers(data.answers);
 
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Clarification submitted', level: 'info', data: { chatId: data.chatId, wantsSections: data.wantsSections } });
+        Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarification submitted — resuming optimization', level: 'info', data: { chatId: data.chatId, wantsSections: data.wantsSections, answerCount: Object.keys(data.answers).length } });
+        logger.info(logger.fmt`chat.clarification_submitted chatId=${data.chatId} wantsSections=${data.wantsSections} answerCount=${Object.keys(data.answers).length}`);
 
         try {
             activeGenerations.set(data.chatId, { accumulated: '' });

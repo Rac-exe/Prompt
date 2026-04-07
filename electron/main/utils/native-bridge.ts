@@ -7,6 +7,8 @@
 
 import * as path from 'path';
 import { app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
+import { logger } from '@sentry/core';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -75,6 +77,7 @@ function loadBridge(): NativeBridge {
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('[NativeBridge] Not loaded — stub mode.\n  Fix: npm run native:build\n  Reason:', msg);
+        Sentry.addBreadcrumb({ category: 'native-bridge', message: 'Native module load failed', level: 'warning', data: { reason: msg } });
     }
 
     return _bridge;
@@ -121,7 +124,19 @@ export function isNativeBridgeAvailable(): boolean {
  * Returns false if the native module is not loaded or the target window is gone.
  */
 export function replaceAtLastAnchor(text: string): boolean {
-    return loadBridge().replaceAtLastAnchor(text);
+    return Sentry.startSpan({ name: 'native.replaceAtLastAnchor', op: 'native.replace' }, (span) => {
+        try {
+            const result = loadBridge().replaceAtLastAnchor(text);
+            span.setAttribute('result', result);
+            span.setAttribute('text.length', text.length);
+            if (!result) logger.warn('native.replaceAtLastAnchor returned false');
+            return result;
+        } catch (err) {
+            Sentry.captureException(err, { tags: { component: 'native-bridge', op: 'replaceAtLastAnchor' } });
+            span.setStatus({ code: 2, message: 'exception' });
+            return false;
+        }
+    });
 }
 
 /**
@@ -130,7 +145,12 @@ export function replaceAtLastAnchor(text: string): boolean {
  * Call this BEFORE or alongside Electron's window.show() for reliable focus.
  */
 export function forceFocusWindow(hwnd: number): boolean {
-    return loadBridge().forceFocusWindow(hwnd);
+    try {
+        return loadBridge().forceFocusWindow(hwnd);
+    } catch (err) {
+        Sentry.captureException(err, { tags: { component: 'native-bridge', op: 'forceFocusWindow' }, extra: { hwnd } });
+        return false;
+    }
 }
 
 /**
@@ -139,7 +159,20 @@ export function forceFocusWindow(hwnd: number): boolean {
  * pastes sections one at a time.
  */
 export function pasteTextToWindow(hwnd: number, text: string): boolean {
-    return loadBridge().pasteTextToWindow(hwnd, text);
+    return Sentry.startSpan({ name: 'native.pasteTextToWindow', op: 'native.paste' }, (span) => {
+        try {
+            const result = loadBridge().pasteTextToWindow(hwnd, text);
+            span.setAttribute('result', result);
+            span.setAttribute('hwnd', hwnd);
+            span.setAttribute('text.length', text.length);
+            if (!result) logger.warn(logger.fmt`native.pasteTextToWindow failed hwnd=${hwnd}`);
+            return result;
+        } catch (err) {
+            Sentry.captureException(err, { tags: { component: 'native-bridge', op: 'pasteTextToWindow' }, extra: { hwnd } });
+            span.setStatus({ code: 2, message: 'exception' });
+            return false;
+        }
+    });
 }
 
 /**
@@ -147,5 +180,17 @@ export function pasteTextToWindow(hwnd: number, text: string): boolean {
  * to submit a pasted section in chat interfaces.
  */
 export function sendEnterToWindow(hwnd: number): boolean {
-    return loadBridge().sendEnterToWindow(hwnd);
+    return Sentry.startSpan({ name: 'native.sendEnterToWindow', op: 'native.enter' }, (span) => {
+        try {
+            const result = loadBridge().sendEnterToWindow(hwnd);
+            span.setAttribute('result', result);
+            span.setAttribute('hwnd', hwnd);
+            if (!result) logger.warn(logger.fmt`native.sendEnterToWindow failed hwnd=${hwnd}`);
+            return result;
+        } catch (err) {
+            Sentry.captureException(err, { tags: { component: 'native-bridge', op: 'sendEnterToWindow' }, extra: { hwnd } });
+            span.setStatus({ code: 2, message: 'exception' });
+            return false;
+        }
+    });
 }

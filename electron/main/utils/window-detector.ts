@@ -6,6 +6,8 @@
  * Insert buttons only (chat).
  */
 
+import * as Sentry from '@sentry/electron/main';
+
 export type WindowMode = 'chat' | 'document';
 
 export interface WindowDetectionResult {
@@ -53,19 +55,27 @@ export function detectWindowMode(title: string): WindowDetectionResult {
 
   for (const { pattern, label } of CHAT_PATTERNS) {
     if (lower.includes(pattern)) {
-      return { mode: 'chat', confidence: 'high', appName: label };
+      const result: WindowDetectionResult = { mode: 'chat', confidence: 'high', appName: label };
+      Sentry.addBreadcrumb({ category: 'window-detector', message: 'Window classified', level: 'info', data: { ...result, title } });
+      return result;
     }
   }
 
   for (const { pattern, label } of DOCUMENT_PATTERNS) {
     if (lower.includes(pattern)) {
-      return { mode: 'document', confidence: 'high', appName: label };
+      const result: WindowDetectionResult = { mode: 'document', confidence: 'high', appName: label };
+      Sentry.addBreadcrumb({ category: 'window-detector', message: 'Window classified', level: 'info', data: { ...result, title } });
+      return result;
     }
   }
 
   if (/\.(txt|md|py|js|ts|tsx|jsx|rs|go|java|cpp|c|h|rb|php|html|css|json|yaml|yml|toml)\b/i.test(title)) {
-    return { mode: 'document', confidence: 'low', appName: 'Text Editor' };
+    const result: WindowDetectionResult = { mode: 'document', confidence: 'low', appName: 'Text Editor' };
+    Sentry.addBreadcrumb({ category: 'window-detector', message: 'Window classified (file extension)', level: 'info', data: { ...result, title } });
+    return result;
   }
 
-  return { mode: 'document', confidence: 'low', appName: 'Unknown' };
+  const result: WindowDetectionResult = { mode: 'document', confidence: 'low', appName: 'Unknown' };
+  Sentry.addBreadcrumb({ category: 'window-detector', message: 'Window unrecognized — defaulting to document', level: 'warning', data: { title } });
+  return result;
 }

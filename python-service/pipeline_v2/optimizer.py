@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Tuple, List, Dict, Union, Optional, Generator
 
 import litellm
+import sentry_sdk
 
 from .context import ChatContext
 from .skills import load_selected_skills, load_skill_file
@@ -118,6 +119,10 @@ def summarize_context(cc: ChatContext, provider: str) -> str:
     LLM 1: Compress full chat context into a compact summary.
     Uses SUMMARIZER_MODEL (cheap/fast) regardless of what the optimizer uses.
     """
+    sentry_sdk.add_breadcrumb(
+        category="optimizer", message="Context summarization started",
+        level="info", data={"session_id": cc.session_id},
+    )
     system_prompt = _load_system_prompt("system_prompt_summarizer.md")
     resolved_model, extra = _get_litellm_kwargs(provider, SUMMARIZER_MODEL)
 
@@ -186,6 +191,18 @@ def optimize(
     if attached_files is None:
         attached_files = []
 
+    sentry_sdk.add_breadcrumb(
+        category="optimizer", message="Optimization started",
+        level="info", data={
+            "mode": mode, "model": model, "stream": stream,
+            "has_clarification": bool(clarification_answers),
+            "wants_sections": wants_sections,
+            "has_files": len(attached_files) > 0,
+            "forced_skill": forced_skill,
+            "is_regeneration": bool(previous_output and previous_output.strip()),
+        },
+    )
+
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
     temperature = 0.95 if is_regeneration else 0.7
@@ -212,11 +229,14 @@ def optimize(
     # Parse attached files
     file_text_context, vision_parts = parse_files(attached_files, model_has_vision)
 
-    # Enrich user input with clarification answers if provided
     if clarification_answers and clarification_answers.strip():
         user_input = (
             f"ORIGINAL REQUEST:\n{user_input}\n\n"
             f"USER CLARIFICATIONS:\n{clarification_answers}"
+        )
+        sentry_sdk.add_breadcrumb(
+            category="optimizer", message="Clarification answers injected",
+            level="info", data={"answer_length": len(clarification_answers)},
         )
 
     if mode == "fast":

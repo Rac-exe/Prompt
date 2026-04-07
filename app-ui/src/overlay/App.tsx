@@ -412,23 +412,31 @@ const OverlayApp: React.FC = () => {
   const handleReplace = useCallback(async (msgId: string) => {
     const content = getMessageContent(msgId);
     if (!content) return;
+    Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Replace IPC invoked', level: 'info', data: { msgId, contentLen: content.length } });
     try {
-      await window.electronAPI?.overlay?.insert?.(content);
+      const result = await window.electronAPI?.overlay?.insert?.(content);
+      if (!result?.success) {
+        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Replace IPC returned failure', level: 'warning' });
+      }
     } catch (err) {
-      // Fallback to clipboard
+      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'replace' } });
       window.electronAPI?.overlay?.copy?.(content);
     }
   }, [getMessageContent]);
 
   // ── Section insert (per-section paste without closing overlay) ──
   const handleInsertSection = useCallback(async (sectionIdx: number, text: string) => {
+    Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert IPC invoked', level: 'info', data: { sectionIdx, textLen: text.length } });
     try {
       const result = await window.electronAPI?.overlay?.insertSection?.(text);
       if (result?.success) {
         setInsertedSections(prev => new Set(prev).add(sectionIdx));
+        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert succeeded', level: 'info', data: { sectionIdx } });
+      } else {
+        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert returned failure', level: 'warning', data: { sectionIdx } });
       }
-    } catch {
-      // Fallback: copy to clipboard
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'insert-section' }, extra: { sectionIdx } });
       window.electronAPI?.overlay?.copy?.(text);
     }
   }, []);

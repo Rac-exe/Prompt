@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import * as Sentry from "@sentry/react";
 import {
   Sparkle,
   PaperPlaneRight,
@@ -80,6 +81,7 @@ export const ClarificationCard = ({
 
   const handleSubmit = useCallback(() => {
     setSubmitted(true);
+    Sentry.addBreadcrumb({ category: 'clarification', message: 'Clarification submitted', level: 'info', data: { questionCount: questions.length, answeredCount } });
     const finalAnswers: Record<string, string> = {};
 
     for (const q of questions) {
@@ -123,8 +125,9 @@ export const ClarificationCard = ({
       }
     }
 
+    Sentry.addBreadcrumb({ category: 'clarification', message: 'Answers finalized', level: 'info', data: { answerCount: Object.keys(finalAnswers).length, wantsSections, hasExtraNotes: !!extraNotes.trim() } });
     onSubmit(finalAnswers, wantsSections);
-  }, [questions, selections, otherActive, otherTexts, textAnswers, extraNotes, onSubmit]);
+  }, [questions, selections, otherActive, otherTexts, textAnswers, extraNotes, onSubmit, answeredCount]);
 
   if (submitted) return null;
 
@@ -409,7 +412,7 @@ export const ClarificationCard = ({
           >
             <button
               type="button"
-              onClick={onSkip}
+              onClick={() => { Sentry.addBreadcrumb({ category: 'clarification', message: 'Clarification skipped', level: 'info', data: { questionCount: questions.length } }); onSkip(); }}
               className={cn(
                 "inline-flex items-center gap-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors",
                 compact ? "text-[10px]" : "text-[11px]"

@@ -396,19 +396,30 @@ export class PythonClient extends EventEmitter {
   }
 
   async clarify(prompt: string): Promise<ClarifyResult> {
-    try {
-      const response = await this.client.post('/clarify', { prompt }, { timeout: 15000 });
-      return response.data;
-    } catch (error) {
-      console.warn('[PythonClient] Clarify failed (non-blocking, using safe default):', error);
-      return {
-        should_clarify: false,
-        is_complex: false,
-        complexity_reason: '',
-        suggested_sections: [],
-        questions: [],
-      };
-    }
+    return Sentry.startSpan({ name: 'python.clarify', op: 'http.client' }, async (span) => {
+      Sentry.addBreadcrumb({ category: 'python-client', message: 'Clarify request started', level: 'info', data: { promptLen: prompt.length } });
+      try {
+        const response = await this.client.post('/clarify', { prompt }, { timeout: 15000 });
+        const result: ClarifyResult = response.data;
+        span.setAttribute('should_clarify', result.should_clarify);
+        span.setAttribute('question_count', result.questions.length);
+        span.setAttribute('is_complex', result.is_complex);
+        Sentry.addBreadcrumb({ category: 'python-client', message: 'Clarify response received', level: 'info', data: { should_clarify: result.should_clarify, questions: result.questions.length, is_complex: result.is_complex } });
+        logger.info(logger.fmt`python.clarify_complete should_clarify=${result.should_clarify} questions=${result.questions.length}`);
+        return result;
+      } catch (error) {
+        Sentry.captureException(error, { tags: { component: 'python-client', op: 'clarify' }, level: 'warning' });
+        span.setStatus({ code: 2, message: 'clarify_failed' });
+        logger.warn(logger.fmt`python.clarify_failed error=${error instanceof Error ? error.message : String(error)}`);
+        return {
+          should_clarify: false,
+          is_complex: false,
+          complexity_reason: '',
+          suggested_sections: [],
+          questions: [],
+        };
+      }
+    });
   }
 
   // Legacy method for non-streaming requests (retaining for backward compatibility)

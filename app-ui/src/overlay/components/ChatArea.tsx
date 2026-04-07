@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Sentry from '@sentry/react';
 import darkLogo from "@/assets/logos/dark-logo-svg.svg";
 import lightLogo from "@/assets/logos/light-logo-svg.svg";
 import { useIsDark } from "@/hooks/useIsDark";
@@ -294,6 +295,7 @@ const OverlaySectionCopyButton: React.FC<{ text: string }> = ({ text }) => {
   return (
     <button
       onClick={() => {
+        Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Section copy', level: 'info', data: { textLen: text.length } });
         navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -326,6 +328,7 @@ const OverlaySectionInsertButton: React.FC<{
   const [inserting, setInserting] = useState(false);
 
   const handleInsert = useCallback(async () => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Section insert clicked', level: 'info', data: { textLen: text.length } });
     setInserting(true);
     onInsert(text);
     setTimeout(() => setInserting(false), 2000);
@@ -447,16 +450,18 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const hasSections = sections !== null && sections.length >= 2;
 
   const handleCopy = useCallback(() => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Copy prompt', level: 'info', data: { msgId: msg.id, hasSections } });
     onCopy(msg.id);
     setCopyState('copied');
     setTimeout(() => setCopyState('idle'), 1800);
-  }, [msg.id, onCopy]);
+  }, [msg.id, onCopy, hasSections]);
 
   const handleReplace = useCallback(async () => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: hasSections ? 'Replace All' : 'Replace', level: 'info', data: { msgId: msg.id, hasSections, sectionCount: sections?.length ?? 0 } });
     setReplaceState('replacing');
     onReplace(msg.id);
     setTimeout(() => setReplaceState('idle'), 3000);
-  }, [msg.id, onReplace]);
+  }, [msg.id, onReplace, hasSections, sections]);
 
   return (
     <div className="chat-message">

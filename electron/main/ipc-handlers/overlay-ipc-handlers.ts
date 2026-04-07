@@ -174,7 +174,8 @@ export function setSourceWindow(hwnd: number, title: string) {
   sourceHwnd = hwnd;
   sourceWindowTitle = title;
   firstSectionDone = false;
-  console.log(`[OverlayHandlers] Source window stored: hwnd=${hwnd}, title="${title}"`);
+  Sentry.addBreadcrumb({ category: 'overlay.source', message: 'Source window captured', level: 'info', data: { hwnd, title } });
+  logger.info(logger.fmt`overlay.source_window_stored hwnd=${hwnd} title=${title}`);
 }
 
 /** Clear overlay conversation history and reset chat session (called on "New Session" or sign-out). */
@@ -184,7 +185,8 @@ export function clearOverlayHistory() {
   sourceHwnd = null;
   sourceWindowTitle = '';
   firstSectionDone = false;
-  console.log('[OverlayHandlers] Overlay session history cleared');
+  Sentry.addBreadcrumb({ category: 'overlay.session', message: 'Overlay session cleared', level: 'info' });
+  logger.info('overlay.session_cleared');
 }
 
 // Cursor polling interval reference (so we can clear it)
@@ -811,28 +813,51 @@ export function registerOverlayHandlers(
   //
   // Fallback: if native bridge is unavailable, write to clipboard instead.
   ipcMain.handle('overlay:insert', async (_event, data: { text: string }) => {
-    Sentry.addBreadcrumb({ category: 'overlay', message: 'Replace triggered', level: 'info' });
-    logger.info('overlay.replace_triggered');
-    if (!data?.text) {
-      return { success: false, error: 'No text provided' };
-    }
+    return Sentry.startSpan({ name: 'overlay.insert', op: 'ui.replace' }, async (span) => {
+      Sentry.addBreadcrumb({ category: 'overlay.replace', message: 'Replace triggered', level: 'info', data: { textLen: data?.text?.length ?? 0, hasSourceHwnd: !!sourceHwnd, firstSectionDone } });
+      logger.info(logger.fmt`overlay.replace_triggered textLen=${data?.text?.length ?? 0} sourceHwnd=${sourceHwnd ?? 'null'}`);
 
-    overlayManager.close();
+      if (!data?.text) {
+        span.setStatus({ code: 2, message: 'no_text' });
+        return { success: false, error: 'No text provided' };
+      }
 
-    if (!isNativeBridgeAvailable()) {
-      return { success: false };
-    }
+      overlayManager.close();
 
-    await new Promise(r => setTimeout(r, 150));
+      if (!isNativeBridgeAvailable()) {
+        Sentry.addBreadcrumb({ category: 'overlay.replace', message: 'Native bridge unavailable', level: 'warning' });
+        span.setStatus({ code: 2, message: 'no_native_bridge' });
+        return { success: false };
+      }
 
-    let success = replaceAtLastAnchor(data.text);
+      await new Promise(r => setTimeout(r, 150));
 
-    if (!success && sourceHwnd) {
-      success = pasteTextToWindow(sourceHwnd, data.text);
-    }
+      try {
+        let success = replaceAtLastAnchor(data.text);
+        Sentry.addBreadcrumb({ category: 'overlay.replace', message: 'replaceAtLastAnchor attempt', level: 'info', data: { success } });
 
-    if (success) firstSectionDone = true;
-    return { success };
+        if (!success && sourceHwnd) {
+          Sentry.addBreadcrumb({ category: 'overlay.replace', message: 'Anchor consumed — trying pasteTextToWindow', level: 'info', data: { sourceHwnd } });
+          success = pasteTextToWindow(sourceHwnd, data.text);
+          Sentry.addBreadcrumb({ category: 'overlay.replace', message: 'pasteTextToWindow result', level: 'info', data: { success } });
+        }
+
+        if (success) {
+          firstSectionDone = true;
+          span.setStatus({ code: 1 });
+        } else {
+          span.setStatus({ code: 2, message: 'paste_failed' });
+          logger.warn('overlay.replace_failed — both anchor and direct paste failed');
+        }
+
+        return { success };
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'insert' }, extra: { sourceHwnd, firstSectionDone } });
+        span.setStatus({ code: 2, message: 'exception' });
+        logger.error(logger.fmt`overlay.insert_exception error=${err instanceof Error ? err.message : String(err)}`);
+        return { success: false, error: String(err) };
+      }
+    });
   });
 
   // ============================================
@@ -843,62 +868,80 @@ export function registerOverlayHandlers(
   // Chat windows: sendEnterToWindow after every paste to submit the message
   // ============================================
   ipcMain.handle('overlay:insert-section', async (_event, data: { text: string }) => {
-    Sentry.addBreadcrumb({ category: 'overlay', message: 'Section insert triggered', level: 'info' });
-    if (!data?.text) {
-      return { success: false, error: 'No text provided' };
-    }
-    if (!sourceHwnd || !isNativeBridgeAvailable()) {
-      return { success: false };
-    }
+    return Sentry.startSpan({ name: 'overlay.insert_section', op: 'ui.section_paste' }, async (span) => {
+      Sentry.addBreadcrumb({ category: 'overlay.section', message: 'Section insert triggered', level: 'info', data: { textLen: data?.text?.length ?? 0, firstSectionDone, sourceHwnd: sourceHwnd ?? null } });
+      logger.info(logger.fmt`overlay.section_insert_triggered firstSectionDone=${firstSectionDone} sourceHwnd=${sourceHwnd ?? 'null'}`);
 
-    const overlayWin = overlayManager.getWindow();
-    const detection = detectWindowMode(sourceWindowTitle);
-    const isChat = detection.mode === 'chat';
-
-    try {
-      if (overlayWin && !overlayWin.isDestroyed()) overlayWin.setOpacity(0);
-      await new Promise(r => setTimeout(r, 100));
-
-      let success = false;
-
-      if (!firstSectionDone) {
-        // First section: replace @prompt trigger text with section content
-        success = replaceAtLastAnchor(data.text);
-        firstSectionDone = true;
-        console.log(`[Overlay] First section insert via replaceAtLastAnchor: success=${success}`);
+      if (!data?.text) {
+        span.setStatus({ code: 2, message: 'no_text' });
+        return { success: false, error: 'No text provided' };
+      }
+      if (!sourceHwnd || !isNativeBridgeAvailable()) {
+        Sentry.addBreadcrumb({ category: 'overlay.section', message: 'No source window or native bridge', level: 'warning', data: { sourceHwnd: sourceHwnd ?? null, nativeBridge: isNativeBridgeAvailable() } });
+        span.setStatus({ code: 2, message: 'no_source' });
+        return { success: false };
       }
 
-      if (!success) {
-        // Subsequent sections OR fallback if anchor was already consumed
-        success = pasteTextToWindow(sourceHwnd, data.text);
-        firstSectionDone = true;
-        console.log(`[Overlay] Section insert via pasteTextToWindow: success=${success}`);
-      }
+      const overlayWin = overlayManager.getWindow();
+      const detection = detectWindowMode(sourceWindowTitle);
+      const isChat = detection.mode === 'chat';
+      span.setAttribute('window.mode', detection.mode);
+      span.setAttribute('window.app', detection.appName);
 
-      // For chat windows, send Enter to submit the pasted section
-      if (success && isChat) {
-        await new Promise(r => setTimeout(r, 150));
-        const enterOk = sendEnterToWindow(sourceHwnd);
-        console.log(`[Overlay] Enter sent to chat window: success=${enterOk}`);
-      }
+      try {
+        if (overlayWin && !overlayWin.isDestroyed()) overlayWin.setOpacity(0);
+        await new Promise(r => setTimeout(r, 100));
 
-      await new Promise(r => setTimeout(r, 200));
-      if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.setOpacity(1);
-        const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-        forceFocusWindow(Number(hwnd));
-      }
+        let success = false;
+        let method = '';
 
-      return { success };
-    } catch (err) {
-      if (overlayWin && !overlayWin.isDestroyed()) {
-        overlayWin.setOpacity(1);
-        const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-        forceFocusWindow(Number(hwnd));
+        if (!firstSectionDone) {
+          success = replaceAtLastAnchor(data.text);
+          firstSectionDone = true;
+          method = 'replaceAtLastAnchor';
+          Sentry.addBreadcrumb({ category: 'overlay.section', message: 'First section via anchor replace', level: 'info', data: { success } });
+        }
+
+        if (!success) {
+          success = pasteTextToWindow(sourceHwnd, data.text);
+          firstSectionDone = true;
+          method = method ? `${method}→pasteTextToWindow` : 'pasteTextToWindow';
+          Sentry.addBreadcrumb({ category: 'overlay.section', message: 'Section via direct paste', level: 'info', data: { success } });
+        }
+
+        span.setAttribute('paste.method', method);
+
+        if (success && isChat) {
+          await new Promise(r => setTimeout(r, 150));
+          const enterOk = sendEnterToWindow(sourceHwnd);
+          Sentry.addBreadcrumb({ category: 'overlay.section', message: 'Enter sent to chat window', level: 'info', data: { success: enterOk } });
+          span.setAttribute('enter.sent', enterOk);
+        }
+
+        await new Promise(r => setTimeout(r, 200));
+        if (overlayWin && !overlayWin.isDestroyed()) {
+          overlayWin.setOpacity(1);
+          const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+          forceFocusWindow(Number(hwnd));
+        }
+
+        span.setStatus({ code: success ? 1 : 2, message: success ? undefined : 'paste_failed' });
+        if (!success) {
+          logger.warn(logger.fmt`overlay.section_insert_failed method=${method}`);
+        }
+        return { success };
+      } catch (err) {
+        if (overlayWin && !overlayWin.isDestroyed()) {
+          overlayWin.setOpacity(1);
+          const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+          forceFocusWindow(Number(hwnd));
+        }
+        Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'insert-section' }, extra: { sourceHwnd, firstSectionDone, isChat, windowTitle: sourceWindowTitle } });
+        span.setStatus({ code: 2, message: 'exception' });
+        logger.error(logger.fmt`overlay.section_insert_exception error=${err instanceof Error ? err.message : String(err)}`);
+        return { success: false, error: String(err) };
       }
-      console.error('[Overlay] Section insert error:', err);
-      return { success: false, error: String(err) };
-    }
+    });
   });
 
   // ============================================
