@@ -105,6 +105,10 @@ const Index = () => {
   // Send error state — shown inline in the input bar instead of a toast
   const [sendError, setSendError] = useState<string | null>(null);
 
+  // Clarification state
+  const [clarificationData, setClarificationData] = useState<any>(null);
+  const pendingClarificationChatId = useRef<string | null>(null);
+
   // Message version tree (edit/retry creates branches instead of slicing)
   const messageTree = useMessageTree();
   // Ref: when an edit/retry is in flight, holds the placeholder ID so
@@ -533,6 +537,19 @@ const Index = () => {
     }
   }, []);
 
+  // Listen for clarification-required from the backend
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onClarificationRequired) return;
+    const cleanup = window.electronAPI.onClarificationRequired((data: any) => {
+      if (data.chatId !== selectedChatIdRef.current) return;
+      console.log('[Index] Clarification required for chat:', data.chatId);
+      pendingClarificationChatId.current = data.chatId;
+      setClarificationData(data);
+      setIsGenerating(false);
+    });
+    return cleanup;
+  }, []);
+
   // Listen for partial file upload failures (image uploads that failed after all retries)
   useEffect(() => {
     if (!isElectron || !window.electronAPI?.onUploadPartialFailure) return;
@@ -829,6 +846,19 @@ const Index = () => {
     setOfflineChatUnavailable(false);
   };
 
+  const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    setClarificationData(null);
+    setIsGenerating(true);
+    startStreaming();
+    if (pendingClarificationChatId.current) {
+      window.electronAPI?.submitClarification?.({
+        chatId: pendingClarificationChatId.current,
+        answers,
+        wantsSections,
+      });
+    }
+  }, [startStreaming]);
+
   const handleSendMessage = useCallback((
     content: string, 
     mode: "fast" | "thinking" = "fast",
@@ -856,8 +886,9 @@ const Index = () => {
       versionIndex,
     });
 
-    // Clear any previous send error
+    // Clear any previous send error or clarification
     setSendError(null);
+    setClarificationData(null);
 
     // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
@@ -1359,6 +1390,8 @@ Your prompt was: "${content}"`;
             setAttachedFiles={setAttachedFiles}
             selectedSkill={selectedSkill}
             setSelectedSkill={setSelectedSkill}
+            clarificationData={clarificationData}
+            onSubmitClarification={handleSubmitClarification}
           />
         );
     }

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { PlusMenu } from "./PlusMenu";
 import { SkillPicker, SKILL_ICON_MAP } from "./SkillPicker";
 import { VersionNavigator } from "./VersionNavigator";
+import { ClarificationCard } from "./ClarificationCard";
 import type { AttachedFile } from "@/types/electron";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 
@@ -50,6 +51,9 @@ interface ChatViewProps {
   setAttachedFiles: (files: AttachedFile[]) => void;
   selectedSkill: string | null;
   setSelectedSkill: (skill: string | null) => void;
+  // Clarification
+  clarificationData?: any;
+  onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -63,6 +67,7 @@ export const ChatView = ({
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
   input, setInput, mode, setMode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
+  clarificationData, onSubmitClarification,
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -645,6 +650,16 @@ export const ChatView = ({
                   avatarUrl={avatarUrl}
                 />
               </div>
+            )}
+
+            {clarificationData && !isGenerating && onSubmitClarification && (
+              <ClarificationCard
+                questions={clarificationData.questions || []}
+                isComplex={clarificationData.is_complex || false}
+                suggestedSections={clarificationData.suggested_sections || []}
+                onSubmit={onSubmitClarification}
+                onSkip={() => onSubmitClarification({}, false)}
+              />
             )}
           </div>
         </div>
