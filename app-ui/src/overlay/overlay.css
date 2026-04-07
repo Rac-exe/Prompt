@@ -269,10 +269,10 @@ textarea { min-height: 40px; }
 }
 
 .message-bubble {
-  padding: 10px 14px;
+  padding: 6px 10px;
   border-radius: 12px;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: hsl(var(--foreground));
   word-break: break-word;
 }
@@ -377,6 +377,28 @@ textarea { min-height: 40px; }
 .assistant-bubble {
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
+  padding: 2px 0;
+}
+.assistant-bubble .prose h1,
+.assistant-bubble .prose h2,
+.assistant-bubble .prose h3 {
+  margin-top: 0.5em;
+  margin-bottom: 0.25em;
+}
+.assistant-bubble .prose p {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+}
+.assistant-bubble .prose ul,
+.assistant-bubble .prose ol {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+}
+.assistant-bubble .prose > :first-child {
+  margin-top: 0;
+}
+.assistant-bubble .prose > :last-child {
+  margin-bottom: 0;
 }
 
 .message-actions {

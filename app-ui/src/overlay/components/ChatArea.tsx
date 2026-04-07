@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import darkLogo from "@/assets/logos/dark-logo-svg.svg";
 import lightLogo from "@/assets/logos/light-logo-svg.svg";
 import { useIsDark } from "@/hooks/useIsDark";
@@ -269,6 +269,94 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
   );
 };
 
+// ── Section parsing (mirrors main app's MessageBubble) ───────────────────────
+
+interface ParsedSection { title: string; content: string }
+
+function parseSections(text: string): ParsedSection[] | null {
+  const sectionRegex = /^## (.+)$/gm;
+  const matches = [...text.matchAll(sectionRegex)];
+  if (matches.length < 2) return null;
+
+  const sections: ParsedSection[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const title = matches[i][1].trim();
+    const start = matches[i].index! + matches[i][0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+    const content = text.slice(start, end).trim();
+    if (content) sections.push({ title, content });
+  }
+  return sections.length >= 2 ? sections : null;
+}
+
+const OverlaySectionCopyButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 3,
+        padding: '2px 6px', borderRadius: 5,
+        border: 'none', background: 'transparent',
+        fontSize: 10, fontWeight: 500, cursor: 'pointer',
+        color: copied ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground) / 0.5)',
+        transition: 'color 0.15s',
+      }}
+    >
+      {copied ? (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+      ) : (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+      )}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+};
+
+const OverlaySectionedContent: React.FC<{ content: string }> = ({ content }) => {
+  const sections = useMemo(() => parseSections(content), [content]);
+
+  if (!sections) {
+    return <MarkdownContent content={content} size="xs" className="message-text" />;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {sections.map((section, idx) => (
+        <div
+          key={idx}
+          style={{
+            padding: '8px 12px',
+            borderTop: idx > 0 ? '1px solid hsl(var(--border) / 0.4)' : undefined,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 16, height: 16, borderRadius: 4,
+                background: 'hsl(var(--accent) / 0.1)', fontSize: 9, fontWeight: 700,
+                color: 'hsl(var(--accent))',
+              }}>
+                {idx + 1}
+              </span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: 'hsl(var(--foreground))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                {section.title}
+              </span>
+            </div>
+            <OverlaySectionCopyButton text={section.content} />
+          </div>
+          <MarkdownContent content={section.content} size="xs" />
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // ── AssistantMessage ─────────────────────────────────────────────────────────
 
 interface AssistantMessageProps {
@@ -306,7 +394,7 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
         {' '}Optimized Prompt
       </div>
       <div className="message-bubble assistant-bubble">
-        <MarkdownContent content={msg.content} size="xs" className="message-text" />
+        <OverlaySectionedContent content={msg.content} />
       </div>
       <div className="message-actions">
         {/* Copy */}
@@ -368,7 +456,7 @@ const StreamingMessage: React.FC<{ content: string }> = ({ content }) => (
       {' '}Optimized Prompt
     </div>
     <div className="message-bubble assistant-bubble">
-      <MarkdownContent content={content} size="xs" className="message-text" />
+      <OverlaySectionedContent content={content} />
     </div>
   </div>
 );
