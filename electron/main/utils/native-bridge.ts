@@ -24,6 +24,8 @@ interface NativeBridge {
     stopHook(): void;
     replaceAtLastAnchor(text: string): boolean;
     forceFocusWindow(hwnd: number): boolean;
+    pasteTextToWindow(hwnd: number, text: string): boolean;
+    sendEnterToWindow(hwnd: number): boolean;
 }
 
 // ─── Stub (used when .node binary is absent) ─────────────────────────────────
@@ -38,6 +40,14 @@ const STUB: NativeBridge = {
     },
     forceFocusWindow: () => {
         console.warn('[NativeBridge] forceFocusWindow called but native module not loaded');
+        return false;
+    },
+    pasteTextToWindow: () => {
+        console.warn('[NativeBridge] pasteTextToWindow called but native module not loaded');
+        return false;
+    },
+    sendEnterToWindow: () => {
+        console.warn('[NativeBridge] sendEnterToWindow called but native module not loaded');
         return false;
     },
 };
@@ -121,4 +131,21 @@ export function replaceAtLastAnchor(text: string): boolean {
  */
 export function forceFocusWindow(hwnd: number): boolean {
     return loadBridge().forceFocusWindow(hwnd);
+}
+
+/**
+ * Paste text into a specific window via clipboard (Ctrl+V) without consuming
+ * any stored anchor. Designed for multi-section insert where the overlay
+ * pastes sections one at a time.
+ */
+export function pasteTextToWindow(hwnd: number, text: string): boolean {
+    return loadBridge().pasteTextToWindow(hwnd, text);
+}
+
+/**
+ * Send Enter key to a specific window. Used by auto-pilot chat mode
+ * to submit a pasted section in chat interfaces.
+ */
+export function sendEnterToWindow(hwnd: number): boolean {
+    return loadBridge().sendEnterToWindow(hwnd);
 }

@@ -69,9 +69,9 @@ import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/aut
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
-import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
+import { registerOverlayHandlers, setSourceWindow } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
-import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
+import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
@@ -121,8 +121,10 @@ function startKeystrokeDetection() {
   }
 
   startHook((anchor: TriggerAnchor) => {
-    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
+    const title = getActiveWindowTitle();
+    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
     Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
+    setSourceWindow(anchor.hwnd, title);
     overlayManager.open(authState.isAuthenticated, undefined, undefined, true,
       authState.currentUserId ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' } : null);
   });

@@ -66,7 +66,7 @@ use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_KEYUP, VIRTUAL_KEY,
-    VK_BACK, VK_CONTROL, VK_V,
+    VK_BACK, VK_CONTROL, VK_RETURN, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, IsWindow,
@@ -666,6 +666,69 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
     }
 
     true
+}
+
+// ─── Standalone paste (no anchor) ─────────────────────────────────────────────
+
+/// Paste arbitrary text into a window identified by raw HWND.
+///
+/// Unlike `replace_at_last_anchor`, this does NOT consume any stored anchor
+/// and does NOT delete trigger text. It simply:
+///   1. Validates the target HWND
+///   2. Focuses the target window (SetForegroundWindow + settle)
+///   3. Pastes via clipboard (Ctrl+V) with save/restore
+///
+/// Designed for multi-section insert where the overlay stays open and
+/// pastes sections one at a time into the same target window.
+pub fn paste_text_to_window(hwnd: isize, text: &str) -> bool {
+    let target = HWND(hwnd as *mut _);
+
+    if unsafe { !IsWindow(Some(target)).as_bool() } {
+        eprintln!("[PasteToWindow] Target window gone (hwnd={hwnd:#x})");
+        return false;
+    }
+
+    unsafe {
+        if !SetForegroundWindow(target).as_bool() {
+            eprintln!("[PasteToWindow] SetForegroundWindow failed — proceeding anyway");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        inject_via_clipboard_paste(target, text)
+    }
+}
+
+/// Send Enter (VK_RETURN) to the target window. Used by auto-pilot chat mode
+/// to submit a pasted section in chat interfaces.
+pub fn send_enter_to_window(hwnd: isize) -> bool {
+    let target = HWND(hwnd as *mut _);
+
+    if unsafe { !IsWindow(Some(target)).as_bool() } {
+        eprintln!("[SendEnter] Target window gone (hwnd={hwnd:#x})");
+        return false;
+    }
+
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0 != target.0 {
+            if !SetForegroundWindow(target).as_bool() {
+                eprintln!("[SendEnter] SetForegroundWindow failed");
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+
+        let enter_inputs = [
+            key_vk(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_vk(VK_RETURN, KEYEVENTF_KEYUP),
+        ];
+        let sent = send_inputs(&enter_inputs);
+        if sent == 0 {
+            eprintln!("[SendEnter] SendInput VK_RETURN failed");
+            return false;
+        }
+        println!("[SendEnter] Enter sent to hwnd={hwnd:#x}");
+        true
+    }
 }
 
 // ─── Input builders ───────────────────────────────────────────────────────────

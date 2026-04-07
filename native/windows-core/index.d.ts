@@ -62,6 +62,31 @@ export declare function startHook(callback: ((err: Error | null, arg: TriggerDat
  */
 export declare function stopHook(): void
 
+/**
+ * Paste text into a specific window via clipboard (Ctrl+V).
+ *
+ * Does NOT consume any stored anchor or delete trigger text.
+ * Focuses the target window, writes text to clipboard, sends Ctrl+V,
+ * then restores the original clipboard contents.
+ *
+ * Designed for multi-section insert where the overlay pastes sections
+ * one at a time into the same target window.
+ *
+ * Returns true on success, false if the window no longer exists or
+ * SendInput is blocked by UIPI.
+ */
+export declare function pasteTextToWindow(hwnd: number, text: string): boolean
+
+/**
+ * Send Enter key (VK_RETURN) to a specific window.
+ *
+ * Used by auto-pilot chat mode to submit a pasted section.
+ * Focuses the target window if needed, then sends VK_RETURN down/up.
+ *
+ * Returns true on success, false if the window is gone or SendInput fails.
+ */
+export declare function sendEnterToWindow(hwnd: number): boolean
+
 /** Sent to the JS callback when @prompt is detected. */
 export interface TriggerData {
   /**

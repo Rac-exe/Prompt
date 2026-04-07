@@ -9,7 +9,9 @@ import { PromptLibraryService } from '../database/services/prompt-library-servic
 import { OptimizationService } from '../database/services/optimization-service';
 import { ChatService } from '../database/services/chat-service';
 import { authState } from '../utils/auth-state';
-import { replaceAtLastAnchor, isNativeBridgeAvailable } from '../utils/native-bridge';
+import { replaceAtLastAnchor, isNativeBridgeAvailable, pasteTextToWindow, sendEnterToWindow, forceFocusWindow, getActiveWindowTitle } from '../utils/native-bridge';
+import { detectWindowMode } from '../utils/window-detector';
+import { AutopilotEngine } from '../utils/autopilot-engine';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
 import { localCache } from '../database/local-cache';
@@ -163,10 +165,25 @@ function getRateLimitService(): RateLimitService {
   return rateLimitService;
 }
 
+const autopilotEngine = new AutopilotEngine();
+
+// Source window info — persisted at @prompt trigger time for multi-section insert
+let sourceHwnd: number | null = null;
+let sourceWindowTitle: string = '';
+
+/** Store the source window HWND and title from the @prompt trigger. */
+export function setSourceWindow(hwnd: number, title: string) {
+  sourceHwnd = hwnd;
+  sourceWindowTitle = title;
+  console.log(`[OverlayHandlers] Source window stored: hwnd=${hwnd}, title="${title}"`);
+}
+
 /** Clear overlay conversation history and reset chat session (called on "New Session" or sign-out). */
 export function clearOverlayHistory() {
   inMemoryOverlayHistory.length = 0;
   currentOverlayChatId = null;
+  sourceHwnd = null;
+  sourceWindowTitle = '';
   console.log('[OverlayHandlers] Overlay session history cleared');
 }
 
@@ -815,6 +832,100 @@ export function registerOverlayHandlers(
     clipboard.writeText(data.text);
     console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
     return { success: false, fallback: 'clipboard' };
+  });
+
+  // ============================================
+  // overlay:insert-section — Paste a single section without closing overlay
+  // ============================================
+  ipcMain.handle('overlay:insert-section', async (_event, data: { text: string }) => {
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Section insert triggered', level: 'info' });
+    if (!data?.text) {
+      return { success: false, error: 'No text provided' };
+    }
+    if (!sourceHwnd) {
+      clipboard.writeText(data.text);
+      return { success: false, fallback: 'clipboard', error: 'No source window stored' };
+    }
+    if (!isNativeBridgeAvailable()) {
+      clipboard.writeText(data.text);
+      return { success: false, fallback: 'clipboard' };
+    }
+
+    // Hide overlay momentarily so it doesn't block the target window
+    const overlayWin = overlayManager.getWindow();
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      overlayWin.setOpacity(0);
+    }
+
+    // Small delay for opacity change to take effect
+    await new Promise(r => setTimeout(r, 100));
+
+    const success = pasteTextToWindow(sourceHwnd, data.text);
+
+    // Re-show and refocus overlay after paste
+    await new Promise(r => setTimeout(r, 200));
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      overlayWin.setOpacity(1);
+      const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+      forceFocusWindow(Number(hwnd));
+    }
+
+    if (!success) {
+      console.warn('[Overlay] pasteTextToWindow failed for section insert');
+    }
+
+    return { success };
+  });
+
+  // ============================================
+  // overlay:get-source-info — Return source window metadata for auto-pilot UI
+  // ============================================
+  ipcMain.handle('overlay:get-source-info', () => {
+    if (!sourceHwnd) {
+      return { hwnd: null, title: '', detectedMode: 'document' as const, confidence: 'low' as const, appName: 'Unknown' };
+    }
+    const detection = detectWindowMode(sourceWindowTitle);
+    return {
+      hwnd: sourceHwnd,
+      title: sourceWindowTitle,
+      detectedMode: detection.mode,
+      confidence: detection.confidence,
+      appName: detection.appName,
+    };
+  });
+
+  // ============================================
+  // overlay:start-autopilot — Begin automated section paste
+  // ============================================
+  ipcMain.on('overlay:start-autopilot', (_event, config: {
+    mode: 'chat' | 'document';
+    waitSeconds: number;
+    sections: string[];
+  }) => {
+    if (!sourceHwnd) {
+      overlayManager.send('overlay:autopilot-progress', {
+        status: 'error', currentSection: 0, totalSections: config.sections.length,
+        waitRemaining: 0, error: 'No source window — @prompt trigger required',
+      });
+      return;
+    }
+
+    autopilotEngine.start({
+      mode: config.mode,
+      sections: config.sections,
+      sourceHwnd,
+      waitSeconds: config.waitSeconds,
+      overlayManager,
+    }, (progress) => {
+      overlayManager.send('overlay:autopilot-progress', progress);
+    });
+  });
+
+  // ============================================
+  // overlay:stop-autopilot — Cancel running auto-pilot
+  // ============================================
+  ipcMain.on('overlay:stop-autopilot', () => {
+    autopilotEngine.stop();
   });
 
   // ============================================
