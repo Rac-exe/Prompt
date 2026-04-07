@@ -6,7 +6,7 @@ import FileType from 'file-type';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
-import { PythonClient, ModelsUsed } from '../api/python-client';
+import { PythonClient, ModelsUsed, ClarifyResult } from '../api/python-client';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
@@ -185,6 +185,30 @@ let currentOptimization: {
 
 // Track in-flight generations so the renderer can resume streaming after a chat switch.
 const activeGenerations = new Map<string, { accumulated: string }>();
+
+interface PendingOptimization {
+    data: {
+        chatId: string | null;
+        content: string;
+        mode?: string;
+        attachedFiles?: AttachedFile[];
+        forcedSkill?: string | null;
+        groupId?: string;
+        versionIndex?: number;
+    };
+    chatId: string;
+    customInstructions: string;
+    messagesContext: Array<{ role: string; content: string }>;
+}
+
+const pendingClarifications = new Map<string, PendingOptimization>();
+
+function formatClarificationAnswers(answers: Record<string, string>): string {
+    return Object.entries(answers)
+        .filter(([, v]) => v && v.trim())
+        .map(([key, val]) => `- ${key}: ${val}`)
+        .join('\n');
+}
 
 /**
  * Register chat & app window IPC handlers.
@@ -738,6 +762,29 @@ export function registerChatHandlers(
                 console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
             }
 
+            // ── Clarification check ──────────────────────────────────────────
+            // Only on first send (no clarificationAnswers yet) and only for
+            // new requests (not refinements detected by weak-message heuristic)
+            if (!isWeakMessage(data.content)) {
+                try {
+                    const clarifyResult = await pythonClient.clarify(data.content);
+                    if (clarifyResult.should_clarify && clarifyResult.questions.length > 0) {
+                        pendingClarifications.set(chatId!, {
+                            data,
+                            chatId: chatId!,
+                            customInstructions,
+                            messagesContext,
+                        });
+                        if (appWindowManager) {
+                            appWindowManager.send('clarification-required', { chatId, ...clarifyResult });
+                        }
+                        return;
+                    }
+                } catch {
+                    // Non-blocking: proceed to optimize on any failure
+                }
+            }
+
             // Trigger streaming optimization — uses the original attachedFiles (with
             // base64) so the LLM sees the image content regardless of upload status.
             activeGenerations.set(chatId!, { accumulated: '' });
@@ -854,6 +901,126 @@ export function registerChatHandlers(
             }
         }
         });
+    });
+
+    // ============================================
+    // APP WINDOW: Submit clarification answers (resumes paused optimization)
+    // ============================================
+    ipcMain.on('app:submit-clarification', async (event, data: {
+        chatId: string;
+        answers: Record<string, string>;
+        wantsSections: boolean;
+    }) => {
+        const pending = pendingClarifications.get(data.chatId);
+        if (!pending) {
+            console.warn('[Chat] submit-clarification: no pending optimization for chatId', data.chatId);
+            return;
+        }
+        pendingClarifications.delete(data.chatId);
+
+        const formattedAnswers = formatClarificationAnswers(data.answers);
+
+        Sentry.addBreadcrumb({ category: 'chat', message: 'Clarification submitted', level: 'info', data: { chatId: data.chatId, wantsSections: data.wantsSections } });
+
+        try {
+            activeGenerations.set(data.chatId, { accumulated: '' });
+            let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
+
+            try {
+                const result = await pythonClient.optimizeStream(
+                    pending.data.content,
+                    false,
+                    pending.messagesContext.length > 0 ? pending.messagesContext : null,
+                    (chunk, accumulated) => {
+                        activeGenerations.set(data.chatId, { accumulated });
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chatId: data.chatId, chunk, accumulated });
+                        }
+                    },
+                    pending.data.mode || 'thinking',
+                    pending.customInstructions,
+                    pending.data.attachedFiles || [],
+                    pending.data.forcedSkill || null,
+                    null,
+                    formattedAnswers || null,
+                    data.wantsSections,
+                );
+                optimizedText = result.text;
+                modelsUsed = result.models;
+            } catch (llmErr: any) {
+                activeGenerations.delete(data.chatId);
+                const friendlyError = humanizeLlmError(llmErr);
+                try {
+                    await chatService.addMessage(data.chatId, '', 'assistant', undefined, {
+                        isError: true,
+                        errorMessage: friendlyError,
+                        groupId: crypto.randomUUID(),
+                        versionIndex: 0,
+                    });
+                } catch { /* non-critical */ }
+                throw llmErr;
+            }
+            activeGenerations.delete(data.chatId);
+
+            let optimizationId: string | undefined;
+            if (authState.isAuthenticated) {
+                try {
+                    const optimization = await optimizationService.saveOptimization(
+                        pending.data.content,
+                        optimizedText,
+                        'app_window',
+                        { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: data.chatId } }
+                    );
+                    optimizationId = optimization.id;
+                } catch (dbError) {
+                    console.error('[Chat] Failed to save optimization record:', dbError);
+                }
+            }
+
+            const assistantGroupId = crypto.randomUUID();
+            const assistantMessage = await chatService.addMessage(
+                data.chatId,
+                optimizedText,
+                'assistant',
+                optimizationId,
+                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+            );
+
+            if (appWindowManager) {
+                appWindowManager.send('message-received', {
+                    chatId: data.chatId,
+                    message: {
+                        id: assistantMessage.id,
+                        chatId: assistantMessage.chat_id,
+                        role: assistantMessage.role,
+                        content: assistantMessage.content,
+                        createdAt: assistantMessage.created_at,
+                        groupId: assistantGroupId,
+                        versionIndex: 0,
+                    }
+                });
+            }
+
+            analyticsService.logEvent('ai_response', { source: 'app', model: modelsUsed?.optimizer });
+
+            if (authState.currentUserId && rateLimitService) {
+                rateLimitService.invalidateCache(authState.currentUserId);
+            }
+
+            const chats = await chatService.getChats();
+            if (appWindowManager) {
+                appWindowManager.send('chats-loaded', { chats });
+            }
+        } catch (error) {
+            Sentry.captureException(error);
+            console.error('[Chat] Clarification optimization failed:', error);
+            if (appWindowManager) {
+                appWindowManager.send('message-send-error', {
+                    error: humanizeLlmError(error),
+                });
+            }
+        }
     });
 
     // ============================================

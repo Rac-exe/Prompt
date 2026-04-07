@@ -16,6 +16,23 @@ interface OptimizeResult {
   models?: ModelsUsed;
 }
 
+export interface ClarifyQuestion {
+  id: string;
+  question: string;
+  type: 'multiple_choice' | 'text';
+  options: string[];
+  allow_other: boolean;
+  optional: boolean;
+}
+
+export interface ClarifyResult {
+  should_clarify: boolean;
+  is_complex: boolean;
+  complexity_reason: string;
+  suggested_sections: string[];
+  questions: ClarifyQuestion[];
+}
+
 interface StreamRequest {
   resolve: (value: OptimizeResult) => void;
   reject: (reason?: any) => void;
@@ -209,7 +226,9 @@ export class PythonClient extends EventEmitter {
     customInstructions: string = "",
     attachedFiles: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }> = [],
     forcedSkill: string | null = null,
-    previousOutput: string | null = null
+    previousOutput: string | null = null,
+    clarificationAnswers: string | null = null,
+    wantsSections: boolean = false
   ): Promise<OptimizeResult> {
     await this.ensureConnection();
 
@@ -327,6 +346,8 @@ export class PythonClient extends EventEmitter {
           custom_instructions: customInstructions,
           attached_files: attachedFiles,
           forced_skill: forcedSkill,
+          clarification_answers: clarificationAnswers || undefined,
+          wants_sections: wantsSections || undefined,
           sentry_trace: sentryTrace,
           baggage,
           user_id: authState.currentUserId || undefined,
@@ -372,6 +393,22 @@ export class PythonClient extends EventEmitter {
     } catch (_) { /* ignore */ }
 
     req.resolve({ text: partial, models: undefined });
+  }
+
+  async clarify(prompt: string): Promise<ClarifyResult> {
+    try {
+      const response = await this.client.post('/clarify', { prompt }, { timeout: 15000 });
+      return response.data;
+    } catch (error) {
+      console.warn('[PythonClient] Clarify failed (non-blocking, using safe default):', error);
+      return {
+        should_clarify: false,
+        is_complex: false,
+        complexity_reason: '',
+        suggested_sections: [],
+        questions: [],
+      };
+    }
   }
 
   // Legacy method for non-streaming requests (retaining for backward compatibility)

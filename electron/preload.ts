@@ -176,6 +176,10 @@ declare global {
       onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
       onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
 
+      // Clarification API
+      submitClarification: (data: { chatId: string; answers: Record<string, string>; wantsSections: boolean }) => void;
+      onClarificationRequired: (callback: (data: { chatId: string; should_clarify: boolean; is_complex: boolean; complexity_reason: string; suggested_sections: string[]; questions: Array<{ id: string; question: string; type: string; options: string[]; allow_other: boolean; optional: boolean }> }) => void) => (() => void);
+
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
       signIn: (data: { email: string; password: string }) => void;
@@ -517,6 +521,18 @@ const electronAPI = {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-sent', handler);
     return () => ipcRenderer.removeListener('message-sent', handler);
+  },
+  submitClarification: (data: {
+    chatId: string;
+    answers: Record<string, string>;
+    wantsSections: boolean;
+  }) => {
+    ipcRenderer.send('app:submit-clarification', data);
+  },
+  onClarificationRequired: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('clarification-required', handler);
+    return () => ipcRenderer.removeListener('clarification-required', handler);
   },
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
