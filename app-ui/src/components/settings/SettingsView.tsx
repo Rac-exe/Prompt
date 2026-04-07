@@ -195,6 +195,13 @@ export const SettingsView = () => {
         toast({ title: "Password updated", description: "Your password has been changed successfully." });
         setResetStep('idle');
         setResetOtp('');
+        // Refresh identities — for OAuth accounts, Supabase doesn't auto-add an email
+        // identity when a password is set via the admin API, so inject it optimistically.
+        await fetchIdentities();
+        setIdentities((prev) => {
+          if (prev.some((i: any) => i.provider === 'email')) return prev;
+          return [...prev, { provider: 'email', id: 'email' }];
+        });
       }
     } catch {
       setResetPasswordError('Failed to update password. Please try again.');
