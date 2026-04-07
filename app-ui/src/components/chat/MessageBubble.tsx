@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Copy, Check, BookmarkSimple, User, Sparkle, PencilSimple, ArrowCounterClockwise, FileText, ImageSquare, MagnifyingGlassPlus, Paperclip, CaretLeft, CaretRight, WarningCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/Logo";
@@ -46,6 +46,79 @@ interface MessageBubbleProps {
   versionInfo?: { current: number; total: number; parentId: string };
   onNavigateVersion?: (parentId: string, direction: 'prev' | 'next') => void;
 }
+
+interface ParsedSection { title: string; content: string }
+
+function parseSections(text: string): ParsedSection[] | null {
+  const sectionRegex = /^## (.+)$/gm;
+  const matches = [...text.matchAll(sectionRegex)];
+  if (matches.length < 2) return null;
+
+  const sections: ParsedSection[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const title = matches[i][1].trim();
+    const start = matches[i].index! + matches[i][0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+    const content = text.slice(start, end).trim();
+    if (content) sections.push({ title, content });
+  }
+  return sections.length >= 2 ? sections : null;
+}
+
+const SectionCopyButton = ({ text }: { text: string }) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      className={cn(
+        "flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-colors",
+        copied
+          ? "text-emerald bg-emerald/8"
+          : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-secondary"
+      )}
+    >
+      {copied ? <Check size={10} weight="bold" /> : <Copy size={10} weight="light" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+};
+
+const SectionedContent = ({ content }: { content: string }) => {
+  const sections = useMemo(() => parseSections(content), [content]);
+
+  if (!sections) {
+    return (
+      <div className="px-4 py-3.5">
+        <MarkdownContent content={content} size="sm" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-border/40">
+      {sections.map((section, idx) => (
+        <div key={idx} className="px-4 py-3.5">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-primary/10 text-[10px] font-semibold text-primary">
+                {idx + 1}
+              </span>
+              <h3 className="text-xs font-semibold text-foreground tracking-wide uppercase">
+                {section.title}
+              </h3>
+            </div>
+            <SectionCopyButton text={section.content} />
+          </div>
+          <MarkdownContent content={section.content} size="sm" />
+        </div>
+      ))}
+    </div>
+  );
+};
 
 export const MessageBubble = ({
   message, onCopy, onSave, isSaved, onFeedback, onEdit, onRegenerate, isGenerating, fileContextCount, avatarUrl,
@@ -367,7 +440,7 @@ export const MessageBubble = ({
               </span>
             </div>
           )}
-          {/* Content — error state or normal text */}
+          {/* Content — error state, sectioned, or normal text */}
           {message.isError ? (
             <div className="flex items-start gap-2.5 px-4 py-3.5">
               <WarningCircle size={16} weight="light" className="text-destructive flex-shrink-0 mt-0.5" />
@@ -379,9 +452,7 @@ export const MessageBubble = ({
               </div>
             </div>
           ) : (
-          <div className="px-4 py-3.5">
-            <MarkdownContent content={message.content} size="sm" />
-          </div>
+          <SectionedContent content={message.content} />
           )}
 
           {/* Action bar — hidden for error sentinels (nothing to copy/save) */}
