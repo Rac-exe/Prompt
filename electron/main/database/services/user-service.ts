@@ -37,6 +37,7 @@ export interface UserPreferences {
 export interface CompleteUserData {
   profile: UserProfile;
   preferences: UserPreferences;
+  hasEmailPassword: boolean;
 }
 
 /**
@@ -192,7 +193,18 @@ export class UserService {
         updated_at: data.updated_at,
       };
 
-      return { profile, preferences };
+      // Detect whether this user has a password set in auth.users. Supabase
+      // does NOT create an email identity row when a password is set via the
+      // admin API for OAuth accounts, so we check the DB directly.
+      let hasEmailPassword = false;
+      try {
+        const { data: hasPw } = await this.client.rpc('user_has_email_password');
+        hasEmailPassword = hasPw === true;
+      } catch {
+        // Non-fatal: fall back to false; the localStorage flag will still work
+      }
+
+      return { profile, preferences, hasEmailPassword };
     } catch (error) {
       console.error('[UserService] Unexpected error fetching complete user data:', error);
       Sentry.captureException(error, { tags: { component: 'user-service', op: 'get-complete-user-data' } });

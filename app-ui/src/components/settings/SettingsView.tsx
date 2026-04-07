@@ -91,6 +91,12 @@ export const SettingsView = () => {
   }, [emailPwKey]);
 
   useEffect(() => {
+    // If the backend confirmed a password exists (via user_has_email_password RPC),
+    // seed the localStorage flag so existing users who set a password before this
+    // fix was deployed also see the correct UI state on their next login.
+    if (user?.hasEmailPassword && !hasPersistedEmailPw()) {
+      persistEmailPwSet();
+    }
     if (user?.identities) setIdentities(injectEmailIdentityIfNeeded(user.identities));
     else fetchIdentities();
   // eslint-disable-next-line react-hooks/exhaustive-deps
