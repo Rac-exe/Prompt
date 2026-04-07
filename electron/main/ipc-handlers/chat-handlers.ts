@@ -768,6 +768,7 @@ export function registerChatHandlers(
             if (!isWeakMessage(data.content)) {
                 try {
                     const clarifyResult = await pythonClient.clarify(data.content);
+                    console.log(`[Chat] Clarify result: should_clarify=${clarifyResult.should_clarify}, questions=${clarifyResult.questions.length}`);
                     if (clarifyResult.should_clarify && clarifyResult.questions.length > 0) {
                         pendingClarifications.set(chatId!, {
                             data,
@@ -973,6 +974,16 @@ export function registerChatHandlers(
                         { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: data.chatId } }
                     );
                     optimizationId = optimization.id;
+                    if (analyzer && authState.currentUserId) {
+                        analyzer.onNewOptimization(
+                            authState.currentUserId,
+                            pending.data.content,
+                            optimizedText,
+                            pending.data.forcedSkill || null,
+                        ).catch((e: unknown) =>
+                            console.warn('[Memory] Analyzer error (non-critical):', e)
+                        );
+                    }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
                 }

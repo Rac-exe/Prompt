@@ -8,6 +8,7 @@ questions that will help produce a better optimized prompt.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any, Dict
 
@@ -16,38 +17,30 @@ import litellm
 from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
 from .usage_logger import log_usage
 
+logger = logging.getLogger("prmpt.clarifier")
+
 CLARIFIER_SYSTEM_PROMPT = """\
-You are a prompt analysis AI. Analyze the user's raw request and decide whether asking clarifying questions would significantly improve the final optimized prompt.
+You are a prompt analysis AI. Given the user's raw request, decide if clarifying questions would meaningfully improve the final optimized prompt.
 
-Return ONLY valid JSON matching this exact schema — no prose, no markdown fences:
-
+Return ONLY valid JSON (no markdown, no prose) with this schema:
 {
-  "should_clarify": boolean,
-  "is_complex": boolean,
-  "complexity_reason": string,
-  "suggested_sections": [],
+  "should_clarify": true/false,
+  "is_complex": true/false,
+  "complexity_reason": "short reason",
+  "suggested_sections": ["Phase 1", "Phase 2"],
   "questions": [
-    {
-      "id": string,
-      "question": string,
-      "type": "multiple_choice" | "text",
-      "options": [],
-      "allow_other": boolean,
-      "optional": boolean
-    }
+    {"id": "q0", "question": "Your question?", "type": "multiple_choice", "options": ["A", "B", "C"], "optional": false}
   ]
 }
 
 RULES:
-- Set should_clarify to false if the prompt is simple, already fully specified, a follow-up refinement (e.g. "make it shorter", "add error handling", "change the tone"), or has no meaningful ambiguity to resolve.
-- Generate 2-5 questions MAX. Never more.
-- Questions must be inferred entirely from what the prompt describes — no hardcoded templates. Read the prompt and figure out what is missing or underspecified.
-- If the prompt describes a multi-part build (app, system, workflow, full project), set is_complex to true and populate suggested_sections with logical build phases.
-- ALWAYS include a delivery format question if is_complex is true: ask whether the user wants "One complete prompt" or "Broken into task sections".
-- Use multiple_choice when there are obvious option sets (tech stack, tone, format, etc.). Use text when the answer is open-ended and unpredictable.
-- Set allow_other to true on multiple_choice questions where the user might have a preference outside your options.
-- Do not ask about things the user already specified in their prompt.
-- When should_clarify is false, return an empty questions array and empty suggested_sections array."""
+1. Set should_clarify to true for any prompt that has meaningful ambiguity — tech stack, tone, audience, scope, features, format, etc.
+2. Set should_clarify to false ONLY if the prompt is very simple, already fully specified, or is a follow-up refinement like "make it shorter."
+3. Generate 2-4 questions. ALWAYS use "multiple_choice" with 3-5 concrete options. Never use "text" type.
+4. Infer questions from what the prompt is missing — do not hardcode. Read the prompt and figure out what is underspecified.
+5. For multi-part builds (apps, systems, workflows): set is_complex to true, fill suggested_sections, and include a delivery format question asking "One complete prompt" vs "Broken into task sections."
+6. Never ask about things the user already specified.
+7. When should_clarify is false, return empty questions and suggested_sections arrays."""
 
 
 _FAIL_SAFE: Dict[str, Any] = {
@@ -84,13 +77,13 @@ def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
                 {"role": "system", "content": CLARIFIER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_input},
             ],
-            max_tokens=1024,
-            temperature=0.3,
+            max_tokens=512,
+            temperature=0.2,
             response_format={"type": "json_object"},
             **extra,
         )
     except Exception as exc:
-        print(f"[Clarifier] LLM call failed: {exc}")
+        logger.warning(f"LLM call failed: {exc}")
         return dict(_FAIL_SAFE)
 
     latency_ms = int((time.perf_counter() - t0) * 1000)
@@ -106,11 +99,12 @@ def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
         )
 
     raw = response.choices[0].message.content or ""
+    logger.info(f"Clarifier response ({latency_ms}ms): {raw[:300]}")
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        print(f"[Clarifier] Failed to parse JSON response: {raw[:200]}")
+        logger.warning(f"Failed to parse JSON response: {raw[:200]}")
         return dict(_FAIL_SAFE)
 
     # Validate and normalize the response
@@ -122,19 +116,20 @@ def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
         "questions": [],
     }
 
-    for q in parsed.get("questions", [])[:5]:
+    for q in parsed.get("questions", [])[:4]:
         if not isinstance(q, dict) or "question" not in q:
             continue
+        opts = list(q.get("options", []))
         result["questions"].append({
-            "id": str(q.get("id", "")),
+            "id": str(q.get("id", f"q{len(result['questions'])}")),
             "question": str(q["question"]),
-            "type": q.get("type", "text") if q.get("type") in ("multiple_choice", "text") else "text",
-            "options": list(q.get("options", [])),
-            "allow_other": bool(q.get("allow_other", False)),
+            "type": "multiple_choice" if opts else "text",
+            "options": opts,
             "optional": bool(q.get("optional", True)),
         })
 
     if result["should_clarify"] and not result["questions"]:
         result["should_clarify"] = False
 
+    logger.info(f"Clarify result: should_clarify={result['should_clarify']}, questions={len(result['questions'])}, is_complex={result['is_complex']}")
     return result

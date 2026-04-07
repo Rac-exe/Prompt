@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as Sentry from "@sentry/react";
-import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown } from "@phosphor-icons/react";
+import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown, CaretRight } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
@@ -385,12 +385,17 @@ export const ChatView = ({
             />
 
             {/* Pro Mode badge */}
-            <TooltipProvider>
+            <TooltipProvider delayDuration={100}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none">
+                  <div className="group relative inline-flex items-center gap-1.5 h-8 px-3 pr-5 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none">
                     <Atom size={14} weight="duotone" className="text-emerald" />
                     <span>Pro Mode</span>
+                    <CaretRight
+                      size={9}
+                      weight="bold"
+                      className="absolute top-1 right-1 text-muted-foreground/30 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-rotate-90 group-hover:text-muted-foreground/60"
+                    />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="top">
