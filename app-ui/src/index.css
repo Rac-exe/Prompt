@@ -12,6 +12,7 @@
 
 @layer base {
   :root {
+    color-scheme: light;
     /* ─── Light Mode ──────────────────────────────────────────────
        Warm peach light theme — soft, premium, easy on the eyes.
        No pure white anywhere. Dark accent matching the dark-logo.
@@ -78,6 +79,7 @@
   }
 
   .dark {
+    color-scheme: dark;
     /* ─── Dark Mode ──────────────────────────────────────────
        Near-black background with vibrant electric-blue accent (#3B82F6).
        Layered dark surfaces for depth. Modern SaaS aesthetic
@@ -280,4 +282,42 @@
 @keyframes pulseSubtle {
   0%, 100% { opacity: 1;   }
   50%       { opacity: 0.6; }
+}
+
+/* ─── Date input styling ────────────────── */
+input[type="date"] {
+  display: flex;
+  align-items: center;
+}
+input[type="date"]::-webkit-datetime-edit {
+  color: hsl(var(--foreground));
+  flex: 1;
+}
+input[type="date"]:not(:valid)::-webkit-datetime-edit,
+input[type="date"][value=""]::-webkit-datetime-edit {
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+input[type="date"]::-webkit-datetime-edit-day-field:focus,
+input[type="date"]::-webkit-datetime-edit-month-field:focus,
+input[type="date"]::-webkit-datetime-edit-year-field:focus {
+  background: hsl(var(--emerald) / 0.2);
+  color: hsl(var(--foreground));
+  border-radius: 2px;
+  outline: none;
+}
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.5;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+.dark input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+  opacity: 0.45;
+}
+.dark input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 0.9;
 }
