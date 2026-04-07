@@ -675,6 +675,42 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
         logger.error(f"Optimization failed: {error_msg}")
         raise HTTPException(status_code=500, detail="Optimization failed — please try again")
 
+
+# ── Clarification endpoint ─────────────────────────────────────────────────
+
+class ClarifyRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+
+class ClarifyQuestion(BaseModel):
+    id: str
+    question: str
+    type: str
+    options: list = []
+    allow_other: bool = False
+    optional: bool = True
+
+class ClarifyResponse(BaseModel):
+    should_clarify: bool
+    is_complex: bool
+    complexity_reason: str = ""
+    suggested_sections: list = []
+    questions: list[ClarifyQuestion] = []
+
+@app.post("/clarify", response_model=ClarifyResponse)
+async def clarify_prompt(request: ClarifyRequest, auth: dict = Depends(require_auth)):
+    """Analyze a prompt and return clarification questions if beneficial."""
+    _ensure_pipeline()
+    try:
+        from pipeline_v2.clarifier import clarify
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, clarify, request.prompt
+        )
+        return ClarifyResponse(**result)
+    except Exception as exc:
+        logger.warning(f"Clarify endpoint failed (returning safe default): {exc}")
+        return ClarifyResponse(should_clarify=False, is_complex=False)
+
+
 @app.websocket("/ws/optimize-stream")
 async def optimize_stream(websocket: WebSocket):
     """
@@ -699,6 +735,8 @@ async def optimize_stream(websocket: WebSocket):
             custom_instructions = data.get("custom_instructions", "")
             attached_files = data.get("attached_files", [])
             forced_skill = data.get("forced_skill", None)
+            clarification_answers = data.get("clarification_answers", None)
+            wants_sections = data.get("wants_sections", False)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
             # Use JWT-verified user id; fall back to request body only for legacy local mode
@@ -797,6 +835,8 @@ async def optimize_stream(websocket: WebSocket):
                             forced_skill=forced_skill,
                             previous_output=previous_output,
                             models_info=models_info,
+                            clarification_answers=clarification_answers,
+                            wants_sections=wants_sections,
                         )
                         for chunk in gen:
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)

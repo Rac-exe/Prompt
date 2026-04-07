@@ -167,6 +167,8 @@ def optimize(
     forced_skill: Optional[str] = None,
     previous_output: Optional[str] = None,
     models_info: Optional[Dict] = None,
+    clarification_answers: Optional[str] = None,
+    wants_sections: bool = False,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -178,6 +180,8 @@ def optimize(
         forced_skill: Override auto skill selection with specific skill name
         previous_output: If provided (regeneration), the LLM is instructed to
                          produce a distinctly different and better optimization.
+        clarification_answers: Pre-formatted user answers from the clarification step.
+        wants_sections: If True, instruct the LLM to output as ordered task sections.
     """
     if attached_files is None:
         attached_files = []
@@ -207,13 +211,27 @@ def optimize(
     
     # Parse attached files
     file_text_context, vision_parts = parse_files(attached_files, model_has_vision)
-    
+
+    # Enrich user input with clarification answers if provided
+    if clarification_answers and clarification_answers.strip():
+        user_input = (
+            f"ORIGINAL REQUEST:\n{user_input}\n\n"
+            f"USER CLARIFICATIONS:\n{clarification_answers}"
+        )
+
     if mode == "fast":
         prompt_type = detect_prompt_type(user_input)
         optimization_strategy = get_optimization_strategy(prompt_type)
         
         system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
-        
+
+        if wants_sections:
+            system_content += (
+                "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
+                "Output each section with a ## Section Title header followed by its prompt content. "
+                "Sections should be self-contained and executable in sequence."
+            )
+
         if custom_instructions and custom_instructions.strip():
             system_content += (
                 f"\n\nDETECTED PROMPT CATEGORY: {prompt_type}\n\n"
@@ -296,6 +314,13 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
         # Append regeneration instruction when applicable
         if regen_instruction:
             user_prompt = user_prompt + regen_instruction
+
+        if wants_sections:
+            system_prompt += (
+                "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
+                "Output each section with a ## Section Title header followed by its prompt content. "
+                "Sections should be self-contained and executable in sequence."
+            )
 
         if custom_instructions and custom_instructions.strip():
             system_prompt += (
