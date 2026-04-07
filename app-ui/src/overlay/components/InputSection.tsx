@@ -561,23 +561,13 @@ const InputSection: React.FC<InputSectionProps> = ({
               </svg>
             </button>
 
-            {/* Mode dropdown trigger */}
-            <button ref={modeBtnRef} className="mode-select-btn" type="button" onClick={toggleModeDropdown}>
-              {currentMode === 'fast' ? (
-                <svg style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              ) : (
-                <svg style={{ width: 13, height: 13 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
-                </svg>
-              )}
-              <span>{currentMode === 'fast' ? 'Fast' : 'Thinking'}</span>
-              <svg style={{ width: 10, height: 10, opacity: 0.5 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+            {/* Pro Mode badge */}
+            <div className="mode-select-btn" title="You don't need any other mode !!" style={{ cursor: 'default', userSelect: 'none' }}>
+              <svg style={{ width: 13, height: 13 }} fill="currentColor" stroke="currentColor" viewBox="0 0 256 256">
+                <path d="M196,128a68.2,68.2,0,0,1-13.1,40.2l21.6,21.5a8.1,8.1,0,0,1,0,11.4,8.2,8.2,0,0,1-11.4,0l-21.5-21.6A68,68,0,0,1,60,128a8.2,8.2,0,0,1,2.1-5.3l29.5-33.2L73.9,52.2a8,8,0,0,1,12.2-10.4l19.4,22.8L128,37.3l22.5,27.3,19.4-22.8a8,8,0,1,1,12.2,10.4l-17.7,37.3,29.5,33.2A8.2,8.2,0,0,1,196,128Z" />
               </svg>
-            </button>
+              <span>Pro Mode</span>
+            </div>
 
             {/* Skill pill */}
             <SkillPill skill={selectedSkill} skillLabel={selectedSkillLabel} onRemove={onRemoveSkill} />
@@ -620,13 +610,14 @@ const InputSection: React.FC<InputSectionProps> = ({
         </div>
       </div>
 
-      {/* Mode dropdown */}
+      {/* Mode dropdown — disabled for Pro Mode
       <ModeDropdown
         currentMode={currentMode}
         open={modeDropdownOpen}
         anchorRect={modeBtnRect}
         onSelect={handleModeSelect}
       />
+      */}
 
       {/* Plus menu */}
       <PlusMenu

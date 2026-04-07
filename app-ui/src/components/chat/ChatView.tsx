@@ -1,14 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as Sentry from "@sentry/react";
-import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Lightning, WarningCircle, CaretDown, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, Brain, ArrowDown } from "@phosphor-icons/react";
+import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
 import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { PlusMenu } from "./PlusMenu";
 import { SkillPicker, SKILL_ICON_MAP } from "./SkillPicker";
@@ -221,8 +219,6 @@ export const ChatView = ({
   const isEmpty = messages.length === 0;
   const canSend = input.trim().length > 0 && !isGenerating && voiceState !== "processing" && isOnline;
 
-  const modeLabel = mode === "fast" ? "Fast" : "Thinking";
-
   // ── Unified input bar (Claude style — textarea + bottom toolbar inside) ──
   const inputBar = (
     <div className="w-full max-w-4xl mx-auto">
@@ -383,53 +379,20 @@ export const ChatView = ({
               anchorRef={plusButtonRef}
             />
 
-            {/* Model selector dropdown (inside the bar, like Claude) */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  disabled={!isOnline}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                >
-                  {mode === "fast" ? (
-                    <Lightning size={14} weight="light" />
-                  ) : (
-                    <Brain size={14} weight="light" />
-                  )}
-                  <span>{modeLabel}</span>
-                  <CaretDown size={12} weight="light" className="opacity-50" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" sideOffset={8} className="w-60 bg-popover border-border shadow-elevated rounded-xl p-1">
-                <DropdownMenuItem
-                  onClick={() => setMode("fast")}
-                  className={cn(
-                    "flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
-                    mode === "fast" && "bg-secondary"
-                  )}
-                >
-                  <Lightning size={16} weight="light" className="text-emerald mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Fast</p>
-                    <p className="text-xs text-muted-foreground">Most efficient for everyday tasks</p>
+            {/* Pro Mode badge */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none">
+                    <Atom size={14} weight="duotone" className="text-emerald" />
+                    <span>Pro Mode</span>
                   </div>
-                  {mode === "fast" && <span className="ml-auto text-emerald mt-0.5">✓</span>}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setMode("thinking")}
-                  className={cn(
-                    "flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
-                    mode === "thinking" && "bg-secondary"
-                  )}
-                >
-                  <Brain size={16} weight="light" className="text-emerald mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Thinking</p>
-                    <p className="text-xs text-muted-foreground">Think longer for complex tasks</p>
-                  </div>
-                  {mode === "thinking" && <span className="ml-auto text-emerald mt-0.5">✓</span>}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  You don't need any other mode !!
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
             {/* Skill pill — shows skill-specific icon */}
             {selectedSkill && (() => {
