@@ -65,6 +65,9 @@ export const SettingsView = () => {
   const [localInstructions, setLocalInstructions] = useState("");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
+  const [localName, setLocalName] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
+
   const [identities, setIdentities] = useState<any[]>([]);
   const [identityLoading, setIdentityLoading] = useState<string | null>(null);
 
@@ -289,6 +292,25 @@ export const SettingsView = () => {
   const userEmail = user?.profile?.email || "";
   const userInitial = (userName[0] || "U").toUpperCase();
 
+  useEffect(() => {
+    setLocalName(userName);
+  }, [userName]);
+
+  const nameDirty = localName.trim() !== "" && localName !== userName;
+
+  const saveName = async () => {
+    if (!nameDirty || nameSaving) return;
+    setNameSaving(true);
+    try {
+      window.electronAPI?.updateProfile({ name: localName.trim() });
+      toast({ title: "Username updated", description: "Your display name has been changed." });
+    } catch {
+      toast({ title: "Update failed", description: "Could not update your username.", variant: "destructive" });
+    } finally {
+      setNameSaving(false);
+    }
+  };
+
   const settingsReadyRef = useRef(false);
 
   useEffect(() => {
@@ -427,10 +449,30 @@ export const SettingsView = () => {
               <Section title="Account Information">
                 <Row>
                   <RowLabel label="Username" />
-                  <Input
-                    defaultValue={userName}
-                    className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={localName}
+                      onChange={(e) => setLocalName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveName(); }}
+                      className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
+                    />
+                    {nameDirty && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs flex-shrink-0"
+                        disabled={nameSaving}
+                        onClick={saveName}
+                      >
+                        {nameSaving ? (
+                          <CircleNotch size={14} weight="light" className="animate-spin" />
+                        ) : (
+                          <Check size={14} weight="bold" className="mr-1" />
+                        )}
+                        {nameSaving ? "" : "Save"}
+                      </Button>
+                    )}
+                  </div>
                 </Row>
                 <Row>
                   <RowLabel label="Email Address" hint="Cannot be changed" />
