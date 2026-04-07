@@ -321,7 +321,7 @@ const OverlaySectionedContent: React.FC<{ content: string }> = ({ content }) => 
   const sections = useMemo(() => parseSections(content), [content]);
 
   if (!sections) {
-    return <MarkdownContent content={content} size="xs" className="message-text" />;
+    return <MarkdownContent content={content} size="sm" className="message-text" />;
   }
 
   return (
@@ -330,27 +330,27 @@ const OverlaySectionedContent: React.FC<{ content: string }> = ({ content }) => 
         <div
           key={idx}
           style={{
-            padding: '8px 12px',
+            padding: '10px 14px',
             borderTop: idx > 0 ? '1px solid hsl(var(--border) / 0.4)' : undefined,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 16, height: 16, borderRadius: 4,
-                background: 'hsl(var(--accent) / 0.1)', fontSize: 9, fontWeight: 700,
+                width: 18, height: 18, borderRadius: 5,
+                background: 'hsl(var(--accent) / 0.1)', fontSize: 10, fontWeight: 700,
                 color: 'hsl(var(--accent))',
               }}>
                 {idx + 1}
               </span>
-              <span style={{ fontSize: 10, fontWeight: 600, color: 'hsl(var(--foreground))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(var(--foreground))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                 {section.title}
               </span>
             </div>
             <OverlaySectionCopyButton text={section.content} />
           </div>
-          <MarkdownContent content={section.content} size="xs" />
+          <MarkdownContent content={section.content} size="sm" />
         </div>
       ))}
     </div>
