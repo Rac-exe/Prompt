@@ -737,6 +737,8 @@ async def optimize_stream(websocket: WebSocket):
             forced_skill = data.get("forced_skill", None)
             clarification_answers = data.get("clarification_answers", None)
             wants_sections = data.get("wants_sections", False)
+            project_id = data.get("project_id", None)
+            project_branch = data.get("project_branch", None)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
             # Use JWT-verified user id; fall back to request body only for legacy local mode
@@ -837,6 +839,9 @@ async def optimize_stream(websocket: WebSocket):
                             models_info=models_info,
                             clarification_answers=clarification_answers,
                             wants_sections=wants_sections,
+                            project_id=project_id,
+                            project_branch=project_branch,
+                            auth_token=websocket.query_params.get("token", ""),
                         )
                         for chunk in gen:
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)

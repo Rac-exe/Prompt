@@ -18,6 +18,7 @@ import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { analyticsService } from '../analytics/analytics-service';
+import { getActiveProjectId, getActiveProjectBranch } from './project-handlers';
 
 // ── Model metadata helper ─────────────────────────────────────────────────────
 function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
@@ -281,7 +282,14 @@ export function registerChatHandlers(
                         }
                     },
                     mode,
-                    customInstructions
+                    customInstructions,
+                    [],
+                    null,
+                    null,
+                    null,
+                    false,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -810,7 +818,12 @@ export function registerChatHandlers(
                     data.mode || 'thinking',
                     customInstructions,
                     attachedFiles,
-                    data.forcedSkill || null
+                    data.forcedSkill || null,
+                    null,
+                    null,
+                    false,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -951,6 +964,8 @@ export function registerChatHandlers(
                     null,
                     formattedAnswers || null,
                     data.wantsSections,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -1133,7 +1148,11 @@ export function registerChatHandlers(
                     customInstructions,
                     attachedFiles,
                     data.forcedSkill || null,
-                    data.previousContent || null
+                    data.previousContent || null,
+                    null,
+                    false,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -1342,6 +1361,11 @@ export async function syncChatMessageQueue(
                 '',
                 [],
                 forcedSkill || null,
+                null,
+                null,
+                false,
+                getActiveProjectId(),
+                getActiveProjectBranch(),
             );
 
             // Save optimization record

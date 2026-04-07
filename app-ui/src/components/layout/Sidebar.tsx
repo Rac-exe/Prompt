@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Logo } from "@/components/ui/Logo";
 import {
-  Lightning, Plus, Books,
+  Lightning, Plus, Books, TreeStructure,
   SidebarSimple,
   CircleNotch, WarningCircle, DotsThree,
   Trash, PencilSimple, Check, X,
@@ -29,8 +29,8 @@ function shortTitle(title: string): string {
 }
 
 interface SidebarProps {
-  currentView: "chat" | "library" | "settings" | "history" | "shared-library";
-  onViewChange: (view: "chat" | "library" | "settings" | "history" | "shared-library") => void;
+  currentView: "chat" | "library" | "settings" | "history" | "shared-library" | "projects";
+  onViewChange: (view: "chat" | "library" | "settings" | "history" | "shared-library" | "projects") => void;
   recentChats: { id: string; title: string; date: string }[];
   onSelectChat: (id: string) => void;
   selectedChatId: string | null;
@@ -66,6 +66,7 @@ export const Sidebar = ({
   const navItems = [
     { id: "chat" as const, label: "New Chat", icon: Plus, action: onNewChat },
     { id: "library" as const, label: "Prompt Library", icon: Books },
+    { id: "projects" as const, label: "Projects", icon: TreeStructure },
   ];
 
   useEffect(() => {

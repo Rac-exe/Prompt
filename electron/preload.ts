@@ -310,6 +310,20 @@ declare global {
         onDownloaded: (callback: (data: { version: string }) => void) => () => void;
         install: () => void;
       };
+
+      // Project Context API
+      project: {
+        add: (options?: { folderPath?: string }) => Promise<any>;
+        remove: (projectId: string) => Promise<void>;
+        list: () => Promise<any[]>;
+        status: (projectId: string) => Promise<any>;
+        setActive: (projectId: string, localPath?: string) => Promise<void>;
+        getActive: () => Promise<{ projectId: string | null; branch: string | null }>;
+        reindex: (projectId: string, localPath: string) => Promise<{ totalFiles: number; totalChunks: number }>;
+        sync: (projectId?: string) => Promise<void>;
+        onStatusUpdate: (callback: (data: any) => void) => () => void;
+        onOverlayStatus: (callback: (data: any) => void) => () => void;
+      };
     };
   }
 }
@@ -880,6 +894,30 @@ const electronAPI = {
       return () => ipcRenderer.removeListener('update:downloaded', handler);
     },
     install: () => ipcRenderer.send('update:install'),
+  },
+
+  // ============================================
+  // PROJECT CONTEXT API
+  // ============================================
+  project: {
+    add: (options?: { folderPath?: string }) => ipcRenderer.invoke('project:add', options),
+    remove: (projectId: string) => ipcRenderer.invoke('project:remove', projectId),
+    list: () => ipcRenderer.invoke('project:list'),
+    status: (projectId: string) => ipcRenderer.invoke('project:status', projectId),
+    setActive: (projectId: string, localPath?: string) => ipcRenderer.invoke('project:set-active', projectId, localPath),
+    getActive: () => ipcRenderer.invoke('project:get-active'),
+    reindex: (projectId: string, localPath: string) => ipcRenderer.invoke('project:reindex', projectId, localPath),
+    sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
+    onStatusUpdate: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('project:status-update', handler);
+      return () => ipcRenderer.removeListener('project:status-update', handler);
+    },
+    onOverlayStatus: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:project-status', handler);
+      return () => ipcRenderer.removeListener('overlay:project-status', handler);
+    },
   },
 };
 

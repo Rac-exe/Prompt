@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: prmpt-code-intelligence
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SUMMARIZER_MODEL
+        value: openrouter/anthropic/claude-3-haiku
+      - key: GITHUB_WEBHOOK_SECRET
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: APP_ENV
+        value: production
+      - key: SENTRY_DSN
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: false

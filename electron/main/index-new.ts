@@ -77,6 +77,10 @@ import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
 import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
 import { analyticsService } from './analytics/analytics-service';
+import { CodeIntelClient } from './api/code-intel-client';
+import { registerProjectHandlers, cleanupProjectHandlers } from './ipc-handlers/project-handlers';
+import { initializeParser } from './services/code-parser';
+import { setKnownProjects, startDetection, stopDetection } from './services/active-window-detector';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -88,6 +92,7 @@ let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
 let pythonClient: PythonClient;
 let transcriptionClient: TranscriptionClient;
+let codeIntelClient: CodeIntelClient;
 
 function getPythonHttpBaseUrl(): string {
   const raw = (process.env.PYTHON_SERVICE_URL || '').trim();
@@ -323,6 +328,11 @@ async function initialize() {
   transcriptionClient = new TranscriptionClient(pythonWsBase);
   console.log('[Main] Transcription client initialized');
 
+  // Code Intelligence Service client
+  const codeIntelUrl = (process.env.CODE_INTELLIGENCE_SERVICE_URL || '').trim() || 'http://127.0.0.1:8002';
+  codeIntelClient = new CodeIntelClient(codeIntelUrl);
+  console.log(`[Main] Code Intelligence Service URL: ${codeIntelUrl}`);
+
   // ============================================
   // REGISTER ALL IPC HANDLERS BEFORE WINDOW PRELOAD
   // ============================================
@@ -339,6 +349,31 @@ async function initialize() {
   registerFileUploadHandlers();
   registerFeedbackHandlers();
   registerDeletionHandlers();
+  registerProjectHandlers(codeIntelClient, overlayManager, appWindowManager);
+
+  // Initialize tree-sitter parser in background
+  initializeParser().catch(e => console.warn('[Main] Tree-sitter init deferred:', e));
+
+  // Phase 2: Auto-detect active project from window titles
+  codeIntelClient.listProjects().then(projects => {
+    setKnownProjects(projects);
+    startDetection({
+      onDetected: (project) => {
+        console.log(`[Main] Auto-detected project: ${project.name}`);
+        overlayManager.send('overlay:project-status', {
+          projectId: project.id,
+          name: project.name,
+          status: project.index_status,
+          auto: true,
+        });
+      },
+      onLost: () => {
+        overlayManager.send('overlay:project-status', null);
+      },
+    });
+  }).catch(() => {
+    // Code intel service not available yet — detection starts when projects are loaded
+  });
 
   // Transcription IPC handlers (inline — depend on transcriptionClient)
   ipcMain.on('transcription:debug', (_event, msg: string) => {
@@ -649,6 +684,8 @@ async function shutdown() {
   console.log('[Main] Shutting down...');
   stopKeystrokeDetection();
   globalShortcut.unregisterAll();
+  cleanupProjectHandlers();
+  stopDetection();
 
   // Disconnect transcription client
   if (transcriptionClient) {

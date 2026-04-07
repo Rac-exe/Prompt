@@ -228,7 +228,9 @@ export class PythonClient extends EventEmitter {
     forcedSkill: string | null = null,
     previousOutput: string | null = null,
     clarificationAnswers: string | null = null,
-    wantsSections: boolean = false
+    wantsSections: boolean = false,
+    projectId: string | null = null,
+    projectBranch: string | null = null,
   ): Promise<OptimizeResult> {
     await this.ensureConnection();
 
@@ -348,6 +350,8 @@ export class PythonClient extends EventEmitter {
           forced_skill: forcedSkill,
           clarification_answers: clarificationAnswers || undefined,
           wants_sections: wantsSections || undefined,
+          project_id: projectId || undefined,
+          project_branch: projectBranch || undefined,
           sentry_trace: sentryTrace,
           baggage,
           user_id: authState.currentUserId || undefined,

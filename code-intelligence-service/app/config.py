@@ -1,0 +1,26 @@
+import os
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/anthropic/claude-3-haiku")
+
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSIONS = 1536
+
+GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
+
+APP_ENV = os.environ.get("APP_ENV", "development")
+APP_VERSION = os.environ.get("APP_VERSION", "0.0.1-dev")
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
+
+GITHUB_POLLING_INTERVAL_SECONDS = 300
+MAX_CHUNKS_PER_INGEST = 10_000
+SUMMARY_MAX_TOKENS = 80
+RETRIEVAL_DEFAULT_LIMIT = 10
+RETRIEVAL_MAX_LIMIT = 25
+GRAPH_EXPANSION_DEPTH = 1

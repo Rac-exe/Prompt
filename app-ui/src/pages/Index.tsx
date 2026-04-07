@@ -9,6 +9,7 @@ import { SavedPrompt } from "@/components/library/PromptCard";
 import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
+import { ProjectsView } from "@/components/projects/ProjectsView";
 import { Message } from "@/components/chat/MessageBubble";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
@@ -47,7 +48,7 @@ const Index = () => {
   useInitializeSettings(user?.profile?.id);
 
   // Navigation state
-  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");
+  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library" | "projects">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   // Ref always holds the latest selectedChatId — used in long-lived IPC listeners
   // to avoid stale closures when the user switches chats.
@@ -1351,6 +1352,10 @@ Your prompt was: "${content}"`;
       case "settings":
         return (
           <SettingsView />
+        );
+      case "projects":
+        return (
+          <ProjectsView />
         );
       case "chat":
       default:

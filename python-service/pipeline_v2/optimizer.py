@@ -26,6 +26,7 @@ from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 from .document_parser import parse_files
 from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
+from .project_context import fetch_project_context
 
 litellm.set_verbose = False
 
@@ -174,6 +175,9 @@ def optimize(
     models_info: Optional[Dict] = None,
     clarification_answers: Optional[str] = None,
     wants_sections: bool = False,
+    project_id: Optional[str] = None,
+    project_branch: Optional[str] = None,
+    auth_token: Optional[str] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -187,6 +191,9 @@ def optimize(
                          produce a distinctly different and better optimization.
         clarification_answers: Pre-formatted user answers from the clarification step.
         wants_sections: If True, instruct the LLM to output as ordered task sections.
+        project_id: If provided, fetches code context from the Code Intelligence Service.
+        project_branch: Current git branch for context scoping.
+        auth_token: JWT token forwarded for Code Intelligence Service auth.
     """
     if attached_files is None:
         attached_files = []
@@ -202,6 +209,22 @@ def optimize(
             "is_regeneration": bool(previous_output and previous_output.strip()),
         },
     )
+
+    # Fetch project codebase context if a project is attached
+    project_context_text = ""
+    if project_id:
+        try:
+            ctx = fetch_project_context(
+                project_id=project_id,
+                user_query=user_input,
+                branch=project_branch,
+                auth_token=auth_token,
+            )
+            if ctx:
+                project_context_text = ctx
+                print(f"[Optimizer] Project context retrieved ({len(ctx)} chars)")
+        except Exception as e:
+            print(f"[Optimizer] Project context fetch failed: {e}")
 
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
@@ -270,8 +293,10 @@ def optimize(
         
         # Prepend file context if present
         final_user_input = user_input
+        if project_context_text:
+            final_user_input = f"{project_context_text}\n\n{final_user_input}"
         if file_text_context:
-            final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{user_input}"
+            final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{final_user_input}"
 
         # Append regeneration instruction when applicable
         final_user_input = final_user_input + regen_instruction
@@ -317,10 +342,12 @@ def optimize(
     
         cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
         
-        # Prepend file context if present
+        # Prepend file/project context if present
         final_user_input = user_input
+        if project_context_text:
+            final_user_input = f"{project_context_text}\n\n{final_user_input}"
         if file_text_context:
-            final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{user_input}"
+            final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{final_user_input}"
     
         user_prompt = f"""CHAT CONTEXT:
 {cc_text}

@@ -2,6 +2,7 @@ import React from 'react';
 import darkLogo from "@/assets/logos/dark-logo-svg.svg";
 import lightLogo from "@/assets/logos/light-logo-svg.svg";
 import { useIsDark } from "@/hooks/useIsDark";
+import ProjectStatus from './ProjectStatus';
 
 interface HeaderProps {
   onClose: () => void;
@@ -38,6 +39,7 @@ const Header: React.FC<HeaderProps> = ({ onClose, onNewSession }) => {
           OVERLAY
         </span>
       </div>
+      <ProjectStatus />
     </div>
 
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, WebkitAppRegion: 'no-drag' as any }}>

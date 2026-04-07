@@ -23,6 +23,7 @@ import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt, isWeakMessage } from './chat-handlers';
 import { analyticsService } from '../analytics/analytics-service';
+import { getActiveProjectId, getActiveProjectBranch } from './project-handlers';
 
 function humanizeLlmError(err: unknown): string {
     const raw: string = ((err as any)?.message ?? (err as any)?.code ?? String(err)).toLowerCase();
@@ -364,7 +365,11 @@ export function registerOverlayHandlers(
         customInstructions,
         data.attachedFiles || [],
         data.forcedSkill || null,
-        data.previousOutput || null
+        data.previousOutput || null,
+        null,
+        false,
+        getActiveProjectId(),
+        getActiveProjectBranch(),
       );
 
       // Add the assistant's response to history
@@ -1072,6 +1077,8 @@ export function registerOverlayHandlers(
         pending.data.previousOutput || null,
         formattedAnswers || null,
         submitData.wantsSections,
+        getActiveProjectId(),
+        getActiveProjectBranch(),
       );
 
       inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
