@@ -446,7 +446,7 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
     ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode);
   },
   saveToChat: (originalText: string, optimizedText: string) => {

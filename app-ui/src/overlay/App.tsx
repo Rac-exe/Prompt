@@ -51,7 +51,7 @@ const OverlayApp: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState('');
-  const [currentMode, setCurrentMode] = useState<string>('fast');
+  const [currentMode] = useState<string>('thinking');
 
   // ── Clarification state ─────────────────────────────────────────────────
   const [clarificationData, setClarificationData] = useState<any>(null);
@@ -526,7 +526,6 @@ const OverlayApp: React.FC = () => {
                 isOptimizing={isOptimizing}
                 isOnline={isOnline}
                 isAuthenticated={isAuthenticated}
-                currentMode={currentMode}
                 attachedFiles={attachedFiles}
                 selectedSkill={selectedSkill}
                 selectedSkillLabel={selectedSkillLabel}
@@ -535,7 +534,6 @@ const OverlayApp: React.FC = () => {
                 skills={skills}
                 onSend={handleSend}
                 onStop={handleStop}
-                onModeChange={setCurrentMode}
                 onAttachFiles={handleAttachFiles}
                 onRemoveFile={handleRemoveFile}
                 onSelectSkill={handleSelectSkill}

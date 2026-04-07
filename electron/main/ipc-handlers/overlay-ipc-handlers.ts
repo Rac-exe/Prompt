@@ -228,7 +228,7 @@ export function registerOverlayHandlers(
   // ============================================
   ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimize requested', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, isRegenerate: data.isRegenerate } });
-    logger.info(logger.fmt`overlay.optimize_requested mode=${data.mode ?? 'fast'} skill=${data.forcedSkill ?? 'none'} isRegenerate=${String(!!data.isRegenerate)}`);
+    logger.info(logger.fmt`overlay.optimize_requested mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'} isRegenerate=${String(!!data.isRegenerate)}`);
     if (!authState.isAuthenticated) {
       overlayManager.send('overlay:optimization-error', { error: 'Not authenticated' });
       return;
@@ -360,7 +360,7 @@ export function registerOverlayHandlers(
         (chunk: string, accumulated: string) => {
           overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
         },
-        data.mode || 'fast',
+        data.mode || 'thinking',
         customInstructions,
         data.attachedFiles || [],
         data.forcedSkill || null,
@@ -1065,7 +1065,7 @@ export function registerOverlayHandlers(
         (chunk: string, accumulated: string) => {
           overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
         },
-        pending.data.mode || 'fast',
+        pending.data.mode || 'thinking',
         pending.customInstructions,
         pending.data.attachedFiles || [],
         pending.data.forcedSkill || null,

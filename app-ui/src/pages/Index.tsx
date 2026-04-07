@@ -60,7 +60,6 @@ const Index = () => {
     input,
     setInput,
     mode,
-    setMode,
     selectedSkill,
     setSelectedSkill,
     attachedFiles,
@@ -861,7 +860,7 @@ const Index = () => {
 
   const handleSendMessage = useCallback((
     content: string, 
-    mode: "fast" | "thinking" = "fast",
+    mode: "fast" | "thinking" = "thinking",
     attachedFiles?: any[],
     selectedSkill?: string | null,
     versionMeta?: { groupId: string; versionIndex: number }
@@ -966,8 +965,8 @@ Your prompt was: "${content}"`;
       { id: placeholderId, role: "user" as const, content: newContent, timestamp: new Date(), groupId, versionIndex },
     ]);
 
-    handleSendMessage(newContent, "fast", undefined, undefined, { groupId, versionIndex });
-  }, [handleSendMessage, messageTree.addBranch]);
+    handleSendMessage(newContent, mode, undefined, undefined, { groupId, versionIndex });
+  }, [handleSendMessage, mode, messageTree.addBranch]);
 
   // Regenerate an assistant response: creates a new assistant version
   // under the SAME user message (no new user version created).
@@ -1007,7 +1006,7 @@ Your prompt was: "${content}"`;
       window.electronAPI.regenerateResponse({
         chatId: selectedChatId!,
         content: userMsg.content,
-        mode: 'fast',
+        mode,
         groupId,
         versionIndex,
         attachedFiles: userMsg.attachedFiles as any,
@@ -1020,7 +1019,7 @@ Your prompt was: "${content}"`;
     generationStartTime.current = performance.now();
     setGenerationStats({ ttft: null, total: null });
     startStreaming();
-  }, [selectedChatId, startStreaming, messageTree]);
+  }, [selectedChatId, mode, startStreaming, messageTree]);
 
   const handleSavePromptClick = (id: string) => {
     let message = displayMessages.find((m) => m.id === id);
@@ -1385,7 +1384,6 @@ Your prompt was: "${content}"`;
             input={input}
             setInput={setInput}
             mode={mode}
-            setMode={setMode}
             attachedFiles={attachedFiles}
             setAttachedFiles={setAttachedFiles}
             selectedSkill={selectedSkill}

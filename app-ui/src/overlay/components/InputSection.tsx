@@ -4,55 +4,6 @@ import type { AttachedFile, SkillInfo } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON, MAX_ATTACHED_FILES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../lib/constants';
 import { fileToBase64, resizeImageIfNeeded } from '../lib/utils';
 
-// ── Mode Dropdown ────────────────────────────────────────────────────────────
-
-interface ModeDropdownProps {
-  currentMode: string;
-  open: boolean;
-  anchorRect: DOMRect | null;
-  onSelect: (mode: string) => void;
-}
-
-const ModeDropdown: React.FC<ModeDropdownProps> = ({ currentMode, open, anchorRect, onSelect }) => {
-  if (!open || !anchorRect) return null;
-
-  const dropH = 110;
-  const style: React.CSSProperties = {
-    position: 'fixed',
-    left: anchorRect.left,
-    top: anchorRect.top - dropH - 6,
-    display: 'flex',
-    flexDirection: 'column',
-  };
-
-  return (
-    <div className="mode-dropdown open" style={style}>
-      <button className={`mode-dropdown-item${currentMode === 'fast' ? ' selected' : ''}`} type="button" onClick={() => onSelect('fast')}>
-        <svg className="mode-icon" fill="none" stroke="hsl(var(--accent))" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600 }}>Fast</div>
-          <div style={{ fontSize: 11, color: 'hsl(var(--muted-foreground))', marginTop: 1 }}>Most efficient for everyday tasks</div>
-        </div>
-        {currentMode === 'fast' && <span className="mode-check">✓</span>}
-      </button>
-      <button className={`mode-dropdown-item${currentMode === 'thinking' ? ' selected' : ''}`} type="button" onClick={() => onSelect('thinking')}>
-        <svg className="mode-icon" fill="none" stroke="hsl(var(--accent))" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
-        </svg>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600 }}>Thinking</div>
-          <div style={{ fontSize: 11, color: 'hsl(var(--muted-foreground))', marginTop: 1 }}>Think longer for complex tasks</div>
-        </div>
-        {currentMode === 'thinking' && <span className="mode-check">✓</span>}
-      </button>
-    </div>
-  );
-};
-
 // ── Skill Picker ─────────────────────────────────────────────────────────────
 
 interface SkillPickerProps {
@@ -310,7 +261,6 @@ interface InputSectionProps {
   isOptimizing: boolean;
   isOnline: boolean;
   isAuthenticated: boolean;
-  currentMode: string;
   attachedFiles: AttachedFile[];
   selectedSkill: string | null;
   selectedSkillLabel: string | null;
@@ -319,7 +269,6 @@ interface InputSectionProps {
   skills: SkillInfo[];
   onSend: (text: string) => void;
   onStop: () => void;
-  onModeChange: (mode: string) => void;
   onAttachFiles: (files: AttachedFile[]) => void;
   onRemoveFile: (index: number) => void;
   onSelectSkill: (name: string, label: string) => void;
@@ -331,10 +280,10 @@ interface InputSectionProps {
 }
 
 const InputSection: React.FC<InputSectionProps> = ({
-  isOptimizing, isOnline, isAuthenticated, currentMode,
+  isOptimizing, isOnline, isAuthenticated,
   attachedFiles, selectedSkill, selectedSkillLabel,
   selectedChatId, selectedChatName, skills,
-  onSend, onStop, onModeChange, onAttachFiles, onRemoveFile,
+  onSend, onStop, onAttachFiles, onRemoveFile,
   onSelectSkill, onRemoveSkill, onAttachContext, onRemoveContext,
   inputRef: externalInputRef,
 }) => {
@@ -342,12 +291,9 @@ const InputSection: React.FC<InputSectionProps> = ({
   const inputRef = externalInputRef || internalInputRef;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
-  const modeBtnRef = useRef<HTMLButtonElement>(null);
 
   const [inputValue, setInputValue] = useState('');
-  const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
-  const [modeBtnRect, setModeBtnRect] = useState<DOMRect | null>(null);
   const [plusBtnRect, setPlusBtnRect] = useState<DOMRect | null>(null);
 
   // Voice state
@@ -421,23 +367,8 @@ const InputSection: React.FC<InputSectionProps> = ({
     e.target.value = '';
   }, [attachedFiles.length, onAttachFiles]);
 
-  // Mode dropdown toggle
-  const toggleModeDropdown = useCallback(() => {
-    setPlusMenuOpen(false);
-    if (!modeDropdownOpen && modeBtnRef.current) {
-      setModeBtnRect(modeBtnRef.current.getBoundingClientRect());
-    }
-    setModeDropdownOpen((prev) => !prev);
-  }, [modeDropdownOpen]);
-
-  const handleModeSelect = useCallback((mode: string) => {
-    onModeChange(mode);
-    setModeDropdownOpen(false);
-  }, [onModeChange]);
-
   // Plus menu toggle
   const togglePlusMenu = useCallback(() => {
-    setModeDropdownOpen(false);
     if (!plusMenuOpen && plusBtnRef.current) {
       setPlusBtnRect(plusBtnRef.current.getBoundingClientRect());
     }
@@ -451,13 +382,10 @@ const InputSection: React.FC<InputSectionProps> = ({
       if (plusMenuOpen && !target.closest('.plus-menu') && !target.closest('.btn-toolbar[data-plus]')) {
         setPlusMenuOpen(false);
       }
-      if (modeDropdownOpen && !target.closest('.mode-dropdown') && !target.closest('.mode-select-btn')) {
-        setModeDropdownOpen(false);
-      }
     };
     document.addEventListener('mousedown', handleMouseDown);
     return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [plusMenuOpen, modeDropdownOpen]);
+  }, [plusMenuOpen]);
 
   // Voice input
   const toggleVoice = useCallback(() => {
@@ -610,15 +538,6 @@ const InputSection: React.FC<InputSectionProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Mode dropdown — disabled for Pro Mode
-      <ModeDropdown
-        currentMode={currentMode}
-        open={modeDropdownOpen}
-        anchorRect={modeBtnRect}
-        onSelect={handleModeSelect}
-      />
-      */}
 
       {/* Plus menu */}
       <PlusMenu

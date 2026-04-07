@@ -512,7 +512,7 @@ class OptimizeRequest(BaseModel):
     prompt: str = Field(..., min_length=3, max_length=50_000)
     skip_cache: Optional[bool] = False
     messages: Optional[list[Message]] = Field(None, max_length=100)
-    mode: Optional[str] = "fast"
+    mode: Optional[str] = "thinking"
     custom_instructions: Optional[str] = Field("", max_length=10_000)
     user_id: Optional[str] = None
 
@@ -629,7 +629,7 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
                 # msg is a Pydantic Message object with role/content
                 cc.add(msg.role, msg.content)
 
-        mode = getattr(request, 'mode', 'fast')
+        mode = getattr(request, 'mode', 'thinking')
         custom_instructions = getattr(request, 'custom_instructions', '')
         
         models_info = {}
@@ -731,7 +731,7 @@ async def optimize_stream(websocket: WebSocket):
             prompt_text = data.get("prompt", "").strip()
             previous_output = data.get("previous_output", None)  # for regeneration self-critique
             messages = data.get("messages", None)
-            mode = data.get("mode", "fast")
+            mode = data.get("mode", "thinking")
             custom_instructions = data.get("custom_instructions", "")
             attached_files = data.get("attached_files", [])
             forced_skill = data.get("forced_skill", None)

@@ -222,7 +222,7 @@ export class PythonClient extends EventEmitter {
     skipCache: boolean = false,
     messages: Array<{ role: string; content: string }> | null = null,
     onChunk: (chunk: string, accumulated: string) => void,
-    mode: string = "fast",
+    mode: string = "thinking",
     customInstructions: string = "",
     attachedFiles: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }> = [],
     forcedSkill: string | null = null,
@@ -427,7 +427,7 @@ export class PythonClient extends EventEmitter {
     prompt: string,
     skipCache: boolean = false,
     messages?: Array<{ role: string; content: string }>,
-    mode: string = "fast",
+    mode: string = "thinking",
     customInstructions: string = ""
   ): Promise<string> {
     try {

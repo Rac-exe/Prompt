@@ -549,42 +549,6 @@ textarea { min-height: 40px; }
 }
 .mode-select-btn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
 
-/* Mode dropdown */
-.mode-dropdown {
-  display: none;
-  position: fixed;
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  border-radius: 12px;
-  padding: 4px;
-  min-width: 210px;
-  box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
-  z-index: 9999;
-}
-.mode-dropdown.open { display: flex; flex-direction: column; }
-
-.mode-dropdown-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: hsl(var(--foreground));
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-  width: 100%;
-  transition: background 0.1s ease;
-}
-.mode-dropdown-item:hover { background: hsl(var(--muted)); }
-.mode-dropdown-item.selected { background: hsl(var(--secondary)); }
-.mode-dropdown-item .mode-icon { width: 16px; height: 16px; margin-top: 1px; flex-shrink: 0; }
-.mode-dropdown-item .mode-check { margin-left: auto; color: hsl(var(--accent)); font-size: 14px; margin-top: 1px; }
-
 /* Send button (circular) */
 .btn-send {
   width: 32px;

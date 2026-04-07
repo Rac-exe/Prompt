@@ -225,7 +225,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
@@ -523,8 +523,8 @@ export function registerChatHandlers(
         versionIndex?: number;
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
-        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'fast'} skill=${data.forcedSkill ?? 'none'}`);
-        await Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'fast', skill: data.forcedSkill || 'none' } }, async () => {
+        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'}`);
+        await Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'thinking', skill: data.forcedSkill || 'none' } }, async () => {
         try {
             // ── Offline guard ─────────────────────────────────────────────────
             // File uploads require network access. Reject early with a clear error
@@ -795,7 +795,7 @@ export function registerChatHandlers(
             let optimizedText: string;
             let modelsUsed: ModelsUsed | undefined;
             Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming started', level: 'info', data: { chatId, mode: data.mode } });
-            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'fast'}`);
+            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'thinking'}`);
             try {
                 const result = await pythonClient.optimizeStream(
                     data.content,
@@ -807,7 +807,7 @@ export function registerChatHandlers(
                             appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
                         }
                     },
-                    data.mode || 'fast',
+                    data.mode || 'thinking',
                     customInstructions,
                     attachedFiles,
                     data.forcedSkill || null
@@ -1053,7 +1053,7 @@ export function registerChatHandlers(
         previousContent?: string;
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
-        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'fast'}`);
+        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'thinking'}`);
         try {
             // ── Rate limit guard ──────────────────────────────────────────────
             if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
@@ -1129,7 +1129,7 @@ export function registerChatHandlers(
                             appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
                         }
                     },
-                    data.mode || 'fast',
+                    data.mode || 'thinking',
                     customInstructions,
                     attachedFiles,
                     data.forcedSkill || null,
@@ -1338,7 +1338,7 @@ export async function syncChatMessageQueue(
                 false,
                 messagesContext.length > 0 ? messagesContext : null,
                 () => { /* no-op chunk callback */ },
-                mode || 'fast',
+                mode || 'thinking',
                 '',
                 [],
                 forcedSkill || null,

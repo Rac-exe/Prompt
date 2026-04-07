@@ -46,7 +46,6 @@ interface ChatViewProps {
   input: string;
   setInput: (value: string) => void;
   mode: "fast" | "thinking";
-  setMode: (value: "fast" | "thinking") => void;
   attachedFiles: AttachedFile[];
   setAttachedFiles: (files: AttachedFile[]) => void;
   selectedSkill: string | null;
@@ -66,7 +65,7 @@ export const ChatView = ({
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
-  input, setInput, mode, setMode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
+  input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
   clarificationData, onSubmitClarification,
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
