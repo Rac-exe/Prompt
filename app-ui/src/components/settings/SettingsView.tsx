@@ -85,8 +85,17 @@ export const SettingsView = () => {
     if (!window.electronAPI?.getIdentities) return;
     try {
       const { identities: ids } = await window.electronAPI.getIdentities();
-      setIdentities(injectEmailIdentityIfNeeded(ids ?? []));
-    } catch { /* offline or not available */ }
+      const injected = injectEmailIdentityIfNeeded(ids ?? []);
+      setIdentities(injected);
+      Sentry.addBreadcrumb({
+        category: 'auth',
+        message: 'Identities fetched',
+        level: 'info',
+        data: { count: injected.length, providers: injected.map((i: any) => i.provider) },
+      });
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'fetchIdentities' } });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emailPwKey]);
 
@@ -96,6 +105,12 @@ export const SettingsView = () => {
     // fix was deployed also see the correct UI state on their next login.
     if (user?.hasEmailPassword && !hasPersistedEmailPw()) {
       persistEmailPwSet();
+      Sentry.addBreadcrumb({
+        category: 'auth',
+        message: 'Email-password flag seeded from RPC (existing user)',
+        level: 'info',
+        data: { userId: user.profile?.id },
+      });
     }
     if (user?.identities) setIdentities(injectEmailIdentityIfNeeded(user.identities));
     else fetchIdentities();
@@ -105,37 +120,53 @@ export const SettingsView = () => {
   const handleLinkIdentity = async (provider: 'google' | 'github') => {
     if (identityLoading) return;
     setIdentityLoading(provider);
-    try {
-      const result = await window.electronAPI?.linkIdentity(provider);
-      if (result?.error) {
-        toast({ title: "Connection failed", description: result.error, variant: "destructive" });
-      } else {
-        toast({ title: `${provider === 'google' ? 'Google' : 'GitHub'} connected`, description: "Your account has been linked." });
-        await fetchIdentities();
+    await Sentry.startSpan({ name: 'settings.link-identity', op: 'ui.action', attributes: { provider } }, async (span) => {
+      try {
+        const result = await window.electronAPI?.linkIdentity(provider);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Link identity failed: ${provider}`, level: 'warning', data: { provider, error: result.error } });
+          toast({ title: "Connection failed", description: result.error, variant: "destructive" });
+        } else {
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Identity linked: ${provider}`, level: 'info', data: { provider } });
+          toast({ title: `${provider === 'google' ? 'Google' : 'GitHub'} connected`, description: "Your account has been linked." });
+          await fetchIdentities();
+        }
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleLinkIdentity', provider } });
+        toast({ title: "Error", description: "Failed to connect account", variant: "destructive" });
+      } finally {
+        setIdentityLoading(null);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to connect account", variant: "destructive" });
-    } finally {
-      setIdentityLoading(null);
-    }
+    });
   };
 
   const handleUnlinkIdentity = async (identityId: string, providerLabel: string) => {
     if (identityLoading) return;
     setIdentityLoading(identityId);
-    try {
-      const result = await window.electronAPI?.unlinkIdentity(identityId);
-      if (result?.error) {
-        toast({ title: "Disconnect failed", description: result.error, variant: "destructive" });
-      } else {
-        toast({ title: `${providerLabel} disconnected`, description: "The account has been unlinked." });
-        await fetchIdentities();
+    await Sentry.startSpan({ name: 'settings.unlink-identity', op: 'ui.action', attributes: { provider: providerLabel } }, async (span) => {
+      try {
+        const result = await window.electronAPI?.unlinkIdentity(identityId);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Unlink identity failed: ${providerLabel}`, level: 'warning', data: { provider: providerLabel, error: result.error } });
+          toast({ title: "Disconnect failed", description: result.error, variant: "destructive" });
+        } else {
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Identity unlinked: ${providerLabel}`, level: 'info', data: { provider: providerLabel } });
+          toast({ title: `${providerLabel} disconnected`, description: "The account has been unlinked." });
+          await fetchIdentities();
+        }
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleUnlinkIdentity', provider: providerLabel } });
+        toast({ title: "Error", description: "Failed to disconnect account", variant: "destructive" });
+      } finally {
+        setIdentityLoading(null);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to disconnect account", variant: "destructive" });
-    } finally {
-      setIdentityLoading(null);
-    }
+    });
   };
 
   // OTP password reset flow state
@@ -151,20 +182,28 @@ export const SettingsView = () => {
   const handleSetPassword = async () => {
     if (!userEmail) return;
     setIdentityLoading('password');
-    try {
-      const result = await window.electronAPI?.sendResetOtp(userEmail);
-      if (result?.error) {
-        toast({ title: "Failed", description: result.error, variant: "destructive" });
-      } else {
-        setResetStep('otp');
-        setOtpError('');
-        toast({ title: "Code sent", description: "Check your inbox for the verification code." });
+    await Sentry.startSpan({ name: 'settings.set-password.send-otp', op: 'ui.action' }, async (span) => {
+      try {
+        const result = await window.electronAPI?.sendResetOtp(userEmail);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP send failed', level: 'warning', data: { error: result.error } });
+          toast({ title: "Failed", description: result.error, variant: "destructive" });
+        } else {
+          span.setAttribute('result', 'sent');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP sent', level: 'info' });
+          setResetStep('otp');
+          setOtpError('');
+          toast({ title: "Code sent", description: "Check your inbox for the verification code." });
+        }
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleSetPassword' } });
+        toast({ title: "Error", description: "Failed to send reset code", variant: "destructive" });
+      } finally {
+        setIdentityLoading(null);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to send reset code", variant: "destructive" });
-    } finally {
-      setIdentityLoading(null);
-    }
+    });
   };
 
   const handleVerifyResetOtp = async (otp: string) => {
@@ -174,6 +213,7 @@ export const SettingsView = () => {
     setNewPassword('');
     setConfirmNewPassword('');
     setResetPasswordError('');
+    Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP accepted — entering new-password step', level: 'info' });
   };
 
   const handleResendResetOtp = async () => {
@@ -181,11 +221,14 @@ export const SettingsView = () => {
     try {
       const result = await window.electronAPI?.sendResetOtp(userEmail);
       if (result?.error) {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resend failed', level: 'warning', data: { error: result.error } });
         setOtpError(result.error);
       } else {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resent', level: 'info' });
         toast({ title: "Code resent", description: "A new verification code has been sent." });
       }
-    } catch {
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResendResetOtp' } });
       setOtpError('Failed to resend code.');
     }
   };
@@ -204,28 +247,41 @@ export const SettingsView = () => {
     }
 
     setResetPasswordLoading(true);
-    try {
-      const result = await window.electronAPI?.verifyResetOtp(userEmail, resetOtp, newPassword);
-      if (result?.error) {
-        setResetPasswordError(result.error);
-        if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
-          setResetStep('otp');
-          setOtpError(result.error);
+    await Sentry.startSpan({ name: 'settings.reset-password.submit', op: 'ui.action' }, async (span) => {
+      try {
+        const result = await window.electronAPI?.verifyResetOtp(userEmail, resetOtp, newPassword);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({
+            category: 'auth',
+            message: 'Password reset submit failed',
+            level: 'warning',
+            data: { error: result.error },
+          });
+          setResetPasswordError(result.error);
+          if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
+            setResetStep('otp');
+            setOtpError(result.error);
+          }
+        } else {
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info' });
+          toast({ title: "Password updated", description: "Your password has been changed successfully." });
+          setResetStep('idle');
+          setResetOtp('');
+          // Persist the flag so the UI stays correct across restarts (Supabase admin API
+          // doesn't add an email identity row for OAuth accounts that set a password).
+          persistEmailPwSet();
+          await fetchIdentities();
         }
-      } else {
-        toast({ title: "Password updated", description: "Your password has been changed successfully." });
-        setResetStep('idle');
-        setResetOtp('');
-        // Persist the flag so the UI stays correct across restarts (Supabase admin API
-        // doesn't add an email identity row for OAuth accounts that set a password).
-        persistEmailPwSet();
-        await fetchIdentities();
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResetPasswordSubmit' } });
+        setResetPasswordError('Failed to update password. Please try again.');
+      } finally {
+        setResetPasswordLoading(false);
       }
-    } catch {
-      setResetPasswordError('Failed to update password. Please try again.');
-    } finally {
-      setResetPasswordLoading(false);
-    }
+    });
   };
 
   const avatarUrl = user?.profile?.avatar_url || null;

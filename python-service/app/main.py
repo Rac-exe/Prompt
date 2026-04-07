@@ -1721,8 +1721,15 @@ class ResetPasswordRequest(BaseModel):
 @app.post("/auth/send-signup-otp")
 @limiter.limit("5/minute")
 async def route_send_signup_otp(request: StarletteRequest, body: SendSignupOtpRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/send-signup-otp invoked", level="info",
+    )
     result = await send_signup_otp(body.email, body.name, body.dob, body.password)
     if not result.get("success"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="send-signup-otp failed", level="warning",
+            data={"error": result.get("error")},
+        )
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
     return result
 
@@ -1730,17 +1737,34 @@ async def route_send_signup_otp(request: StarletteRequest, body: SendSignupOtpRe
 @app.post("/auth/verify-signup-otp")
 @limiter.limit("10/minute")
 async def route_verify_signup_otp(request: StarletteRequest, body: VerifySignupOtpRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/verify-signup-otp invoked", level="info",
+    )
     result = verify_signup_otp(body.email, body.otp)
     if not result.get("valid"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="verify-signup-otp failed", level="warning",
+            data={"error": result.get("error")},
+        )
         raise HTTPException(status_code=400, detail=result.get("error", "Verification failed"))
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="verify-signup-otp success", level="info",
+    )
     return result
 
 
 @app.post("/auth/send-reset-otp")
 @limiter.limit("5/minute")
 async def route_send_reset_otp(request: StarletteRequest, body: SendResetOtpRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/send-reset-otp invoked", level="info",
+    )
     result = await send_reset_otp(body.email)
     if not result.get("success"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="send-reset-otp failed", level="warning",
+            data={"error": result.get("error")},
+        )
         raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
     return result
 
@@ -1748,9 +1772,19 @@ async def route_send_reset_otp(request: StarletteRequest, body: SendResetOtpRequ
 @app.post("/auth/reset-password")
 @limiter.limit("5/minute")
 async def route_reset_password(request: StarletteRequest, body: ResetPasswordRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/reset-password invoked", level="info",
+    )
     result = await otp_reset_password(body.email, body.otp, body.new_password)
     if not result.get("valid"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="reset-password failed", level="warning",
+            data={"error": result.get("error")},
+        )
         raise HTTPException(status_code=400, detail=result.get("error", "Password reset failed"))
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="reset-password success", level="info",
+    )
     return result
 
 

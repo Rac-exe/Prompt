@@ -198,10 +198,34 @@ export class UserService {
       // admin API for OAuth accounts, so we check the DB directly.
       let hasEmailPassword = false;
       try {
-        const { data: hasPw } = await this.client.rpc('user_has_email_password');
-        hasEmailPassword = hasPw === true;
-      } catch {
+        await Sentry.startSpan(
+          { name: 'user.check-email-password', op: 'db.rpc', attributes: { userId: userData.user.id } },
+          async (span) => {
+            const { data: hasPw, error: pwError } = await this.client.rpc('user_has_email_password');
+            if (pwError) {
+              span.setAttribute('result', 'error');
+              Sentry.captureException(pwError, {
+                tags: { component: 'user-service', op: 'check-email-password' },
+                extra: { userId: userData.user.id },
+              });
+              return;
+            }
+            hasEmailPassword = hasPw === true;
+            span.setAttribute('result', hasEmailPassword ? 'has-password' : 'no-password');
+            Sentry.addBreadcrumb({
+              category: 'user',
+              message: `user_has_email_password: ${hasEmailPassword}`,
+              level: 'info',
+              data: { userId: userData.user.id, hasEmailPassword },
+            });
+          },
+        );
+      } catch (pwErr) {
         // Non-fatal: fall back to false; the localStorage flag will still work
+        Sentry.captureException(pwErr, {
+          tags: { component: 'user-service', op: 'check-email-password', severity: 'non-fatal' },
+          extra: { userId: userData.user.id },
+        });
       }
 
       return { profile, preferences, hasEmailPassword };
