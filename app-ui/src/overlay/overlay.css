@@ -377,7 +377,6 @@ textarea { min-height: 40px; }
 .assistant-bubble {
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
-  white-space: pre-line;
 }
 
 .message-actions {

@@ -111,7 +111,7 @@ const SectionedContent = ({ content }: { content: string }) => {
                 {section.title}
               </h3>
             </div>
-            <SectionCopyButton text={section.content} />
+            <SectionCopyButton text={`${section.title}\n\n${section.content}`} />
           </div>
           <MarkdownContent content={section.content} size="sm" />
         </div>

@@ -210,6 +210,11 @@ CRITICAL RULES:
 2. If the user's input is a completely NEW request, transform it into a detailed, comprehensive prompt.
 3. If the user's input is a REFINEMENT (e.g. "make it shorter", "focus on kids", "now add python"), you must look at the previous chat history, apply the new instruction to the PREVIOUS optimized prompt, and output the NEW updated prompt.
 
+FORMATTING:
+- Use bullet points (- ) for lists of requirements, features, constraints, and deliverables. Never comma-separate items that should be individual points.
+- Use short descriptive headings to group related requirements when the prompt is complex.
+- Keep each bullet point as a single, actionable instruction.
+
 DO NOT:
 - Answer the prompt or write the final deliverable (e.g., don't write the actual code or poem)
 - Explain what you're doing or have a conversation with the user

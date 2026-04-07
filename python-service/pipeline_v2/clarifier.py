@@ -131,5 +131,26 @@ def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
     if result["should_clarify"] and not result["questions"]:
         result["should_clarify"] = False
 
+    # Always inject the delivery format question for complex prompts.
+    # The LLM is unreliable about including it, so we add it ourselves.
+    if result["should_clarify"] and result["is_complex"]:
+        has_delivery_q = any(
+            q["id"] == "delivery_format"
+            or "task sections" in q["question"].lower()
+            or "broken into" in q["question"].lower()
+            for q in result["questions"]
+        )
+        if not has_delivery_q:
+            result["questions"].append({
+                "id": "delivery_format",
+                "question": "How would you like the optimized prompt delivered?",
+                "type": "multiple_choice",
+                "options": [
+                    "One complete prompt",
+                    "Broken into task sections (recommended for complex builds)",
+                ],
+                "optional": False,
+            })
+
     logger.info(f"Clarify result: should_clarify={result['should_clarify']}, questions={len(result['questions'])}, is_complex={result['is_complex']}")
     return result

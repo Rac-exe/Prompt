@@ -305,6 +305,7 @@ const OverlaySectionCopyButton: React.FC<{ text: string }> = ({ text }) => {
         fontSize: 10, fontWeight: 500, cursor: 'pointer',
         color: copied ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground) / 0.5)',
         transition: 'color 0.15s',
+        whiteSpace: 'nowrap', flexShrink: 0,
       }}
     >
       {copied ? (
@@ -348,7 +349,7 @@ const OverlaySectionedContent: React.FC<{ content: string }> = ({ content }) => 
                 {section.title}
               </span>
             </div>
-            <OverlaySectionCopyButton text={section.content} />
+            <OverlaySectionCopyButton text={`${section.title}\n\n${section.content}`} />
           </div>
           <MarkdownContent content={section.content} size="sm" />
         </div>

@@ -181,6 +181,12 @@ You have access to User Context (UC) containing learned preferences. **Always ap
 
 Output ONLY the optimized prompt — no headers, no analysis, no explanations.
 
+**Formatting Rules:**
+- Use bullet points (- ) for all lists of requirements, features, constraints, steps, and deliverables.
+- Never comma-separate items that could each be their own bullet point. Each requirement gets its own line.
+- Use short descriptive headings to group related requirements when the prompt is complex.
+- Keep each bullet as a single, clear, actionable instruction.
+
 **For all request types (NEW / REFINEMENT / ADDITION):**
 
 Output the complete optimized prompt text directly. Nothing before it, nothing after it.

@@ -229,6 +229,8 @@ def optimize(
             system_content += (
                 "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
                 "Output each section with a ## Section Title header followed by its prompt content. "
+                "Within each section, use bullet points (- ) for individual requirements and instructions. "
+                "Never write dense paragraphs — every requirement must be its own bullet point. "
                 "Sections should be self-contained and executable in sequence."
             )
 
@@ -319,6 +321,8 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             system_prompt += (
                 "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
                 "Output each section with a ## Section Title header followed by its prompt content. "
+                "Within each section, use bullet points (- ) for individual requirements and instructions. "
+                "Never write dense paragraphs — every requirement must be its own bullet point. "
                 "Sections should be self-contained and executable in sequence."
             )
 
