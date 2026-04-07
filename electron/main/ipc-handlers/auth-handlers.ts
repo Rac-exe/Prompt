@@ -231,11 +231,6 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
 export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     const { authService } = getServices();
 
-    // Initialize email service for OTP
-    emailService.initialize();
-    // Periodically clean up expired OTPs
-    setInterval(() => emailService.cleanup(), 5 * 60 * 1000);
-
     // ============================================
     // AUTH IPC HANDLERS
     // ============================================
@@ -246,17 +241,15 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             const email = data.email.toLowerCase().trim();
             console.log('[Auth] Sending signup OTP to:', email);
 
-            // Check if the email is already registered in auth.users
-            const adminClient = SupabaseClientManager.getAdminClient();
-            if (adminClient) {
-                const { data: exists, error: rpcError } = await adminClient
-                    .rpc('check_email_exists', { email_input: email });
+            // Check if the email is already registered (SECURITY DEFINER RPC — works with anon key)
+            const client = SupabaseClientManager.getClient();
+            const { data: exists, error: rpcError } = await client
+                .rpc('check_email_exists', { email_input: email });
 
-                if (rpcError) {
-                    console.warn('[Auth] Email check RPC failed, falling back:', rpcError.message);
-                } else if (exists) {
-                    return { error: 'An account with this email already exists. Please sign in instead.' };
-                }
+            if (rpcError) {
+                console.warn('[Auth] Email check RPC failed, proceeding:', rpcError.message);
+            } else if (exists) {
+                return { error: 'An account with this email already exists. Please sign in instead.' };
             }
 
             const result = await emailService.sendSignupOtp(data);
@@ -276,7 +269,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     ipcMain.handle('auth:verify-signup-otp', async (_event, { email, otp }: { email: string; otp: string }) => {
         try {
             console.log('[Auth] Verifying signup OTP for:', email);
-            const verification = emailService.verifySignupOtp(email, otp);
+            const verification = await emailService.verifySignupOtp(email, otp);
 
             if (!verification.valid || !verification.data) {
                 return { error: verification.error };
@@ -351,51 +344,14 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
         }
     });
 
-    // Verify Reset OTP and update password
+    // Verify Reset OTP and update password (Python handles OTP verification + admin password update atomically)
     ipcMain.handle('auth:verify-reset-otp', async (_event, { email, otp, newPassword }: { email: string; otp: string; newPassword: string }) => {
         try {
-            console.log('[Auth] Verifying reset OTP for:', email);
-            const verification = emailService.verifyResetOtp(email, otp);
+            console.log('[Auth] Verifying reset OTP + resetting password for:', email);
+            const result = await emailService.verifyResetOtpAndResetPassword(email, otp, newPassword);
 
-            if (!verification.valid) {
-                return { error: verification.error };
-            }
-
-            // Use admin client to update the user's password
-            const adminClient = SupabaseClientManager.getAdminClient();
-            if (!adminClient) {
-                return { error: 'Password reset is not configured. Contact support.' };
-            }
-
-            // Find user by email — paginate to avoid missing users beyond page 1
-            const normalizedEmail = email.toLowerCase().trim();
-            let targetUser: any = null;
-            const perPage = 1000;
-            for (let page = 1; !targetUser; page++) {
-                const { data: userData, error: listError } = await adminClient.auth.admin.listUsers({ page, perPage });
-                if (listError) {
-                    Sentry.captureException(listError, { tags: { op: 'auth:verify-reset-otp', step: 'listUsers' } });
-                    console.error('[Auth] Admin listUsers error:', listError);
-                    return { error: 'Could not look up user. Please try again.' };
-                }
-                targetUser = userData.users.find(
-                    (u: any) => u.email?.toLowerCase() === normalizedEmail
-                );
-                if (userData.users.length < perPage) break;
-            }
-
-            if (!targetUser) {
-                return { error: 'No account found with this email address.' };
-            }
-
-            const { error: updateError } = await adminClient.auth.admin.updateUserById(targetUser.id, {
-                password: newPassword,
-            });
-
-            if (updateError) {
-                Sentry.captureException(updateError, { tags: { op: 'auth:verify-reset-otp', step: 'updateUserById' } });
-                console.error('[Auth] Admin updateUser error:', updateError);
-                return { error: updateError.message || 'Failed to update password' };
+            if (!result.success) {
+                return { error: result.error };
             }
 
             Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info', data: { email } });

@@ -27,6 +27,11 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.auth import require_auth, require_ws_auth
+from app.email_otp import (
+    send_signup_otp, verify_signup_otp,
+    send_reset_otp, reset_password as otp_reset_password,
+    cleanup_expired as otp_cleanup,
+)
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -178,11 +183,18 @@ def _get_np():
     import numpy as np
     return np
 
+async def _otp_cleanup_loop():
+    while True:
+        await asyncio.sleep(300)
+        otp_cleanup()
+
+
 @app.on_event("startup")
 async def startup_event():
     """Kick off model warmup in the background so the port binds immediately."""
     logger.info("Server starting — model preloads will run in background")
     asyncio.create_task(_background_warmup())
+    asyncio.create_task(_otp_cleanup_loop())
 
 
 async def _background_warmup():
@@ -1679,6 +1691,67 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
         level="info",
     )
     return ImageUploadResponse(url=url)
+
+
+# ── Auth OTP Routes (unauthenticated, rate-limited) ──────────────────────────
+
+
+class SendSignupOtpRequest(BaseModel):
+    email: str
+    name: str
+    dob: str
+    password: str
+
+
+class VerifySignupOtpRequest(BaseModel):
+    email: str
+    otp: str
+
+
+class SendResetOtpRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
+
+@app.post("/auth/send-signup-otp")
+@limiter.limit("5/minute")
+async def route_send_signup_otp(request: StarletteRequest, body: SendSignupOtpRequest):
+    result = await send_signup_otp(body.email, body.name, body.dob, body.password)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
+    return result
+
+
+@app.post("/auth/verify-signup-otp")
+@limiter.limit("10/minute")
+async def route_verify_signup_otp(request: StarletteRequest, body: VerifySignupOtpRequest):
+    result = verify_signup_otp(body.email, body.otp)
+    if not result.get("valid"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Verification failed"))
+    return result
+
+
+@app.post("/auth/send-reset-otp")
+@limiter.limit("5/minute")
+async def route_send_reset_otp(request: StarletteRequest, body: SendResetOtpRequest):
+    result = await send_reset_otp(body.email)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
+    return result
+
+
+@app.post("/auth/reset-password")
+@limiter.limit("5/minute")
+async def route_reset_password(request: StarletteRequest, body: ResetPasswordRequest):
+    result = await otp_reset_password(body.email, body.otp, body.new_password)
+    if not result.get("valid"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Password reset failed"))
+    return result
 
 
 @app.on_event("shutdown")
