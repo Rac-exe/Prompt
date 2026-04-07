@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 import * as crypto from 'crypto';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
-import { PythonClient, ModelsUsed } from '../api/python-client';
+import { PythonClient, ModelsUsed, ClarifyResult } from '../api/python-client';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PromptLibraryService } from '../database/services/prompt-library-service';
 import { OptimizationService } from '../database/services/optimization-service';
@@ -20,7 +20,7 @@ import { errorLog } from '../database/error-log';
 import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
-import { buildTitlePrompt } from './chat-handlers';
+import { buildTitlePrompt, isWeakMessage } from './chat-handlers';
 import { analyticsService } from '../analytics/analytics-service';
 
 function humanizeLlmError(err: unknown): string {
@@ -52,17 +52,19 @@ function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
 // IPC Contract:
 //
 // Renderer → Main (send / invoke):
-//   overlay:optimize   — Start prompt optimization (streaming)
-//   overlay:save       — Save optimized prompt to library (invoke, returns result)
-//   overlay:copy       — Copy text to clipboard
-//   overlay:close      — Hide the overlay
-//   overlay:open-app   — Show the main app window (e.g. for login)
-//   overlay:check-auth — Check current auth state (invoke, returns boolean)
-//   overlay:get-collections — Get prompt library collections (invoke)
+//   overlay:optimize              — Start prompt optimization (streaming)
+//   overlay:submit-clarification  — Submit clarification answers (resumes paused optimization)
+//   overlay:save                  — Save optimized prompt to library (invoke, returns result)
+//   overlay:copy                  — Copy text to clipboard
+//   overlay:close                 — Hide the overlay
+//   overlay:open-app              — Show the main app window (e.g. for login)
+//   overlay:check-auth            — Check current auth state (invoke, returns boolean)
+//   overlay:get-collections       — Get prompt library collections (invoke)
 //
 // Main → Renderer (send):
 //   overlay:opened                — Overlay was opened (includes auth state)
 //   overlay:auth-state            — Auth state update
+//   overlay:clarification-required — Clarification questions for the user
 //   overlay:optimization-chunk    — Streaming optimization chunk
 //   overlay:optimization-complete — Optimization finished
 //   overlay:optimization-error    — Optimization failed
@@ -121,6 +123,33 @@ const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
 
 // Track the current overlay session's chat ID so all messages go to the same chat
 let currentOverlayChatId: string | null = null;
+
+// Pending overlay clarification — only one can be active at a time
+interface PendingOverlayOptimization {
+  data: {
+    text: string;
+    isRegenerate?: boolean;
+    mode?: string;
+    chatId?: string;
+    attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
+    forcedSkill?: string;
+    previousOutput?: string;
+    userGroupId?: string;
+    userVersionIndex?: number;
+    assistantGroupId?: string;
+    assistantVersionIndex?: number;
+  };
+  customInstructions: string;
+  historyContext: Array<{ role: string; content: string }> | null;
+}
+let pendingOverlayClarification: PendingOverlayOptimization | null = null;
+
+function formatOverlayClarificationAnswers(answers: Record<string, string>): string {
+  return Object.entries(answers)
+    .filter(([, v]) => v && v.trim())
+    .map(([key, val]) => `- ${key}: ${val}`)
+    .join('\n');
+}
 
 let chatService: ChatService | null = null;
 function getChatService(): ChatService {
@@ -285,6 +314,25 @@ export function registerOverlayHandlers(
 
       // Add the user's new message to in-memory history (used when no chatId)
       inMemoryOverlayHistory.push({ role: 'user', content: data.text });
+
+      // ── Clarification check (skip regenerations & weak messages) ──────
+      if (!data.isRegenerate && !isWeakMessage(data.text)) {
+        try {
+          const clarifyResult = await pythonClient.clarify(data.text);
+          console.log(`[Overlay] Clarify result: should_clarify=${clarifyResult.should_clarify}, questions=${clarifyResult.questions.length}`);
+          if (clarifyResult.should_clarify && clarifyResult.questions.length > 0) {
+            pendingOverlayClarification = {
+              data,
+              customInstructions,
+              historyContext,
+            };
+            overlayManager.send('overlay:clarification-required', clarifyResult);
+            return;
+          }
+        } catch (clarifyErr) {
+          console.warn('[Overlay] Clarify call failed (proceeding to optimize):', clarifyErr);
+        }
+      }
 
       const { text: optimizedText, models: modelsUsed } = await pythonClient.optimizeStream(
         data.text,
@@ -846,6 +894,84 @@ export function registerOverlayHandlers(
   ipcMain.on('overlay:stop-generation', () => {
     console.log('[Overlay] Stop generation requested');
     pythonClient.abortLatestStream();
+  });
+
+  // ============================================
+  // overlay:submit-clarification — Resume optimization with clarification answers
+  // ============================================
+  ipcMain.on('overlay:submit-clarification', async (_event, submitData: {
+    answers: Record<string, string>;
+    wantsSections: boolean;
+  }) => {
+    const pending = pendingOverlayClarification;
+    if (!pending) {
+      console.warn('[Overlay] submit-clarification: no pending optimization');
+      return;
+    }
+    pendingOverlayClarification = null;
+
+    const formattedAnswers = formatOverlayClarificationAnswers(submitData.answers);
+    Sentry.addBreadcrumb({ category: 'overlay', message: 'Clarification submitted', level: 'info', data: { wantsSections: submitData.wantsSections } });
+
+    try {
+      const { text: optimizedText, models: modelsUsed } = await pythonClient.optimizeStream(
+        pending.data.text,
+        !!pending.data.isRegenerate,
+        pending.historyContext,
+        (chunk: string, accumulated: string) => {
+          overlayManager.send('overlay:optimization-chunk', { chunk, accumulated });
+        },
+        pending.data.mode || 'fast',
+        pending.customInstructions,
+        pending.data.attachedFiles || [],
+        pending.data.forcedSkill || null,
+        pending.data.previousOutput || null,
+        formattedAnswers || null,
+        submitData.wantsSections,
+      );
+
+      inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
+
+      if (authState.currentUserId) {
+        getRateLimitService().invalidateCache(authState.currentUserId);
+      }
+
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'Clarification optimization complete', level: 'info' });
+      overlayManager.send('overlay:optimization-complete', {
+        original: pending.data.text,
+        optimized: optimizedText,
+      });
+
+      analyticsService.logEvent('overlay_optimization', { source: 'overlay', clarified: true });
+
+      // Fire-and-forget DB save (same pattern as regular overlay optimize)
+      if (authState.isAuthenticated) {
+        getOptimizationService().saveOptimization(
+          pending.data.text,
+          optimizedText,
+          'overlay',
+          { ...buildModelMeta(modelsUsed), source_context: { app: 'overlay', clarified: true } }
+        ).catch((err: Error) => {
+          console.error('[Overlay] Clarification optimization record save failed:', err);
+        });
+
+        if (authState.currentUserId) {
+          const analyzer = getMemoryAnalyzer(pythonClient, appWindowManager);
+          analyzer.onNewOptimization(
+            authState.currentUserId,
+            pending.data.text,
+            optimizedText,
+            pending.data.forcedSkill || null,
+          ).catch((e: unknown) =>
+            console.warn('[Overlay] Memory analyzer error (non-critical):', e)
+          );
+        }
+      }
+    } catch (error) {
+      Sentry.captureException(error);
+      const message = humanizeLlmError(error);
+      overlayManager.send('overlay:optimization-error', { error: message });
+    }
   });
 
   console.log('[OverlayHandlers] IPC handlers registered');

@@ -125,6 +125,8 @@ declare global {
         saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
         onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => () => void;
         onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => () => void;
+        onClarificationRequired: (callback: (data: any) => void) => () => void;
+        submitClarification: (data: { answers: Record<string, string>; wantsSections: boolean }) => void;
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => () => void;
         onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => () => void;
         onOptimizationError: (callback: (data: { error: string }) => void) => () => void;
@@ -358,6 +360,14 @@ const electronAPI = {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('overlay:auth-state', handler);
       return () => ipcRenderer.removeListener('overlay:auth-state', handler);
+    },
+    onClarificationRequired: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:clarification-required', handler);
+      return () => ipcRenderer.removeListener('overlay:clarification-required', handler);
+    },
+    submitClarification: (data: { answers: Record<string, string>; wantsSections: boolean }) => {
+      ipcRenderer.send('overlay:submit-clarification', data);
     },
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
       const handler = (_event: any, data: any) => callback(data);
