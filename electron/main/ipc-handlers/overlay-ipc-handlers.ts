@@ -11,7 +11,6 @@ import { ChatService } from '../database/services/chat-service';
 import { authState } from '../utils/auth-state';
 import { replaceAtLastAnchor, isNativeBridgeAvailable, pasteTextToWindow, sendEnterToWindow, forceFocusWindow, getActiveWindowTitle } from '../utils/native-bridge';
 import { detectWindowMode } from '../utils/window-detector';
-import { AutopilotEngine } from '../utils/autopilot-engine';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
 import { localCache } from '../database/local-cache';
@@ -165,16 +164,16 @@ function getRateLimitService(): RateLimitService {
   return rateLimitService;
 }
 
-const autopilotEngine = new AutopilotEngine();
-
 // Source window info — persisted at @prompt trigger time for multi-section insert
 let sourceHwnd: number | null = null;
 let sourceWindowTitle: string = '';
+let firstSectionDone = false;
 
 /** Store the source window HWND and title from the @prompt trigger. */
 export function setSourceWindow(hwnd: number, title: string) {
   sourceHwnd = hwnd;
   sourceWindowTitle = title;
+  firstSectionDone = false;
   console.log(`[OverlayHandlers] Source window stored: hwnd=${hwnd}, title="${title}"`);
 }
 
@@ -184,6 +183,7 @@ export function clearOverlayHistory() {
   currentOverlayChatId = null;
   sourceHwnd = null;
   sourceWindowTitle = '';
+  firstSectionDone = false;
   console.log('[OverlayHandlers] Overlay session history cleared');
 }
 
@@ -810,7 +810,7 @@ export function registerOverlayHandlers(
   //   3. Returns { success: boolean } to renderer.
   //
   // Fallback: if native bridge is unavailable, write to clipboard instead.
-  ipcMain.handle('overlay:insert', (_event, data: { text: string }) => {
+  ipcMain.handle('overlay:insert', async (_event, data: { text: string }) => {
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Replace triggered', level: 'info' });
     logger.info('overlay.replace_triggered');
     if (!data?.text) {
@@ -819,66 +819,90 @@ export function registerOverlayHandlers(
 
     overlayManager.close();
 
-    if (isNativeBridgeAvailable()) {
-      const success = replaceAtLastAnchor(data.text);
-      if (!success) {
-        console.warn('[Overlay] replaceAtLastAnchor failed — window may have lost focus or been closed');
-        Sentry.captureMessage('Replace failed', 'warning');
-        logger.warn('overlay.replace_failed — native bridge lost focus or closed');
-      }
-      return { success };
+    if (!isNativeBridgeAvailable()) {
+      return { success: false };
     }
 
-    clipboard.writeText(data.text);
-    console.warn('[Overlay] Native bridge unavailable — text copied to clipboard instead');
-    return { success: false, fallback: 'clipboard' };
+    await new Promise(r => setTimeout(r, 150));
+
+    let success = replaceAtLastAnchor(data.text);
+
+    if (!success && sourceHwnd) {
+      success = pasteTextToWindow(sourceHwnd, data.text);
+    }
+
+    if (success) firstSectionDone = true;
+    return { success };
   });
 
   // ============================================
   // overlay:insert-section — Paste a single section without closing overlay
+  //
+  // First insert: replaceAtLastAnchor (removes @prompt, pastes at exact position)
+  // Subsequent:   pasteTextToWindow   (pastes at current cursor in source window)
+  // Chat windows: sendEnterToWindow after every paste to submit the message
   // ============================================
   ipcMain.handle('overlay:insert-section', async (_event, data: { text: string }) => {
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Section insert triggered', level: 'info' });
     if (!data?.text) {
       return { success: false, error: 'No text provided' };
     }
-    if (!sourceHwnd) {
-      clipboard.writeText(data.text);
-      return { success: false, fallback: 'clipboard', error: 'No source window stored' };
-    }
-    if (!isNativeBridgeAvailable()) {
-      clipboard.writeText(data.text);
-      return { success: false, fallback: 'clipboard' };
+    if (!sourceHwnd || !isNativeBridgeAvailable()) {
+      return { success: false };
     }
 
-    // Hide overlay momentarily so it doesn't block the target window
     const overlayWin = overlayManager.getWindow();
-    if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.setOpacity(0);
+    const detection = detectWindowMode(sourceWindowTitle);
+    const isChat = detection.mode === 'chat';
+
+    try {
+      if (overlayWin && !overlayWin.isDestroyed()) overlayWin.setOpacity(0);
+      await new Promise(r => setTimeout(r, 100));
+
+      let success = false;
+
+      if (!firstSectionDone) {
+        // First section: replace @prompt trigger text with section content
+        success = replaceAtLastAnchor(data.text);
+        firstSectionDone = true;
+        console.log(`[Overlay] First section insert via replaceAtLastAnchor: success=${success}`);
+      }
+
+      if (!success) {
+        // Subsequent sections OR fallback if anchor was already consumed
+        success = pasteTextToWindow(sourceHwnd, data.text);
+        firstSectionDone = true;
+        console.log(`[Overlay] Section insert via pasteTextToWindow: success=${success}`);
+      }
+
+      // For chat windows, send Enter to submit the pasted section
+      if (success && isChat) {
+        await new Promise(r => setTimeout(r, 150));
+        const enterOk = sendEnterToWindow(sourceHwnd);
+        console.log(`[Overlay] Enter sent to chat window: success=${enterOk}`);
+      }
+
+      await new Promise(r => setTimeout(r, 200));
+      if (overlayWin && !overlayWin.isDestroyed()) {
+        overlayWin.setOpacity(1);
+        const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+        forceFocusWindow(Number(hwnd));
+      }
+
+      return { success };
+    } catch (err) {
+      if (overlayWin && !overlayWin.isDestroyed()) {
+        overlayWin.setOpacity(1);
+        const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+        forceFocusWindow(Number(hwnd));
+      }
+      console.error('[Overlay] Section insert error:', err);
+      return { success: false, error: String(err) };
     }
-
-    // Small delay for opacity change to take effect
-    await new Promise(r => setTimeout(r, 100));
-
-    const success = pasteTextToWindow(sourceHwnd, data.text);
-
-    // Re-show and refocus overlay after paste
-    await new Promise(r => setTimeout(r, 200));
-    if (overlayWin && !overlayWin.isDestroyed()) {
-      overlayWin.setOpacity(1);
-      const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-      forceFocusWindow(Number(hwnd));
-    }
-
-    if (!success) {
-      console.warn('[Overlay] pasteTextToWindow failed for section insert');
-    }
-
-    return { success };
   });
 
   // ============================================
-  // overlay:get-source-info — Return source window metadata for auto-pilot UI
+  // overlay:get-source-info — Return source window metadata
   // ============================================
   ipcMain.handle('overlay:get-source-info', () => {
     if (!sourceHwnd) {
@@ -892,40 +916,6 @@ export function registerOverlayHandlers(
       confidence: detection.confidence,
       appName: detection.appName,
     };
-  });
-
-  // ============================================
-  // overlay:start-autopilot — Begin automated section paste
-  // ============================================
-  ipcMain.on('overlay:start-autopilot', (_event, config: {
-    mode: 'chat' | 'document';
-    waitSeconds: number;
-    sections: string[];
-  }) => {
-    if (!sourceHwnd) {
-      overlayManager.send('overlay:autopilot-progress', {
-        status: 'error', currentSection: 0, totalSections: config.sections.length,
-        waitRemaining: 0, error: 'No source window — @prompt trigger required',
-      });
-      return;
-    }
-
-    autopilotEngine.start({
-      mode: config.mode,
-      sections: config.sections,
-      sourceHwnd,
-      waitSeconds: config.waitSeconds,
-      overlayManager,
-    }, (progress) => {
-      overlayManager.send('overlay:autopilot-progress', progress);
-    });
-  });
-
-  // ============================================
-  // overlay:stop-autopilot — Cancel running auto-pilot
-  // ============================================
-  ipcMain.on('overlay:stop-autopilot', () => {
-    autopilotEngine.stop();
   });
 
   // ============================================

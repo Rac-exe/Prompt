@@ -89,6 +89,13 @@ pub struct AnchorData {
 
 static LAST_ANCHOR: Mutex<Option<AnchorData>> = Mutex::new(None);
 
+/// Focused child HWND captured at @prompt trigger time.
+/// Persists across inserts (not consumed by replaceAtLastAnchor).
+/// Used by paste_text_to_window to restore keyboard focus to the exact
+/// input control where @prompt was typed, even if the user has switched
+/// windows/tabs in between.
+static STORED_FOCUS_HWND: Mutex<Option<isize>> = Mutex::new(None);
+
 /// Cancellation flag for the clipboard restore thread. Set to `true` at the
 /// start of each new `inject_via_clipboard_paste` call so that any pending
 /// restore from a previous invocation is skipped instead of clobbering the
@@ -96,6 +103,9 @@ static LAST_ANCHOR: Mutex<Option<AnchorData>> = Mutex::new(None);
 static RESTORE_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Store the foreground window and trigger length captured at trigger time.
+/// Also captures the focused child control via GetGUIThreadInfo so that
+/// subsequent paste_text_to_window calls can restore focus to the exact
+/// input field where @prompt was typed.
 /// Called from hook.rs → fire_trigger(). Not modified.
 pub fn store_anchor(hwnd: isize, trigger_len: u32) {
     let ts = SystemTime::now()
@@ -105,6 +115,19 @@ pub fn store_anchor(hwnd: isize, trigger_len: u32) {
     if let Ok(mut g) = LAST_ANCHOR.lock() {
         *g = Some(AnchorData { hwnd, trigger_len, timestamp_ms: ts });
         println!("[Replacement] Anchor stored: hwnd={hwnd:#x}, trigger_len={trigger_len}");
+    }
+
+    // Capture the focused child control at trigger time.
+    unsafe {
+        let mut gti: GUITHREADINFO = std::mem::zeroed();
+        gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        if GetGUIThreadInfo(0, &mut gti).is_ok() && !gti.hwndFocus.0.is_null() {
+            let focus = gti.hwndFocus.0 as isize;
+            if let Ok(mut g) = STORED_FOCUS_HWND.lock() {
+                *g = Some(focus);
+            }
+            println!("[Replacement] Focus child stored: hwnd={focus:#x}");
+        }
     }
 }
 
@@ -689,10 +712,35 @@ pub fn paste_text_to_window(hwnd: isize, text: &str) -> bool {
     }
 
     unsafe {
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+
         if !SetForegroundWindow(target).as_bool() {
             eprintln!("[PasteToWindow] SetForegroundWindow failed — proceeding anyway");
         }
         std::thread::sleep(std::time::Duration::from_millis(60));
+
+        // Restore keyboard focus to the child control that was focused at
+        // @prompt trigger time. This ensures the paste lands in the correct
+        // input field even if the user has clicked elsewhere in the window.
+        let focus_hwnd = STORED_FOCUS_HWND.lock().ok().and_then(|g| *g);
+        if let Some(fh) = focus_hwnd {
+            let child = HWND(fh as *mut _);
+            if IsWindow(Some(child)).as_bool() {
+                let target_thread = GetWindowThreadProcessId(target, None);
+                let our_thread = GetCurrentThreadId();
+                let attached = target_thread != 0
+                    && target_thread != our_thread
+                    && AttachThreadInput(our_thread, target_thread, true).as_bool();
+                let _ = SetFocus(Some(child));
+                if attached {
+                    let _ = AttachThreadInput(our_thread, target_thread, false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+        }
+
         inject_via_clipboard_paste(target, text)
     }
 }

@@ -56,12 +56,9 @@ const OverlayApp: React.FC = () => {
   // ── Clarification state ─────────────────────────────────────────────────
   const [clarificationData, setClarificationData] = useState<any>(null);
 
-  // ── Section insert & auto-pilot state ──────────────────────────────────
+  // ── Section insert state ────────────────────────────────────────────────
   const [insertedSections, setInsertedSections] = useState<Set<number>>(new Set());
   const [sourceInfo, setSourceInfo] = useState<{ appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null>(null);
-  const [autopilotProgress, setAutopilotProgress] = useState<{
-    status: string; currentSection: number; totalSections: number; waitRemaining: number; error?: string;
-  } | null>(null);
 
   // ── Turn-based versioning ────────────────────────────────────────────────
   const {
@@ -142,7 +139,6 @@ const OverlayApp: React.FC = () => {
       setTriggeredByHook(!!data.triggeredByHook);
       // Reset section insert state on new session
       setInsertedSections(new Set());
-      setAutopilotProgress(null);
       if (data.triggeredByHook) {
         api.overlay?.getSourceInfo?.().then((info: any) => {
           if (info?.hwnd) setSourceInfo(info);
@@ -212,22 +208,6 @@ const OverlayApp: React.FC = () => {
     api.onNetworkStatus?.((data: { isOnline: boolean }) => setIsOnline(data.isOnline));
     api.onNetworkReconnected?.(() => setIsOnline(true));
 
-    // ── Auto-pilot progress ──
-    const cleanupAutopilot = api.overlay?.onAutopilotProgress?.((data: any) => {
-      setAutopilotProgress(data);
-      // Mark sections as inserted as auto-pilot progresses
-      if (data.status === 'running' || data.status === 'paused' || data.status === 'completed') {
-        setInsertedSections(prev => {
-          const next = new Set(prev);
-          for (let i = 0; i < data.currentSection; i++) next.add(i);
-          if (data.status === 'completed') {
-            for (let i = 0; i < data.totalSections; i++) next.add(i);
-          }
-          return next;
-        });
-      }
-    });
-
     // ── Settings updates ──
     const cleanupSettings = api.overlay?.onSettingsUpdate?.(applySettings);
 
@@ -249,7 +229,6 @@ const OverlayApp: React.FC = () => {
       cleanupComplete?.();
       cleanupError?.();
       cleanupUploadFailure?.();
-      cleanupAutopilot?.();
       cleanupSettings?.();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -454,15 +433,6 @@ const OverlayApp: React.FC = () => {
     }
   }, []);
 
-  // ── Auto-pilot ──
-  const handleStartAutopilot = useCallback((mode: 'chat' | 'document', waitSeconds: number, sections: string[]) => {
-    window.electronAPI?.overlay?.startAutopilot?.({ mode, waitSeconds, sections });
-  }, []);
-
-  const handleStopAutopilot = useCallback(() => {
-    window.electronAPI?.overlay?.stopAutopilot?.();
-  }, []);
-
   // ── File attachment ──
   const handleAttachFiles = useCallback((newFiles: AttachedFile[]) => {
     setAttachedFiles((prev) => [...prev, ...newFiles]);
@@ -542,9 +512,6 @@ const OverlayApp: React.FC = () => {
                 onInsertSection={handleInsertSection}
                 insertedSections={insertedSections}
                 sourceInfo={sourceInfo}
-                autopilotProgress={autopilotProgress}
-                onStartAutopilot={handleStartAutopilot}
-                onStopAutopilot={handleStopAutopilot}
               />
 
               <InputSection

@@ -2,8 +2,8 @@
  * window-detector.ts
  *
  * Classifies a target window as "chat" or "document" based on its title bar text.
- * Used by the auto-pilot engine to decide between sequential send (chat) and
- * bulk paste (document) modes.
+ * Used to decide whether to show "Paste All Sections" (document) or per-section
+ * Insert buttons only (chat).
  */
 
 export type WindowMode = 'chat' | 'document';
@@ -15,13 +15,11 @@ export interface WindowDetectionResult {
 }
 
 const CHAT_PATTERNS: Array<{ pattern: string; label: string }> = [
-  // IDEs with AI chat
   { pattern: 'cursor', label: 'Cursor' },
   { pattern: 'visual studio code', label: 'VS Code' },
   { pattern: 'windsurf', label: 'Windsurf' },
   { pattern: 'copilot', label: 'GitHub Copilot' },
 
-  // Web AI chat (browser title usually includes page name)
   { pattern: 'chatgpt', label: 'ChatGPT' },
   { pattern: 'claude', label: 'Claude' },
   { pattern: 'gemini', label: 'Gemini' },
@@ -30,7 +28,6 @@ const CHAT_PATTERNS: Array<{ pattern: string; label: string }> = [
   { pattern: 'deepseek', label: 'DeepSeek' },
   { pattern: 'grok', label: 'Grok' },
 
-  // Messaging apps (Enter sends message)
   { pattern: 'slack', label: 'Slack' },
   { pattern: 'discord', label: 'Discord' },
   { pattern: 'microsoft teams', label: 'Teams' },
@@ -66,11 +63,9 @@ export function detectWindowMode(title: string): WindowDetectionResult {
     }
   }
 
-  // Heuristic: file extensions in title suggest a code/text editor
   if (/\.(txt|md|py|js|ts|tsx|jsx|rs|go|java|cpp|c|h|rb|php|html|css|json|yaml|yml|toml)\b/i.test(title)) {
     return { mode: 'document', confidence: 'low', appName: 'Text Editor' };
   }
 
-  // Default to document mode (safer — pastes everything at once, no Enter key sent)
   return { mode: 'document', confidence: 'low', appName: 'Unknown' };
 }

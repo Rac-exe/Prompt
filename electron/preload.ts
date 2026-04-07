@@ -120,9 +120,6 @@ declare global {
         insert: (text: string) => Promise<{ success: boolean; fallback?: string }>;
         insertSection: (text: string) => Promise<{ success: boolean; fallback?: string }>;
         getSourceInfo: () => Promise<{ hwnd: number | null; title: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low'; appName: string }>;
-        startAutopilot: (config: { mode: 'chat' | 'document'; waitSeconds: number; sections: string[] }) => void;
-        stopAutopilot: () => void;
-        onAutopilotProgress: (callback: (data: { status: string; currentSection: number; totalSections: number; waitRemaining: number; error?: string }) => void) => () => void;
         checkAuth: () => Promise<{ isAuthenticated: boolean }>;
         getCollections: () => Promise<any>;
         createCollection: (name: string, icon?: string) => Promise<any>;
@@ -346,17 +343,6 @@ const electronAPI = {
     },
     getSourceInfo: () => {
       return ipcRenderer.invoke('overlay:get-source-info');
-    },
-    startAutopilot: (config: { mode: 'chat' | 'document'; waitSeconds: number; sections: string[] }) => {
-      ipcRenderer.send('overlay:start-autopilot', config);
-    },
-    stopAutopilot: () => {
-      ipcRenderer.send('overlay:stop-autopilot');
-    },
-    onAutopilotProgress: (callback: (data: { status: string; currentSection: number; totalSections: number; waitRemaining: number; error?: string }) => void) => {
-      const handler = (_event: any, data: any) => callback(data);
-      ipcRenderer.on('overlay:autopilot-progress', handler);
-      return () => ipcRenderer.removeListener('overlay:autopilot-progress', handler);
     },
     checkAuth: () => {
       return ipcRenderer.invoke('overlay:check-auth');
