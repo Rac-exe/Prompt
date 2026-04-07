@@ -68,17 +68,32 @@ export const SettingsView = () => {
   const [identities, setIdentities] = useState<any[]>([]);
   const [identityLoading, setIdentityLoading] = useState<string | null>(null);
 
+  // Persist "has email password" flag across restarts per user.
+  // Supabase admin API sets the password hash but does NOT add an email identity
+  // row in auth.identities for OAuth accounts, so we track it ourselves.
+  const emailPwKey = `prmpt-has-pw:${user?.profile?.id ?? ''}`;
+  const persistEmailPwSet = () => localStorage.setItem(emailPwKey, 'true');
+  const hasPersistedEmailPw = () => localStorage.getItem(emailPwKey) === 'true';
+
+  const injectEmailIdentityIfNeeded = (ids: any[]): any[] => {
+    if (ids.some((i: any) => i.provider === 'email')) return ids;
+    if (hasPersistedEmailPw()) return [...ids, { provider: 'email', id: 'email' }];
+    return ids;
+  };
+
   const fetchIdentities = useCallback(async () => {
     if (!window.electronAPI?.getIdentities) return;
     try {
       const { identities: ids } = await window.electronAPI.getIdentities();
-      setIdentities(ids ?? []);
+      setIdentities(injectEmailIdentityIfNeeded(ids ?? []));
     } catch { /* offline or not available */ }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailPwKey]);
 
   useEffect(() => {
-    if (user?.identities) setIdentities(user.identities);
+    if (user?.identities) setIdentities(injectEmailIdentityIfNeeded(user.identities));
     else fetchIdentities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, fetchIdentities]);
 
   const handleLinkIdentity = async (provider: 'google' | 'github') => {
@@ -195,13 +210,10 @@ export const SettingsView = () => {
         toast({ title: "Password updated", description: "Your password has been changed successfully." });
         setResetStep('idle');
         setResetOtp('');
-        // Refresh identities — for OAuth accounts, Supabase doesn't auto-add an email
-        // identity when a password is set via the admin API, so inject it optimistically.
+        // Persist the flag so the UI stays correct across restarts (Supabase admin API
+        // doesn't add an email identity row for OAuth accounts that set a password).
+        persistEmailPwSet();
         await fetchIdentities();
-        setIdentities((prev) => {
-          if (prev.some((i: any) => i.provider === 'email')) return prev;
-          return [...prev, { provider: 'email', id: 'email' }];
-        });
       }
     } catch {
       setResetPasswordError('Failed to update password. Please try again.');
