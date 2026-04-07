@@ -559,7 +559,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
             {/* ── Continue ── */}
             <button
               onClick={handleThemeContinue}
-              className="mt-10 inline-flex items-center gap-2 text-sm font-semibold py-2.5 px-8 rounded-xl bg-emerald text-white hover:bg-emerald/90 glow-emerald-sm transition-all duration-200"
+              className="mt-10 inline-flex items-center gap-2 text-sm font-semibold py-2.5 px-8 rounded-xl border border-input text-foreground hover:bg-muted transition-all duration-200"
             >
               Continue
               <ArrowRight size={14} weight="light" />
@@ -700,7 +700,7 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
                   onClick={goNext}
                   className={`flex items-center gap-2.5 text-sm font-semibold py-2.5 px-6 rounded-xl transition-all duration-200 ${
                     isLast
-                      ? 'bg-emerald text-white hover:bg-emerald/90 glow-emerald-sm'
+                      ? 'border border-input text-foreground hover:bg-muted'
                       : 'bg-secondary hover:bg-secondary/80 text-foreground'
                   }`}
                 >

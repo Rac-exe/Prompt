@@ -143,7 +143,7 @@ export function OtpVerification({
       <Button
         onClick={() => onVerify(digits.join(''))}
         disabled={isLoading || digits.some((d) => !d)}
-        className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button"
+        className="w-full h-10 border border-input text-foreground hover:bg-muted font-semibold transition-button"
       >
         {isLoading ? (
           <Loader2 className="w-4 h-4 animate-spin" />

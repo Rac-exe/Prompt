@@ -241,7 +241,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
               "flex-shrink-0 gap-2 text-sm font-semibold transition-smooth",
               saved
                 ? "bg-emerald/10 text-emerald border border-emerald/30 hover:bg-emerald/10 cursor-default"
-                : "bg-emerald text-white hover:bg-emerald/90"
+                : "border border-input text-foreground hover:bg-muted"
             )}
           >
             {saving ? (

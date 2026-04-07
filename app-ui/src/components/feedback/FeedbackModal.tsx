@@ -87,7 +87,7 @@ export const FeedbackModal = ({
                                 size="lg"
                                 onClick={() => handleRatingClick("positive")}
                                 className={`flex-1 gap-2 transition-all ${rating === "positive"
-                                        ? "bg-emerald text-white hover:bg-emerald/90"
+                                        ? "bg-emerald/10 text-emerald border border-emerald/30 hover:bg-emerald/15"
                                         : "border-border hover:bg-secondary"
                                     }`}
                             >
@@ -135,7 +135,7 @@ export const FeedbackModal = ({
                             <Button
                                 onClick={handleSubmit}
                                 disabled={!rating}
-                                className="flex-1 bg-emerald text-white hover:bg-emerald/90 disabled:opacity-50"
+                                className="flex-1 border border-input text-foreground hover:bg-muted font-semibold disabled:opacity-50"
                             >
                                 Submit
                             </Button>

@@ -600,7 +600,7 @@ export const SettingsView = () => {
                         <Button variant="ghost" size="sm" onClick={discardInstructions} className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground">
                           Discard
                         </Button>
-                        <Button size="sm" onClick={saveInstructions} className="h-7 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold">
+                        <Button size="sm" onClick={saveInstructions} className="h-7 px-3 text-xs border border-input text-foreground hover:bg-muted font-semibold">
                           Save
                         </Button>
                       </div>
@@ -761,7 +761,7 @@ export const SettingsView = () => {
                     </Button>
                     <Button
                       type="submit" disabled={resetPasswordLoading}
-                      className="flex-1 h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                      className="flex-1 h-10 border border-input text-foreground hover:bg-muted font-semibold"
                     >
                       {resetPasswordLoading ? (
                         <CircleNotch size={16} weight="light" className="animate-spin" />

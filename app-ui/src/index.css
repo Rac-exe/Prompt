@@ -42,9 +42,9 @@
     --muted:              20 50% 94%;
     --muted-foreground:   215 20% 38%;
 
-    /* Accent — active / selected items (warm peach, 20% more visible) */
-    --accent:             20 35% 87%;
-    --accent-foreground:  220 10% 15%;
+    /* Accent — dark accent matching dark-logo */
+    --accent:             220 10% 15%;
+    --accent-foreground:  0   0% 100%;
 
     --destructive:        0 68% 50%;
     --destructive-foreground: 0 0% 100%;
@@ -62,8 +62,7 @@
     --surface-hover:      19 100% 94%;
     --surface-elevated:   20 100% 98%;
 
-    /* Dark accent mapped to accent tokens — matches dark-logo vibe */
-    --accent:             220 10% 15%;
+    /* Accent variants */
     --accent-soft:        220 8% 25%;
     --accent-muted:       20 30% 92%;
 
@@ -300,7 +299,7 @@ input[type="date"][value=""]::-webkit-datetime-edit {
 input[type="date"]::-webkit-datetime-edit-day-field:focus,
 input[type="date"]::-webkit-datetime-edit-month-field:focus,
 input[type="date"]::-webkit-datetime-edit-year-field:focus {
-  background: hsl(var(--emerald) / 0.2);
+  background: hsl(var(--accent) / 0.2);
   color: hsl(var(--foreground));
   border-radius: 2px;
   outline: none;

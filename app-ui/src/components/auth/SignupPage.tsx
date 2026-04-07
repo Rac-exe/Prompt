@@ -365,7 +365,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
 
             <Button
               type="submit" disabled={isLoading}
-              className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button mt-1"
+              className="w-full h-10 border border-input text-foreground hover:bg-muted font-semibold transition-button mt-1"
             >
               {isLoading ? (
                 <CircleNotch size={16} weight="light" className="animate-spin" />

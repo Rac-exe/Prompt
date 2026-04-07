@@ -161,7 +161,7 @@ export const SavePromptModal = ({
             <Button
               onClick={handleSave}
               disabled={!canSave || isSaving}
-              className="flex-1 bg-emerald text-white hover:bg-emerald/90 disabled:opacity-50 transition-button"
+              className="flex-1 border border-input text-foreground hover:bg-muted font-semibold disabled:opacity-50 transition-button"
               data-testid="save-prompt-confirm-button"
             >
               {isSaving ? (

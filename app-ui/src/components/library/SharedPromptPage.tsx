@@ -148,7 +148,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
               "flex-shrink-0 gap-2 text-sm font-semibold transition-smooth",
               copied
                 ? "bg-emerald/10 text-emerald border border-emerald/30 hover:bg-emerald/10"
-                : "bg-emerald text-white hover:bg-emerald/90"
+                : "border border-input text-foreground hover:bg-muted"
             )}
           >
             {copied ? (

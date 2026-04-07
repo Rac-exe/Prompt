@@ -73,7 +73,7 @@ export const PromptPreviewModal = ({ open, onOpenChange, prompt }: PromptPreview
         <div className="p-6 pt-4 border-t border-border flex gap-3">
           <Button
             onClick={handleCopy}
-            className="flex-1 bg-emerald text-white hover:bg-emerald/90 transition-button"
+            className="flex-1 border border-input text-foreground hover:bg-muted font-semibold transition-button"
           >
             {copied ? (
               <>

@@ -113,7 +113,7 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
               </div>
               <Button
                 onClick={handleExport}
-                className="w-full bg-emerald text-white hover:bg-emerald/90"
+                className="w-full border border-input text-foreground hover:bg-muted font-semibold"
               >
                 <DownloadSimple size={16} weight="light" className="mr-2" />
                 Export as Markdown

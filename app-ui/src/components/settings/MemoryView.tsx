@@ -209,7 +209,7 @@ function MemorySection({
                 className="text-sm bg-secondary border border-border/50 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary/50"
               />
               <div className="flex gap-2">
-                <button onClick={handleAdd} className="flex-1 text-xs py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-smooth">Save</button>
+                <button onClick={handleAdd} className="flex-1 text-xs py-1 rounded border border-input text-foreground hover:bg-muted font-medium transition-smooth">Save</button>
                 <button onClick={() => setAdding(false)} className="flex-1 text-xs py-1 rounded bg-secondary hover:bg-secondary/80 transition-smooth">Cancel</button>
               </div>
             </div>
