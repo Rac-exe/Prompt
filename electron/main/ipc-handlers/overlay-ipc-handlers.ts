@@ -944,15 +944,17 @@ export function registerOverlayHandlers(
 
       analyticsService.logEvent('overlay_optimization', { source: 'overlay', clarified: true });
 
-      // Fire-and-forget DB save (same pattern as regular overlay optimize)
+      // Fire-and-forget DB save — full chat message persistence
       if (authState.isAuthenticated) {
+        let optimizationId: string | undefined;
         getOptimizationService().saveOptimization(
           pending.data.text,
           optimizedText,
           'overlay',
           { ...buildModelMeta(modelsUsed), source_context: { app: 'overlay', clarified: true } }
-        ).catch((err: Error) => {
-          console.error('[Overlay] Clarification optimization record save failed:', err);
+        ).then(opt => { optimizationId = opt.id; })
+        .catch((err: Error) => {
+          errorLog.append('[Overlay] clarification optimization record save', err);
         });
 
         if (authState.currentUserId) {
@@ -966,6 +968,131 @@ export function registerOverlayHandlers(
             console.warn('[Overlay] Memory analyzer error (non-critical):', e)
           );
         }
+
+        // Persist messages to DB (same logic as regular overlay:optimize)
+        (async () => {
+          try {
+            const svc = getChatService();
+            const targetChatId = pending.data.chatId || null;
+
+            if (targetChatId) {
+              console.log('[Overlay/Clarify] Appending to existing chat:', targetChatId);
+
+              const userGroupId = pending.data.userGroupId || crypto.randomUUID();
+              const userVersionIndex = pending.data.userVersionIndex ?? 0;
+              const assistantGroupId = pending.data.assistantGroupId || crypto.randomUUID();
+              const assistantVersionIndex = pending.data.assistantVersionIndex ?? 0;
+
+              let userMsg: any = null;
+              if (!pending.data.isRegenerate) {
+                const preId = crypto.randomUUID();
+                let filesForDb: any[] = [];
+                if (pending.data.attachedFiles && pending.data.attachedFiles.length > 0 && authState.currentUserId) {
+                  const results = await Promise.allSettled(
+                    pending.data.attachedFiles.map(f =>
+                      uploadAttachment(f, authState.currentUserId!, targetChatId, preId, pythonClient)
+                    )
+                  );
+                  filesForDb = results.map((r, i) => {
+                    if (r.status === 'fulfilled') return r.value;
+                    const reason = (r as PromiseRejectedResult).reason;
+                    console.error(`[Overlay/Clarify] Upload failed for "${pending.data.attachedFiles![i].name}":`, reason?.message);
+                    return { name: pending.data.attachedFiles![i].name, mimeType: pending.data.attachedFiles![i].mimeType, sizeBytes: pending.data.attachedFiles![i].sizeBytes, uploadFailed: true };
+                  });
+                }
+                userMsg = await svc.addMessage(targetChatId, pending.data.text, 'user', undefined, {
+                  groupId: userGroupId,
+                  versionIndex: userVersionIndex,
+                  attachedFiles: filesForDb.length > 0 ? filesForDb : undefined,
+                  selectedSkill: pending.data.forcedSkill || undefined,
+                }, preId);
+              }
+              const assistantMsg = await svc.addMessage(
+                targetChatId,
+                optimizedText,
+                'assistant',
+                optimizationId,
+                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+              );
+
+              if (authState.currentUserId) {
+                const userId = authState.currentUserId;
+                const msgs = await svc.getMessages(targetChatId);
+                localCache.setMessages(userId, targetChatId, msgs as any);
+                const appendMessages: any[] = [];
+                if (userMsg) appendMessages.push({ ...userMsg, groupId: userGroupId, versionIndex: userVersionIndex });
+                appendMessages.push({ ...assistantMsg, groupId: assistantGroupId, versionIndex: assistantVersionIndex });
+                appWindowManager.send('overlay:messages-appended', { chatId: targetChatId, messages: appendMessages });
+
+                try {
+                  await svc.touchChat(targetChatId);
+                  const chats = await svc.getChats();
+                  localCache.setChats(userId, chats as any);
+                  appWindowManager.send('chats-loaded', { chats });
+                } catch (touchErr) {
+                  console.warn('[Overlay/Clarify] Failed to touch chat:', touchErr);
+                }
+              }
+              console.log('[Overlay/Clarify] Saved messages to context chat:', targetChatId);
+            } else {
+              if (!currentOverlayChatId) {
+                const words = pending.data.text.trim().split(/\s+/).slice(0, 4);
+                const placeholderTitle = words.join(' ') || 'Overlay Optimization';
+                const chat = await svc.createChat(placeholderTitle);
+                currentOverlayChatId = chat.id;
+                console.log('[Overlay/Clarify] Created new chat:', currentOverlayChatId);
+
+                const titlePrompt = buildTitlePrompt(pending.data.text, pending.data.attachedFiles || []);
+                if (titlePrompt) {
+                  const chatIdForTitle = currentOverlayChatId;
+                  (async () => {
+                    try {
+                      const smartTitle = await pythonClient.generateTitle(titlePrompt);
+                      if (smartTitle && smartTitle !== placeholderTitle) {
+                        await svc.updateChatTitle(chatIdForTitle, smartTitle);
+                        appWindowManager.send('chat-renamed', { chatId: chatIdForTitle, title: smartTitle });
+                      }
+                    } catch (err) {
+                      console.warn('[Overlay/Clarify] Smart title failed:', err);
+                    }
+                  })();
+                }
+              }
+
+              const olUserGroupId = pending.data.userGroupId || crypto.randomUUID();
+              const olAssistantGroupId = pending.data.assistantGroupId || crypto.randomUUID();
+
+              if (!pending.data.isRegenerate) {
+                await svc.addMessage(currentOverlayChatId, pending.data.text, 'user', undefined, {
+                  groupId: olUserGroupId,
+                  versionIndex: pending.data.userVersionIndex ?? 0,
+                });
+              }
+              await svc.addMessage(
+                currentOverlayChatId,
+                optimizedText,
+                'assistant',
+                optimizationId,
+                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: pending.data.assistantVersionIndex ?? 0 }
+              );
+
+              if (authState.currentUserId) {
+                const userId = authState.currentUserId;
+                const chats = await svc.getChats();
+                localCache.setChats(userId, chats as any);
+                appWindowManager.send('chats-loaded', { chats });
+                if (currentOverlayChatId) {
+                  const msgs = await svc.getMessages(currentOverlayChatId);
+                  localCache.setMessages(userId, currentOverlayChatId, msgs as any);
+                }
+              }
+              console.log('[Overlay/Clarify] Saved messages to session chat:', currentOverlayChatId);
+            }
+          } catch (chatErr) {
+            errorLog.append('[Overlay/Clarify] DB save', chatErr);
+            Sentry.captureException(chatErr, { tags: { component: 'overlay-clarify-db-save' } });
+          }
+        })();
       }
     } catch (error) {
       Sentry.captureException(error);
