@@ -318,7 +318,53 @@ const OverlaySectionCopyButton: React.FC<{ text: string }> = ({ text }) => {
   );
 };
 
-const OverlaySectionedContent: React.FC<{ content: string }> = ({ content }) => {
+const OverlaySectionInsertButton: React.FC<{
+  text: string;
+  inserted: boolean;
+  onInsert: (text: string) => void;
+}> = ({ text, inserted, onInsert }) => {
+  const [inserting, setInserting] = useState(false);
+
+  const handleInsert = useCallback(async () => {
+    setInserting(true);
+    onInsert(text);
+    setTimeout(() => setInserting(false), 2000);
+  }, [text, onInsert]);
+
+  return (
+    <button
+      onClick={handleInsert}
+      disabled={inserting}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 3,
+        padding: '2px 6px', borderRadius: 5,
+        border: 'none', background: 'transparent',
+        fontSize: 10, fontWeight: 500, cursor: inserted ? 'default' : 'pointer',
+        color: inserted ? 'hsl(142 71% 45%)' : inserting ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground) / 0.5)',
+        transition: 'color 0.15s',
+        whiteSpace: 'nowrap', flexShrink: 0,
+      }}
+    >
+      {inserted ? (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+      ) : (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+      )}
+      {inserted ? 'Inserted' : inserting ? 'Inserting…' : 'Insert'}
+    </button>
+  );
+};
+
+interface OverlaySectionedContentProps {
+  content: string;
+  showReplace?: boolean;
+  insertedSections?: Set<number>;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+}
+
+const OverlaySectionedContent: React.FC<OverlaySectionedContentProps> = ({
+  content, showReplace, insertedSections, onInsertSection,
+}) => {
   const sections = useMemo(() => parseSections(content), [content]);
 
   if (!sections) {
@@ -327,33 +373,251 @@ const OverlaySectionedContent: React.FC<{ content: string }> = ({ content }) => 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {sections.map((section, idx) => (
-        <div
-          key={idx}
+      {sections.map((section, idx) => {
+        const isInserted = insertedSections?.has(idx) ?? false;
+        const sectionText = `${section.title}\n\n${section.content}`;
+
+        return (
+          <div
+            key={idx}
+            style={{
+              padding: '10px 14px',
+              borderTop: idx > 0 ? '1px solid hsl(var(--border) / 0.4)' : undefined,
+              opacity: isInserted ? 0.5 : 1,
+              transition: 'opacity 0.3s',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 18, height: 18, borderRadius: 5,
+                  background: isInserted ? 'hsl(142 71% 45% / 0.15)' : 'hsl(var(--accent) / 0.1)',
+                  fontSize: 10, fontWeight: 700,
+                  color: isInserted ? 'hsl(142 71% 45%)' : 'hsl(var(--accent))',
+                }}>
+                  {isInserted ? '✓' : idx + 1}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(var(--foreground))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {section.title}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                {showReplace && onInsertSection && (
+                  <OverlaySectionInsertButton
+                    text={sectionText}
+                    inserted={isInserted}
+                    onInsert={() => onInsertSection(idx, sectionText)}
+                  />
+                )}
+                <OverlaySectionCopyButton text={sectionText} />
+              </div>
+            </div>
+            <MarkdownContent content={section.content} size="sm" />
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ── AssistantMessage ─────────────────────────────────────────────────────────
+
+// ── Auto-pilot progress bar ──────────────────────────────────────────────────
+
+interface AutopilotProgress {
+  status: string;
+  currentSection: number;
+  totalSections: number;
+  waitRemaining: number;
+  error?: string;
+}
+
+interface AutopilotBarProps {
+  sourceInfo: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  autopilotProgress: AutopilotProgress | null;
+  sections: ParsedSection[];
+  onStartAutopilot: (mode: 'chat' | 'document', waitSeconds: number, sections: string[]) => void;
+  onStopAutopilot: () => void;
+}
+
+const AutopilotBar: React.FC<AutopilotBarProps> = ({
+  sourceInfo, autopilotProgress, sections, onStartAutopilot, onStopAutopilot,
+}) => {
+  const [selectedMode, setSelectedMode] = useState<'chat' | 'document'>(sourceInfo?.detectedMode ?? 'document');
+  const [waitSeconds, setWaitSeconds] = useState(45);
+
+  useEffect(() => {
+    if (sourceInfo?.detectedMode) setSelectedMode(sourceInfo.detectedMode);
+  }, [sourceInfo?.detectedMode]);
+
+  const isRunning = autopilotProgress?.status === 'running' || autopilotProgress?.status === 'paused';
+  const isCompleted = autopilotProgress?.status === 'completed';
+  const isError = autopilotProgress?.status === 'error';
+
+  const handleStart = useCallback(() => {
+    const sectionTexts = sections.map(s => `${s.title}\n\n${s.content}`);
+    onStartAutopilot(selectedMode, waitSeconds, sectionTexts);
+  }, [sections, selectedMode, waitSeconds, onStartAutopilot]);
+
+  if (isCompleted) {
+    return (
+      <div style={{
+        padding: '8px 12px', margin: '6px 0',
+        borderRadius: 8, border: '1px solid hsl(142 71% 45% / 0.3)',
+        background: 'hsl(142 71% 45% / 0.06)',
+        fontSize: 11, color: 'hsl(142 71% 45%)', fontWeight: 600,
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+        Auto-pilot complete — all {autopilotProgress.totalSections} sections delivered
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div style={{
+        padding: '8px 12px', margin: '6px 0',
+        borderRadius: 8, border: '1px solid hsl(0 72% 51% / 0.3)',
+        background: 'hsl(0 72% 51% / 0.06)',
+        fontSize: 11, color: 'hsl(0 72% 51%)', fontWeight: 500,
+      }}>
+        Auto-pilot failed — {autopilotProgress?.error || 'target window may have been closed'}
+      </div>
+    );
+  }
+
+  if (isRunning && autopilotProgress) {
+    const pct = ((autopilotProgress.currentSection + 1) / autopilotProgress.totalSections) * 100;
+    const waiting = autopilotProgress.status === 'paused';
+
+    return (
+      <div style={{
+        padding: '10px 12px', margin: '6px 0',
+        borderRadius: 8, border: '1px solid hsl(var(--accent) / 0.2)',
+        background: 'hsl(var(--accent) / 0.04)',
+        display: 'flex', flexDirection: 'column', gap: 6,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(var(--foreground))' }}>
+            Auto-pilot {waiting ? 'waiting' : 'running'}
+          </span>
+          <button
+            onClick={onStopAutopilot}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 3,
+              padding: '2px 8px', borderRadius: 5,
+              border: '1px solid hsl(0 72% 51% / 0.3)', background: 'hsl(0 72% 51% / 0.08)',
+              fontSize: 10, fontWeight: 500, cursor: 'pointer', color: 'hsl(0 72% 51%)',
+            }}
+          >
+            Stop
+          </button>
+        </div>
+        <div style={{ fontSize: 10, color: 'hsl(var(--muted-foreground))' }}>
+          Section {autopilotProgress.currentSection + 1} of {autopilotProgress.totalSections}
+          {waiting && ` — waiting ${autopilotProgress.waitRemaining}s`}
+        </div>
+        <div style={{
+          height: 3, borderRadius: 2, background: 'hsl(var(--border) / 0.3)',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            height: '100%', borderRadius: 2,
+            background: 'hsl(var(--accent))',
+            width: `${Math.min(pct, 100)}%`,
+            transition: 'width 0.5s ease',
+          }} />
+        </div>
+      </div>
+    );
+  }
+
+  // Idle state — show configuration
+  return (
+    <div style={{
+      padding: '10px 12px', margin: '6px 0',
+      borderRadius: 8, border: '1px solid hsl(var(--border) / 0.3)',
+      background: 'hsl(var(--card) / 0.5)',
+      display: 'flex', flexDirection: 'column', gap: 8,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(var(--foreground))' }}>
+          Auto-pilot
+        </span>
+        {sourceInfo && (
+          <span style={{ fontSize: 10, color: 'hsl(var(--muted-foreground))' }}>
+            Target: {sourceInfo.appName}
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <button
+          onClick={() => setSelectedMode('chat')}
           style={{
-            padding: '10px 14px',
-            borderTop: idx > 0 ? '1px solid hsl(var(--border) / 0.4)' : undefined,
+            flex: 1, padding: '4px 0', borderRadius: 5, fontSize: 10, fontWeight: 500,
+            cursor: 'pointer', transition: 'all 0.15s',
+            border: selectedMode === 'chat' ? '1px solid hsl(var(--accent) / 0.4)' : '1px solid hsl(var(--border) / 0.3)',
+            background: selectedMode === 'chat' ? 'hsl(var(--accent) / 0.1)' : 'transparent',
+            color: selectedMode === 'chat' ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground))',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                width: 18, height: 18, borderRadius: 5,
-                background: 'hsl(var(--accent) / 0.1)', fontSize: 10, fontWeight: 700,
-                color: 'hsl(var(--accent))',
-              }}>
-                {idx + 1}
-              </span>
-              <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(var(--foreground))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {section.title}
-              </span>
-            </div>
-            <OverlaySectionCopyButton text={`${section.title}\n\n${section.content}`} />
-          </div>
-          <MarkdownContent content={section.content} size="sm" />
+          Chat Mode
+        </button>
+        <button
+          onClick={() => setSelectedMode('document')}
+          style={{
+            flex: 1, padding: '4px 0', borderRadius: 5, fontSize: 10, fontWeight: 500,
+            cursor: 'pointer', transition: 'all 0.15s',
+            border: selectedMode === 'document' ? '1px solid hsl(var(--accent) / 0.4)' : '1px solid hsl(var(--border) / 0.3)',
+            background: selectedMode === 'document' ? 'hsl(var(--accent) / 0.1)' : 'transparent',
+            color: selectedMode === 'document' ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground))',
+          }}
+        >
+          Paste All
+        </button>
+      </div>
+
+      {selectedMode === 'chat' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 10, color: 'hsl(var(--muted-foreground))' }}>Wait between sections:</span>
+          <select
+            value={waitSeconds}
+            onChange={(e) => setWaitSeconds(Number(e.target.value))}
+            style={{
+              padding: '2px 4px', borderRadius: 4, fontSize: 10,
+              border: '1px solid hsl(var(--border) / 0.4)',
+              background: 'hsl(var(--background))', color: 'hsl(var(--foreground))',
+              cursor: 'pointer',
+            }}
+          >
+            <option value={15}>15s</option>
+            <option value={30}>30s</option>
+            <option value={45}>45s</option>
+            <option value={60}>60s</option>
+            <option value={90}>90s</option>
+            <option value={120}>2 min</option>
+            <option value={180}>3 min</option>
+          </select>
         </div>
-      ))}
+      )}
+
+      <button
+        onClick={handleStart}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+          padding: '6px 0', borderRadius: 6, fontSize: 11, fontWeight: 600,
+          cursor: 'pointer', transition: 'all 0.15s',
+          border: '1px solid hsl(var(--accent) / 0.3)',
+          background: 'hsl(var(--accent) / 0.1)',
+          color: 'hsl(var(--accent))',
+        }}
+      >
+        <svg style={{ width: 11, height: 11 }} fill="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+        {selectedMode === 'chat' ? 'Start Auto-pilot' : 'Paste All Sections'}
+      </button>
     </div>
   );
 };
@@ -368,11 +632,23 @@ interface AssistantMessageProps {
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+  insertedSections?: Set<number>;
+  sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  autopilotProgress?: AutopilotProgress | null;
+  onStartAutopilot?: (mode: 'chat' | 'document', waitSeconds: number, sections: string[]) => void;
+  onStopAutopilot?: () => void;
 }
 
-const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate }) => {
+const AssistantMessage: React.FC<AssistantMessageProps> = ({
+  msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate,
+  onInsertSection, insertedSections, sourceInfo, autopilotProgress, onStartAutopilot, onStopAutopilot,
+}) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [replaceState, setReplaceState] = useState<'idle' | 'replacing' | 'replaced' | 'clipboard' | 'error'>('idle');
+
+  const sections = useMemo(() => parseSections(msg.content), [msg.content]);
+  const hasSections = sections !== null && sections.length >= 2;
 
   const handleCopy = useCallback(() => {
     onCopy(msg.id);
@@ -383,8 +659,6 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
   const handleReplace = useCallback(async () => {
     setReplaceState('replacing');
     onReplace(msg.id);
-    // The actual replace result is fire-and-forget from here — the parent handles it
-    // We simulate the state transition; a more robust approach would use a callback
     setTimeout(() => setReplaceState('idle'), 3000);
   }, [msg.id, onReplace]);
 
@@ -395,7 +669,12 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
         {' '}Optimized Prompt
       </div>
       <div className="message-bubble assistant-bubble">
-        <OverlaySectionedContent content={msg.content} />
+        <OverlaySectionedContent
+          content={msg.content}
+          showReplace={showReplace}
+          insertedSections={insertedSections}
+          onInsertSection={onInsertSection}
+        />
       </div>
       <div className="message-actions">
         {/* Copy */}
@@ -415,8 +694,8 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
             </>
           )}
         </button>
-        {/* Replace — only shown when overlay was opened via @prompt trigger */}
-        {showReplace && (
+        {/* Replace — only for non-sectioned output (single prompt) */}
+        {showReplace && !hasSections && (
           <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
             {replaceState === 'replacing' ? (
               <>
@@ -444,6 +723,17 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
           </span>
         )}
       </div>
+
+      {/* Auto-pilot bar for sectioned output */}
+      {showReplace && hasSections && sections && onStartAutopilot && onStopAutopilot && (
+        <AutopilotBar
+          sourceInfo={sourceInfo ?? null}
+          autopilotProgress={autopilotProgress ?? null}
+          sections={sections}
+          onStartAutopilot={onStartAutopilot}
+          onStopAutopilot={onStopAutopilot}
+        />
+      )}
     </div>
   );
 };
@@ -477,11 +767,18 @@ interface TurnItemProps {
   onRegenerate: (turnIdx: number) => void;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+  insertedSections?: Set<number>;
+  sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  autopilotProgress?: AutopilotProgress | null;
+  onStartAutopilot?: (mode: 'chat' | 'document', waitSeconds: number, sections: string[]) => void;
+  onStopAutopilot?: () => void;
 }
 
 const TurnItem: React.FC<TurnItemProps> = ({
   turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
+  onInsertSection, insertedSections, sourceInfo, autopilotProgress, onStartAutopilot, onStopAutopilot,
 }) => {
   const uIdx = turn.userActiveIdx;
   const assistGroup = turn.assistantGroups[uIdx];
@@ -521,6 +818,12 @@ const TurnItem: React.FC<TurnItemProps> = ({
             onCopy={onCopy}
             onReplace={onReplace}
             onRegenerate={onRegenerate}
+            onInsertSection={onInsertSection}
+            insertedSections={insertedSections}
+            sourceInfo={sourceInfo}
+            autopilotProgress={autopilotProgress}
+            onStartAutopilot={onStartAutopilot}
+            onStopAutopilot={onStopAutopilot}
           />
         </div>
       ))}
@@ -559,12 +862,19 @@ interface ChatAreaProps {
   clarificationData?: any;
   onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
   onSkipClarification?: () => void;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+  insertedSections?: Set<number>;
+  sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  autopilotProgress?: AutopilotProgress | null;
+  onStartAutopilot?: (mode: 'chat' | 'document', waitSeconds: number, sections: string[]) => void;
+  onStopAutopilot?: () => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
   clarificationData, onSubmitClarification, onSkipClarification,
+  onInsertSection, insertedSections, sourceInfo, autopilotProgress, onStartAutopilot, onStopAutopilot,
 }) => {
   const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -617,6 +927,12 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onRegenerate={onRegenerate}
           onNavigateUser={onNavigateUser}
           onNavigateAssistant={onNavigateAssistant}
+          onInsertSection={onInsertSection}
+          insertedSections={insertedSections}
+          sourceInfo={sourceInfo}
+          autopilotProgress={autopilotProgress}
+          onStartAutopilot={onStartAutopilot}
+          onStopAutopilot={onStopAutopilot}
         />
       ))}
 
