@@ -365,7 +365,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     });
 
     // Sign In
-    ipcMain.on('auth:sign-in', async (event, data: { email: string; password: string }) => {
+    ipcMain.handle('auth:sign-in', async (_event, data: { email: string; password: string }) => {
         Sentry.addBreadcrumb({ category: 'auth', message: 'Login attempt', level: 'info' });
         logger.info(logger.fmt`auth.login_attempt email=${data.email}`);
         try {
@@ -377,19 +377,21 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 Sentry.addBreadcrumb({ category: 'auth', message: 'Login failed', level: 'warning' });
                 logger.warn(logger.fmt`auth.login_failed email=${data.email} error=${error?.message ?? 'unknown'}`);
                 console.error('[Auth] Sign in failed:', error?.message);
+                const errMsg = error?.message || 'Sign in failed';
                 appWindowManager.send('auth:state-changed', {
                     isAuthenticated: false,
                     user: null,
-                    error: error?.message || 'Sign in failed',
+                    error: errMsg,
                 });
-                return;
+                return { error: errMsg };
             }
 
             Sentry.addBreadcrumb({ category: 'auth', message: 'Login successful', level: 'info' });
             logger.info('auth.login_success via password');
             console.log('[Auth] ✅ Sign in successful');
             await handleSuccessfulAuth(appWindowManager);
-        } catch (error) {
+            return { success: true };
+        } catch (error: any) {
             console.error('[Auth] Unexpected sign in error:', error);
             Sentry.captureException(error);
             appWindowManager.send('auth:state-changed', {
@@ -397,6 +399,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 user: null,
                 error: 'Sign in failed',
             });
+            return { error: error?.message || 'Sign in failed' };
         }
     });
 

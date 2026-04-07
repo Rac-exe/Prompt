@@ -30,7 +30,7 @@ interface Window {
     };
 
     // Auth
-    signIn: (data: { email: string; password: string }) => void;
+    signIn: (data: { email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
     checkAuth: () => void;
     onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any; error?: string }) => void) => void;
     signOut: () => void;

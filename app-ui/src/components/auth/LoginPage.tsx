@@ -125,20 +125,8 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
   useEffect(() => {
     if (externalError) {
       setIsLoading(false);
-      setPassword('');
-      setEmail('');
-
-      const isInvalidCreds = externalError.toLowerCase().includes('invalid login credentials');
-      toast({
-        variant: "destructive",
-        title: "Login Failed",
-        description: isInvalidCreds
-          ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
-          : externalError,
-        duration: 5000,
-      });
     }
-  }, [externalError, toast]);
+  }, [externalError]);
 
   const handleOAuth = async (provider: 'google' | 'github') => {
     if (oauthLoading || isLoading) return;
@@ -170,14 +158,25 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
     Sentry.addBreadcrumb({ category: 'auth', message: 'Password sign-in attempted', level: 'info' });
     try {
       if (window.electronAPI) {
-        window.electronAPI.signIn({ email, password });
+        const result = await window.electronAPI.signIn({ email, password });
+        if (result?.error) {
+          const isInvalidCreds = result.error.toLowerCase().includes('invalid login credentials');
+          toast({
+            variant: "destructive",
+            title: "Login Failed",
+            description: isInvalidCreds
+              ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
+              : result.error,
+            duration: 5000,
+          });
+          setPassword('');
+        }
       } else {
         toast({
           variant: "destructive",
           title: "System Error",
           description: 'This app requires Electron to run',
         });
-        setIsLoading(false);
       }
     } catch (err) {
       Sentry.captureException(err, { tags: { component: 'login-page', op: 'auth:sign-in' } });
@@ -186,6 +185,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
         title: "Error",
         description: 'An unexpected error occurred',
       });
+    } finally {
       setIsLoading(false);
     }
   };
