@@ -53,6 +53,9 @@ const OverlayApp: React.FC = () => {
   const [streamingContent, setStreamingContent] = useState('');
   const [currentMode, setCurrentMode] = useState<string>('fast');
 
+  // ── Clarification state ─────────────────────────────────────────────────
+  const [clarificationData, setClarificationData] = useState<any>(null);
+
   // ── Turn-based versioning ────────────────────────────────────────────────
   const {
     turns, messages: messagesRef,
@@ -149,6 +152,13 @@ const OverlayApp: React.FC = () => {
       setIsAuthenticated(data.isAuthenticated);
     });
 
+    // ── Clarification required ──
+    const cleanupClarification = api.overlay?.onClarificationRequired?.((data: any) => {
+      setIsOptimizing(false);
+      setIsLoading(false);
+      setClarificationData(data);
+    });
+
     // ── Streaming chunks ──
     const cleanupChunk = api.overlay?.onOptimizationChunk?.((data: { chunk: string; accumulated: string }) => {
       setIsLoading(false);
@@ -203,6 +213,7 @@ const OverlayApp: React.FC = () => {
     return () => {
       cleanupOpened?.();
       cleanupAuthState?.();
+      cleanupClarification?.();
       cleanupChunk?.();
       cleanupComplete?.();
       cleanupError?.();
@@ -259,15 +270,32 @@ const OverlayApp: React.FC = () => {
     setIsLoading(false);
     setStreamingContent('');
     setErrorMessage(null);
+    setClarificationData(null);
     streamingTurnIdxRef.current = -1;
     window.electronAPI?.overlay?.newSession?.();
     requestAnimationFrame(() => setTimeout(() => inputRef.current?.focus(), 80));
   }, [clearAll]);
 
+  // ── Submit clarification answers ──
+  const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    setClarificationData(null);
+    setIsOptimizing(true);
+    setIsLoading(true);
+    setErrorMessage(null);
+    setStreamingContent('');
+    window.electronAPI?.overlay?.submitClarification?.({ answers, wantsSections });
+  }, []);
+
+  // ── Skip clarification ──
+  const handleSkipClarification = useCallback(() => {
+    handleSubmitClarification({}, false);
+  }, [handleSubmitClarification]);
+
   // ── Send message ──
   const handleSend = useCallback((text: string) => {
     if (!text.trim() || isOptimizing) return;
 
+    setClarificationData(null);
     setIsOptimizing(true);
     setErrorMessage(null);
     setIsLoading(true);
@@ -454,6 +482,9 @@ const OverlayApp: React.FC = () => {
                 onRegenerate={handleRegenerate}
                 onNavigateUser={navigateUserVersion}
                 onNavigateAssistant={navigateAssistantVersion}
+                clarificationData={clarificationData}
+                onSubmitClarification={handleSubmitClarification}
+                onSkipClarification={handleSkipClarification}
               />
 
               <InputSection

@@ -6,6 +6,7 @@ import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON } from '../lib/constants';
 import { useScrollController } from '../../hooks/useScrollController';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { ClarificationCard } from '@/components/chat/ClarificationCard';
 
 // ── Inline sub-components (small, tightly coupled to overlay) ────────────────
 
@@ -466,11 +467,15 @@ interface ChatAreaProps {
   onRegenerate: (turnIdx: number) => void;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
+  clarificationData?: any;
+  onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
+  onSkipClarification?: () => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
+  clarificationData, onSubmitClarification, onSkipClarification,
 }) => {
   const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -479,7 +484,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     chatAreaRef,
     {
       isStreaming: streamingTurnIdx >= 0,
-      messageCount: turns.length,
+      messageCount: turns.length + (clarificationData ? 1 : 0),
       streamingTrigger: streamingContent,
     },
   );
@@ -525,6 +530,18 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onNavigateAssistant={onNavigateAssistant}
         />
       ))}
+
+      {/* Clarification card */}
+      {clarificationData?.should_clarify && clarificationData.questions?.length > 0 && onSubmitClarification && onSkipClarification && (
+        <ClarificationCard
+          questions={clarificationData.questions}
+          isComplex={clarificationData.is_complex}
+          suggestedSections={clarificationData.suggested_sections || []}
+          onSubmit={onSubmitClarification}
+          onSkip={onSkipClarification}
+          compact
+        />
+      )}
 
       {/* Error banner */}
       {errorMessage && (

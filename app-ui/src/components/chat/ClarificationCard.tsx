@@ -26,6 +26,7 @@ interface ClarificationCardProps {
   suggestedSections: string[];
   onSubmit: (answers: Record<string, string>, wantsSections: boolean) => void;
   onSkip: () => void;
+  compact?: boolean;
 }
 
 export const ClarificationCard = ({
@@ -34,6 +35,7 @@ export const ClarificationCard = ({
   suggestedSections,
   onSubmit,
   onSkip,
+  compact = false,
 }: ClarificationCardProps) => {
   const [selections, setSelections] = useState<Record<string, Set<string>>>({});
   const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
@@ -127,33 +129,49 @@ export const ClarificationCard = ({
   if (submitted) return null;
 
   return (
-    <div className="flex gap-3 px-4 py-3 max-w-4xl mx-auto w-full">
-      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1">
-        <Logo className="w-3.5 h-3.5" />
-      </div>
+    <div className={cn(
+      compact ? "px-2 py-2 w-full" : "flex gap-3 px-4 py-3 max-w-4xl mx-auto w-full"
+    )}>
+      {!compact && (
+        <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1">
+          <Logo className="w-3.5 h-3.5" />
+        </div>
+      )}
 
       <div ref={cardRef} className="flex-1 min-w-0">
-        <div className="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
+        <div className={cn(
+          "rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden",
+          compact && "rounded-xl"
+        )}>
           {/* ── Header ── */}
-          <div className="px-5 pt-4 pb-3">
+          <div className={compact ? "px-3.5 pt-3 pb-2" : "px-5 pt-4 pb-3"}>
             <div className="flex items-center gap-2">
               <Sparkle
-                size={15}
+                size={compact ? 13 : 15}
                 weight="fill"
                 className="text-amber-500 animate-[spin_3s_linear_infinite]"
               />
-              <h3 className="text-[13px] font-semibold text-foreground tracking-tight">
+              <h3 className={cn(
+                "font-semibold text-foreground tracking-tight",
+                compact ? "text-[12px]" : "text-[13px]"
+              )}>
                 Let's dial this in
               </h3>
             </div>
-            <p className="text-[11px] text-muted-foreground/70 mt-0.5 ml-[23px]">
+            <p className={cn(
+              "text-muted-foreground/70 mt-0.5",
+              compact ? "text-[10px] ml-[21px]" : "text-[11px] ml-[23px]"
+            )}>
               Pick all that apply — select multiple if you want
             </p>
           </div>
 
           {/* ── Progress bar ── */}
           {questions.length > 1 && (
-            <div className="px-5 pb-3 flex items-center gap-1.5">
+            <div className={cn(
+              "flex items-center gap-1.5",
+              compact ? "px-3.5 pb-2" : "px-5 pb-3"
+            )}>
               {questions.map((q) => {
                 const hasAnswer =
                   q.type === "multiple_choice"
@@ -173,7 +191,9 @@ export const ClarificationCard = ({
           )}
 
           {/* ── Questions ── */}
-          <div className="px-5 pb-2 space-y-5">
+          <div className={cn(
+            compact ? "px-3.5 pb-1.5 space-y-3.5" : "px-5 pb-2 space-y-5"
+          )}>
             {questions.map((q, i) => (
               <div
                 key={q.id}
@@ -184,13 +204,19 @@ export const ClarificationCard = ({
                     : "opacity-0 translate-y-3 pointer-events-none"
                 )}
               >
-                <p className="text-[13px] font-medium text-foreground mb-2.5 leading-snug">
+                <p className={cn(
+                  "font-medium text-foreground leading-snug",
+                  compact ? "text-[12px] mb-2" : "text-[13px] mb-2.5"
+                )}>
                   {q.question}
                 </p>
 
                 {q.type === "multiple_choice" && q.options.length > 0 ? (
                   <div className="space-y-1.5">
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div className={cn(
+                      "gap-1.5",
+                      compact ? "flex flex-col" : "grid grid-cols-2"
+                    )}>
                       {q.options.map((opt) => {
                         const selected = selections[q.id]?.has(opt) ?? false;
                         return (
@@ -199,8 +225,10 @@ export const ClarificationCard = ({
                             type="button"
                             onClick={() => toggleOption(q.id, opt)}
                             className={cn(
-                              "group flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all duration-200",
-                              "border",
+                              "group flex items-center text-left transition-all duration-200 border",
+                              compact
+                                ? "gap-2 px-2.5 py-2 rounded-lg"
+                                : "gap-2.5 px-3 py-2.5 rounded-xl",
                               selected
                                 ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
                                 : "border-transparent bg-muted/40 hover:bg-muted/70"
@@ -208,20 +236,21 @@ export const ClarificationCard = ({
                           >
                             {selected ? (
                               <CheckSquare
-                                size={16}
+                                size={compact ? 14 : 16}
                                 weight="fill"
                                 className="text-primary flex-shrink-0 transition-transform duration-200 scale-110"
                               />
                             ) : (
                               <Square
-                                size={16}
+                                size={compact ? 14 : 16}
                                 weight="regular"
                                 className="text-muted-foreground/30 flex-shrink-0 group-hover:text-muted-foreground/50 transition-colors"
                               />
                             )}
                             <span
                               className={cn(
-                                "text-xs leading-snug transition-colors",
+                                "leading-snug transition-colors",
+                                compact ? "text-[11px]" : "text-xs",
                                 selected
                                   ? "text-foreground font-medium"
                                   : "text-muted-foreground group-hover:text-foreground"
@@ -238,15 +267,17 @@ export const ClarificationCard = ({
                         type="button"
                         onClick={() => toggleOther(q.id)}
                         className={cn(
-                          "group flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left transition-all duration-200",
-                          "border",
+                          "group flex items-center text-left transition-all duration-200 border",
+                          compact
+                            ? "gap-2 px-2.5 py-2 rounded-lg"
+                            : "gap-2.5 px-3 py-2.5 rounded-xl",
                           otherActive[q.id]
                             ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
                             : "border-transparent bg-muted/40 hover:bg-muted/70"
                         )}
                       >
                         <PencilSimpleLine
-                          size={16}
+                          size={compact ? 14 : 16}
                           weight={otherActive[q.id] ? "fill" : "regular"}
                           className={cn(
                             "flex-shrink-0 transition-colors",
@@ -257,7 +288,8 @@ export const ClarificationCard = ({
                         />
                         <span
                           className={cn(
-                            "text-xs leading-snug transition-colors",
+                            "leading-snug transition-colors",
+                            compact ? "text-[11px]" : "text-xs",
                             otherActive[q.id]
                               ? "text-foreground font-medium"
                               : "text-muted-foreground group-hover:text-foreground"
@@ -281,7 +313,10 @@ export const ClarificationCard = ({
                           }))
                         }
                         autoFocus
-                        className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-muted/30 border border-primary/20 focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-1 focus:ring-primary/15 text-foreground placeholder:text-muted-foreground/40 transition-all"
+                        className={cn(
+                          "w-full text-foreground placeholder:text-muted-foreground/40 transition-all bg-muted/30 border border-primary/20 focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-1 focus:ring-primary/15",
+                          compact ? "px-2.5 py-2 text-[11px] rounded-lg" : "px-3.5 py-2.5 text-xs rounded-xl"
+                        )}
                       />
                     )}
                   </div>
@@ -296,7 +331,10 @@ export const ClarificationCard = ({
                         [q.id]: e.target.value,
                       }))
                     }
-                    className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-muted/40 border border-transparent focus:border-primary/30 focus:bg-background focus:outline-none focus:ring-1 focus:ring-primary/15 text-foreground placeholder:text-muted-foreground/40 transition-all"
+                    className={cn(
+                      "w-full text-foreground placeholder:text-muted-foreground/40 transition-all bg-muted/40 border border-transparent focus:border-primary/30 focus:bg-background focus:outline-none focus:ring-1 focus:ring-primary/15",
+                      compact ? "px-2.5 py-2 text-[11px] rounded-lg" : "px-3.5 py-2.5 text-xs rounded-xl"
+                    )}
                   />
                 )}
               </div>
@@ -306,18 +344,22 @@ export const ClarificationCard = ({
             {isComplex && suggestedSections.length > 0 && (
               <div
                 className={cn(
-                  "flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-emerald-500/[0.05] border border-emerald-500/10 transition-all duration-[400ms]",
+                  "flex items-start gap-2.5 rounded-xl bg-emerald-500/[0.05] border border-emerald-500/10 transition-all duration-[400ms]",
+                  compact ? "px-2.5 py-2" : "px-3.5 py-3",
                   visibleCount > 0
                     ? "opacity-100 translate-y-0"
                     : "opacity-0 translate-y-3"
                 )}
               >
                 <ListChecks
-                  size={15}
+                  size={compact ? 13 : 15}
                   weight="duotone"
                   className="text-emerald-600 dark:text-emerald-400 mt-px flex-shrink-0"
                 />
-                <div className="text-[11px] leading-relaxed text-muted-foreground">
+                <div className={cn(
+                  "leading-relaxed text-muted-foreground",
+                  compact ? "text-[10px]" : "text-[11px]"
+                )}>
                   <span className="font-medium text-foreground">
                     Suggested build flow:{" "}
                   </span>
@@ -346,8 +388,11 @@ export const ClarificationCard = ({
                 placeholder="Anything else on your mind? Describe freely..."
                 value={extraNotes}
                 onChange={(e) => setExtraNotes(e.target.value)}
-                rows={2}
-                className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-dashed border-border/50 bg-muted/20 focus:border-primary/30 focus:bg-background focus:border-solid focus:outline-none focus:ring-1 focus:ring-primary/15 text-foreground placeholder:text-muted-foreground/35 transition-all resize-none"
+                rows={compact ? 1 : 2}
+                className={cn(
+                  "w-full border border-dashed border-border/50 bg-muted/20 focus:border-primary/30 focus:bg-background focus:border-solid focus:outline-none focus:ring-1 focus:ring-primary/15 text-foreground placeholder:text-muted-foreground/35 transition-all resize-none",
+                  compact ? "px-2.5 py-2 text-[11px] rounded-lg" : "px-3.5 py-2.5 text-xs rounded-xl"
+                )}
               />
             </div>
           </div>
@@ -355,7 +400,8 @@ export const ClarificationCard = ({
           {/* ── Footer ── */}
           <div
             className={cn(
-              "px-5 py-3 border-t border-border/30 flex items-center justify-between transition-all duration-500",
+              "border-t border-border/30 flex items-center justify-between transition-all duration-500",
+              compact ? "px-3.5 py-2" : "px-5 py-3",
               visibleCount >= questions.length
                 ? "opacity-100"
                 : "opacity-0"
@@ -364,23 +410,27 @@ export const ClarificationCard = ({
             <button
               type="button"
               onClick={onSkip}
-              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              className={cn(
+                "inline-flex items-center gap-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+                compact ? "text-[10px]" : "text-[11px]"
+              )}
             >
               Skip — just optimize
-              <ArrowRight size={10} weight="bold" />
+              <ArrowRight size={compact ? 9 : 10} weight="bold" />
             </button>
 
             <button
               type="button"
               onClick={handleSubmit}
               className={cn(
-                "inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all duration-200",
+                "inline-flex items-center gap-1.5 font-semibold transition-all duration-200",
+                compact ? "px-3 py-1.5 rounded-lg text-[11px]" : "px-4 py-2 rounded-xl text-xs",
                 answeredCount > 0
                   ? "bg-primary text-primary-foreground shadow-sm hover:shadow-md hover:brightness-110 active:scale-[0.97]"
                   : "bg-primary/80 text-primary-foreground/80"
               )}
             >
-              <Lightning size={13} weight="fill" />
+              <Lightning size={compact ? 11 : 13} weight="fill" />
               Optimize
             </button>
           </div>
