@@ -321,6 +321,9 @@ declare global {
         getActive: () => Promise<{ projectId: string | null; branch: string | null }>;
         reindex: (projectId: string, localPath: string) => Promise<{ totalFiles: number; totalChunks: number }>;
         sync: (projectId?: string) => Promise<void>;
+        toggleWatching: (projectId: string, localPath: string, enable: boolean) => Promise<{ watching: boolean }>;
+        isWatching: (projectId: string) => Promise<boolean>;
+        retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => Promise<any>;
         onStatusUpdate: (callback: (data: any) => void) => () => void;
         onOverlayStatus: (callback: (data: any) => void) => () => void;
       };
@@ -908,6 +911,9 @@ const electronAPI = {
     getActive: () => ipcRenderer.invoke('project:get-active'),
     reindex: (projectId: string, localPath: string) => ipcRenderer.invoke('project:reindex', projectId, localPath),
     sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
+    toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
+    isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
+    retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => ipcRenderer.invoke('project:retrieve', params),
     onStatusUpdate: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('project:status-update', handler);

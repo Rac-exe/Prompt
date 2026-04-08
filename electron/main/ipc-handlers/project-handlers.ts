@@ -8,7 +8,7 @@ import type { CodeIntelClient, ProjectInfo } from '../api/code-intel-client';
 import type { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import type { AppWindowManager } from '../windows/app-window-manager';
 import { isGitRepo, getBranchInfo, getGitRemoteUrl, parseGitHubUrl } from '../services/git-service';
-import { startWatching, stopWatching, performFullScan, stopAllWatchers } from '../services/file-watcher';
+import { startWatching, stopWatching, performFullScan, stopAllWatchers, isWatching } from '../services/file-watcher';
 import { clearProjectCache } from '../database/local-project-cache';
 
 let _client: CodeIntelClient | null = null;
@@ -160,6 +160,30 @@ export function registerProjectHandlers(
   ipcMain.handle('project:sync', async (_event, projectId?: string) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
     await _client.syncProject(projectId);
+  });
+
+  ipcMain.handle('project:toggle-watching', async (_event, projectId: string, localPath: string, enable: boolean) => {
+    if (enable) {
+      let branch: string | undefined;
+      const isGit = await isGitRepo(localPath);
+      if (isGit) {
+        const branchInfo = await getBranchInfo(localPath);
+        branch = branchInfo.currentBranch;
+      }
+      startWatching(projectId, localPath, _client!, branch);
+    } else {
+      stopWatching(projectId);
+    }
+    return { watching: isWatching(projectId) };
+  });
+
+  ipcMain.handle('project:is-watching', (_event, projectId: string) => {
+    return isWatching(projectId);
+  });
+
+  ipcMain.handle('project:retrieve', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number }) => {
+    if (!_client) throw new Error('Code intelligence client not initialized');
+    return await _client.retrieve(params);
   });
 }
 

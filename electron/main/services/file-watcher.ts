@@ -29,7 +29,7 @@ interface WatcherState {
 
 const activeWatchers: Map<string, WatcherState> = new Map();
 
-const DEBOUNCE_MS = 300;
+const DEBOUNCE_MS = 2000;
 
 const DEFAULT_IGNORES = [
   '**/node_modules/**',
@@ -113,7 +113,7 @@ export function startWatching(
     ignored: DEFAULT_IGNORES,
     persistent: true,
     ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
+    awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 200 },
   });
 
   const state: WatcherState = {
@@ -165,6 +165,10 @@ export function stopAllWatchers(): void {
   for (const projectId of activeWatchers.keys()) {
     stopWatching(projectId);
   }
+}
+
+export function isWatching(projectId: string): boolean {
+  return activeWatchers.has(projectId);
 }
 
 export async function performFullScan(

@@ -301,7 +301,29 @@ const InputSection: React.FC<InputSectionProps> = ({
   const voiceActiveRef = useRef(false);
   const transcriptionSessionIdRef = useRef<string | null>(null);
 
+  const [activeProjectName, setActiveProjectName] = useState<string | null>(null);
+
   const canSend = !!inputValue.trim() && !isOptimizing && isOnline;
+
+  // Load active project context
+  useEffect(() => {
+    const api = (window as any).electronAPI?.project;
+    if (!api) return;
+    api.getActive().then(async (active: any) => {
+      if (active?.projectId) {
+        try {
+          const info = await api.status(active.projectId);
+          setActiveProjectName(info?.name || null);
+        } catch { setActiveProjectName(null); }
+      }
+    }).catch(() => {});
+
+    const unsub = api.onOverlayStatus?.((data: any) => {
+      if (data?.name) setActiveProjectName(data.name);
+      if (!data?.projectId) setActiveProjectName(null);
+    });
+    return () => unsub?.();
+  }, []);
 
   // Auto-resize textarea
   const autoResize = useCallback(() => {
@@ -500,6 +522,31 @@ const InputSection: React.FC<InputSectionProps> = ({
 
             {/* Skill pill */}
             <SkillPill skill={selectedSkill} skillLabel={selectedSkillLabel} onRemove={onRemoveSkill} />
+
+            {/* Project context indicator */}
+            {activeProjectName && (
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '2px 8px',
+                borderRadius: 12,
+                backgroundColor: 'hsl(200 80% 60% / 0.1)',
+                border: '1px solid hsl(200 80% 60% / 0.15)',
+                fontSize: 10,
+                fontWeight: 600,
+                color: 'hsl(200 80% 60%)',
+                maxWidth: 120,
+                overflow: 'hidden',
+              }}>
+                <svg style={{ width: 10, height: 10, flexShrink: 0 }} fill="currentColor" viewBox="0 0 256 256">
+                  <path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216ZM172.42,72.84l-64,32a8.05,8.05,0,0,0-3.58,3.58l-32,64A8,8,0,0,0,80,184a8.09,8.09,0,0,0,3.58-.84l64-32a8.05,8.05,0,0,0,3.58-3.58l32-64a8,8,0,0,0-10.74-10.74ZM138,138,97.89,158.11,118,118l40.15-20.07Z" />
+                </svg>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {activeProjectName}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="input-toolbar-right">

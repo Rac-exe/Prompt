@@ -1355,7 +1355,10 @@ Your prompt was: "${content}"`;
         );
       case "projects":
         return (
-          <ProjectsView />
+          <ProjectsView onSendToChat={(prompt: string) => {
+            setCurrentView("chat");
+            setInput(prompt);
+          }} />
         );
       case "chat":
       default:

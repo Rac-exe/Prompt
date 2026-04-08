@@ -66,7 +66,7 @@ export const Sidebar = ({
   const navItems = [
     { id: "chat" as const, label: "New Chat", icon: Plus, action: onNewChat },
     { id: "library" as const, label: "Prompt Library", icon: Books },
-    { id: "projects" as const, label: "Projects", icon: TreeStructure },
+    { id: "projects" as const, label: "Spaces", icon: TreeStructure },
   ];
 
   useEffect(() => {
