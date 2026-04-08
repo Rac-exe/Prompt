@@ -59,23 +59,18 @@ export const ClarificationSummaryCard = ({
   if (answeredQuestions.length === 0 && !mode) return null;
 
   return (
-    <div className="flex gap-3 max-w-4xl mx-auto w-full animate-slide-up">
-      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1">
-        <Logo className="w-3.5 h-3.5" />
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
+    <div className="flex justify-end max-w-4xl mx-auto w-full animate-slide-up">
+      <div className="min-w-0 max-w-md">
+        <div className="rounded-xl border border-border/50 bg-card shadow-sm overflow-hidden">
           {/* Header */}
-          <div className="px-5 pt-4 pb-3 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkle size={15} weight="fill" className="text-amber-500" />
-              <h3 className="text-[13px] font-semibold text-foreground tracking-tight">
+          <div className="px-3.5 pt-2.5 pb-2 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-1.5">
+              <Sparkle size={13} weight="fill" className="text-amber-500" />
+              <h3 className="text-[12px] font-semibold text-foreground tracking-tight">
                 Your preferences
               </h3>
-              {/* Mode pill */}
               <div className={cn(
-                "px-2.5 py-0.5 rounded-full text-[10px] font-semibold tracking-wide uppercase",
+                "px-2 py-px rounded-full text-[9px] font-semibold tracking-wide uppercase",
                 mode === 'tasks'
                   ? "bg-emerald-500/10 text-emerald-500"
                   : "bg-muted text-muted-foreground"
@@ -87,26 +82,26 @@ export const ClarificationSummaryCard = ({
               <button
                 type="button"
                 onClick={startEditing}
-                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground/60 hover:text-foreground transition-colors px-2 py-1 rounded-lg hover:bg-muted/50"
+                className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/60 hover:text-foreground transition-colors px-1.5 py-0.5 rounded-md hover:bg-muted/50"
               >
-                <PencilSimpleLine size={12} weight="light" />
-                Edit choices
+                <PencilSimpleLine size={11} weight="light" />
+                Edit
               </button>
             )}
           </div>
 
           {/* Answers list */}
-          <div className="px-5 pb-4 space-y-2.5">
+          <div className="px-3.5 pb-3 space-y-2">
             {answeredQuestions.map((q) => (
               <div key={q.id}>
-                <div className="text-[10px] font-medium text-muted-foreground/60 mb-1 leading-snug">
+                <div className="text-[9px] font-medium text-muted-foreground/60 mb-0.5 leading-snug">
                   {q.question}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap gap-1">
                   {answers[q.question].split(", ").map((val, i) => (
                     <span
                       key={i}
-                      className="inline-flex items-center px-2.5 py-1 rounded-lg bg-primary/[0.06] border border-primary/20 text-[11px] font-medium text-foreground"
+                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-primary/[0.06] border border-primary/20 text-[10px] font-medium text-foreground"
                     >
                       {val}
                     </span>
@@ -116,10 +111,10 @@ export const ClarificationSummaryCard = ({
             ))}
             {answers["Additional context"] && (
               <div>
-                <div className="text-[10px] font-medium text-muted-foreground/60 mb-1 leading-snug">
+                <div className="text-[9px] font-medium text-muted-foreground/60 mb-0.5 leading-snug">
                   Additional context
                 </div>
-                <p className="text-xs text-foreground/80 leading-relaxed">
+                <p className="text-[11px] text-foreground/80 leading-relaxed">
                   {answers["Additional context"]}
                 </p>
               </div>
