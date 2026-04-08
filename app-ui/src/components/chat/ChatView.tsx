@@ -53,6 +53,7 @@ interface ChatViewProps {
   // Clarification
   clarificationData?: any;
   onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
+  clarificationAnswersMap?: Record<string, { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -66,7 +67,7 @@ export const ChatView = ({
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
   input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
-  clarificationData, onSubmitClarification,
+  clarificationData, onSubmitClarification, clarificationAnswersMap,
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -387,7 +388,7 @@ export const ChatView = ({
             <TooltipProvider delayDuration={100}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="group relative inline-flex items-center gap-1.5 h-8 px-3 pr-5 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none">
+                  <div className="group relative inline-flex items-center gap-1.5 h-8 px-3 pr-5 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none transition-colors duration-150 hover:bg-muted hover:text-foreground">
                     <Atom size={14} weight="duotone" className="text-emerald" />
                     <span>Pro Mode</span>
                     <CaretRight
@@ -617,6 +618,7 @@ export const ChatView = ({
                 avatarUrl={avatarUrl}
                 versionInfo={message.role === "user" && versionInfo ? versionInfo : undefined}
                 onNavigateVersion={message.role === "user" ? onNavigateVersion : undefined}
+                clarificationInfo={message.role === "user" ? clarificationAnswersMap?.[message.id] : undefined}
               />
               {/* Assistant regenerate navigator — BELOW the assistant bubble */}
               {message.role === "assistant" && versionInfo && (

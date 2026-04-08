@@ -549,6 +549,43 @@ textarea { min-height: 40px; }
 }
 .mode-select-btn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
 
+/* Pro Mode caret animation — matches main app exactly */
+.pro-mode-caret {
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.mode-select-btn:hover .pro-mode-caret {
+  transform: rotate(-90deg);
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+/* Pro Mode tooltip — above badge, white bg, black text, fast */
+.pro-mode-badge {
+  position: relative;
+}
+.pro-mode-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  margin-bottom: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: #fff;
+  color: #111;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms ease, transform 100ms ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  z-index: 100;
+}
+.pro-mode-badge:hover .pro-mode-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Send button (circular) */
 .btn-send {
   width: 32px;

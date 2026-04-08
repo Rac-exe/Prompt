@@ -55,6 +55,7 @@ const OverlayApp: React.FC = () => {
 
   // ── Clarification state ─────────────────────────────────────────────────
   const [clarificationData, setClarificationData] = useState<any>(null);
+  const [clarificationAnswersByTurn, setClarificationAnswersByTurn] = useState<Record<number, { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
 
   // ── Section insert state ────────────────────────────────────────────────
   const [insertedSections, setInsertedSections] = useState<Set<number>>(new Set());
@@ -289,13 +290,18 @@ const OverlayApp: React.FC = () => {
 
   // ── Submit clarification answers ──
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    const turnIdx = turns.length - 1;
+    if (turnIdx >= 0) {
+      const questions = (clarificationData?.questions || []).map((q: any) => q.question as string);
+      setClarificationAnswersByTurn(prev => ({ ...prev, [turnIdx]: { questions, answers, mode: wantsSections ? 'tasks' : 'single' } }));
+    }
     setClarificationData(null);
     setIsOptimizing(true);
     setIsLoading(true);
     setErrorMessage(null);
     setStreamingContent('');
     window.electronAPI?.overlay?.submitClarification?.({ answers, wantsSections });
-  }, []);
+  }, [turns.length]);
 
   // ── Skip clarification ──
   const handleSkipClarification = useCallback(() => {
@@ -520,6 +526,7 @@ const OverlayApp: React.FC = () => {
                 onInsertSection={handleInsertSection}
                 insertedSections={insertedSections}
                 sourceInfo={sourceInfo}
+                clarificationAnswersByTurn={clarificationAnswersByTurn}
               />
 
               <InputSection

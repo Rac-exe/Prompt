@@ -170,6 +170,80 @@ const AssistantBrandMark: React.FC<{ size: number }> = ({ size }) => {
   );
 };
 
+// ── ClarificationPopover (shown on hover over user bubble) ──────────────────
+
+interface ClarificationInfo {
+  questions: string[];
+  answers: Record<string, string>;
+  mode: 'single' | 'tasks';
+}
+
+const DELIVERY_KEYWORDS = ['task sections', 'broken into', 'delivery', 'one complete', 'delivered'];
+const isDeliveryQuestion = (q: string) => DELIVERY_KEYWORDS.some(k => q.toLowerCase().includes(k));
+
+const ClarificationPopover: React.FC<{ info: ClarificationInfo; visible: boolean; flipBelow?: boolean }> = ({ info, visible, flipBelow }) => {
+  const { questions, answers, mode } = info;
+  const allKeys = (questions.length > 0 ? questions : Object.keys(answers)).filter(k => !isDeliveryQuestion(k));
+  if (allKeys.length === 0 && !mode) return null;
+
+  const posStyle: React.CSSProperties = flipBelow
+    ? { top: '100%', marginTop: 8 }
+    : { bottom: '100%', marginBottom: 8 };
+
+  const hiddenY = flipBelow ? 'translateY(-6px)' : 'translateY(6px)';
+
+  return (
+    <div
+      style={{
+        position: 'absolute', right: 0, ...posStyle,
+        minWidth: 240, maxWidth: 320, padding: '10px 12px',
+        borderRadius: 14, background: '#fff', border: 'none',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)',
+        opacity: visible ? 1 : 0, pointerEvents: visible ? 'auto' : 'none',
+        transform: visible ? 'translateY(0)' : hiddenY,
+        transition: 'opacity 120ms ease, transform 120ms ease',
+        zIndex: 50,
+      }}
+    >
+      {/* Mode pills */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <div style={{
+          padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600, letterSpacing: '0.01em',
+          background: mode === 'single' ? 'rgba(0,0,0,0.06)' : 'transparent',
+          color: mode === 'single' ? '#333' : '#ccc',
+          transition: 'all 150ms ease',
+        }}>
+          Single Prompt
+        </div>
+        <div style={{
+          padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600, letterSpacing: '0.01em',
+          background: mode === 'tasks' ? 'rgba(16,185,129,0.1)' : 'transparent',
+          color: mode === 'tasks' ? 'rgb(16,185,129)' : '#ccc',
+          transition: 'all 150ms ease',
+        }}>
+          Tasks
+        </div>
+      </div>
+
+      {allKeys.length > 0 && (
+        <>
+          <div style={{ height: 1, background: 'rgba(0,0,0,0.06)', marginBottom: 8 }} />
+
+          {allKeys.map((key, idx) => {
+            const val = answers[key];
+            return (
+              <div key={key} style={{ marginBottom: idx === allKeys.length - 1 ? 0 : 10 }}>
+                <div style={{ fontSize: 9, fontWeight: 500, color: '#999', marginBottom: 2, lineHeight: 1.3 }}>{key}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#1a1a1a', lineHeight: 1.4 }}>{val || '—'}</div>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+};
+
 // ── UserMessage ──────────────────────────────────────────────────────────────
 
 interface UserMessageProps {
@@ -177,12 +251,16 @@ interface UserMessageProps {
   turnIdx: number;
   isOptimizing: boolean;
   onEdit: (turnIdx: number, newContent: string) => void;
+  clarificationInfo?: ClarificationInfo;
 }
 
-const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, onEdit }) => {
+const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, onEdit, clarificationInfo }) => {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(msg.content);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const [bubbleHovered, setBubbleHovered] = useState(false);
+  const [popoverFlip, setPopoverFlip] = useState(false);
+  const bubbleRef = useRef<HTMLDivElement>(null);
 
   const openEdit = useCallback(() => {
     setEditText(msg.content);
@@ -223,9 +301,21 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
       {!editing && (
         <div>
           <FilesDisplay files={msg.attachedFiles} />
-          <div className="message-bubble user-bubble">
+          <div
+            ref={bubbleRef}
+            className="message-bubble user-bubble"
+            style={{ position: 'relative' }}
+            onMouseEnter={() => {
+              if (!clarificationInfo) return;
+              const rect = bubbleRef.current?.getBoundingClientRect();
+              setPopoverFlip(!!rect && rect.top < 160);
+              setBubbleHovered(true);
+            }}
+            onMouseLeave={() => setBubbleHovered(false)}
+          >
             <SkillTag skill={msg.skill} skillLabel={msg.skillLabel} />
             <div className="message-text">{msg.content}</div>
+            {clarificationInfo && <ClarificationPopover info={clarificationInfo} visible={bubbleHovered} flipBelow={popoverFlip} />}
           </div>
           <div className="user-message-actions">
             {!isOptimizing && (
@@ -577,12 +667,13 @@ interface TurnItemProps {
   onInsertSection?: (sectionIdx: number, text: string) => void;
   insertedSections?: Set<number>;
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  clarificationInfo?: ClarificationInfo;
 }
 
 const TurnItem: React.FC<TurnItemProps> = ({
   turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
-  onInsertSection, insertedSections, sourceInfo,
+  onInsertSection, insertedSections, sourceInfo, clarificationInfo,
 }) => {
   const uIdx = turn.userActiveIdx;
   const assistGroup = turn.assistantGroups[uIdx];
@@ -598,6 +689,7 @@ const TurnItem: React.FC<TurnItemProps> = ({
             turnIdx={turnIdx}
             isOptimizing={isOptimizing}
             onEdit={onEditCommit}
+            clarificationInfo={i === 0 ? clarificationInfo : undefined}
           />
         </div>
       ))}
@@ -666,13 +758,14 @@ interface ChatAreaProps {
   onInsertSection?: (sectionIdx: number, text: string) => void;
   insertedSections?: Set<number>;
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  clarificationAnswersByTurn?: Record<number, ClarificationInfo>;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
   clarificationData, onSubmitClarification, onSkipClarification,
-  onInsertSection, insertedSections, sourceInfo,
+  onInsertSection, insertedSections, sourceInfo, clarificationAnswersByTurn,
 }) => {
   const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -728,6 +821,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onInsertSection={onInsertSection}
           insertedSections={insertedSections}
           sourceInfo={sourceInfo}
+          clarificationInfo={clarificationAnswersByTurn?.[i]}
         />
       ))}
 

@@ -107,6 +107,7 @@ const Index = () => {
   // Clarification state
   const [clarificationData, setClarificationData] = useState<any>(null);
   const pendingClarificationChatId = useRef<string | null>(null);
+  const [clarificationAnswersMap, setClarificationAnswersMap] = useState<Record<string, { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
 
   // Message version tree (edit/retry creates branches instead of slicing)
   const messageTree = useMessageTree();
@@ -846,6 +847,11 @@ const Index = () => {
   };
 
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    const lastUserMsg = [...messagesRef.current].reverse().find(m => m.role === 'user');
+    if (lastUserMsg) {
+      const questions = (clarificationData?.questions || []).map((q: any) => q.question as string);
+      setClarificationAnswersMap(prev => ({ ...prev, [lastUserMsg.id]: { questions, answers, mode: wantsSections ? 'tasks' : 'single' } }));
+    }
     setClarificationData(null);
     setIsGenerating(true);
     startStreaming();
@@ -1390,6 +1396,7 @@ Your prompt was: "${content}"`;
             setSelectedSkill={setSelectedSkill}
             clarificationData={clarificationData}
             onSubmitClarification={handleSubmitClarification}
+            clarificationAnswersMap={clarificationAnswersMap}
           />
         );
     }
