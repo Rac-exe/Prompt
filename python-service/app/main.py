@@ -820,6 +820,19 @@ async def optimize_stream(websocket: WebSocket):
                 loop = asyncio.get_event_loop()
                 chunk_queue: asyncio.Queue = asyncio.Queue()
 
+                task_plan = None
+                if wants_sections:
+                    from pipeline_v2.task_planner import plan_tasks
+                    task_plan = await loop.run_in_executor(
+                        None,
+                        lambda: plan_tasks(
+                            user_input=prompt_text,
+                            model=SUMMARIZER_MODEL,
+                            provider="auto",
+                        ),
+                    )
+                    logger.info(f"Task plan: {len(task_plan) if task_plan else 0} tasks")
+
                 def run_stream():
                     """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""
                     try:
@@ -837,6 +850,7 @@ async def optimize_stream(websocket: WebSocket):
                             models_info=models_info,
                             clarification_answers=clarification_answers,
                             wants_sections=wants_sections,
+                            task_plan=task_plan,
                         )
                         for chunk in gen:
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)

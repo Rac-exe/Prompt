@@ -157,6 +157,46 @@ Compress this conversation into the required JSON format."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Task-plan aware delivery format
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_delivery_format(task_plan: Optional[list] = None) -> str:
+    """Build the DELIVERY FORMAT appendix for the system prompt.
+
+    When a task_plan is available (from task_planner.py), each task gets a
+    precise state anchor so the optimizer writes continuations, not repeats.
+    Without a plan, falls back to the original generic instruction.
+    """
+    if task_plan:
+        plan_text = "\n".join(
+            f"Task {t['number']}: {t['name']}\n"
+            f"  Goal: {t['goal']}\n"
+            f"  Produces: {', '.join(t.get('produces', []))}\n"
+            f"  State after: {t.get('state_after', '')}"
+            for t in task_plan
+        )
+        return (
+            "\n\nTASK PLAN (use this to write accurate state declarations):\n"
+            f"{plan_text}\n\n"
+            "DELIVERY FORMAT: Write each task as a standalone executable prompt "
+            "for an AI coding assistant using the hybrid format:\n"
+            "1. One-line project anchor (tech stack + goal)\n"
+            "2. 'At this point:' — list what previous tasks built (from the plan above)\n"
+            "3. Task instructions — actionable, specific, not spec-like\n"
+            "4. Exit condition — what should work/exist when done\n"
+            "Use ## Task N: Name as the heading. Each task must be independently "
+            "executable if pasted into the same ongoing chat."
+        )
+    return (
+        "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
+        "Output each section with a ## Section Title header followed by its prompt content. "
+        "Within each section, use bullet points (- ) for individual requirements and instructions. "
+        "Never write dense paragraphs — every requirement must be its own bullet point. "
+        "Sections should be self-contained and executable in sequence."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LLM 2 — Prompt Optimizer (DT + SF + PO)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -174,6 +214,7 @@ def optimize(
     models_info: Optional[Dict] = None,
     clarification_answers: Optional[str] = None,
     wants_sections: bool = False,
+    task_plan: Optional[list] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -246,13 +287,7 @@ def optimize(
         system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
 
         if wants_sections:
-            system_content += (
-                "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
-                "Output each section with a ## Section Title header followed by its prompt content. "
-                "Within each section, use bullet points (- ) for individual requirements and instructions. "
-                "Never write dense paragraphs — every requirement must be its own bullet point. "
-                "Sections should be self-contained and executable in sequence."
-            )
+            system_content += _build_delivery_format(task_plan)
 
         if custom_instructions and custom_instructions.strip():
             system_content += (
@@ -338,13 +373,7 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             user_prompt = user_prompt + regen_instruction
 
         if wants_sections:
-            system_prompt += (
-                "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
-                "Output each section with a ## Section Title header followed by its prompt content. "
-                "Within each section, use bullet points (- ) for individual requirements and instructions. "
-                "Never write dense paragraphs — every requirement must be its own bullet point. "
-                "Sections should be self-contained and executable in sequence."
-            )
+            system_prompt += _build_delivery_format(task_plan)
 
         if custom_instructions and custom_instructions.strip():
             system_prompt += (
