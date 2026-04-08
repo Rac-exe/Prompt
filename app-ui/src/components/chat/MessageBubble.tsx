@@ -45,7 +45,6 @@ interface MessageBubbleProps {
   /** Version info for user messages — shown inline with the edit button */
   versionInfo?: { current: number; total: number; parentId: string };
   onNavigateVersion?: (parentId: string, direction: 'prev' | 'next') => void;
-  clarificationInfo?: { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' };
 }
 
 interface ParsedSection { title: string; content: string }
@@ -121,70 +120,9 @@ const SectionedContent = ({ content }: { content: string }) => {
   );
 };
 
-const DELIVERY_KW = ['task sections', 'broken into', 'delivery', 'one complete', 'delivered'];
-const isDeliveryQ = (q: string) => DELIVERY_KW.some(k => q.toLowerCase().includes(k));
-
-const ClarificationPopoverApp: React.FC<{ info: { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' }; visible: boolean; flipBelow?: boolean }> = ({ info, visible, flipBelow }) => {
-  const { questions, answers, mode } = info;
-  const allKeys = (questions.length > 0 ? questions : Object.keys(answers)).filter(k => !isDeliveryQ(k));
-  if (allKeys.length === 0 && !mode) return null;
-
-  const posClass = flipBelow ? 'absolute top-full right-0 mt-2 z-50' : 'absolute bottom-full right-0 mb-2 z-50';
-  const hiddenY = flipBelow ? 'translateY(-6px)' : 'translateY(6px)';
-
-  return (
-    <div
-      className={posClass}
-      style={{
-        minWidth: 260, maxWidth: 340, padding: '14px 16px',
-        borderRadius: 14, background: '#fff', border: 'none',
-        boxShadow: '0 8px 30px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)',
-        opacity: visible ? 1 : 0,
-        pointerEvents: visible ? 'auto' : 'none',
-        transform: visible ? 'translateY(0)' : hiddenY,
-        transition: 'opacity 120ms ease, transform 120ms ease',
-      }}
-    >
-      {/* Mode pills */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-        <div style={{
-          padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, letterSpacing: '0.01em',
-          background: mode === 'single' ? 'rgba(0,0,0,0.06)' : 'transparent',
-          color: mode === 'single' ? '#333' : '#ccc',
-        }}>
-          Single Prompt
-        </div>
-        <div style={{
-          padding: '4px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600, letterSpacing: '0.01em',
-          background: mode === 'tasks' ? 'rgba(16,185,129,0.1)' : 'transparent',
-          color: mode === 'tasks' ? 'rgb(16,185,129)' : '#ccc',
-        }}>
-          Tasks
-        </div>
-      </div>
-
-      {allKeys.length > 0 && (
-        <>
-          <div style={{ height: 1, background: 'rgba(0,0,0,0.06)', marginBottom: 10 }} />
-
-          {allKeys.map((key, idx) => {
-            const val = answers[key];
-            return (
-              <div key={key} style={{ marginBottom: idx === allKeys.length - 1 ? 0 : 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 500, color: '#999', marginBottom: 2, lineHeight: 1.3 }}>{key}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#1a1a1a', lineHeight: 1.4 }}>{val || '—'}</div>
-              </div>
-            );
-          })}
-        </>
-      )}
-    </div>
-  );
-};
-
 export const MessageBubble = ({
   message, onCopy, onSave, isSaved, onFeedback, onEdit, onRegenerate, isGenerating, fileContextCount, avatarUrl,
-  versionInfo, onNavigateVersion, clarificationInfo,
+  versionInfo, onNavigateVersion,
 }: MessageBubbleProps) => {
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -192,9 +130,6 @@ export const MessageBubble = ({
   const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const isUser = message.role === "user";
-  const [bubbleHovered, setBubbleHovered] = useState(false);
-  const [popoverFlip, setPopoverFlip] = useState(false);
-  const bubbleRef = useRef<HTMLDivElement>(null);
 
   // Auto-expand edit textarea whenever editValue changes
   useEffect(() => {
@@ -400,19 +335,8 @@ export const MessageBubble = ({
                 );
               })()}
               
-              <div
-                ref={bubbleRef}
-                className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3 relative"
-                onMouseEnter={() => {
-                  if (!clarificationInfo) return;
-                  const rect = bubbleRef.current?.getBoundingClientRect();
-                  setPopoverFlip(!!rect && rect.top < 180);
-                  setBubbleHovered(true);
-                }}
-                onMouseLeave={() => setBubbleHovered(false)}
-              >
+              <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>
-                {clarificationInfo && <ClarificationPopoverApp info={clarificationInfo} visible={bubbleHovered} flipBelow={popoverFlip} />}
               </div>
               {/* Action row — always visible, contains edit button + version navigator */}
               {!isGenerating && (onEdit || (versionInfo && versionInfo.total > 1)) && (

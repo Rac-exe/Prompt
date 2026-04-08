@@ -532,6 +532,9 @@ const electronAPI = {
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
     previousContent?: string;
+    clarificationAnswers?: string;
+    wantsSections?: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => {
     ipcRenderer.send('app:regenerate-response', data);
   },
@@ -544,6 +547,7 @@ const electronAPI = {
     chatId: string;
     answers: Record<string, string>;
     wantsSections: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => {
     ipcRenderer.send('app:submit-clarification', data);
   },

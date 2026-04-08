@@ -28,6 +28,31 @@ interface ClarificationCardProps {
   onSubmit: (answers: Record<string, string>, wantsSections: boolean) => void;
   onSkip: () => void;
   compact?: boolean;
+  /** Pre-fill selections from a previous submission (re-edit flow). */
+  initialAnswers?: Record<string, string>;
+  /** Override the submit button label (default: "Optimize"). */
+  submitLabel?: string;
+  /** Override the skip button label (default: "Skip — just optimize"). */
+  skipLabel?: string;
+}
+
+/**
+ * Parse a comma-joined answer string back into a set of selected options
+ * and leftover "other" text that doesn't match any known option.
+ */
+function parseAnswerToSelections(
+  answerStr: string,
+  options: string[],
+): { selected: Set<string>; otherText: string } {
+  const parts = answerStr.split(", ");
+  const optionSet = new Set(options);
+  const selected = new Set<string>();
+  const otherParts: string[] = [];
+  for (const part of parts) {
+    if (optionSet.has(part)) selected.add(part);
+    else if (part) otherParts.push(part);
+  }
+  return { selected, otherText: otherParts.join(", ") };
 }
 
 export const ClarificationCard = ({
@@ -37,24 +62,71 @@ export const ClarificationCard = ({
   onSubmit,
   onSkip,
   compact = false,
+  initialAnswers,
+  submitLabel = "Optimize",
+  skipLabel = "Skip — just optimize",
 }: ClarificationCardProps) => {
-  const [selections, setSelections] = useState<Record<string, Set<string>>>({});
-  const [otherActive, setOtherActive] = useState<Record<string, boolean>>({});
-  const [otherTexts, setOtherTexts] = useState<Record<string, string>>({});
-  const [textAnswers, setTextAnswers] = useState<Record<string, string>>({});
-  const [extraNotes, setExtraNotes] = useState("");
-  const [visibleCount, setVisibleCount] = useState(0);
+  const [selections, setSelections] = useState<Record<string, Set<string>>>(() => {
+    if (!initialAnswers) return {};
+    const sel: Record<string, Set<string>> = {};
+    for (const q of questions) {
+      if (q.type !== "multiple_choice") continue;
+      const raw = initialAnswers[q.question] || "";
+      if (!raw) continue;
+      const { selected } = parseAnswerToSelections(raw, q.options);
+      if (selected.size > 0) sel[q.id] = selected;
+    }
+    return sel;
+  });
+  const [otherActive, setOtherActive] = useState<Record<string, boolean>>(() => {
+    if (!initialAnswers) return {};
+    const oa: Record<string, boolean> = {};
+    for (const q of questions) {
+      if (q.type !== "multiple_choice") continue;
+      const raw = initialAnswers[q.question] || "";
+      if (!raw) continue;
+      const { otherText } = parseAnswerToSelections(raw, q.options);
+      if (otherText) oa[q.id] = true;
+    }
+    return oa;
+  });
+  const [otherTexts, setOtherTexts] = useState<Record<string, string>>(() => {
+    if (!initialAnswers) return {};
+    const ot: Record<string, string> = {};
+    for (const q of questions) {
+      if (q.type !== "multiple_choice") continue;
+      const raw = initialAnswers[q.question] || "";
+      if (!raw) continue;
+      const { otherText } = parseAnswerToSelections(raw, q.options);
+      if (otherText) ot[q.id] = otherText;
+    }
+    return ot;
+  });
+  const [textAnswers, setTextAnswers] = useState<Record<string, string>>(() => {
+    if (!initialAnswers) return {};
+    const ta: Record<string, string> = {};
+    for (const q of questions) {
+      if (q.type === "multiple_choice") continue;
+      const raw = initialAnswers[q.question] || "";
+      if (raw) ta[q.id] = raw;
+    }
+    return ta;
+  });
+  const [extraNotes, setExtraNotes] = useState(() => initialAnswers?.["Additional context"] || "");
+  const hasInitialAnswers = !!initialAnswers;
+  const [visibleCount, setVisibleCount] = useState(hasInitialAnswers ? questions.length + 1 : 0);
   const [submitted, setSubmitted] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (hasInitialAnswers) return;
     if (visibleCount >= questions.length + 1) return;
     const timer = setTimeout(
       () => setVisibleCount((c) => c + 1),
       visibleCount === 0 ? 150 : 120
     );
     return () => clearTimeout(timer);
-  }, [visibleCount, questions.length]);
+  }, [visibleCount, questions.length, hasInitialAnswers]);
 
   const toggleOption = useCallback((qId: string, option: string) => {
     setSelections((prev) => {
@@ -418,7 +490,7 @@ export const ClarificationCard = ({
                 compact ? "text-[10px]" : "text-[11px]"
               )}
             >
-              Skip — just optimize
+              {skipLabel}
               <ArrowRight size={compact ? 9 : 10} weight="bold" />
             </button>
 
@@ -434,7 +506,7 @@ export const ClarificationCard = ({
               )}
             >
               <Lightning size={compact ? 11 : 13} weight="fill" />
-              Optimize
+              {submitLabel}
             </button>
           </div>
         </div>

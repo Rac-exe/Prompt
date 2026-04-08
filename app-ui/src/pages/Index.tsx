@@ -10,6 +10,7 @@ import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { Message } from "@/components/chat/MessageBubble";
+import type { ClarifyQuestion } from "@/components/chat/ClarificationCard";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
@@ -106,8 +107,16 @@ const Index = () => {
 
   // Clarification state
   const [clarificationData, setClarificationData] = useState<any>(null);
+  const clarificationDataRef = useRef<any>(null);
+  clarificationDataRef.current = clarificationData;
   const pendingClarificationChatId = useRef<string | null>(null);
-  const [clarificationAnswersMap, setClarificationAnswersMap] = useState<Record<string, { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
+  // Keyed by **assistant** message ID so each version keeps its own choices
+  const [clarificationAnswersMap, setClarificationAnswersMap] = useState<Record<string, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
+  // Holds choices temporarily until the assistant message ID is known.
+  // _pendingKey is the temp key used in the map so the card stays visible during streaming.
+  const pendingClarificationChoices = useRef<{ questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks'; _pendingKey?: string } | null>(null);
+  const clarificationAnswersMapRef = useRef(clarificationAnswersMap);
+  clarificationAnswersMapRef.current = clarificationAnswersMap;
 
   // Message version tree (edit/retry creates branches instead of slicing)
   const messageTree = useMessageTree();
@@ -314,6 +323,18 @@ const Index = () => {
       setMessages((prev) => {
         if (prev.some(m => m.id === finalMessage.id)) return prev;
         return [...prev, finalMessage];
+      });
+    }
+
+    // Associate pending clarification choices with this assistant message
+    const pendingChoices = pendingClarificationChoices.current;
+    if (pendingChoices) {
+      pendingClarificationChoices.current = null;
+      const { _pendingKey, ...choices } = pendingChoices;
+      setClarificationAnswersMap(prev => {
+        const next = { ...prev, [finalMessage.id]: choices };
+        if (_pendingKey && next[_pendingKey]) delete next[_pendingKey];
+        return next;
       });
     }
 
@@ -699,6 +720,15 @@ const Index = () => {
           if (!editInProgressRef.current && !sendingRef.current) {
             messageTree.init(formattedMessages);
           }
+
+          // Reconstruct clarification choices from assistant message metadata
+          const restoredChoices: Record<string, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }> = {};
+          for (const msg of data.messages) {
+            if (msg.role === 'assistant' && msg.metadata?.clarificationChoices) {
+              restoredChoices[msg.id] = msg.metadata.clarificationChoices;
+            }
+          }
+          setClarificationAnswersMap(restoredChoices);
         }
       };
 
@@ -830,6 +860,7 @@ const Index = () => {
   const handleSelectChat = useCallback((chatId: string) => {
     if (chatId === selectedChatIdRef.current) return;
     detachFromActiveGeneration();
+    setClarificationAnswersMap({});
     setSelectedChatId(chatId);
   }, [detachFromActiveGeneration]);
 
@@ -847,11 +878,24 @@ const Index = () => {
   };
 
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    const currentClarification = clarificationDataRef.current;
     const lastUserMsg = [...messagesRef.current].reverse().find(m => m.role === 'user');
-    if (lastUserMsg) {
-      const questions = (clarificationData?.questions || []).map((q: any) => q.question as string);
-      setClarificationAnswersMap(prev => ({ ...prev, [lastUserMsg.id]: { questions, answers, mode: wantsSections ? 'tasks' : 'single' } }));
+    const questions: ClarifyQuestion[] = (currentClarification?.questions || []).map((q: any) => ({
+      id: q.id,
+      question: q.question,
+      type: q.type,
+      options: q.options || [],
+      optional: q.optional ?? false,
+    }));
+    const choicesPayload = { questions, answers, mode: (wantsSections ? 'tasks' : 'single') as 'single' | 'tasks' };
+
+    // Store in map immediately with a temp key so the card is visible during streaming
+    const pendingKey = lastUserMsg ? `_pending_${lastUserMsg.id}` : undefined;
+    if (pendingKey) {
+      setClarificationAnswersMap(prev => ({ ...prev, [pendingKey]: choicesPayload }));
     }
+    pendingClarificationChoices.current = { ...choicesPayload, _pendingKey: pendingKey };
+
     setClarificationData(null);
     setIsGenerating(true);
     startStreaming();
@@ -860,6 +904,7 @@ const Index = () => {
         chatId: pendingClarificationChatId.current,
         answers,
         wantsSections,
+        clarificationChoices: choicesPayload,
       });
     }
   }, [startStreaming]);
@@ -1018,6 +1063,74 @@ Your prompt was: "${content}"`;
         attachedFiles: userMsg.attachedFiles as any,
         forcedSkill: userMsg.selectedSkill || null,
         previousContent: originalAssistant?.content || undefined,
+      });
+    }
+
+    setIsGenerating(true);
+    generationStartTime.current = performance.now();
+    setGenerationStats({ ttft: null, total: null });
+    startStreaming();
+  }, [selectedChatId, mode, startStreaming, messageTree]);
+
+  // Re-optimize with changed clarification answers: finds the assistant
+  // message after the given user message and regenerates it with new answers.
+  const handleReoptimize = useCallback((userMessageId: string, newAnswers: Record<string, string>, wantsSections: boolean) => {
+    if (sendingRef.current || !selectedChatId) return;
+
+    const activePath = messageTree.getActivePath();
+    const uIdx = activePath.indexOf(userMessageId);
+    if (uIdx < 0 || uIdx >= activePath.length - 1) return;
+
+    const assistantMsgId = activePath[uIdx + 1];
+    const assistantMsg = messagesRef.current.find(m => m.id === assistantMsgId);
+    if (!assistantMsg || assistantMsg.role !== 'assistant') return;
+
+    const userMsg = messagesRef.current.find(m => m.id === userMessageId);
+    if (!userMsg) return;
+
+    // Build the choices payload — stored in ref until the new assistant ID arrives
+    const prevInfo = clarificationAnswersMapRef.current[assistantMsgId];
+    const choicesPayload = {
+      questions: prevInfo?.questions || [],
+      answers: newAnswers,
+      mode: (wantsSections ? 'tasks' : 'single') as 'single' | 'tasks',
+    };
+    // Also store immediately with a temp key so the summary stays visible during streaming
+    const pendingKey = `_pending_${userMessageId}`;
+    setClarificationAnswersMap(prev => ({ ...prev, [pendingKey]: choicesPayload }));
+    pendingClarificationChoices.current = { ...choicesPayload, _pendingKey: pendingKey };
+
+    // Format answers the same way the backend expects
+    const formattedAnswers = Object.entries(newAnswers)
+      .filter(([, v]) => v && v.trim())
+      .map(([key, val]) => `- ${key}: ${val}`)
+      .join('\n');
+
+    const groupId = assistantMsg.groupId || assistantMsgId;
+    const existingCount = messagesRef.current.filter(m => m.groupId === groupId).length;
+    const versionIndex = existingCount > 0 ? existingCount : 1;
+
+    const placeholderId = `reopt-placeholder-${Date.now()}`;
+
+    sendingRef.current = true;
+    editInProgressRef.current = true;
+    pendingRegenPlaceholderId.current = placeholderId;
+
+    messageTree.addBranch(assistantMsgId, placeholderId);
+
+    if (isElectron && window.electronAPI?.regenerateResponse) {
+      window.electronAPI.regenerateResponse({
+        chatId: selectedChatId,
+        content: userMsg.content,
+        mode,
+        groupId,
+        versionIndex,
+        attachedFiles: userMsg.attachedFiles as any,
+        forcedSkill: userMsg.selectedSkill || null,
+        previousContent: assistantMsg.content || undefined,
+        clarificationAnswers: formattedAnswers || undefined,
+        wantsSections,
+        clarificationChoices: choicesPayload,
       });
     }
 
@@ -1397,6 +1510,7 @@ Your prompt was: "${content}"`;
             clarificationData={clarificationData}
             onSubmitClarification={handleSubmitClarification}
             clarificationAnswersMap={clarificationAnswersMap}
+            onReoptimize={handleReoptimize}
           />
         );
     }
