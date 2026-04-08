@@ -9,6 +9,7 @@ import ChatPicker from './components/ChatPicker';
 import CollectionPicker from './components/CollectionPicker';
 import { useTurns } from './hooks/useTurns';
 import type { AttachedFile, SkillInfo, OverlaySettings } from './lib/types';
+import type { ClarifyQuestion } from '@/components/chat/ClarificationCard';
 import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 // ── Settings helpers ─────────────────────────────────────────────────────────
@@ -55,7 +56,9 @@ const OverlayApp: React.FC = () => {
 
   // ── Clarification state ─────────────────────────────────────────────────
   const [clarificationData, setClarificationData] = useState<any>(null);
-  const [clarificationAnswersByTurn, setClarificationAnswersByTurn] = useState<Record<number, { questions: string[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
+  const clarificationDataRef = useRef<any>(null);
+  clarificationDataRef.current = clarificationData;
+  const [clarificationAnswersByTurn, setClarificationAnswersByTurn] = useState<Record<number, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
 
   // ── Section insert state ────────────────────────────────────────────────
   const [insertedSections, setInsertedSections] = useState<Set<number>>(new Set());
@@ -290,23 +293,92 @@ const OverlayApp: React.FC = () => {
 
   // ── Submit clarification answers ──
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    const currentClarification = clarificationDataRef.current;
     const turnIdx = turns.length - 1;
     if (turnIdx >= 0) {
-      const questions = (clarificationData?.questions || []).map((q: any) => q.question as string);
+      const questions: ClarifyQuestion[] = (currentClarification?.questions || []).map((q: any) => ({
+        id: q.id,
+        question: q.question,
+        type: q.type,
+        options: q.options || [],
+        optional: q.optional ?? false,
+      }));
       setClarificationAnswersByTurn(prev => ({ ...prev, [turnIdx]: { questions, answers, mode: wantsSections ? 'tasks' : 'single' } }));
     }
+    const choicesPayload = turnIdx >= 0
+      ? { questions: (currentClarification?.questions || []).map((q: any) => ({ id: q.id, question: q.question, type: q.type, options: q.options || [], optional: q.optional ?? false })), answers, mode: wantsSections ? 'tasks' : 'single' }
+      : undefined;
+
     setClarificationData(null);
     setIsOptimizing(true);
     setIsLoading(true);
     setErrorMessage(null);
     setStreamingContent('');
-    window.electronAPI?.overlay?.submitClarification?.({ answers, wantsSections });
+    window.electronAPI?.overlay?.submitClarification?.({ answers, wantsSections, clarificationChoices: choicesPayload });
   }, [turns.length]);
 
   // ── Skip clarification ──
   const handleSkipClarification = useCallback(() => {
     handleSubmitClarification({}, false);
   }, [handleSubmitClarification]);
+
+  // ── Re-optimize with changed clarification answers ──
+  const handleReoptimize = useCallback((turnIdx: number, newAnswers: Record<string, string>, wantsSections: boolean) => {
+    if (isOptimizing) return;
+    const turn = turns[turnIdx];
+    if (!turn) return;
+
+    const activeUserVer = turn.userVersions[turn.userActiveIdx];
+    if (!activeUserVer) return;
+
+    // Update stored choices
+    const prevInfo = clarificationAnswersByTurn[turnIdx];
+    setClarificationAnswersByTurn(prev => ({
+      ...prev,
+      [turnIdx]: {
+        questions: prevInfo?.questions || [],
+        answers: newAnswers,
+        mode: wantsSections ? 'tasks' : 'single',
+      },
+    }));
+
+    // Format answers for the backend
+    const formattedAnswers = Object.entries(newAnswers)
+      .filter(([, v]) => v && v.trim())
+      .map(([key, val]) => `- ${key}: ${val}`)
+      .join('\n');
+
+    // Use the regenerate flow with clarification answers
+    const result = prepareRegenerate(turnIdx);
+    if (!result) return;
+
+    setIsOptimizing(true);
+    setErrorMessage(null);
+    setIsLoading(true);
+    setStreamingContent('');
+    streamingTurnIdxRef.current = turnIdx;
+
+    const choicesPayload = {
+      questions: prevInfo?.questions || [],
+      answers: newAnswers,
+      mode: wantsSections ? 'tasks' : 'single',
+    };
+
+    window.electronAPI?.overlay?.optimize?.({
+      text: activeUserVer.content,
+      isRegenerate: true,
+      mode: currentMode,
+      chatId: selectedChatId || undefined,
+      attachedFiles: activeUserVer.attachedFiles?.length ? activeUserVer.attachedFiles : undefined,
+      forcedSkill: activeUserVer.skill || undefined,
+      assistantGroupId: result.assistGroupId,
+      assistantVersionIndex: result.assistVerIdx,
+      previousOutput: result.previousAssistantContent || undefined,
+      clarificationAnswers: formattedAnswers || undefined,
+      wantsSections,
+      clarificationChoices: choicesPayload,
+    });
+  }, [isOptimizing, turns, clarificationAnswersByTurn, prepareRegenerate, currentMode, selectedChatId]);
 
   // ── Send message ──
   const handleSend = useCallback((text: string) => {
@@ -527,6 +599,7 @@ const OverlayApp: React.FC = () => {
                 insertedSections={insertedSections}
                 sourceInfo={sourceInfo}
                 clarificationAnswersByTurn={clarificationAnswersByTurn}
+                onReoptimize={handleReoptimize}
               />
 
               <InputSection

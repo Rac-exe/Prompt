@@ -226,7 +226,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimize requested', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, isRegenerate: data.isRegenerate } });
     logger.info(logger.fmt`overlay.optimize_requested mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'} isRegenerate=${String(!!data.isRegenerate)}`);
     if (!authState.isAuthenticated) {
@@ -364,7 +364,9 @@ export function registerOverlayHandlers(
         customInstructions,
         data.attachedFiles || [],
         data.forcedSkill || null,
-        data.previousOutput || null
+        data.previousOutput || null,
+        data.clarificationAnswers || null,
+        data.wantsSections,
       );
 
       // Add the assistant's response to history
@@ -463,12 +465,16 @@ export function registerOverlayHandlers(
                   selectedSkill: data.forcedSkill || undefined,
                 }, preId);
               }
+              const optAssistMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex,
+              };
+              if (data.clarificationChoices) optAssistMeta.clarificationChoices = data.clarificationChoices;
               const assistantMsg = await svc.addMessage(
                 targetChatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                optAssistMeta
               );
 
               // Update cache
@@ -574,12 +580,16 @@ export function registerOverlayHandlers(
                   });
                 }
               }
+              const olOptAssistMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex,
+              };
+              if (data.clarificationChoices) olOptAssistMeta.clarificationChoices = data.clarificationChoices;
               await svc.addMessage(
                 currentOverlayChatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: olAssistantVersionIndex }
+                olOptAssistMeta
               );
 
               if (authState.currentUserId) {
@@ -1046,6 +1056,7 @@ export function registerOverlayHandlers(
   ipcMain.on('overlay:submit-clarification', async (_event, submitData: {
     answers: Record<string, string>;
     wantsSections: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => {
     const pending = pendingOverlayClarification;
     if (!pending) {
@@ -1151,12 +1162,16 @@ export function registerOverlayHandlers(
                   selectedSkill: pending.data.forcedSkill || undefined,
                 }, preId);
               }
+              const clarifyAssistMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex,
+              };
+              if (submitData.clarificationChoices) clarifyAssistMeta.clarificationChoices = submitData.clarificationChoices;
               const assistantMsg = await svc.addMessage(
                 targetChatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                clarifyAssistMeta
               );
 
               if (authState.currentUserId) {
@@ -1212,12 +1227,16 @@ export function registerOverlayHandlers(
                   versionIndex: pending.data.userVersionIndex ?? 0,
                 });
               }
+              const olClarifyAssistMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: pending.data.assistantVersionIndex ?? 0,
+              };
+              if (submitData.clarificationChoices) olClarifyAssistMeta.clarificationChoices = submitData.clarificationChoices;
               await svc.addMessage(
                 currentOverlayChatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, source_app: 'overlay', groupId: olAssistantGroupId, versionIndex: pending.data.assistantVersionIndex ?? 0 }
+                olClarifyAssistMeta
               );
 
               if (authState.currentUserId) {
