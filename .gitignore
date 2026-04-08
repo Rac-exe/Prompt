@@ -3,6 +3,9 @@ node_modules/
 python-service/venv/
 python-service/__pycache__/
 python-service/**/__pycache__/
+code-intelligence-service/venv/
+code-intelligence-service/__pycache__/
+code-intelligence-service/**/__pycache__/
 
 # Build outputs
 dist/
