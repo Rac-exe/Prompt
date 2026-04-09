@@ -35,13 +35,30 @@ Return ONLY valid JSON (no markdown, no prose) with this schema:
 }
 
 RULES:
-1. Set should_clarify to true for any prompt that has meaningful ambiguity — tech stack, tone, audience, scope, features, format, etc.
+1. Set should_clarify to true for any prompt that has meaningful ambiguity. Almost every prompt benefits from clarification — default to true.
 2. Set should_clarify to false ONLY if the prompt is very simple, already fully specified, or is a follow-up refinement like "make it shorter."
 3. Generate 2-4 questions. ALWAYS use "multiple_choice" with 3-5 concrete options. Never use "text" type.
 4. Infer questions from what the prompt is missing — do not hardcode. Read the prompt and figure out what is underspecified.
 5. For multi-part builds (apps, systems, workflows): set is_complex to true, fill suggested_sections, and include a delivery format question asking "One complete prompt" vs "Broken into task sections."
 6. Never ask about things the user already specified.
-7. When should_clarify is false, return empty questions and suggested_sections arrays."""
+7. When should_clarify is false, return empty questions and suggested_sections arrays.
+
+CRITICAL — DETECT MISSING CONTEXT BY CATEGORY:
+For CODE / TECHNICAL / BUG FIX prompts (mentions code, buttons, CSS, API, database, components, etc.):
+  - If no tech stack / framework specified → ASK (e.g. "React + Tailwind", "Vue + CSS", "Vanilla HTML/CSS/JS", "Next.js", "Flutter")
+  - If no project type specified → ASK (e.g. "Web app", "Mobile app", "Desktop app", "CLI tool")
+  - If referring to existing code ("fix this", "change that") but no context about codebase → ASK what framework, styling approach, or component library they use
+
+For WRITING / CONTENT prompts (blog, email, article, social media, etc.):
+  - If no tone specified → ASK
+  - If no audience specified → ASK
+  - If no length/format specified → ASK
+
+For BUSINESS / STRATEGY prompts:
+  - If no industry/domain specified → ASK
+  - If no audience or stakeholders specified → ASK
+
+The optimizer WILL fabricate details if you don't ask. Missing tech stack is the #1 cause of bad outputs — a prompt about "fixing button hover styles" will get "HTML/CSS/JS typing practice app" hallucinated if you don't ask what framework they use. Your job is to prevent that."""
 
 
 _FAIL_SAFE: Dict[str, Any] = {
