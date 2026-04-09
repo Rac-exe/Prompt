@@ -681,6 +681,7 @@ interface ChatAreaProps {
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
   clarificationAnswersByTurn?: Record<number, ClarificationInfo>;
   onReoptimize?: (turnIdx: number, answers: Record<string, string>, wantsSections: boolean) => void;
+  onRetry?: () => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
@@ -688,6 +689,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
   clarificationData, onSubmitClarification, onSkipClarification,
   onInsertSection, insertedSections, sourceInfo, clarificationAnswersByTurn, onReoptimize,
+  onRetry,
 }) => {
   const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -760,10 +762,18 @@ const ChatArea: React.FC<ChatAreaProps> = ({
         />
       )}
 
-      {/* Error banner */}
+      {/* Error banner with retry */}
       {errorMessage && (
-        <div className="error-banner" style={{ display: 'block' }}>
+        <div className="error-banner" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
           <span>{errorMessage}</span>
+          {onRetry && (
+            <button
+              onClick={() => { onRetry(); }}
+              className="error-retry-btn"
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 

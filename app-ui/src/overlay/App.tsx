@@ -51,6 +51,7 @@ const OverlayApp: React.FC = () => {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const lastOptimizeRequestRef = useRef<any>(null);
   const [streamingContent, setStreamingContent] = useState('');
   const [currentMode] = useState<string>('thinking');
 
@@ -197,8 +198,7 @@ const OverlayApp: React.FC = () => {
       setIsLoading(false);
       setStreamingContent('');
       streamingTurnIdxRef.current = -1;
-      setErrorMessage(data.error || 'Optimization failed. Please try again.');
-      setTimeout(() => setErrorMessage(null), 5000);
+      setErrorMessage(data.error || 'Optimization failed.');
     });
 
     // ── File upload partial failure ──
@@ -367,7 +367,7 @@ const OverlayApp: React.FC = () => {
       mode: wantsSections ? 'tasks' : 'single',
     };
 
-    window.electronAPI?.overlay?.optimize?.({
+    const reoptPayload = {
       text: activeUserVer.content,
       isRegenerate: true,
       mode: currentMode,
@@ -380,7 +380,9 @@ const OverlayApp: React.FC = () => {
       clarificationAnswers: formattedAnswers || undefined,
       wantsSections,
       clarificationChoices: choicesPayload,
-    });
+    };
+    lastOptimizeRequestRef.current = reoptPayload;
+    window.electronAPI?.overlay?.optimize?.(reoptPayload);
   }, [isOptimizing, turns, clarificationAnswersByTurn, prepareRegenerate, currentMode, selectedChatId]);
 
   // ── Send message ──
@@ -400,7 +402,7 @@ const OverlayApp: React.FC = () => {
     const { turnIdx, userGroupId, assistantGroupId } = addUserMessage(text, filesToSend, skillToSend, selectedSkillLabel);
     streamingTurnIdxRef.current = turnIdx;
 
-    window.electronAPI?.overlay?.optimize?.({
+    const optimizePayload = {
       text,
       isRegenerate: false,
       mode: currentMode,
@@ -411,9 +413,10 @@ const OverlayApp: React.FC = () => {
       userVersionIndex: 0,
       assistantGroupId,
       assistantVersionIndex: 0,
-    });
+    };
+    lastOptimizeRequestRef.current = optimizePayload;
+    window.electronAPI?.overlay?.optimize?.(optimizePayload);
 
-    // Clear attached files after sending
     setAttachedFiles([]);
   }, [isOptimizing, attachedFiles, selectedSkill, selectedSkillLabel, addUserMessage, currentMode, selectedChatId]);
 
@@ -446,7 +449,7 @@ const OverlayApp: React.FC = () => {
     setStreamingContent('');
     streamingTurnIdxRef.current = turnIdx;
 
-    window.electronAPI?.overlay?.optimize?.({
+    const editPayload = {
       text: newContent,
       isRegenerate: false,
       mode: currentMode,
@@ -457,7 +460,9 @@ const OverlayApp: React.FC = () => {
       userVersionIndex: result.newUserVerIdx,
       assistantGroupId: result.turn.assistantGroupIds[result.newUserVerIdx],
       assistantVersionIndex: 0,
-    });
+    };
+    lastOptimizeRequestRef.current = editPayload;
+    window.electronAPI?.overlay?.optimize?.(editPayload);
   }, [commitEdit, currentMode, selectedChatId]);
 
   // ── Regenerate ──
@@ -473,7 +478,7 @@ const OverlayApp: React.FC = () => {
     setStreamingContent('');
     streamingTurnIdxRef.current = turnIdx;
 
-    window.electronAPI?.overlay?.optimize?.({
+    const regenPayload = {
       text: result.userVer.content,
       isRegenerate: true,
       mode: currentMode,
@@ -483,8 +488,22 @@ const OverlayApp: React.FC = () => {
       assistantGroupId: result.assistGroupId,
       assistantVersionIndex: result.assistVerIdx,
       previousOutput: result.previousAssistantContent || undefined,
-    });
+    };
+    lastOptimizeRequestRef.current = regenPayload;
+    window.electronAPI?.overlay?.optimize?.(regenPayload);
   }, [isOptimizing, prepareRegenerate, currentMode, selectedChatId]);
+
+  // ── Retry after error ──
+  const handleRetry = useCallback(() => {
+    const payload = lastOptimizeRequestRef.current;
+    if (!payload) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Retry optimization' });
+    setErrorMessage(null);
+    setIsOptimizing(true);
+    setIsLoading(true);
+    setStreamingContent('');
+    window.electronAPI?.overlay?.optimize?.(payload);
+  }, []);
 
   // ── Copy message ──
   const handleCopy = useCallback((msgId: string) => {
@@ -607,6 +626,7 @@ const OverlayApp: React.FC = () => {
                 sourceInfo={sourceInfo}
                 clarificationAnswersByTurn={clarificationAnswersByTurn}
                 onReoptimize={handleReoptimize}
+                onRetry={handleRetry}
               />
 
               <InputSection
