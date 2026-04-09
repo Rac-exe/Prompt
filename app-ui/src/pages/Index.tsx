@@ -994,7 +994,7 @@ Your prompt was: "${content}"`;
     });
   };
 
-  // Retry last failed optimization
+  // Retry last failed optimization (skips message creation in the handler)
   const handleRetry = useCallback(() => {
     const payload = lastSendRequestRef.current;
     if (!payload || !window.electronAPI?.sendMessage) return;
@@ -1002,7 +1002,7 @@ Your prompt was: "${content}"`;
     setSendError(null);
     setIsGenerating(true);
     sendingRef.current = true;
-    window.electronAPI.sendMessage(payload);
+    window.electronAPI.sendMessage({ ...payload, isRetry: true });
   }, []);
 
   // Edit a user message: create a new branch in the version tree instead of

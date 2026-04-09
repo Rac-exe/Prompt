@@ -521,6 +521,7 @@ export function registerChatHandlers(
         forcedSkill?: string | null;
         groupId?: string;
         versionIndex?: number;
+        isRetry?: boolean;
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
         logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'}`);
@@ -649,81 +650,76 @@ export function registerChatHandlers(
             }
 
             // ── Insert message + notify renderer FIRST, upload in background ──
-            // Strategy: DB INSERT with file metadata (no URLs) → fire message-sent
-            // → start uploads in parallel with optimization. This ensures the
-            // renderer shows the user message instantly and DB reloads find it.
-            const userGroupId = data.groupId || crypto.randomUUID();
-            const userVersionIndex = data.versionIndex ?? 0;
-            const preGeneratedMessageId = crypto.randomUUID();
+            // On retry we skip message creation — the user message already exists.
+            let retrySkipMessageId: string | null = null;
 
-            // Insert message to DB with file metadata only (name/type/size).
-            // Cloudinary URLs are backfilled asynchronously after upload completes.
-            const filesMetadataOnly = attachedFiles.map(f => ({
-                name: f.name, mimeType: f.mimeType, sizeBytes: f.sizeBytes,
-            }));
-            const userMessage = await chatService.addMessage(
-                chatId, data.content, 'user', undefined,
-                {
-                    attachedFiles: filesMetadataOnly.length > 0 ? filesMetadataOnly : undefined,
-                    selectedSkill: data.forcedSkill || undefined,
-                    groupId: userGroupId,
-                    versionIndex: userVersionIndex,
-                },
-                preGeneratedMessageId,
-            );
+            if (!data.isRetry) {
+                const userGroupId = data.groupId || crypto.randomUUID();
+                const userVersionIndex = data.versionIndex ?? 0;
+                const preGeneratedMessageId = crypto.randomUUID();
 
-            // Notify renderer immediately — base64 is included for in-session thumbnails.
-            // The DB already has the record, so any selectedChatId-triggered reload will
-            // find it (avoiding the blank-screen flash).
-            if (appWindowManager) {
-                appWindowManager.send('message-sent', {
-                    chatId,
-                    chat,
-                    userMessage: {
-                        id: userMessage.id,
-                        chatId: userMessage.chat_id,
-                        role: userMessage.role,
-                        content: userMessage.content,
-                        createdAt: userMessage.created_at,
-                        attachedFiles: attachedFiles.length > 0 ? attachedFiles : undefined,
-                        selectedSkill: data.forcedSkill || null,
+                const filesMetadataOnly = attachedFiles.map(f => ({
+                    name: f.name, mimeType: f.mimeType, sizeBytes: f.sizeBytes,
+                }));
+                const userMessage = await chatService.addMessage(
+                    chatId, data.content, 'user', undefined,
+                    {
+                        attachedFiles: filesMetadataOnly.length > 0 ? filesMetadataOnly : undefined,
+                        selectedSkill: data.forcedSkill || undefined,
                         groupId: userGroupId,
                         versionIndex: userVersionIndex,
-                    }
-                });
-            }
+                    },
+                    preGeneratedMessageId,
+                );
+                retrySkipMessageId = userMessage.id;
 
-            // Fire-and-forget: upload files to Cloudinary/Supabase Storage in background.
-            // Results are written back to the DB for future sessions; current session
-            // displays thumbnails from in-memory base64.
-            if (attachedFiles.length > 0 && authState.currentUserId) {
-                const userId = authState.currentUserId;
-                (async () => {
-                    try {
-                        const results = await Promise.allSettled(
-                            attachedFiles.map(f =>
-                                uploadAttachment(f, userId, chatId, preGeneratedMessageId, pythonClient)
-                            )
-                        );
-                        const filesForDb = results.map((r, i) => {
-                            if (r.status === 'fulfilled') return r.value;
-                            const uploadErr = (r as PromiseRejectedResult).reason;
-                            console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
-                            Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
-                            return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
-                        });
-                        await chatService.updateMessageAttachments(userMessage.id, filesForDb);
-                        const succeeded = filesForDb.filter((f: any) => !f.uploadFailed).length;
-                        const chatFailedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
-                        Sentry.addBreadcrumb({ category: 'chat', message: 'Background uploads complete', level: 'info', data: { messageId: userMessage.id, succeeded, failed: chatFailedNames.length } });
-                        if (chatFailedNames.length > 0 && appWindowManager) {
-                            appWindowManager.send('upload-partial-failure', { failedFiles: chatFailedNames });
+                if (appWindowManager) {
+                    appWindowManager.send('message-sent', {
+                        chatId,
+                        chat,
+                        userMessage: {
+                            id: userMessage.id,
+                            chatId: userMessage.chat_id,
+                            role: userMessage.role,
+                            content: userMessage.content,
+                            createdAt: userMessage.created_at,
+                            attachedFiles: attachedFiles.length > 0 ? attachedFiles : undefined,
+                            selectedSkill: data.forcedSkill || null,
+                            groupId: userGroupId,
+                            versionIndex: userVersionIndex,
                         }
-                    } catch (bgErr) {
-                        console.error('[Chat] Background upload failed:', bgErr);
-                        Sentry.captureException(bgErr, { tags: { component: 'file-upload-bg' }, extra: { messageId: userMessage.id, chatId } });
-                    }
-                })();
+                    });
+                }
+
+                if (attachedFiles.length > 0 && authState.currentUserId) {
+                    const userId = authState.currentUserId;
+                    (async () => {
+                        try {
+                            const results = await Promise.allSettled(
+                                attachedFiles.map(f =>
+                                    uploadAttachment(f, userId, chatId, preGeneratedMessageId, pythonClient)
+                                )
+                            );
+                            const filesForDb = results.map((r, i) => {
+                                if (r.status === 'fulfilled') return r.value;
+                                const uploadErr = (r as PromiseRejectedResult).reason;
+                                console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
+                                Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
+                                return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
+                            });
+                            await chatService.updateMessageAttachments(userMessage.id, filesForDb);
+                            const succeeded = filesForDb.filter((f: any) => !f.uploadFailed).length;
+                            const chatFailedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
+                            Sentry.addBreadcrumb({ category: 'chat', message: 'Background uploads complete', level: 'info', data: { messageId: userMessage.id, succeeded, failed: chatFailedNames.length } });
+                            if (chatFailedNames.length > 0 && appWindowManager) {
+                                appWindowManager.send('upload-partial-failure', { failedFiles: chatFailedNames });
+                            }
+                        } catch (bgErr) {
+                            console.error('[Chat] Background upload failed:', bgErr);
+                            Sentry.captureException(bgErr, { tags: { component: 'file-upload-bg' }, extra: { messageId: userMessage.id, chatId } });
+                        }
+                    })();
+                }
             }
 
             let customInstructions = '';
@@ -753,7 +749,7 @@ export function registerChatHandlers(
             let messagesContext: Array<{role: string, content: string}> = [];
             try {
                 const history = await chatService.getMessages(chatId);
-                const relevantHistory = history.filter(m => m.id !== userMessage.id).slice(-10);
+                const relevantHistory = history.filter(m => !retrySkipMessageId || m.id !== retrySkipMessageId).slice(-10);
                 messagesContext = relevantHistory.map(m => ({
                     role: m.role,
                     content: m.content
@@ -764,8 +760,9 @@ export function registerChatHandlers(
 
             // ── Clarification check ──────────────────────────────────────────
             // Only on first send (no clarificationAnswers yet) and only for
-            // new requests (not refinements detected by weak-message heuristic)
-            if (!isWeakMessage(data.content)) {
+            // new requests (not refinements detected by weak-message heuristic).
+            // Skip on retry — user already completed clarification.
+            if (!data.isRetry && !isWeakMessage(data.content)) {
                 try {
                     const clarifyResult = await pythonClient.clarify(data.content);
                     Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarify check complete', level: 'info', data: { chatId, should_clarify: clarifyResult.should_clarify, questions: clarifyResult.questions.length, is_complex: clarifyResult.is_complex } });
