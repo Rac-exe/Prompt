@@ -28,6 +28,20 @@ function getServices() {
     return { authService, userService, chatService, promptLibraryService };
 }
 
+const AUTH_DATA_TIMEOUT_MS = 8_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`${label} timed out after ${ms}ms`));
+        }, ms);
+        promise.then(
+            (val) => { clearTimeout(timer); resolve(val); },
+            (err) => { clearTimeout(timer); reject(err); },
+        );
+    });
+}
+
 // Dedup guard: if handleSuccessfulAuth is already in-flight (e.g. auth:check from
 // the renderer racing with checkAndRestoreSession on startup), reuse the existing
 // Promise instead of starting a second parallel Supabase session.
@@ -102,7 +116,8 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
         // Only make network call if we don't already have user data and we're online
         if (!user) {
             if (!networkMonitor.isOnline) {
-                console.warn('[Auth] Offline — cannot validate user via network. Aborting auth load.');
+                console.warn('[Auth] Offline — cannot validate user via network. Sending unauthenticated state.');
+                appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
                 return;
             }
             const result = await authService.getCurrentUser();
@@ -111,6 +126,7 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
 
         if (!user) {
             console.error('[Auth] No user after authentication');
+            appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
             return;
         }
 
@@ -123,13 +139,17 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
             try {
                 const [completeUserData, identitiesResult] = await Sentry.startSpan(
                     { name: 'auth.load-user-data', op: 'http.parallel', attributes: { userId: user.id } },
-                    () => Promise.all([
-                        userService.getCompleteUserData(),
-                        authService.getIdentities().catch(e => {
-                            console.warn('[Auth] Could not load identities:', e);
-                            return { identities: [] as any[], error: null };
-                        }),
-                    ])
+                    () => withTimeout(
+                        Promise.all([
+                            userService.getCompleteUserData(),
+                            authService.getIdentities().catch(e => {
+                                console.warn('[Auth] Could not load identities:', e);
+                                return { identities: [] as any[], error: null };
+                            }),
+                        ]),
+                        AUTH_DATA_TIMEOUT_MS,
+                        'auth.load-user-data',
+                    )
                 );
                 userData = completeUserData;
                 userData.identities = identitiesResult.identities ?? [];
