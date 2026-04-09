@@ -289,6 +289,31 @@ export const SettingsView = () => {
   const userEmail = user?.profile?.email || "";
   const userInitial = (userName[0] || "U").toUpperCase();
 
+  const [editedName, setEditedName] = useState(userName);
+  const [nameSaving, setNameSaving] = useState(false);
+  const nameChanged = editedName.trim() !== userName;
+
+  useEffect(() => { setEditedName(userName); }, [userName]);
+
+  const saveName = async () => {
+    const trimmed = editedName.trim();
+    if (!trimmed || trimmed === userName) return;
+    setNameSaving(true);
+    try {
+      await Sentry.startSpan({ name: 'settings.update-username', op: 'ui.action' }, async () => {
+        if (window.electronAPI?.updateProfile) {
+          window.electronAPI.updateProfile({ name: trimmed });
+        }
+      });
+      toast({ title: "Username updated", description: "Your username has been saved." });
+    } catch (err) {
+      Sentry.captureException(err);
+      toast({ title: "Error", description: "Failed to update username.", variant: "destructive" });
+    } finally {
+      setNameSaving(false);
+    }
+  };
+
   const settingsReadyRef = useRef(false);
 
   useEffect(() => {
@@ -427,10 +452,23 @@ export const SettingsView = () => {
               <Section title="Account Information">
                 <Row>
                   <RowLabel label="Username" />
-                  <Input
-                    defaultValue={userName}
-                    className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={editedName}
+                      onChange={(e) => setEditedName(e.target.value)}
+                      className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
+                    />
+                    {nameChanged && (
+                      <Button
+                        size="sm"
+                        onClick={saveName}
+                        disabled={nameSaving || !editedName.trim()}
+                        className="h-8 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                      >
+                        {nameSaving ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <Check size={14} weight="bold" />}
+                      </Button>
+                    )}
+                  </div>
                 </Row>
                 <Row>
                   <RowLabel label="Email Address" hint="Cannot be changed" />
