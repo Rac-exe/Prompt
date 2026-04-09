@@ -41,9 +41,26 @@ class AnalyticsService {
 
   async startSession(appVersion: string): Promise<void> {
     if (!this.initialized || !this.userId) return;
+    // Guard: a session is already tracked in this process — don't create a duplicate.
+    // This fires when both the SIGNED_IN event and the session-restore path call
+    // startSession() for the same login.
+    if (this.sessionId) return;
 
     try {
       const client = SupabaseClientManager.getClient();
+
+      // Crash-recovery: close any sessions that were left open from a previous
+      // crash (ended_at IS NULL). Duration is set to null to signal it was
+      // unclean, so the dashboard can distinguish normal vs crash endings.
+      await client
+        .from('app_sessions')
+        .update({
+          ended_at: new Date().toISOString(),
+          duration_seconds: null,
+        })
+        .eq('user_id', this.userId)
+        .is('ended_at', null);
+
       const { data, error } = await client
         .from('app_sessions')
         .insert({
