@@ -1910,7 +1910,7 @@ _RELEASES_BASE_URL = os.environ.get(
     "RELEASES_BASE_URL",
     "https://tfetlkkdggdkbuycfoun.supabase.co/storage/v1/object/public/releases",
 )
-_LATEST_APP_VERSION = os.environ.get("LATEST_APP_VERSION", "1.0.0")
+_LATEST_APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
 _SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 _SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
