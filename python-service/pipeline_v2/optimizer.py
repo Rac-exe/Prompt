@@ -409,8 +409,10 @@ def optimize(
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
                 if models_info is not None:
                     models_info["summarizer"] = SUMMARIZER_MODEL
-                from .context import save_chat_context as _save
-                _save(cc)
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Context compacted in-memory",
+                    level="info", data={"kept_recent": CC_KEEP_RECENT, "new_msg_count": len(cc.messages)},
+                )
             except Exception as exc:
                 logger.warning(f"Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
                 sentry_sdk.capture_exception(exc)
