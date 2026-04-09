@@ -17,10 +17,14 @@ import time
 from pathlib import Path
 from typing import Tuple, List, Dict, Union, Optional, Generator
 
+import logging
+
 import litellm
 import sentry_sdk
 
 from .context import ChatContext
+
+logger = logging.getLogger(__name__)
 from .skills import load_selected_skills, load_skill_file
 from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
@@ -167,6 +171,10 @@ def _build_delivery_format(task_plan: Optional[list] = None) -> str:
     precise state anchor so the optimizer writes continuations, not repeats.
     Without a plan, falls back to the original generic instruction.
     """
+    sentry_sdk.add_breadcrumb(
+        category="optimizer", message="Building delivery format",
+        level="info", data={"has_task_plan": bool(task_plan), "task_count": len(task_plan) if task_plan else 0},
+    )
     if task_plan:
         plan_text = "\n".join(
             f"Task {t['number']}: {t['name']}\n"
@@ -340,18 +348,18 @@ def optimize(
         
         # Select skills (or use forced skill)
         if forced_skill:
-            print(f"[Optimizer] Using forced skill: {forced_skill}")
+            logger.info(f"Using forced skill: {forced_skill}")
             skill_names = [forced_skill]
             skills_content = load_skill_file(forced_skill)
             if not skills_content:
-                print(f"[Optimizer] WARNING: Forced skill '{forced_skill}' not found, falling back to auto-selection")
+                logger.warning(f"Forced skill '{forced_skill}' not found, falling back to auto-selection")
                 skill_names, skills_content = load_selected_skills(user_input)
         else:
             skill_names, skills_content = load_selected_skills(user_input)
     
         # Context management: compact if CC exceeds token budget
         if cc.token_estimate() > SUMMARIZE_THRESHOLD:
-            print(f"[Optimizer] Compacting context ({SUMMARIZER_MODEL})...")
+            logger.info(f"Compacting context ({SUMMARIZER_MODEL})...")
             try:
                 summary_text = summarize_context(cc, provider)
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
@@ -360,7 +368,8 @@ def optimize(
                 from .context import save_chat_context as _save
                 _save(cc)
             except Exception as exc:
-                print(f"[Optimizer] WARNING: Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
+                logger.warning(f"Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
+                sentry_sdk.capture_exception(exc)
     
         cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
         
@@ -427,6 +436,11 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             usage = None
             need_strip = wants_sections and bool(task_plan)
             prefix_buffer = "" if need_strip else None
+            if need_strip:
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Stream prefix strip enabled",
+                    level="info",
+                )
 
             for chunk in response:
                 delta = chunk.choices[0].delta.content or ""
@@ -437,8 +451,14 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
                         prefix_buffer += delta
                         heading_match = _TASK_HEADING_RE.search(prefix_buffer)
                         if heading_match:
-                            clean_start = prefix_buffer[heading_match.start():]
+                            stripped_len = heading_match.start()
+                            clean_start = prefix_buffer[stripped_len:]
                             prefix_buffer = None
+                            if stripped_len > 0:
+                                sentry_sdk.add_breadcrumb(
+                                    category="optimizer", message="Stripped analysis prefix from stream",
+                                    level="warning", data={"chars_stripped": stripped_len},
+                                )
                             if clean_start:
                                 yield clean_start
                         elif len(prefix_buffer) >= _STRIP_BUFFER_LIMIT:
@@ -449,6 +469,10 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
                                 if clean_start:
                                     yield clean_start
                             else:
+                                sentry_sdk.add_breadcrumb(
+                                    category="optimizer", message="Stream strip safety valve: no heading found, flushing buffer",
+                                    level="warning", data={"buffer_len": len(prefix_buffer)},
+                                )
                                 dump = prefix_buffer
                                 prefix_buffer = None
                                 yield dump
@@ -508,7 +532,11 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             if not heading_match:
                 heading_match = re.search(r'##\s*\S', cleaned, re.IGNORECASE)
             if heading_match and heading_match.start() > 0:
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Stripped analysis prefix from non-stream result",
+                    level="warning", data={"chars_stripped": heading_match.start()},
+                )
                 cleaned = cleaned[heading_match.start():]
-        print(cleaned)
+        logger.info(f"Optimization complete ({latency_ms}ms)")
         return cleaned
 

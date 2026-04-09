@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import * as Sentry from "@sentry/react";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -859,6 +860,7 @@ const Index = () => {
   // ── Chat selection (abort any in-flight stream first) ────────
   const handleSelectChat = useCallback((chatId: string) => {
     if (chatId === selectedChatIdRef.current) return;
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Chat selected', data: { chatId } });
     detachFromActiveGeneration();
     setClarificationAnswersMap({});
     setSelectedChatId(chatId);
@@ -866,7 +868,7 @@ const Index = () => {
 
   // Chat handlers
   const handleNewChat = () => {
-    console.log('[Index] Starting new chat');
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'New chat started' });
     detachFromActiveGeneration();
     // Clear current chat selection and messages
     setMessages([]);
@@ -878,6 +880,7 @@ const Index = () => {
   };
 
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    Sentry.addBreadcrumb({ category: 'app.clarification', message: 'Clarification submitted', data: { answerCount: Object.keys(answers).length, wantsSections } });
     const currentClarification = clarificationDataRef.current;
     const lastUserMsg = [...messagesRef.current].reverse().find(m => m.role === 'user');
     const questions: ClarifyQuestion[] = (currentClarification?.questions || []).map((q: any) => ({
@@ -916,11 +919,10 @@ const Index = () => {
     selectedSkill?: string | null,
     versionMeta?: { groupId: string; versionIndex: number }
   ) => {
-    // Prevent double sends (e.g. rapid clicks before isGenerating is set)
     if (sendingRef.current) {
-      console.warn('[Index] Ignoring duplicate send — already in flight');
       return;
     }
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skill: selectedSkill || 'auto' } });
     sendingRef.current = true;
 
     const groupId = versionMeta?.groupId || crypto.randomUUID();
@@ -995,6 +997,7 @@ Your prompt was: "${content}"`;
   // destroying old messages. The previous version + its responses remain
   // accessible via the ← / → version navigator.
   const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message edited', data: { messageId } });
     const placeholderId = `edit-placeholder-${Date.now()}`;
 
     // Mark edit in progress so tree isn't flattened by a reload
@@ -1023,6 +1026,7 @@ Your prompt was: "${content}"`;
   // under the SAME user message (no new user version created).
   const handleRegenerateMessage = useCallback((assistantMessageId: string) => {
     if (sendingRef.current) return;
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Regenerate requested', data: { assistantMessageId } });
 
     // Walk the active path to find the user message before this assistant
     const activePath = messageTree.getActivePath();

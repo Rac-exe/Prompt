@@ -708,6 +708,7 @@ async def clarify_prompt(request: ClarifyRequest, auth: dict = Depends(require_a
         return ClarifyResponse(**result)
     except Exception as exc:
         logger.warning(f"Clarify endpoint failed (returning safe default): {exc}")
+        sentry_sdk.capture_exception(exc)
         return ClarifyResponse(should_clarify=False, is_complex=False)
 
 
@@ -823,6 +824,10 @@ async def optimize_stream(websocket: WebSocket):
                 task_plan = None
                 if wants_sections:
                     from pipeline_v2.task_planner import plan_tasks
+                    sentry_sdk.add_breadcrumb(
+                        category="optimize", message="Task planning started",
+                        level="info", data={"request_id": request_id},
+                    )
                     task_plan = await loop.run_in_executor(
                         None,
                         lambda: plan_tasks(
@@ -831,7 +836,12 @@ async def optimize_stream(websocket: WebSocket):
                             provider="auto",
                         ),
                     )
-                    logger.info(f"Task plan: {len(task_plan) if task_plan else 0} tasks")
+                    task_count = len(task_plan) if task_plan else 0
+                    sentry_sdk.add_breadcrumb(
+                        category="optimize", message="Task planning complete",
+                        level="info", data={"request_id": request_id, "task_count": task_count, "success": task_plan is not None},
+                    )
+                    logger.info(f"Task plan: {task_count} tasks")
 
                 def run_stream():
                     """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""

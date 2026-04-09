@@ -73,7 +73,13 @@ def plan_tasks(
     """
     with sentry_sdk.start_span(op="ai.task_planner", description="Plan tasks") as span:
         resolved_model = model or SUMMARIZER_MODEL
-        resolved_model_name, extra = _get_litellm_kwargs(resolved_model)
+        try:
+            resolved_model_name, extra = _get_litellm_kwargs(resolved_model)
+        except RuntimeError as exc:
+            logger.error(f"Task planner config error: {exc}")
+            sentry_sdk.capture_exception(exc)
+            span.set_status("internal_error")
+            return None
         span.set_data("model", resolved_model_name)
         span.set_data("input_length", len(user_input))
 
@@ -121,12 +127,13 @@ def plan_tasks(
 
         try:
             parsed = json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             logger.warning(f"Task planner JSON parse failed: {raw[:200]}")
             sentry_sdk.add_breadcrumb(
                 category="task_planner", message="JSON parse failed",
                 level="warning", data={"raw_preview": raw[:200]},
             )
+            sentry_sdk.capture_exception(exc)
             span.set_status("internal_error")
             return None
 

@@ -325,6 +325,7 @@ const InputSection: React.FC<InputSectionProps> = ({
       window.electronAPI?.transcription?.stop?.();
       transcriptionSessionIdRef.current = null;
     }
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Message sent', level: 'info' });
     onSend(text);
     setInputValue('');
     if (inputRef.current) {

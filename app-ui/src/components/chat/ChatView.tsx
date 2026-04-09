@@ -151,6 +151,7 @@ export const ChatView = ({
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("idle");
     }
+    Sentry.addBreadcrumb({ category: "app.action", message: "Message sent", level: "info", data: { mode, hasFiles: attachedFiles.length > 0, skill: selectedSkill || 'auto' } });
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
     setAttachedFiles([]);

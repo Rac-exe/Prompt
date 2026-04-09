@@ -117,12 +117,13 @@ def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
 
         try:
             parsed = json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             logger.warning(f"Failed to parse JSON response: {raw[:200]}")
             sentry_sdk.add_breadcrumb(
                 category="clarifier", message="JSON parse failed",
                 level="warning", data={"raw_preview": raw[:200]},
             )
+            sentry_sdk.capture_exception(exc)
             span.set_status("internal_error")
             return dict(_FAIL_SAFE)
 

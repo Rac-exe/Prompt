@@ -293,6 +293,7 @@ const OverlayApp: React.FC = () => {
 
   // ── Submit clarification answers ──
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    Sentry.addBreadcrumb({ category: 'overlay.clarification', message: 'Clarification submitted', data: { answerCount: Object.keys(answers).length, wantsSections } });
     const currentClarification = clarificationDataRef.current;
     const turnIdx = turns.length - 1;
     if (turnIdx >= 0) {
@@ -319,12 +320,14 @@ const OverlayApp: React.FC = () => {
 
   // ── Skip clarification ──
   const handleSkipClarification = useCallback(() => {
+    Sentry.addBreadcrumb({ category: 'overlay.clarification', message: 'Clarification skipped' });
     handleSubmitClarification({}, false);
   }, [handleSubmitClarification]);
 
   // ── Re-optimize with changed clarification answers ──
   const handleReoptimize = useCallback((turnIdx: number, newAnswers: Record<string, string>, wantsSections: boolean) => {
     if (isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Re-optimize triggered', data: { turnIdx, wantsSections } });
     const turn = turns[turnIdx];
     if (!turn) return;
 
@@ -383,6 +386,7 @@ const OverlayApp: React.FC = () => {
   // ── Send message ──
   const handleSend = useCallback((text: string) => {
     if (!text.trim() || isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Message sent' });
 
     setClarificationData(null);
     setIsOptimizing(true);
@@ -416,6 +420,7 @@ const OverlayApp: React.FC = () => {
   // ── Stop generation ──
   const handleStop = useCallback(() => {
     if (!isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Generation stopped' });
     window.electronAPI?.overlay?.stopGeneration?.();
 
     const sc = streamingContent;
@@ -458,6 +463,7 @@ const OverlayApp: React.FC = () => {
   // ── Regenerate ──
   const handleRegenerate = useCallback((turnIdx: number) => {
     if (isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Regenerate requested', data: { turnIdx } });
     const result = prepareRegenerate(turnIdx);
     if (!result) return;
 
@@ -482,6 +488,7 @@ const OverlayApp: React.FC = () => {
 
   // ── Copy message ──
   const handleCopy = useCallback((msgId: string) => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Prompt copied', data: { msgId } });
     const content = getMessageContent(msgId);
     if (content) window.electronAPI?.overlay?.copy?.(content);
   }, [getMessageContent]);
