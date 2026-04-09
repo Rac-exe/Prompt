@@ -1715,7 +1715,7 @@ async def websocket_transcribe_stream(websocket: WebSocket):
 # ── Cloudinary image upload ────────────────────────────────────────────────────
 
 class ImageUploadRequest(BaseModel):
-    base64: str = Field(..., max_length=10_000_000)  # ~7.5 MB decoded
+    base64: str = Field(..., max_length=10_000_000)
     filename: str
     mime_type: str = "image/jpeg"
 
@@ -1951,7 +1951,7 @@ async def download_redirect(request: Request):
         except Exception as exc:
             logger.warning(f"Failed to log download event: {exc}")
 
-    exe_url = f"{_RELEASES_BASE_URL}/Prmpt-Setup-{version}.exe"
+    exe_url = f"{_RELEASES_BASE_URL}/Prmpt%20Setup%20{version}.exe"
     return RedirectResponse(url=exe_url, status_code=302)
 
 
