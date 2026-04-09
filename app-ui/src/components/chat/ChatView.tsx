@@ -39,7 +39,6 @@ interface ChatViewProps {
   offlineChatUnavailable?: boolean;
   onRetryLoad?: () => void;
   sendError?: string | null;
-  onRetry?: () => void;
   onStopGeneration?: () => void;
   avatarUrl?: string | null;
   versionInfoMap?: Map<string, VersionInfo>;
@@ -66,7 +65,7 @@ export const ChatView = ({
   onSendMessage, onCopyPrompt, onSavePrompt, onFeedback,
   onEditMessage, onRegenerateMessage,
   savedPromptIds, isGenerating, isOnline = true, offlineChatUnavailable = false,
-  onRetryLoad, sendError, onRetry, onStopGeneration, avatarUrl,
+  onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
   input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
@@ -498,17 +497,9 @@ export const ChatView = ({
       {(voiceError || sendError) && (
         <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-lg bg-destructive/8 border border-destructive/20 animate-slide-up">
           <WarningCircle size={14} weight="light" className="text-destructive flex-shrink-0" />
-          <span className="flex-1 text-[12px] text-destructive leading-snug">
+          <span className="text-[12px] text-destructive leading-snug">
             {sendError || voiceError}
           </span>
-          {sendError && onRetry && (
-            <button
-              onClick={onRetry}
-              className="flex-shrink-0 px-3 py-1 rounded-md text-[11px] font-semibold text-destructive border border-destructive/30 bg-destructive/10 hover:bg-destructive/18 transition-colors cursor-pointer"
-            >
-              Retry
-            </button>
-          )}
         </div>
       )}
     </div>

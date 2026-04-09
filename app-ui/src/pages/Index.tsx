@@ -105,7 +105,6 @@ const Index = () => {
 
   // Send error state — shown inline in the input bar instead of a toast
   const [sendError, setSendError] = useState<string | null>(null);
-  const lastSendRequestRef = useRef<any>(null);
 
   // Clarification state
   const [clarificationData, setClarificationData] = useState<any>(null);
@@ -551,6 +550,8 @@ const Index = () => {
         pendingRegenPlaceholderId.current = null;
         sendingRef.current = false;
         setSendError(data.error);
+        // Auto-clear after 6 s so it doesn't linger forever
+        setTimeout(() => setSendError(null), 6000);
       };
 
       const cleanup = window.electronAPI.onMessageSendError(handleMessageSendError);
@@ -943,7 +944,7 @@ const Index = () => {
 
     // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
-      const sendPayload = {
+      window.electronAPI.sendMessage({
         chatId: selectedChatId,
         content: content,
         mode,
@@ -951,9 +952,7 @@ const Index = () => {
         forcedSkill: selectedSkill,
         groupId,
         versionIndex,
-      };
-      lastSendRequestRef.current = sendPayload;
-      window.electronAPI.sendMessage(sendPayload);
+      });
 
       console.log('[Index] Message sent to Electron main process');
     } else {
@@ -993,17 +992,6 @@ Your prompt was: "${content}"`;
       description: "Prompt copied to clipboard.",
     });
   };
-
-  // Retry last failed optimization (skips message creation in the handler)
-  const handleRetry = useCallback(() => {
-    const payload = lastSendRequestRef.current;
-    if (!payload || !window.electronAPI?.sendMessage) return;
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Retry optimization' });
-    setSendError(null);
-    setIsGenerating(true);
-    sendingRef.current = true;
-    window.electronAPI.sendMessage({ ...payload, isRetry: true });
-  }, []);
 
   // Edit a user message: create a new branch in the version tree instead of
   // destroying old messages. The previous version + its responses remain
@@ -1505,7 +1493,6 @@ Your prompt was: "${content}"`;
             isOnline={isOnline}
             offlineChatUnavailable={offlineChatUnavailable}
             sendError={sendError}
-            onRetry={handleRetry}
             onStopGeneration={handleStopGeneration}
             avatarUrl={user?.profile?.avatar_url}
             versionInfoMap={versionInfoMap}

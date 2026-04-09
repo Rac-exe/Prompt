@@ -200,8 +200,12 @@ export class PythonClient extends EventEmitter {
           }
 
           for (const [reqId, request] of this.activeRequests.entries()) {
-            console.warn(`[PythonClient] Request ${reqId} socket closed unexpectedly (accumulated ${(request.accumulated || '').length} chars)`);
-            request.reject(new Error('AI service connection lost. Click Retry to try again.'));
+            if (request.accumulated && request.accumulated.length > 0) {
+              console.warn(`[PythonClient] Request ${reqId} socket closed but has data, resolving with partial.`);
+              request.resolve({ text: request.accumulated, models: undefined });
+            } else {
+              request.reject(new Error('WebSocket connection closed unexpectedly'));
+            }
           }
           this.activeRequests.clear();
           this.ws = null;

@@ -520,7 +520,6 @@ const electronAPI = {
     forcedSkill?: string | null;
     groupId?: string;
     versionIndex?: number;
-    isRetry?: boolean;
   }) => {
     ipcRenderer.send('app:send-message', data);
   },
