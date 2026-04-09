@@ -155,7 +155,10 @@ def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
         for q in parsed.get("questions", [])[:4]:
             if not isinstance(q, dict) or "question" not in q:
                 continue
-            opts = list(q.get("options", []))
+            opts = [
+                o for o in list(q.get("options", []))
+                if str(o).strip().lower() != "other"
+            ]
             result["questions"].append({
                 "id": str(q.get("id", f"q{len(result['questions'])}")),
                 "question": str(q["question"]),

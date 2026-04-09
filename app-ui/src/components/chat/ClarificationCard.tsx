@@ -9,6 +9,8 @@ import {
   PencilSimpleLine,
   ListChecks,
   Lightning,
+  RadioButton,
+  Circle,
 } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
@@ -53,6 +55,162 @@ function parseAnswerToSelections(
     else if (part) otherParts.push(part);
   }
   return { selected, otherText: otherParts.join(", ") };
+}
+
+function OptionGroup({
+  q,
+  compact,
+  selections,
+  otherActive,
+  otherTexts,
+  isDeliveryQuestion,
+  toggleOption,
+  toggleOther,
+  setOtherTexts,
+}: {
+  q: ClarifyQuestion;
+  compact: boolean;
+  selections: Record<string, Set<string>>;
+  otherActive: Record<string, boolean>;
+  otherTexts: Record<string, string>;
+  isDeliveryQuestion: (q: ClarifyQuestion) => boolean;
+  toggleOption: (qId: string, option: string, singleSelect?: boolean) => void;
+  toggleOther: (qId: string) => void;
+  setOtherTexts: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+}) {
+  const isSingleSelect = isDeliveryQuestion(q);
+  const filteredOpts = q.options.filter(
+    (o) => o.toLowerCase().trim() !== "other"
+  );
+
+  return (
+    <div className="space-y-1.5">
+      <div
+        className={cn(
+          "gap-1.5",
+          compact ? "flex flex-col" : "grid grid-cols-2"
+        )}
+      >
+        {filteredOpts.map((opt) => {
+          const selected = selections[q.id]?.has(opt) ?? false;
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => toggleOption(q.id, opt, isSingleSelect)}
+              className={cn(
+                "group flex items-center text-left transition-all duration-200 border",
+                compact
+                  ? "gap-2 px-2.5 py-2 rounded-lg"
+                  : "gap-2.5 px-3 py-2.5 rounded-xl",
+                selected
+                  ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
+                  : "border-transparent bg-muted/40 hover:bg-muted/70"
+              )}
+            >
+              {isSingleSelect ? (
+                selected ? (
+                  <RadioButton
+                    size={compact ? 14 : 16}
+                    weight="fill"
+                    className="text-primary flex-shrink-0 transition-transform duration-200 scale-110"
+                  />
+                ) : (
+                  <Circle
+                    size={compact ? 14 : 16}
+                    weight="regular"
+                    className="text-muted-foreground/30 flex-shrink-0 group-hover:text-muted-foreground/50 transition-colors"
+                  />
+                )
+              ) : selected ? (
+                <CheckSquare
+                  size={compact ? 14 : 16}
+                  weight="fill"
+                  className="text-primary flex-shrink-0 transition-transform duration-200 scale-110"
+                />
+              ) : (
+                <Square
+                  size={compact ? 14 : 16}
+                  weight="regular"
+                  className="text-muted-foreground/30 flex-shrink-0 group-hover:text-muted-foreground/50 transition-colors"
+                />
+              )}
+              <span
+                className={cn(
+                  "leading-snug transition-colors",
+                  compact ? "text-[11px]" : "text-xs",
+                  selected
+                    ? "text-foreground font-medium"
+                    : "text-muted-foreground group-hover:text-foreground"
+                )}
+              >
+                {opt}
+              </span>
+            </button>
+          );
+        })}
+
+        {!isSingleSelect && (
+          <button
+            type="button"
+            onClick={() => toggleOther(q.id)}
+            className={cn(
+              "group flex items-center text-left transition-all duration-200 border",
+              compact
+                ? "gap-2 px-2.5 py-2 rounded-lg"
+                : "gap-2.5 px-3 py-2.5 rounded-xl",
+              otherActive[q.id]
+                ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
+                : "border-transparent bg-muted/40 hover:bg-muted/70"
+            )}
+          >
+            <PencilSimpleLine
+              size={compact ? 14 : 16}
+              weight={otherActive[q.id] ? "fill" : "regular"}
+              className={cn(
+                "flex-shrink-0 transition-colors",
+                otherActive[q.id]
+                  ? "text-primary"
+                  : "text-muted-foreground/30 group-hover:text-muted-foreground/50"
+              )}
+            />
+            <span
+              className={cn(
+                "leading-snug transition-colors",
+                compact ? "text-[11px]" : "text-xs",
+                otherActive[q.id]
+                  ? "text-foreground font-medium"
+                  : "text-muted-foreground group-hover:text-foreground"
+              )}
+            >
+              Other
+            </span>
+          </button>
+        )}
+      </div>
+
+      {!isSingleSelect && otherActive[q.id] && (
+        <input
+          type="text"
+          placeholder="Describe what you have in mind..."
+          value={otherTexts[q.id] || ""}
+          onChange={(e) =>
+            setOtherTexts((prev) => ({
+              ...prev,
+              [q.id]: e.target.value,
+            }))
+          }
+          autoFocus
+          className={cn(
+            "w-full text-foreground placeholder:text-muted-foreground/40 transition-all bg-muted/30 border border-primary/20 focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-1 focus:ring-primary/15",
+            compact
+              ? "px-2.5 py-2 text-[11px] rounded-lg"
+              : "px-3.5 py-2.5 text-xs rounded-xl"
+          )}
+        />
+      )}
+    </div>
+  );
 }
 
 export const ClarificationCard = ({
@@ -128,8 +286,27 @@ export const ClarificationCard = ({
     return () => clearTimeout(timer);
   }, [visibleCount, questions.length, hasInitialAnswers]);
 
-  const toggleOption = useCallback((qId: string, option: string) => {
+  const isDeliveryQuestion = useCallback((q: ClarifyQuestion) => {
+    return (
+      q.id === "delivery_format" ||
+      q.question.toLowerCase().includes("task sections") ||
+      q.question.toLowerCase().includes("broken into") ||
+      q.question.toLowerCase().includes("delivery") ||
+      q.question.toLowerCase().includes("one complete")
+    );
+  }, []);
+
+  const toggleOption = useCallback((qId: string, option: string, singleSelect?: boolean) => {
     setSelections((prev) => {
+      if (singleSelect) {
+        const current = new Set(prev[qId] || []);
+        if (current.has(option) && current.size === 1) {
+          current.delete(option);
+        } else {
+          return { ...prev, [qId]: new Set([option]) };
+        }
+        return { ...prev, [qId]: current };
+      }
       const current = new Set(prev[qId] || []);
       if (current.has(option)) {
         current.delete(option);
@@ -287,114 +464,17 @@ export const ClarificationCard = ({
                 </p>
 
                 {q.type === "multiple_choice" && q.options.length > 0 ? (
-                  <div className="space-y-1.5">
-                    <div className={cn(
-                      "gap-1.5",
-                      compact ? "flex flex-col" : "grid grid-cols-2"
-                    )}>
-                      {q.options.map((opt) => {
-                        const selected = selections[q.id]?.has(opt) ?? false;
-                        return (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => toggleOption(q.id, opt)}
-                            className={cn(
-                              "group flex items-center text-left transition-all duration-200 border",
-                              compact
-                                ? "gap-2 px-2.5 py-2 rounded-lg"
-                                : "gap-2.5 px-3 py-2.5 rounded-xl",
-                              selected
-                                ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
-                                : "border-transparent bg-muted/40 hover:bg-muted/70"
-                            )}
-                          >
-                            {selected ? (
-                              <CheckSquare
-                                size={compact ? 14 : 16}
-                                weight="fill"
-                                className="text-primary flex-shrink-0 transition-transform duration-200 scale-110"
-                              />
-                            ) : (
-                              <Square
-                                size={compact ? 14 : 16}
-                                weight="regular"
-                                className="text-muted-foreground/30 flex-shrink-0 group-hover:text-muted-foreground/50 transition-colors"
-                              />
-                            )}
-                            <span
-                              className={cn(
-                                "leading-snug transition-colors",
-                                compact ? "text-[11px]" : "text-xs",
-                                selected
-                                  ? "text-foreground font-medium"
-                                  : "text-muted-foreground group-hover:text-foreground"
-                              )}
-                            >
-                              {opt}
-                            </span>
-                          </button>
-                        );
-                      })}
-
-                      {/* Other option */}
-                      <button
-                        type="button"
-                        onClick={() => toggleOther(q.id)}
-                        className={cn(
-                          "group flex items-center text-left transition-all duration-200 border",
-                          compact
-                            ? "gap-2 px-2.5 py-2 rounded-lg"
-                            : "gap-2.5 px-3 py-2.5 rounded-xl",
-                          otherActive[q.id]
-                            ? "border-primary/40 bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary)/0.15)]"
-                            : "border-transparent bg-muted/40 hover:bg-muted/70"
-                        )}
-                      >
-                        <PencilSimpleLine
-                          size={compact ? 14 : 16}
-                          weight={otherActive[q.id] ? "fill" : "regular"}
-                          className={cn(
-                            "flex-shrink-0 transition-colors",
-                            otherActive[q.id]
-                              ? "text-primary"
-                              : "text-muted-foreground/30 group-hover:text-muted-foreground/50"
-                          )}
-                        />
-                        <span
-                          className={cn(
-                            "leading-snug transition-colors",
-                            compact ? "text-[11px]" : "text-xs",
-                            otherActive[q.id]
-                              ? "text-foreground font-medium"
-                              : "text-muted-foreground group-hover:text-foreground"
-                          )}
-                        >
-                          Other
-                        </span>
-                      </button>
-                    </div>
-
-                    {/* Other text input */}
-                    {otherActive[q.id] && (
-                      <input
-                        type="text"
-                        placeholder="Describe what you have in mind..."
-                        value={otherTexts[q.id] || ""}
-                        onChange={(e) =>
-                          setOtherTexts((prev) => ({
-                            ...prev,
-                            [q.id]: e.target.value,
-                          }))
-                        }
-                        autoFocus
-                        className={cn(
-                          "w-full text-foreground placeholder:text-muted-foreground/40 transition-all bg-muted/30 border border-primary/20 focus:border-primary/40 focus:bg-background focus:outline-none focus:ring-1 focus:ring-primary/15",
-                          compact ? "px-2.5 py-2 text-[11px] rounded-lg" : "px-3.5 py-2.5 text-xs rounded-xl"
-                        )}
-                      />
-                    )}
-                  </div>
+                  <OptionGroup
+                    q={q}
+                    compact={compact}
+                    selections={selections}
+                    otherActive={otherActive}
+                    otherTexts={otherTexts}
+                    isDeliveryQuestion={isDeliveryQuestion}
+                    toggleOption={toggleOption}
+                    toggleOther={toggleOther}
+                    setOtherTexts={setOtherTexts}
+                  />
                 ) : (
                   <input
                     type="text"
