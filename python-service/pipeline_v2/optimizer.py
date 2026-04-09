@@ -176,23 +176,35 @@ def _build_delivery_format(task_plan: Optional[list] = None) -> str:
             for t in task_plan
         )
         return (
-            "\n\nTASK PLAN (use this to write accurate state declarations):\n"
-            f"{plan_text}\n\n"
+            "\n\n<internal_reference>\n"
+            "The following task plan is for your internal reference ONLY. "
+            "Do NOT reproduce, echo, or summarize it in your output.\n\n"
+            f"{plan_text}\n"
+            "</internal_reference>\n\n"
             "DELIVERY FORMAT: Write each task as a standalone executable prompt "
             "for an AI coding assistant using the hybrid format:\n"
             "1. One-line project anchor (tech stack + goal)\n"
-            "2. 'At this point:' — list what previous tasks built (from the plan above)\n"
+            "2. 'At this point:' — list what previous tasks built (from the reference above)\n"
             "3. Task instructions — actionable, specific, not spec-like\n"
             "4. Exit condition — what should work/exist when done\n"
             "Use ## Task N: Name as the heading. Each task must be independently "
-            "executable if pasted into the same ongoing chat."
+            "executable if pasted into the same ongoing chat.\n\n"
+            "CRITICAL: Do NOT output any analysis, classification, or internal reasoning. "
+            "No DECISION TAKER, SKILL SELECTOR, OPTIMIZATION TECHNIQUES, or USER CONTEXT sections. "
+            "No DT, SF, PO, or UC headers. Skip all preamble. "
+            "Begin your response DIRECTLY with ## Task 1: — the very first characters you output "
+            "must be the ## Task 1 heading."
         )
     return (
         "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
         "Output each section with a ## Section Title header followed by its prompt content. "
         "Within each section, use bullet points (- ) for individual requirements and instructions. "
         "Never write dense paragraphs — every requirement must be its own bullet point. "
-        "Sections should be self-contained and executable in sequence."
+        "Sections should be self-contained and executable in sequence.\n\n"
+        "CRITICAL: Do NOT output any analysis, classification, or internal reasoning. "
+        "No DECISION TAKER, SKILL SELECTOR, OPTIMIZATION TECHNIQUES, or USER CONTEXT sections. "
+        "No DT, SF, PO, or UC headers. Skip all preamble. "
+        "Begin your response DIRECTLY with the first ## Section heading."
     )
 
 
@@ -406,17 +418,53 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             max_tokens=8192, temperature=temperature, stream=True,
             stream_options={"include_usage": True}, **extra,
         )
+        _TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
+        _SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
+        _STRIP_BUFFER_LIMIT = 2000
+
         def _stream_generator():
             result_acc = ""
             usage = None
+            need_strip = wants_sections and bool(task_plan)
+            prefix_buffer = "" if need_strip else None
+
             for chunk in response:
                 delta = chunk.choices[0].delta.content or ""
                 if delta:
                     result_acc += delta
-                    yield delta
+
+                    if prefix_buffer is not None:
+                        prefix_buffer += delta
+                        heading_match = _TASK_HEADING_RE.search(prefix_buffer)
+                        if heading_match:
+                            clean_start = prefix_buffer[heading_match.start():]
+                            prefix_buffer = None
+                            if clean_start:
+                                yield clean_start
+                        elif len(prefix_buffer) >= _STRIP_BUFFER_LIMIT:
+                            fallback_match = _SECTION_HEADING_RE.search(prefix_buffer)
+                            if fallback_match:
+                                clean_start = prefix_buffer[fallback_match.start():]
+                                prefix_buffer = None
+                                if clean_start:
+                                    yield clean_start
+                            else:
+                                dump = prefix_buffer
+                                prefix_buffer = None
+                                yield dump
+                    else:
+                        yield delta
+
                 if hasattr(chunk, "usage") and chunk.usage:
                     usage = chunk.usage
-                    
+
+            if prefix_buffer is not None and prefix_buffer:
+                heading_match = _TASK_HEADING_RE.search(prefix_buffer) or _SECTION_HEADING_RE.search(prefix_buffer)
+                if heading_match:
+                    yield prefix_buffer[heading_match.start():]
+                else:
+                    yield prefix_buffer
+
             latency_ms = int((time.perf_counter() - t0) * 1000)
             if usage:
                 log_usage(
@@ -429,7 +477,6 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
                     skills=skill_names,
                     latency_ms=latency_ms,
                 )
-            # print("Stream completed.")
             
         return _stream_generator()
         
@@ -455,6 +502,13 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
                 latency_ms=latency_ms,
             )
     
-        print(result.strip())
-        return result.strip()
+        cleaned = result.strip()
+        if wants_sections and task_plan and cleaned:
+            heading_match = re.search(r'##\s*Task\s', cleaned, re.IGNORECASE)
+            if not heading_match:
+                heading_match = re.search(r'##\s*\S', cleaned, re.IGNORECASE)
+            if heading_match and heading_match.start() > 0:
+                cleaned = cleaned[heading_match.start():]
+        print(cleaned)
+        return cleaned
 
