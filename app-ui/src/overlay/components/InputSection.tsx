@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as Sentry from '@sentry/react';
-import { CaretRight } from '@phosphor-icons/react';
+import { CaretRight, Sparkle } from '@phosphor-icons/react';
 import type { AttachedFile, SkillInfo } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON, MAX_ATTACHED_FILES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../lib/constants';
 import { fileToBase64, resizeImageIfNeeded } from '../lib/utils';
@@ -150,9 +150,7 @@ const PlusMenu: React.FC<PlusMenuProps> = ({ open, anchorRect, skills, onAttachF
             <span>Add photos &amp; files</span>
           </button>
           <button className="plus-menu-item" type="button" onClick={() => setShowSkills(true)}>
-            <svg style={{ width: 14, height: 14, flexShrink: 0, color: 'hsl(var(--muted-foreground))' }} fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z" />
-            </svg>
+            <Sparkle size={14} weight="light" style={{ flexShrink: 0, color: 'hsl(var(--muted-foreground))' }} />
             <span>Choose skill</span>
           </button>
         </div>
