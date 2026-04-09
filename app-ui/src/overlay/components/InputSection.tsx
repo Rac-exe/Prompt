@@ -367,6 +367,40 @@ const InputSection: React.FC<InputSectionProps> = ({
     e.target.value = '';
   }, [attachedFiles.length, onAttachFiles]);
 
+  // Clipboard paste handler (Ctrl+V images / PDFs)
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData.items);
+    const fileItems = items.filter(item => ALLOWED_MIME_TYPES.includes(item.type));
+    if (fileItems.length === 0) return;
+
+    e.preventDefault();
+    const remaining = MAX_ATTACHED_FILES - attachedFiles.length;
+    if (remaining <= 0) return;
+
+    const newFiles: AttachedFile[] = [];
+    for (const item of fileItems.slice(0, remaining)) {
+      const file = item.getAsFile();
+      if (!file) continue;
+
+      if (file.type === 'application/pdf') {
+        if (file.size > MAX_FILE_SIZE) continue;
+        try {
+          const base64 = await fileToBase64(file);
+          newFiles.push({ name: file.name || 'pasted.pdf', mimeType: file.type, base64, sizeBytes: file.size });
+        } catch { /* skip */ }
+        continue;
+      }
+
+      try {
+        const { base64, sizeBytes, mimeType } = await resizeImageIfNeeded(file);
+        const ext = mimeType.split('/')[1] || 'png';
+        newFiles.push({ name: file.name || `pasted-image.${ext}`, mimeType, base64, sizeBytes });
+      } catch { /* skip */ }
+    }
+
+    if (newFiles.length > 0) onAttachFiles(newFiles);
+  }, [attachedFiles.length, onAttachFiles]);
+
   // Plus menu toggle
   const togglePlusMenu = useCallback(() => {
     if (!plusMenuOpen && plusBtnRef.current) {
@@ -469,6 +503,7 @@ const InputSection: React.FC<InputSectionProps> = ({
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
           }}
+          onPaste={handlePaste}
           disabled={!isOnline}
         />
 
