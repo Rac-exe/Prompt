@@ -14,7 +14,7 @@ interface AuthWrapperProps {
 type AuthView = 'loading' | 'login' | 'signup' | 'onboarding' | 'app';
 
 const ONBOARDING_KEY_PREFIX = 'onboarding-completed-';
-const AUTH_SLOW_MS = 4_000;
+const AUTH_SLOW_MS = 6_000;
 const AUTH_RETRY_MS = 12_000;
 const AUTH_GIVEUP_MS = 20_000;
 

@@ -134,105 +134,137 @@ export class UserService {
   }
 
   /**
-   * Get complete user data (profile + preferences)
+   * Get complete user data (profile + preferences).
+   * When called without a userId, resolves it via auth.getUser() (network call).
+   * Hot-path callers (startup) should pass userId from the cached session to skip that round-trip.
    */
-  async getCompleteUserData(): Promise<CompleteUserData | null> {
+  async getCompleteUserData(userId?: string): Promise<CompleteUserData | null> {
     try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) return null;
+      return await Sentry.startSpan(
+        { name: 'user.get-complete-user-data', op: 'db', attributes: { userIdProvided: !!userId } },
+        async (span) => {
+          let resolvedId = userId;
+          if (!resolvedId) {
+            const { data: userData } = await Sentry.startSpan(
+              { name: 'user.auth-get-user', op: 'http.client' },
+              () => this.client.auth.getUser(),
+            );
+            if (!userData.user) return null;
+            resolvedId = userData.user.id;
+          }
 
-      let { data, error } = await this.client
-        .from('user_full_profile')
-        .select('*')
-        .eq('id', userData.user.id)
-        .single();
+          span.setAttribute('userId', resolvedId);
 
-      if (error || !data) {
-        console.warn('[UserService] Profile missing — re-creating for user', userData.user.id);
-        Sentry.addBreadcrumb({
-          category: 'user',
-          message: 'Zombie profile detected — re-creating',
-          level: 'warning',
-          data: { userId: userData.user.id },
-        });
-        await this.ensureProfileExists(userData.user);
+          const [profileResult, passwordResult] = await Sentry.startSpan(
+            { name: 'user.profile-and-password', op: 'db.parallel' },
+            () => Promise.all([
+              this._fetchProfile(resolvedId!),
+              this._checkEmailPassword(resolvedId!),
+            ]),
+          );
 
-        const retry = await this.client
-          .from('user_full_profile')
-          .select('*')
-          .eq('id', userData.user.id)
-          .single();
+          if (!profileResult) return null;
 
-        data = retry.data;
-        error = retry.error;
-
-        if (error || !data) {
-          console.error('[UserService] Still cannot fetch profile after re-creation:', error);
-          Sentry.captureException(error ?? new Error('Profile missing after re-creation'), {
-            tags: { component: 'user-service', op: 'get-complete-user-data:retry-failed' },
-            extra: { userId: userData.user.id },
-          });
-          return null;
-        }
-      }
-
-      const profile: UserProfile = {
-        id: data.id,
-        name: data.name,
-        dob: data.dob,
-        email: data.email,
-        avatar_url: data.avatar_url,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-      };
-
-      const preferences: UserPreferences = {
-        user_id: data.id,
-        personalization_prompt: data.personalization_prompt,
-        ui_settings: data.ui_settings,
-        updated_at: data.updated_at,
-      };
-
-      // Detect whether this user has a password set in auth.users. Supabase
-      // does NOT create an email identity row when a password is set via the
-      // admin API for OAuth accounts, so we check the DB directly.
-      let hasEmailPassword = false;
-      try {
-        await Sentry.startSpan(
-          { name: 'user.check-email-password', op: 'db.rpc', attributes: { userId: userData.user.id } },
-          async (span) => {
-            const { data: hasPw, error: pwError } = await this.client.rpc('user_has_email_password');
-            if (pwError) {
-              span.setAttribute('result', 'error');
-              Sentry.captureException(pwError, {
-                tags: { component: 'user-service', op: 'check-email-password' },
-                extra: { userId: userData.user.id },
-              });
-              return;
-            }
-            hasEmailPassword = hasPw === true;
-            span.setAttribute('result', hasEmailPassword ? 'has-password' : 'no-password');
-            Sentry.addBreadcrumb({
-              category: 'user',
-              message: `user_has_email_password: ${hasEmailPassword}`,
-              level: 'info',
-              data: { userId: userData.user.id, hasEmailPassword },
-            });
-          },
-        );
-      } catch (pwErr) {
-        // Non-fatal: fall back to false; the localStorage flag will still work
-        Sentry.captureException(pwErr, {
-          tags: { component: 'user-service', op: 'check-email-password', severity: 'non-fatal' },
-          extra: { userId: userData.user.id },
-        });
-      }
-
-      return { profile, preferences, hasEmailPassword };
+          return { ...profileResult, hasEmailPassword: passwordResult };
+        },
+      );
     } catch (error) {
       console.error('[UserService] Unexpected error fetching complete user data:', error);
       Sentry.captureException(error, { tags: { component: 'user-service', op: 'get-complete-user-data' } });
       return null;
+    }
+  }
+
+  private async _fetchProfile(userId: string): Promise<{ profile: UserProfile; preferences: UserPreferences } | null> {
+    let { data, error } = await Sentry.startSpan(
+      { name: 'user.fetch-profile', op: 'db.query', attributes: { userId } },
+      () => this.client
+        .from('user_full_profile')
+        .select('*')
+        .eq('id', userId)
+        .single(),
+    );
+
+    if (error || !data) {
+      console.warn('[UserService] Profile missing — re-creating for user', userId);
+      Sentry.addBreadcrumb({
+        category: 'user',
+        message: 'Zombie profile detected — re-creating',
+        level: 'warning',
+        data: { userId },
+      });
+      await this.ensureProfileExists({ id: userId } as any);
+
+      const retry = await this.client
+        .from('user_full_profile')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      data = retry.data;
+      error = retry.error;
+
+      if (error || !data) {
+        console.error('[UserService] Still cannot fetch profile after re-creation:', error);
+        Sentry.captureException(error ?? new Error('Profile missing after re-creation'), {
+          tags: { component: 'user-service', op: 'get-complete-user-data:retry-failed' },
+          extra: { userId },
+        });
+        return null;
+      }
+    }
+
+    const profile: UserProfile = {
+      id: data.id,
+      name: data.name,
+      dob: data.dob,
+      email: data.email,
+      avatar_url: data.avatar_url,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
+
+    const preferences: UserPreferences = {
+      user_id: data.id,
+      personalization_prompt: data.personalization_prompt,
+      ui_settings: data.ui_settings,
+      updated_at: data.updated_at,
+    };
+
+    return { profile, preferences };
+  }
+
+  private async _checkEmailPassword(userId: string): Promise<boolean> {
+    try {
+      return await Sentry.startSpan(
+        { name: 'user.check-email-password', op: 'db.rpc', attributes: { userId } },
+        async (span) => {
+          const { data: hasPw, error: pwError } = await this.client.rpc('user_has_email_password');
+          if (pwError) {
+            span.setAttribute('result', 'error');
+            Sentry.captureException(pwError, {
+              tags: { component: 'user-service', op: 'check-email-password' },
+              extra: { userId },
+            });
+            return false;
+          }
+          const result = hasPw === true;
+          span.setAttribute('result', result ? 'has-password' : 'no-password');
+          Sentry.addBreadcrumb({
+            category: 'user',
+            message: `user_has_email_password: ${result}`,
+            level: 'info',
+            data: { userId, hasEmailPassword: result },
+          });
+          return result;
+        },
+      );
+    } catch (pwErr) {
+      Sentry.captureException(pwErr, {
+        tags: { component: 'user-service', op: 'check-email-password', severity: 'non-fatal' },
+        extra: { userId },
+      });
+      return false;
     }
   }
 

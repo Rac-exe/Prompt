@@ -47,6 +47,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // Promise instead of starting a second parallel Supabase session.
 let _authLoadPromise: Promise<void> | null = null;
 
+// Cache the last auth result so the renderer gets it instantly when it mounts
+// (avoids a redundant Supabase round-trip when the renderer loads after the main process auth).
+let _cachedAuthPayload: { isAuthenticated: boolean; user: any } | null = null;
+
 /**
  * Check for existing session and restore state
  */
@@ -54,28 +58,37 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
     const { authService } = getServices();
 
     try {
-        console.log('[Auth] Checking for existing session...');
-        const { session, error } = await authService.getSession();
+        return await Sentry.startSpan(
+            { name: 'auth.check-and-restore-session', op: 'auth' },
+            async (rootSpan) => {
+                console.log('[Auth] Checking for existing session...');
 
-        if (error || !session) {
-            console.log('[Auth] No valid session found');
-            authState.isAuthenticated = false;
-            authState.currentUserId = null;
-            // Notify renderer so it can leave the loading state
-            appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
-            return false;
-        }
+                const { session, error } = await Sentry.startSpan(
+                    { name: 'auth.get-session', op: 'auth.local' },
+                    () => authService.getSession(),
+                );
 
-        // Set auth state from the locally-stored session token — no network required
-        authState.isAuthenticated = true;
-        authState.currentUserId = session.user.id;
-        authState.currentAccessToken = session.access_token ?? null;
-        console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
+                if (error || !session) {
+                    rootSpan.setAttribute('result', 'no-session');
+                    console.log('[Auth] No valid session found');
+                    authState.isAuthenticated = false;
+                    authState.currentUserId = null;
+                    appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
+                    return false;
+                }
 
-        // handleSuccessfulAuth already handles online/offline branching for data loading
-        await handleSuccessfulAuth(appWindowManager, session.user);
+                rootSpan.setAttribute('userId', session.user.id);
+                authState.isAuthenticated = true;
+                authState.currentUserId = session.user.id;
+                authState.currentAccessToken = session.access_token ?? null;
+                console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
-        return true;
+                await handleSuccessfulAuth(appWindowManager, session.user);
+
+                rootSpan.setAttribute('result', 'restored');
+                return true;
+            },
+        );
     } catch (error) {
         console.error('[Auth] Error checking session:', error);
         Sentry.captureException(error);
@@ -141,7 +154,7 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
                     { name: 'auth.load-user-data', op: 'http.parallel', attributes: { userId: user.id } },
                     () => withTimeout(
                         Promise.all([
-                            userService.getCompleteUserData(),
+                            userService.getCompleteUserData(user.id),
                             authService.getIdentities().catch(e => {
                                 console.warn('[Auth] Could not load identities:', e);
                                 return { identities: [] as any[], error: null };
@@ -197,11 +210,10 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
 
         // 1. Send Auth State — UI transitions from loading spinner to app view.
+        const authPayload = { isAuthenticated: true, user: userData };
+        _cachedAuthPayload = authPayload;
         console.log('[Auth] 📤 Sending authenticated state to renderer');
-        appWindowManager.send('auth:state-changed', {
-            isAuthenticated: true,
-            user: userData,
-        });
+        appWindowManager.send('auth:state-changed', authPayload);
 
         // 2. Load Chats (from Supabase if online, from cache if offline)
         try {
@@ -428,6 +440,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             console.log('[Auth] Sign out request');
             await authService!.signOut();
 
+            _cachedAuthPayload = null;
             authState.isAuthenticated = false;
             authState.currentAccessToken = null;
             authState.currentUserId = null;
@@ -456,6 +469,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             console.log('[Auth] Sign out request (app:sign-out)');
             await authService!.signOut();
 
+            _cachedAuthPayload = null;
             authState.isAuthenticated = false;
             authState.currentAccessToken = null;
             authState.currentUserId = null;
@@ -795,6 +809,12 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
         try {
             console.log('[Auth] 📥 Renderer requested auth check');
 
+            if (_cachedAuthPayload) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'auth:check — replaying cached payload', level: 'info' });
+                appWindowManager.send('auth:state-changed', _cachedAuthPayload);
+                return;
+            }
+
             // getSession() reads from the local filesystem session.json — works offline
             const { authService } = getServices();
             const { session, error } = await authService.getSession();
@@ -813,9 +833,6 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             authState.currentAccessToken = session.access_token ?? null;
             console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
-            // If checkAndRestoreSession already ran handleSuccessfulAuth on startup,
-            // skip the full data-load to avoid redundant Supabase calls.
-            // We still call handleSuccessfulAuth if it hasn't been run yet (edge case).
             await handleSuccessfulAuth(appWindowManager, session.user);
         } catch (error) {
             console.error('[Auth] Error checking auth:', error);
