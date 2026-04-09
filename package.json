@@ -1,6 +1,6 @@
 {
   "name": "prompt-optimizer",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Global desktop app for AI prompt optimization with Supabase",
   "main": "dist/main/index-new.js",
   "scripts": {
@@ -80,9 +80,8 @@
       "installerHeaderIcon": "build/icon.ico"
     },
     "publish": {
-      "provider": "github",
-      "owner": "MrRaccooon",
-      "repo": "Prompt"
+      "provider": "generic",
+      "url": "https://tfetlkkdggdkbuycfoun.supabase.co/storage/v1/object/public/releases"
     }
   },
   "keywords": [
@@ -97,7 +96,6 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.16.0",
-    "@types/nodemailer": "^7.0.11",
     "@types/ws": "^8.18.1",
     "electron": "32.2.7",
     "electron-builder": "^26.8.1",
@@ -112,7 +110,6 @@
     "dotenv": "^16.3.1",
     "electron-updater": "^6.8.3",
     "file-type": "^16.5.4",
-    "nodemailer": "^8.0.4",
     "uiohook-napi": "^1.5.4",
     "ws": "^8.19.0"
   }

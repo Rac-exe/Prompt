@@ -68,53 +68,105 @@ export const SettingsView = () => {
   const [identities, setIdentities] = useState<any[]>([]);
   const [identityLoading, setIdentityLoading] = useState<string | null>(null);
 
+  // Persist "has email password" flag across restarts per user.
+  // Supabase admin API sets the password hash but does NOT add an email identity
+  // row in auth.identities for OAuth accounts, so we track it ourselves.
+  const emailPwKey = `prmpt-has-pw:${user?.profile?.id ?? ''}`;
+  const persistEmailPwSet = () => localStorage.setItem(emailPwKey, 'true');
+  const hasPersistedEmailPw = () => localStorage.getItem(emailPwKey) === 'true';
+
+  const injectEmailIdentityIfNeeded = (ids: any[]): any[] => {
+    if (ids.some((i: any) => i.provider === 'email')) return ids;
+    if (hasPersistedEmailPw()) return [...ids, { provider: 'email', id: 'email' }];
+    return ids;
+  };
+
   const fetchIdentities = useCallback(async () => {
     if (!window.electronAPI?.getIdentities) return;
     try {
       const { identities: ids } = await window.electronAPI.getIdentities();
-      setIdentities(ids ?? []);
-    } catch { /* offline or not available */ }
-  }, []);
+      const injected = injectEmailIdentityIfNeeded(ids ?? []);
+      setIdentities(injected);
+      Sentry.addBreadcrumb({
+        category: 'auth',
+        message: 'Identities fetched',
+        level: 'info',
+        data: { count: injected.length, providers: injected.map((i: any) => i.provider) },
+      });
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'fetchIdentities' } });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emailPwKey]);
 
   useEffect(() => {
-    if (user?.identities) setIdentities(user.identities);
+    // If the backend confirmed a password exists (via user_has_email_password RPC),
+    // seed the localStorage flag so existing users who set a password before this
+    // fix was deployed also see the correct UI state on their next login.
+    if (user?.hasEmailPassword && !hasPersistedEmailPw()) {
+      persistEmailPwSet();
+      Sentry.addBreadcrumb({
+        category: 'auth',
+        message: 'Email-password flag seeded from RPC (existing user)',
+        level: 'info',
+        data: { userId: user.profile?.id },
+      });
+    }
+    if (user?.identities) setIdentities(injectEmailIdentityIfNeeded(user.identities));
     else fetchIdentities();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, fetchIdentities]);
 
   const handleLinkIdentity = async (provider: 'google' | 'github') => {
     if (identityLoading) return;
     setIdentityLoading(provider);
-    try {
-      const result = await window.electronAPI?.linkIdentity(provider);
-      if (result?.error) {
-        toast({ title: "Connection failed", description: result.error, variant: "destructive" });
-      } else {
-        toast({ title: `${provider === 'google' ? 'Google' : 'GitHub'} connected`, description: "Your account has been linked." });
-        await fetchIdentities();
+    await Sentry.startSpan({ name: 'settings.link-identity', op: 'ui.action', attributes: { provider } }, async (span) => {
+      try {
+        const result = await window.electronAPI?.linkIdentity(provider);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Link identity failed: ${provider}`, level: 'warning', data: { provider, error: result.error } });
+          toast({ title: "Connection failed", description: result.error, variant: "destructive" });
+        } else {
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Identity linked: ${provider}`, level: 'info', data: { provider } });
+          toast({ title: `${provider === 'google' ? 'Google' : 'GitHub'} connected`, description: "Your account has been linked." });
+          await fetchIdentities();
+        }
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleLinkIdentity', provider } });
+        toast({ title: "Error", description: "Failed to connect account", variant: "destructive" });
+      } finally {
+        setIdentityLoading(null);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to connect account", variant: "destructive" });
-    } finally {
-      setIdentityLoading(null);
-    }
+    });
   };
 
   const handleUnlinkIdentity = async (identityId: string, providerLabel: string) => {
     if (identityLoading) return;
     setIdentityLoading(identityId);
-    try {
-      const result = await window.electronAPI?.unlinkIdentity(identityId);
-      if (result?.error) {
-        toast({ title: "Disconnect failed", description: result.error, variant: "destructive" });
-      } else {
-        toast({ title: `${providerLabel} disconnected`, description: "The account has been unlinked." });
-        await fetchIdentities();
+    await Sentry.startSpan({ name: 'settings.unlink-identity', op: 'ui.action', attributes: { provider: providerLabel } }, async (span) => {
+      try {
+        const result = await window.electronAPI?.unlinkIdentity(identityId);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Unlink identity failed: ${providerLabel}`, level: 'warning', data: { provider: providerLabel, error: result.error } });
+          toast({ title: "Disconnect failed", description: result.error, variant: "destructive" });
+        } else {
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: `Identity unlinked: ${providerLabel}`, level: 'info', data: { provider: providerLabel } });
+          toast({ title: `${providerLabel} disconnected`, description: "The account has been unlinked." });
+          await fetchIdentities();
+        }
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleUnlinkIdentity', provider: providerLabel } });
+        toast({ title: "Error", description: "Failed to disconnect account", variant: "destructive" });
+      } finally {
+        setIdentityLoading(null);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to disconnect account", variant: "destructive" });
-    } finally {
-      setIdentityLoading(null);
-    }
+    });
   };
 
   // OTP password reset flow state
@@ -130,20 +182,28 @@ export const SettingsView = () => {
   const handleSetPassword = async () => {
     if (!userEmail) return;
     setIdentityLoading('password');
-    try {
-      const result = await window.electronAPI?.sendResetOtp(userEmail);
-      if (result?.error) {
-        toast({ title: "Failed", description: result.error, variant: "destructive" });
-      } else {
-        setResetStep('otp');
-        setOtpError('');
-        toast({ title: "Code sent", description: "Check your inbox for the verification code." });
+    await Sentry.startSpan({ name: 'settings.set-password.send-otp', op: 'ui.action' }, async (span) => {
+      try {
+        const result = await window.electronAPI?.sendResetOtp(userEmail);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP send failed', level: 'warning', data: { error: result.error } });
+          toast({ title: "Failed", description: result.error, variant: "destructive" });
+        } else {
+          span.setAttribute('result', 'sent');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP sent', level: 'info' });
+          setResetStep('otp');
+          setOtpError('');
+          toast({ title: "Code sent", description: "Check your inbox for the verification code." });
+        }
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleSetPassword' } });
+        toast({ title: "Error", description: "Failed to send reset code", variant: "destructive" });
+      } finally {
+        setIdentityLoading(null);
       }
-    } catch {
-      toast({ title: "Error", description: "Failed to send reset code", variant: "destructive" });
-    } finally {
-      setIdentityLoading(null);
-    }
+    });
   };
 
   const handleVerifyResetOtp = async (otp: string) => {
@@ -153,6 +213,7 @@ export const SettingsView = () => {
     setNewPassword('');
     setConfirmNewPassword('');
     setResetPasswordError('');
+    Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP accepted — entering new-password step', level: 'info' });
   };
 
   const handleResendResetOtp = async () => {
@@ -160,11 +221,14 @@ export const SettingsView = () => {
     try {
       const result = await window.electronAPI?.sendResetOtp(userEmail);
       if (result?.error) {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resend failed', level: 'warning', data: { error: result.error } });
         setOtpError(result.error);
       } else {
+        Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resent', level: 'info' });
         toast({ title: "Code resent", description: "A new verification code has been sent." });
       }
-    } catch {
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResendResetOtp' } });
       setOtpError('Failed to resend code.');
     }
   };
@@ -183,30 +247,72 @@ export const SettingsView = () => {
     }
 
     setResetPasswordLoading(true);
-    try {
-      const result = await window.electronAPI?.verifyResetOtp(userEmail, resetOtp, newPassword);
-      if (result?.error) {
-        setResetPasswordError(result.error);
-        if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
-          setResetStep('otp');
-          setOtpError(result.error);
+    await Sentry.startSpan({ name: 'settings.reset-password.submit', op: 'ui.action' }, async (span) => {
+      try {
+        const result = await window.electronAPI?.verifyResetOtp(userEmail, resetOtp, newPassword);
+        if (result?.error) {
+          span.setAttribute('result', 'failed');
+          Sentry.addBreadcrumb({
+            category: 'auth',
+            message: 'Password reset submit failed',
+            level: 'warning',
+            data: { error: result.error },
+          });
+          setResetPasswordError(result.error);
+          if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
+            setResetStep('otp');
+            setOtpError(result.error);
+          }
+        } else {
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info' });
+          toast({ title: "Password updated", description: "Your password has been changed successfully." });
+          setResetStep('idle');
+          setResetOtp('');
+          // Persist the flag so the UI stays correct across restarts (Supabase admin API
+          // doesn't add an email identity row for OAuth accounts that set a password).
+          persistEmailPwSet();
+          await fetchIdentities();
         }
-      } else {
-        toast({ title: "Password updated", description: "Your password has been changed successfully." });
-        setResetStep('idle');
-        setResetOtp('');
+      } catch (err) {
+        span.setAttribute('result', 'error');
+        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResetPasswordSubmit' } });
+        setResetPasswordError('Failed to update password. Please try again.');
+      } finally {
+        setResetPasswordLoading(false);
       }
-    } catch {
-      setResetPasswordError('Failed to update password. Please try again.');
-    } finally {
-      setResetPasswordLoading(false);
-    }
+    });
   };
 
   const avatarUrl = user?.profile?.avatar_url || null;
   const userName = user?.profile?.name || "User";
   const userEmail = user?.profile?.email || "";
   const userInitial = (userName[0] || "U").toUpperCase();
+
+  const [editedName, setEditedName] = useState(userName);
+  const [nameSaving, setNameSaving] = useState(false);
+  const nameChanged = editedName.trim() !== userName;
+
+  useEffect(() => { setEditedName(userName); }, [userName]);
+
+  const saveName = async () => {
+    const trimmed = editedName.trim();
+    if (!trimmed || trimmed === userName) return;
+    setNameSaving(true);
+    try {
+      await Sentry.startSpan({ name: 'settings.update-username', op: 'ui.action' }, async () => {
+        if (window.electronAPI?.updateProfile) {
+          window.electronAPI.updateProfile({ name: trimmed });
+        }
+      });
+      toast({ title: "Username updated", description: "Your username has been saved." });
+    } catch (err) {
+      Sentry.captureException(err);
+      toast({ title: "Error", description: "Failed to update username.", variant: "destructive" });
+    } finally {
+      setNameSaving(false);
+    }
+  };
 
   const settingsReadyRef = useRef(false);
 
@@ -242,7 +348,7 @@ export const SettingsView = () => {
     const newSettings = { ...settings, [key]: value };
     setSettings(newSettings);
     applySettings(newSettings);
-    saveSettings(newSettings).catch((err) => {
+    saveSettings(newSettings, user?.profile?.id).catch((err) => {
       Sentry.captureException(err, { tags: { component: 'settings-view', op: 'auto-save' }, extra: { key } });
       console.error('[SettingsView] Failed to auto-save:', err);
       toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
@@ -346,10 +452,23 @@ export const SettingsView = () => {
               <Section title="Account Information">
                 <Row>
                   <RowLabel label="Username" />
-                  <Input
-                    defaultValue={userName}
-                    className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
-                  />
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={editedName}
+                      onChange={(e) => setEditedName(e.target.value)}
+                      className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
+                    />
+                    {nameChanged && (
+                      <Button
+                        size="sm"
+                        onClick={saveName}
+                        disabled={nameSaving || !editedName.trim()}
+                        className="h-8 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                      >
+                        {nameSaving ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <Check size={14} weight="bold" />}
+                      </Button>
+                    )}
+                  </div>
                 </Row>
                 <Row>
                   <RowLabel label="Email Address" hint="Cannot be changed" />

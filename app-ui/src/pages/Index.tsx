@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import * as Sentry from "@sentry/react";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Sidebar } from "@/components/layout/Sidebar";
@@ -10,6 +11,7 @@ import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { Message } from "@/components/chat/MessageBubble";
+import type { ClarifyQuestion } from "@/components/chat/ClarificationCard";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
 import { toast } from "@/hooks/use-toast";
 import { useInitializeSettings } from "@/hooks/useInitializeSettings";
@@ -41,10 +43,10 @@ interface ChatSession {
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 const Index = () => {
-  // Initialize settings after authentication
-  useInitializeSettings();
-
   const { user, signOut } = useAuth();
+
+  // Initialize settings after authentication, scoped to user
+  useInitializeSettings(user?.profile?.id);
 
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");
@@ -60,7 +62,6 @@ const Index = () => {
     input,
     setInput,
     mode,
-    setMode,
     selectedSkill,
     setSelectedSkill,
     attachedFiles,
@@ -104,6 +105,19 @@ const Index = () => {
 
   // Send error state — shown inline in the input bar instead of a toast
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // Clarification state
+  const [clarificationData, setClarificationData] = useState<any>(null);
+  const clarificationDataRef = useRef<any>(null);
+  clarificationDataRef.current = clarificationData;
+  const pendingClarificationChatId = useRef<string | null>(null);
+  // Keyed by **assistant** message ID so each version keeps its own choices
+  const [clarificationAnswersMap, setClarificationAnswersMap] = useState<Record<string, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
+  // Holds choices temporarily until the assistant message ID is known.
+  // _pendingKey is the temp key used in the map so the card stays visible during streaming.
+  const pendingClarificationChoices = useRef<{ questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks'; _pendingKey?: string } | null>(null);
+  const clarificationAnswersMapRef = useRef(clarificationAnswersMap);
+  clarificationAnswersMapRef.current = clarificationAnswersMap;
 
   // Message version tree (edit/retry creates branches instead of slicing)
   const messageTree = useMessageTree();
@@ -310,6 +324,18 @@ const Index = () => {
       setMessages((prev) => {
         if (prev.some(m => m.id === finalMessage.id)) return prev;
         return [...prev, finalMessage];
+      });
+    }
+
+    // Associate pending clarification choices with this assistant message
+    const pendingChoices = pendingClarificationChoices.current;
+    if (pendingChoices) {
+      pendingClarificationChoices.current = null;
+      const { _pendingKey, ...choices } = pendingChoices;
+      setClarificationAnswersMap(prev => {
+        const next = { ...prev, [finalMessage.id]: choices };
+        if (_pendingKey && next[_pendingKey]) delete next[_pendingKey];
+        return next;
       });
     }
 
@@ -533,6 +559,19 @@ const Index = () => {
     }
   }, []);
 
+  // Listen for clarification-required from the backend
+  useEffect(() => {
+    if (!isElectron || !window.electronAPI?.onClarificationRequired) return;
+    const cleanup = window.electronAPI.onClarificationRequired((data: any) => {
+      if (data.chatId !== selectedChatIdRef.current) return;
+      console.log('[Index] Clarification required for chat:', data.chatId);
+      pendingClarificationChatId.current = data.chatId;
+      setClarificationData(data);
+      setIsGenerating(false);
+    });
+    return cleanup;
+  }, []);
+
   // Listen for partial file upload failures (image uploads that failed after all retries)
   useEffect(() => {
     if (!isElectron || !window.electronAPI?.onUploadPartialFailure) return;
@@ -682,6 +721,15 @@ const Index = () => {
           if (!editInProgressRef.current && !sendingRef.current) {
             messageTree.init(formattedMessages);
           }
+
+          // Reconstruct clarification choices from assistant message metadata
+          const restoredChoices: Record<string, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }> = {};
+          for (const msg of data.messages) {
+            if (msg.role === 'assistant' && msg.metadata?.clarificationChoices) {
+              restoredChoices[msg.id] = msg.metadata.clarificationChoices;
+            }
+          }
+          setClarificationAnswersMap(restoredChoices);
         }
       };
 
@@ -812,13 +860,15 @@ const Index = () => {
   // ── Chat selection (abort any in-flight stream first) ────────
   const handleSelectChat = useCallback((chatId: string) => {
     if (chatId === selectedChatIdRef.current) return;
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Chat selected', data: { chatId } });
     detachFromActiveGeneration();
+    setClarificationAnswersMap({});
     setSelectedChatId(chatId);
   }, [detachFromActiveGeneration]);
 
   // Chat handlers
   const handleNewChat = () => {
-    console.log('[Index] Starting new chat');
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'New chat started' });
     detachFromActiveGeneration();
     // Clear current chat selection and messages
     setMessages([]);
@@ -829,18 +879,50 @@ const Index = () => {
     setOfflineChatUnavailable(false);
   };
 
+  const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    Sentry.addBreadcrumb({ category: 'app.clarification', message: 'Clarification submitted', data: { answerCount: Object.keys(answers).length, wantsSections } });
+    const currentClarification = clarificationDataRef.current;
+    const lastUserMsg = [...messagesRef.current].reverse().find(m => m.role === 'user');
+    const questions: ClarifyQuestion[] = (currentClarification?.questions || []).map((q: any) => ({
+      id: q.id,
+      question: q.question,
+      type: q.type,
+      options: q.options || [],
+      optional: q.optional ?? false,
+    }));
+    const choicesPayload = { questions, answers, mode: (wantsSections ? 'tasks' : 'single') as 'single' | 'tasks' };
+
+    // Store in map immediately with a temp key so the card is visible during streaming
+    const pendingKey = lastUserMsg ? `_pending_${lastUserMsg.id}` : undefined;
+    if (pendingKey) {
+      setClarificationAnswersMap(prev => ({ ...prev, [pendingKey]: choicesPayload }));
+    }
+    pendingClarificationChoices.current = { ...choicesPayload, _pendingKey: pendingKey };
+
+    setClarificationData(null);
+    setIsGenerating(true);
+    startStreaming();
+    if (pendingClarificationChatId.current) {
+      window.electronAPI?.submitClarification?.({
+        chatId: pendingClarificationChatId.current,
+        answers,
+        wantsSections,
+        clarificationChoices: choicesPayload,
+      });
+    }
+  }, [startStreaming]);
+
   const handleSendMessage = useCallback((
     content: string, 
-    mode: "fast" | "thinking" = "fast",
+    mode: "fast" | "thinking" = "thinking",
     attachedFiles?: any[],
     selectedSkill?: string | null,
     versionMeta?: { groupId: string; versionIndex: number }
   ) => {
-    // Prevent double sends (e.g. rapid clicks before isGenerating is set)
     if (sendingRef.current) {
-      console.warn('[Index] Ignoring duplicate send — already in flight');
       return;
     }
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skill: selectedSkill || 'auto' } });
     sendingRef.current = true;
 
     const groupId = versionMeta?.groupId || crypto.randomUUID();
@@ -856,8 +938,9 @@ const Index = () => {
       versionIndex,
     });
 
-    // Clear any previous send error
+    // Clear any previous send error or clarification
     setSendError(null);
+    setClarificationData(null);
 
     // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
@@ -914,6 +997,7 @@ Your prompt was: "${content}"`;
   // destroying old messages. The previous version + its responses remain
   // accessible via the ← / → version navigator.
   const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message edited', data: { messageId } });
     const placeholderId = `edit-placeholder-${Date.now()}`;
 
     // Mark edit in progress so tree isn't flattened by a reload
@@ -935,13 +1019,14 @@ Your prompt was: "${content}"`;
       { id: placeholderId, role: "user" as const, content: newContent, timestamp: new Date(), groupId, versionIndex },
     ]);
 
-    handleSendMessage(newContent, "fast", undefined, undefined, { groupId, versionIndex });
-  }, [handleSendMessage, messageTree.addBranch]);
+    handleSendMessage(newContent, mode, undefined, undefined, { groupId, versionIndex });
+  }, [handleSendMessage, mode, messageTree.addBranch]);
 
   // Regenerate an assistant response: creates a new assistant version
   // under the SAME user message (no new user version created).
   const handleRegenerateMessage = useCallback((assistantMessageId: string) => {
     if (sendingRef.current) return;
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Regenerate requested', data: { assistantMessageId } });
 
     // Walk the active path to find the user message before this assistant
     const activePath = messageTree.getActivePath();
@@ -976,7 +1061,7 @@ Your prompt was: "${content}"`;
       window.electronAPI.regenerateResponse({
         chatId: selectedChatId!,
         content: userMsg.content,
-        mode: 'fast',
+        mode,
         groupId,
         versionIndex,
         attachedFiles: userMsg.attachedFiles as any,
@@ -989,7 +1074,75 @@ Your prompt was: "${content}"`;
     generationStartTime.current = performance.now();
     setGenerationStats({ ttft: null, total: null });
     startStreaming();
-  }, [selectedChatId, startStreaming, messageTree]);
+  }, [selectedChatId, mode, startStreaming, messageTree]);
+
+  // Re-optimize with changed clarification answers: finds the assistant
+  // message after the given user message and regenerates it with new answers.
+  const handleReoptimize = useCallback((userMessageId: string, newAnswers: Record<string, string>, wantsSections: boolean) => {
+    if (sendingRef.current || !selectedChatId) return;
+
+    const activePath = messageTree.getActivePath();
+    const uIdx = activePath.indexOf(userMessageId);
+    if (uIdx < 0 || uIdx >= activePath.length - 1) return;
+
+    const assistantMsgId = activePath[uIdx + 1];
+    const assistantMsg = messagesRef.current.find(m => m.id === assistantMsgId);
+    if (!assistantMsg || assistantMsg.role !== 'assistant') return;
+
+    const userMsg = messagesRef.current.find(m => m.id === userMessageId);
+    if (!userMsg) return;
+
+    // Build the choices payload — stored in ref until the new assistant ID arrives
+    const prevInfo = clarificationAnswersMapRef.current[assistantMsgId];
+    const choicesPayload = {
+      questions: prevInfo?.questions || [],
+      answers: newAnswers,
+      mode: (wantsSections ? 'tasks' : 'single') as 'single' | 'tasks',
+    };
+    // Also store immediately with a temp key so the summary stays visible during streaming
+    const pendingKey = `_pending_${userMessageId}`;
+    setClarificationAnswersMap(prev => ({ ...prev, [pendingKey]: choicesPayload }));
+    pendingClarificationChoices.current = { ...choicesPayload, _pendingKey: pendingKey };
+
+    // Format answers the same way the backend expects
+    const formattedAnswers = Object.entries(newAnswers)
+      .filter(([, v]) => v && v.trim())
+      .map(([key, val]) => `- ${key}: ${val}`)
+      .join('\n');
+
+    const groupId = assistantMsg.groupId || assistantMsgId;
+    const existingCount = messagesRef.current.filter(m => m.groupId === groupId).length;
+    const versionIndex = existingCount > 0 ? existingCount : 1;
+
+    const placeholderId = `reopt-placeholder-${Date.now()}`;
+
+    sendingRef.current = true;
+    editInProgressRef.current = true;
+    pendingRegenPlaceholderId.current = placeholderId;
+
+    messageTree.addBranch(assistantMsgId, placeholderId);
+
+    if (isElectron && window.electronAPI?.regenerateResponse) {
+      window.electronAPI.regenerateResponse({
+        chatId: selectedChatId,
+        content: userMsg.content,
+        mode,
+        groupId,
+        versionIndex,
+        attachedFiles: userMsg.attachedFiles as any,
+        forcedSkill: userMsg.selectedSkill || null,
+        previousContent: assistantMsg.content || undefined,
+        clarificationAnswers: formattedAnswers || undefined,
+        wantsSections,
+        clarificationChoices: choicesPayload,
+      });
+    }
+
+    setIsGenerating(true);
+    generationStartTime.current = performance.now();
+    setGenerationStats({ ttft: null, total: null });
+    startStreaming();
+  }, [selectedChatId, mode, startStreaming, messageTree]);
 
   const handleSavePromptClick = (id: string) => {
     let message = displayMessages.find((m) => m.id === id);
@@ -1354,11 +1507,14 @@ Your prompt was: "${content}"`;
             input={input}
             setInput={setInput}
             mode={mode}
-            setMode={setMode}
             attachedFiles={attachedFiles}
             setAttachedFiles={setAttachedFiles}
             selectedSkill={selectedSkill}
             setSelectedSkill={setSelectedSkill}
+            clarificationData={clarificationData}
+            onSubmitClarification={handleSubmitClarification}
+            clarificationAnswersMap={clarificationAnswersMap}
+            onReoptimize={handleReoptimize}
           />
         );
     }

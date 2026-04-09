@@ -9,6 +9,10 @@ export interface SettingsData {
 
 export const STORAGE_KEY = "prompt-weaver-settings";
 
+export function storageKey(userId?: string): string {
+    return userId ? `${STORAGE_KEY}-${userId}` : STORAGE_KEY;
+}
+
 // Default settings — light for first-time users; stored preference takes over on return visits.
 export const DEFAULT_SETTINGS: SettingsData = {
     theme: "light",
@@ -21,13 +25,12 @@ export const DEFAULT_SETTINGS: SettingsData = {
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 // Load settings from Supabase (via Electron) or localStorage
-export const loadSettings = async (): Promise<SettingsData> => {
+export const loadSettings = async (userId?: string): Promise<SettingsData> => {
+    const key = storageKey(userId);
     if (isElectron && window.electronAPI.loadSettings) {
         try {
-            // Load from Supabase via Electron
             const settings = await window.electronAPI.loadSettings();
 
-            // Transform snake_case from DB to camelCase for frontend
             const transformed: SettingsData = {
                 theme: settings.theme || DEFAULT_SETTINGS.theme,
                 fontSize: settings.font_size || DEFAULT_SETTINGS.fontSize,
@@ -35,7 +38,7 @@ export const loadSettings = async (): Promise<SettingsData> => {
                 promptInstructions: settings.prompt_instructions || DEFAULT_SETTINGS.promptInstructions,
             };
 
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(transformed));
+            localStorage.setItem(key, JSON.stringify(transformed));
             Sentry.addBreadcrumb({ category: 'settings', message: 'Loaded from Supabase', level: 'info', data: { theme: transformed.theme, fontSize: transformed.fontSize, fontFamily: transformed.fontFamily } });
             return transformed;
         } catch (error) {
@@ -44,8 +47,7 @@ export const loadSettings = async (): Promise<SettingsData> => {
         }
     }
 
-    // Fallback: Load from localStorage (for non-Electron or error)
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(key) || localStorage.getItem(STORAGE_KEY);
     if (stored) {
         try {
             return JSON.parse(stored);
@@ -57,10 +59,8 @@ export const loadSettings = async (): Promise<SettingsData> => {
 };
 
 // Save settings to Supabase (via Electron) and localStorage
-export const saveSettings = async (settings: SettingsData): Promise<void> => {
-    // Write locally FIRST so the preference survives sign-out or app close
-    // before the Supabase round-trip completes.
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+export const saveSettings = async (settings: SettingsData, userId?: string): Promise<void> => {
+    localStorage.setItem(storageKey(userId), JSON.stringify(settings));
 
     if (isElectron && window.electronAPI.saveSettings) {
         try {

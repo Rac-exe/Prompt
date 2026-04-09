@@ -28,6 +28,21 @@ export declare function forceFocusWindow(hwnd: number): boolean
 export declare function getActiveWindowTitle(): string
 
 /**
+ * Paste text into a specific window via clipboard (Ctrl+V).
+ *
+ * Does NOT consume any stored anchor or delete trigger text.
+ * Focuses the target window, writes text to clipboard, sends Ctrl+V,
+ * then restores the original clipboard contents.
+ *
+ * Designed for multi-section insert where the overlay pastes sections
+ * one at a time into the same target window.
+ *
+ * Returns true on success, false if the window no longer exists or
+ * SendInput is blocked by UIPI.
+ */
+export declare function pasteTextToWindow(hwnd: number, text: string): boolean
+
+/**
  * Select the @prompt trigger text and replace it with `text` in the original window.
  *
  * Must be called AFTER the overlay closes and AI text is ready.
@@ -42,6 +57,16 @@ export declare function getActiveWindowTitle(): string
  * Electron main thread blocking briefly is acceptable — the renderer is unaffected.
  */
 export declare function replaceAtLastAnchor(text: string): boolean
+
+/**
+ * Send Enter key (VK_RETURN) to a specific window.
+ *
+ * Used by auto-pilot chat mode to submit a pasted section.
+ * Focuses the target window if needed, then sends VK_RETURN down/up.
+ *
+ * Returns true on success, false if the window is gone or SendInput fails.
+ */
+export declare function sendEnterToWindow(hwnd: number): boolean
 
 /**
  * Install the global WH_KEYBOARD_LL keyboard hook.

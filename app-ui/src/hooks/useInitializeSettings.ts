@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import * as Sentry from '@sentry/react';
-import { loadSettings, applySettings, DEFAULT_SETTINGS, STORAGE_KEY } from "@/lib/settings";
+import { loadSettings, applySettings, STORAGE_KEY, storageKey } from "@/lib/settings";
 
 /**
  * Hook to initialize and apply user settings on app startup.
@@ -14,10 +14,11 @@ import { loadSettings, applySettings, DEFAULT_SETTINGS, STORAGE_KEY } from "@/li
  *   The SettingsView phantom-toggle guard ensures the Radix Switch can't
  *   accidentally revert the theme during this sync.
  */
-export const useInitializeSettings = () => {
+export const useInitializeSettings = (userId?: string) => {
     useEffect(() => {
         try {
-            const stored = localStorage.getItem(STORAGE_KEY);
+            const key = userId ? storageKey(userId) : STORAGE_KEY;
+            const stored = localStorage.getItem(key) || localStorage.getItem(STORAGE_KEY);
             if (stored) {
                 applySettings(JSON.parse(stored));
             }
@@ -25,11 +26,11 @@ export const useInitializeSettings = () => {
             // Corrupt localStorage — fall through
         }
 
-        loadSettings()
+        loadSettings(userId)
             .then(applySettings)
             .catch((error) => {
                 Sentry.captureException(error, { tags: { component: 'settings', op: 'init' } });
                 console.error("[Settings] Initialization error:", error);
             });
-    }, []);
+    }, [userId]);
 };

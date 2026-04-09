@@ -112,12 +112,14 @@ declare global {
       // OVERLAY API (for overlay.html)
       // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => void;
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => void;
         save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
         copy: (text: string) => void;
         close: () => void;
         openApp: () => void;
         insert: (text: string) => Promise<{ success: boolean; fallback?: string }>;
+        insertSection: (text: string) => Promise<{ success: boolean; fallback?: string }>;
+        getSourceInfo: () => Promise<{ hwnd: number | null; title: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low'; appName: string }>;
         checkAuth: () => Promise<{ isAuthenticated: boolean }>;
         getCollections: () => Promise<any>;
         createCollection: (name: string, icon?: string) => Promise<any>;
@@ -125,6 +127,8 @@ declare global {
         saveToChat: (chatId: string, content: string) => Promise<{ messageId: string }>;
         onOpened: (callback: (data: { isAuthenticated: boolean }) => void) => () => void;
         onAuthState: (callback: (data: { isAuthenticated: boolean }) => void) => () => void;
+        onClarificationRequired: (callback: (data: any) => void) => () => void;
+        submitClarification: (data: { answers: Record<string, string>; wantsSections: boolean }) => void;
         onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => () => void;
         onOptimizationComplete: (callback: (data: { original: string; optimized: string }) => void) => () => void;
         onOptimizationError: (callback: (data: { error: string }) => void) => () => void;
@@ -175,6 +179,10 @@ declare global {
       onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
       onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
       onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
+
+      // Clarification API
+      submitClarification: (data: { chatId: string; answers: Record<string, string>; wantsSections: boolean }) => void;
+      onClarificationRequired: (callback: (data: { chatId: string; should_clarify: boolean; is_complex: boolean; complexity_reason: string; suggested_sections: string[]; questions: Array<{ id: string; question: string; type: string; options: string[]; allow_other: boolean; optional: boolean }> }) => void) => (() => void);
 
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
@@ -312,7 +320,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -329,6 +337,12 @@ const electronAPI = {
     },
     insert: (text: string) => {
       return ipcRenderer.invoke('overlay:insert', { text });
+    },
+    insertSection: (text: string) => {
+      return ipcRenderer.invoke('overlay:insert-section', { text });
+    },
+    getSourceInfo: () => {
+      return ipcRenderer.invoke('overlay:get-source-info');
     },
     checkAuth: () => {
       return ipcRenderer.invoke('overlay:check-auth');
@@ -354,6 +368,14 @@ const electronAPI = {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('overlay:auth-state', handler);
       return () => ipcRenderer.removeListener('overlay:auth-state', handler);
+    },
+    onClarificationRequired: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:clarification-required', handler);
+      return () => ipcRenderer.removeListener('overlay:clarification-required', handler);
+    },
+    submitClarification: (data: { answers: Record<string, string>; wantsSections: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
+      ipcRenderer.send('overlay:submit-clarification', data);
     },
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
       const handler = (_event: any, data: any) => callback(data);
@@ -424,7 +446,7 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
     ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
@@ -510,6 +532,9 @@ const electronAPI = {
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
     previousContent?: string;
+    clarificationAnswers?: string;
+    wantsSections?: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => {
     ipcRenderer.send('app:regenerate-response', data);
   },
@@ -517,6 +542,19 @@ const electronAPI = {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('message-sent', handler);
     return () => ipcRenderer.removeListener('message-sent', handler);
+  },
+  submitClarification: (data: {
+    chatId: string;
+    answers: Record<string, string>;
+    wantsSections: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
+  }) => {
+    ipcRenderer.send('app:submit-clarification', data);
+  },
+  onClarificationRequired: (callback: (data: any) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('clarification-required', handler);
+    return () => ipcRenderer.removeListener('clarification-required', handler);
   },
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
@@ -575,9 +613,6 @@ const electronAPI = {
   // ============================================
   // AUTH API
   // ============================================
-  signUp: (data: { name: string; dob: string; email: string; password: string }) => {
-    ipcRenderer.send('auth:sign-up', data);
-  },
   signIn: (data: { email: string; password: string }) => {
     ipcRenderer.send('auth:sign-in', data);
   },

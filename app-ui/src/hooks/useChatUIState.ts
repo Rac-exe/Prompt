@@ -10,7 +10,7 @@ export type ChatUIState = {
 
 const getDefaultState = (): ChatUIState => ({
   input: "",
-  mode: "fast",
+  mode: "thinking",
   skill: null,
   attachedFiles: [],
 });
@@ -26,7 +26,7 @@ export const useChatUIState = (selectedChatId: string | null) => {
 
   // Local state for current chat
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"fast" | "thinking">("fast");
+  const [mode, setMode] = useState<"fast" | "thinking">("thinking");
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
 
@@ -35,7 +35,7 @@ export const useChatUIState = (selectedChatId: string | null) => {
     if (!selectedChatId) {
       // No chat selected → reset to defaults
       setInput("");
-      setMode("fast");
+      setMode("thinking");
       setSelectedSkill(null);
       setAttachedFiles([]);
       return;

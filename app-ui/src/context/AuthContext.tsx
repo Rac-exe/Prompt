@@ -49,6 +49,7 @@ export interface CompleteUserData {
     profile: UserProfile;
     preferences: UserPreferences;
     identities?: UserIdentity[];
+    hasEmailPassword?: boolean;
 }
 
 interface AuthContextType {

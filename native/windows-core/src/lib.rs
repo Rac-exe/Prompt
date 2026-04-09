@@ -100,6 +100,41 @@ pub fn replace_at_last_anchor(text: String) -> bool {
     { replacement::replace_at_last_anchor(&text) }
 }
 
+/// Paste text into a specific window via clipboard (Ctrl+V).
+///
+/// Does NOT consume any stored anchor or delete trigger text.
+/// Focuses the target window, writes text to clipboard, sends Ctrl+V,
+/// then restores the original clipboard contents.
+///
+/// Designed for multi-section insert where the overlay pastes sections
+/// one at a time into the same target window.
+///
+/// Returns true on success, false if the window no longer exists or
+/// SendInput is blocked by UIPI.
+#[napi]
+pub fn paste_text_to_window(hwnd: i64, text: String) -> bool {
+    #[cfg(not(target_os = "windows"))]
+    { let _ = (hwnd, text); return false; }
+
+    #[cfg(target_os = "windows")]
+    { replacement::paste_text_to_window(hwnd as isize, &text) }
+}
+
+/// Send Enter key (VK_RETURN) to a specific window.
+///
+/// Used by auto-pilot chat mode to submit a pasted section.
+/// Focuses the target window if needed, then sends VK_RETURN down/up.
+///
+/// Returns true on success, false if the window is gone or SendInput fails.
+#[napi]
+pub fn send_enter_to_window(hwnd: i64) -> bool {
+    #[cfg(not(target_os = "windows"))]
+    { let _ = hwnd; return false; }
+
+    #[cfg(target_os = "windows")]
+    { replacement::send_enter_to_window(hwnd as isize) }
+}
+
 /// Force-focus an Electron window by its native HWND.
 ///
 /// Electron's BrowserWindow.focus() is asynchronous and works through the

@@ -122,7 +122,7 @@ export const PlusMenu = ({
         ref={menuRef}
         className={cn(
           "fixed z-[100] min-w-[200px] rounded-xl",
-          "bg-popover border border-border/80 shadow-xl",
+          "bg-background border border-border shadow-[0_-4px_24px_rgba(0,0,0,0.45)]",
           "animate-in fade-in-0 slide-in-from-bottom-1 duration-100",
         )}
         style={{ left: pos.left, bottom: pos.bottom }}

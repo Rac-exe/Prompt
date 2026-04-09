@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as Sentry from '@sentry/react';
 import darkLogo from "@/assets/logos/dark-logo-svg.svg";
 import lightLogo from "@/assets/logos/light-logo-svg.svg";
 import { useIsDark } from "@/hooks/useIsDark";
 import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON } from '../lib/constants';
 import { useScrollController } from '../../hooks/useScrollController';
+import { MarkdownContent } from '@/components/ui/MarkdownContent';
+import { ClarificationCard, type ClarifyQuestion } from '@/components/chat/ClarificationCard';
+import { ClarificationSummaryCard } from '@/components/chat/ClarificationSummaryCard';
 
 // ── Inline sub-components (small, tightly coupled to overlay) ────────────────
 
@@ -167,6 +171,14 @@ const AssistantBrandMark: React.FC<{ size: number }> = ({ size }) => {
   );
 };
 
+// ── ClarificationInfo type ──────────────────────────────────────────────────
+
+interface ClarificationInfo {
+  questions: ClarifyQuestion[];
+  answers: Record<string, string>;
+  mode: 'single' | 'tasks';
+}
+
 // ── UserMessage ──────────────────────────────────────────────────────────────
 
 interface UserMessageProps {
@@ -201,7 +213,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
     onEdit(turnIdx, trimmed);
   }, [editText, msg.content, cancelEdit, onEdit, turnIdx]);
 
-  // auto-resize textarea
   useEffect(() => {
     if (editing && taRef.current) {
       const ta = taRef.current;
@@ -216,7 +227,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
     <div className="chat-message">
       <div className="message-label">You</div>
 
-      {/* Display mode */}
       {!editing && (
         <div>
           <FilesDisplay files={msg.attachedFiles} />
@@ -237,7 +247,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
         </div>
       )}
 
-      {/* Edit mode */}
       {editing && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <textarea
@@ -247,7 +256,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
             value={editText}
             onChange={(e) => {
               setEditText(e.target.value);
-              // auto-resize
               const ta = e.target;
               ta.style.height = 'auto';
               ta.style.height = ta.scrollHeight + 'px';
@@ -267,6 +275,160 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
   );
 };
 
+// ── Section parsing (mirrors main app's MessageBubble) ───────────────────────
+
+interface ParsedSection { title: string; content: string }
+
+function parseSections(text: string): ParsedSection[] | null {
+  const sectionRegex = /^## (.+)$/gm;
+  const matches = [...text.matchAll(sectionRegex)];
+  if (matches.length < 2) return null;
+
+  const sections: ParsedSection[] = [];
+  for (let i = 0; i < matches.length; i++) {
+    const title = matches[i][1].trim();
+    const start = matches[i].index! + matches[i][0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+    const content = text.slice(start, end).trim();
+    if (content) sections.push({ title, content });
+  }
+  return sections.length >= 2 ? sections : null;
+}
+
+const OverlaySectionCopyButton: React.FC<{ text: string }> = ({ text }) => {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Section copy', level: 'info', data: { textLen: text.length } });
+        navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 3,
+        padding: '2px 6px', borderRadius: 5,
+        border: 'none', background: 'transparent',
+        fontSize: 10, fontWeight: 500, cursor: 'pointer',
+        color: copied ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground) / 0.5)',
+        transition: 'color 0.15s',
+        whiteSpace: 'nowrap', flexShrink: 0,
+      }}
+    >
+      {copied ? (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+      ) : (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+      )}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  );
+};
+
+const OverlaySectionInsertButton: React.FC<{
+  text: string;
+  inserted: boolean;
+  onInsert: (text: string) => void;
+}> = ({ text, inserted, onInsert }) => {
+  const [inserting, setInserting] = useState(false);
+
+  const handleInsert = useCallback(async () => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Section insert clicked', level: 'info', data: { textLen: text.length } });
+    setInserting(true);
+    onInsert(text);
+    setTimeout(() => setInserting(false), 2000);
+  }, [text, onInsert]);
+
+  return (
+    <button
+      onClick={handleInsert}
+      disabled={inserting}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 3,
+        padding: '2px 6px', borderRadius: 5,
+        border: 'none', background: 'transparent',
+        fontSize: 10, fontWeight: 500, cursor: inserted ? 'default' : 'pointer',
+        color: inserted ? 'hsl(142 71% 45%)' : inserting ? 'hsl(var(--accent))' : 'hsl(var(--muted-foreground) / 0.5)',
+        transition: 'color 0.15s',
+        whiteSpace: 'nowrap', flexShrink: 0,
+      }}
+    >
+      {inserted ? (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+      ) : (
+        <svg style={{ width: 10, height: 10 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+      )}
+      {inserted ? 'Inserted' : inserting ? 'Inserting…' : 'Insert'}
+    </button>
+  );
+};
+
+interface OverlaySectionedContentProps {
+  content: string;
+  showReplace?: boolean;
+  insertedSections?: Set<number>;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+}
+
+const OverlaySectionedContent: React.FC<OverlaySectionedContentProps> = ({
+  content, showReplace, insertedSections, onInsertSection,
+}) => {
+  const sections = useMemo(() => parseSections(content), [content]);
+
+  if (!sections) {
+    return <MarkdownContent content={content} size="sm" className="message-text" />;
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {sections.map((section, idx) => {
+        const isInserted = insertedSections?.has(idx) ?? false;
+        const sectionText = `${section.title}\n\n${section.content}`;
+
+        return (
+          <div
+            key={idx}
+            style={{
+              padding: '10px 14px',
+              borderTop: idx > 0 ? '1px solid hsl(var(--border) / 0.4)' : undefined,
+              opacity: isInserted ? 0.5 : 1,
+              transition: 'opacity 0.3s',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 18, height: 18, borderRadius: 5,
+                  background: isInserted ? 'hsl(142 71% 45% / 0.15)' : 'hsl(var(--accent) / 0.1)',
+                  fontSize: 10, fontWeight: 700,
+                  color: isInserted ? 'hsl(142 71% 45%)' : 'hsl(var(--accent))',
+                }}>
+                  {isInserted ? '✓' : idx + 1}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'hsl(var(--foreground))', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {section.title}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                {showReplace && onInsertSection && (
+                  <OverlaySectionInsertButton
+                    text={sectionText}
+                    inserted={isInserted}
+                    onInsert={() => onInsertSection(idx, sectionText)}
+                  />
+                )}
+                <OverlaySectionCopyButton text={sectionText} />
+              </div>
+            </div>
+            <MarkdownContent content={section.content} size="sm" />
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ── AssistantMessage ─────────────────────────────────────────────────────────
 
 interface AssistantMessageProps {
@@ -277,25 +439,34 @@ interface AssistantMessageProps {
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+  insertedSections?: Set<number>;
+  sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
 }
 
-const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate }) => {
+const AssistantMessage: React.FC<AssistantMessageProps> = ({
+  msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate,
+  onInsertSection, insertedSections, sourceInfo,
+}) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [replaceState, setReplaceState] = useState<'idle' | 'replacing' | 'replaced' | 'clipboard' | 'error'>('idle');
 
+  const sections = useMemo(() => parseSections(msg.content), [msg.content]);
+  const hasSections = sections !== null && sections.length >= 2;
+
   const handleCopy = useCallback(() => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Copy prompt', level: 'info', data: { msgId: msg.id, hasSections } });
     onCopy(msg.id);
     setCopyState('copied');
     setTimeout(() => setCopyState('idle'), 1800);
-  }, [msg.id, onCopy]);
+  }, [msg.id, onCopy, hasSections]);
 
   const handleReplace = useCallback(async () => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: hasSections ? 'Replace All' : 'Replace', level: 'info', data: { msgId: msg.id, hasSections, sectionCount: sections?.length ?? 0 } });
     setReplaceState('replacing');
     onReplace(msg.id);
-    // The actual replace result is fire-and-forget from here — the parent handles it
-    // We simulate the state transition; a more robust approach would use a callback
     setTimeout(() => setReplaceState('idle'), 3000);
-  }, [msg.id, onReplace]);
+  }, [msg.id, onReplace, hasSections, sections]);
 
   return (
     <div className="chat-message">
@@ -304,7 +475,12 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
         {' '}Optimized Prompt
       </div>
       <div className="message-bubble assistant-bubble">
-        <div className="message-text">{msg.content}</div>
+        <OverlaySectionedContent
+          content={msg.content}
+          showReplace={showReplace}
+          insertedSections={insertedSections}
+          onInsertSection={onInsertSection}
+        />
       </div>
       <div className="message-actions">
         {/* Copy */}
@@ -324,8 +500,8 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
             </>
           )}
         </button>
-        {/* Replace — only shown when overlay was opened via @prompt trigger */}
-        {showReplace && (
+        {/* Replace — for non-sectioned output (single prompt) */}
+        {showReplace && !hasSections && (
           <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
             {replaceState === 'replacing' ? (
               <>
@@ -336,6 +512,22 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
               <>
                 <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                 {' '}Replace
+              </>
+            )}
+          </button>
+        )}
+        {/* Replace All — for sectioned output, replaces entire prompt at once */}
+        {showReplace && hasSections && (
+          <button className="btn-msg-action" onClick={handleReplace} disabled={replaceState === 'replacing'}>
+            {replaceState === 'replacing' ? (
+              <>
+                <svg style={{ width: 12, height: 12 }} fill="none" viewBox="0 0 24 24" className="animate-spin"><circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path style={{ opacity: 0.8 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                {' '}Replacing…
+              </>
+            ) : (
+              <>
+                <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
+                {' '}Replace All
               </>
             )}
           </button>
@@ -353,6 +545,7 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({ msg, turnIdx, isOpt
           </span>
         )}
       </div>
+
     </div>
   );
 };
@@ -366,7 +559,7 @@ const StreamingMessage: React.FC<{ content: string }> = ({ content }) => (
       {' '}Optimized Prompt
     </div>
     <div className="message-bubble assistant-bubble">
-      <div className="message-text">{content}</div>
+      <OverlaySectionedContent content={content} />
     </div>
   </div>
 );
@@ -386,11 +579,17 @@ interface TurnItemProps {
   onRegenerate: (turnIdx: number) => void;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+  insertedSections?: Set<number>;
+  sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  clarificationInfo?: ClarificationInfo;
+  onReoptimize?: (turnIdx: number, answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 const TurnItem: React.FC<TurnItemProps> = ({
   turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
+  onInsertSection, insertedSections, sourceInfo, clarificationInfo, onReoptimize,
 }) => {
   const uIdx = turn.userActiveIdx;
   const assistGroup = turn.assistantGroups[uIdx];
@@ -398,7 +597,17 @@ const TurnItem: React.FC<TurnItemProps> = ({
 
   return (
     <div style={{ marginBottom: 0 }}>
-      {/* Render all user versions (only active visible) */}
+      {/* Clarification summary card — shown before user message */}
+      {clarificationInfo && (
+        <div style={{ marginBottom: 4 }}>
+          <ClarificationSummaryCard
+            info={clarificationInfo}
+            onReoptimize={onReoptimize ? (answers, wantsSections) => onReoptimize(turnIdx, answers, wantsSections) : undefined}
+            isGenerating={isOptimizing}
+          />
+        </div>
+      )}
+
       {turn.userVersions.map((uMsg, i) => (
         <div key={uMsg.id} style={{ display: i === turn.userActiveIdx ? undefined : 'none' }}>
           <UserMessage
@@ -410,7 +619,6 @@ const TurnItem: React.FC<TurnItemProps> = ({
         </div>
       ))}
 
-      {/* User version navigator */}
       <VersionNav
         current={turn.userActiveIdx + 1}
         total={turn.userVersions.length}
@@ -419,7 +627,6 @@ const TurnItem: React.FC<TurnItemProps> = ({
         onNext={() => onNavigateUser(turnIdx, 1)}
       />
 
-      {/* Render all assistant versions for active user (only active visible) */}
       {assistGroup?.map((aMsg, i) => (
         <div key={aMsg.id} style={{ display: i === assistActiveIdx ? undefined : 'none' }}>
           <AssistantMessage
@@ -430,14 +637,15 @@ const TurnItem: React.FC<TurnItemProps> = ({
             onCopy={onCopy}
             onReplace={onReplace}
             onRegenerate={onRegenerate}
+            onInsertSection={onInsertSection}
+            insertedSections={insertedSections}
+            sourceInfo={sourceInfo}
           />
         </div>
       ))}
 
-      {/* Streaming message */}
       {isStreamingHere && streamingContent && <StreamingMessage content={streamingContent} />}
 
-      {/* Assistant version navigator */}
       <VersionNav
         current={(assistGroup?.length ?? 0) > 0 ? assistActiveIdx + 1 : 0}
         total={assistGroup?.length ?? 0}
@@ -465,11 +673,21 @@ interface ChatAreaProps {
   onRegenerate: (turnIdx: number) => void;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
+  clarificationData?: any;
+  onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
+  onSkipClarification?: () => void;
+  onInsertSection?: (sectionIdx: number, text: string) => void;
+  insertedSections?: Set<number>;
+  sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  clarificationAnswersByTurn?: Record<number, ClarificationInfo>;
+  onReoptimize?: (turnIdx: number, answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
+  clarificationData, onSubmitClarification, onSkipClarification,
+  onInsertSection, insertedSections, sourceInfo, clarificationAnswersByTurn, onReoptimize,
 }) => {
   const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -478,7 +696,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
     chatAreaRef,
     {
       isStreaming: streamingTurnIdx >= 0,
-      messageCount: turns.length,
+      messageCount: turns.length + (clarificationData ? 1 : 0),
       streamingTrigger: streamingContent,
     },
   );
@@ -522,8 +740,25 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onRegenerate={onRegenerate}
           onNavigateUser={onNavigateUser}
           onNavigateAssistant={onNavigateAssistant}
+          onInsertSection={onInsertSection}
+          insertedSections={insertedSections}
+          sourceInfo={sourceInfo}
+          clarificationInfo={clarificationAnswersByTurn?.[i]}
+          onReoptimize={onReoptimize}
         />
       ))}
+
+      {/* Clarification card */}
+      {clarificationData?.should_clarify && clarificationData.questions?.length > 0 && onSubmitClarification && onSkipClarification && (
+        <ClarificationCard
+          questions={clarificationData.questions}
+          isComplex={clarificationData.is_complex}
+          suggestedSections={clarificationData.suggested_sections || []}
+          onSubmit={onSubmitClarification}
+          onSkip={onSkipClarification}
+          compact
+        />
+      )}
 
       {/* Error banner */}
       {errorMessage && (

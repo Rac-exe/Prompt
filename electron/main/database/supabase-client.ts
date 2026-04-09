@@ -3,7 +3,6 @@ import { ElectronStorageAdapter } from './electron-storage-adapter';
 
 export class SupabaseClientManager {
   private static instance: SupabaseClient | null = null;
-  private static adminInstance: SupabaseClient | null = null;
   private static supabaseUrl: string = '';
   private static supabaseKey: string = '';
   private static storageAdapter: ElectronStorageAdapter | null = null;
@@ -38,30 +37,6 @@ export class SupabaseClientManager {
 
   static isInitialized(): boolean {
     return this.instance !== null;
-  }
-
-  /**
-   * Admin client using the service role key — bypasses RLS.
-   * Used only for admin operations like resetting a user's password.
-   */
-  static getAdminClient(): SupabaseClient | null {
-    if (this.adminInstance) return this.adminInstance;
-
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!serviceRoleKey || serviceRoleKey === 'your-service-role-key') {
-      console.warn('[SupabaseClientManager] SUPABASE_SERVICE_ROLE_KEY not set — admin operations unavailable');
-      return null;
-    }
-
-    this.adminInstance = createClient(this.supabaseUrl, serviceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
-
-    console.log('[SupabaseClientManager] Admin client initialized');
-    return this.adminInstance;
   }
 
   /**

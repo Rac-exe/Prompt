@@ -47,7 +47,17 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
                 return;
             }
 
-            await service.updateProfile(updates);
+            const ALLOWED_PROFILE_FIELDS = ['name', 'dob', 'avatar_url'];
+            const sanitized: Record<string, any> = {};
+            for (const key of ALLOWED_PROFILE_FIELDS) {
+                if (key in updates) sanitized[key] = updates[key];
+            }
+            if (Object.keys(sanitized).length === 0) {
+                console.warn('[User] Profile update rejected: no allowed fields');
+                return;
+            }
+
+            await service.updateProfile(sanitized);
 
             // Cache new avatar immediately if provided
             if (updates.avatar_url && authState.currentUserId) {

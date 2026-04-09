@@ -578,6 +578,8 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.forceFocusWindow = nativeBinding.forceFocusWindow
 module.exports.getActiveWindowTitle = nativeBinding.getActiveWindowTitle
+module.exports.pasteTextToWindow = nativeBinding.pasteTextToWindow
 module.exports.replaceAtLastAnchor = nativeBinding.replaceAtLastAnchor
+module.exports.sendEnterToWindow = nativeBinding.sendEnterToWindow
 module.exports.startHook = nativeBinding.startHook
 module.exports.stopHook = nativeBinding.stopHook

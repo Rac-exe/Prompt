@@ -272,9 +272,8 @@ textarea { min-height: 40px; }
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.5;
   color: hsl(var(--foreground));
-  white-space: pre-wrap;
   word-break: break-word;
 }
 
@@ -550,41 +549,42 @@ textarea { min-height: 40px; }
 }
 .mode-select-btn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
 
-/* Mode dropdown */
-.mode-dropdown {
-  display: none;
-  position: fixed;
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  border-radius: 12px;
-  padding: 4px;
-  min-width: 210px;
-  box-shadow: 0 -4px 24px rgba(0,0,0,0.45);
-  z-index: 9999;
+/* Pro Mode caret animation — matches main app exactly */
+.pro-mode-caret {
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.mode-dropdown.open { display: flex; flex-direction: column; }
+.mode-select-btn:hover .pro-mode-caret {
+  transform: rotate(-90deg);
+  color: hsl(var(--muted-foreground) / 0.6);
+}
 
-.mode-dropdown-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: hsl(var(--foreground));
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  font-family: inherit;
-  text-align: left;
-  width: 100%;
-  transition: background 0.1s ease;
+/* Pro Mode tooltip — above badge, theme-aware, fast */
+.pro-mode-badge {
+  position: relative;
 }
-.mode-dropdown-item:hover { background: hsl(var(--muted)); }
-.mode-dropdown-item.selected { background: hsl(var(--secondary)); }
-.mode-dropdown-item .mode-icon { width: 16px; height: 16px; margin-top: 1px; flex-shrink: 0; }
-.mode-dropdown-item .mode-check { margin-left: auto; color: hsl(var(--accent)); font-size: 14px; margin-top: 1px; }
+.pro-mode-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%) translateY(2px);
+  margin-bottom: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms ease, transform 100ms ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  z-index: 100;
+}
+.pro-mode-badge:hover .pro-mode-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 
 /* Send button (circular) */
 .btn-send {

@@ -12,6 +12,7 @@ import { authState } from '../utils/auth-state';
 import { networkMonitor } from './network-monitor-singleton';
 import { localCache } from '../database/local-cache';
 import { emailService } from '../services/email-service';
+import { clearOverlayHistory } from './overlay-ipc-handlers';
 
 // Services (lazy loaded)
 let authService: AuthService | null = null;
@@ -27,10 +28,28 @@ function getServices() {
     return { authService, userService, chatService, promptLibraryService };
 }
 
+const AUTH_DATA_TIMEOUT_MS = 8_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`${label} timed out after ${ms}ms`));
+        }, ms);
+        promise.then(
+            (val) => { clearTimeout(timer); resolve(val); },
+            (err) => { clearTimeout(timer); reject(err); },
+        );
+    });
+}
+
 // Dedup guard: if handleSuccessfulAuth is already in-flight (e.g. auth:check from
 // the renderer racing with checkAndRestoreSession on startup), reuse the existing
 // Promise instead of starting a second parallel Supabase session.
 let _authLoadPromise: Promise<void> | null = null;
+
+// Cache the last auth result so the renderer gets it instantly when it mounts
+// (avoids a redundant Supabase round-trip when the renderer loads after the main process auth).
+let _cachedAuthPayload: { isAuthenticated: boolean; user: any } | null = null;
 
 /**
  * Check for existing session and restore state
@@ -39,28 +58,37 @@ export async function checkAndRestoreSession(appWindowManager: AppWindowManager)
     const { authService } = getServices();
 
     try {
-        console.log('[Auth] Checking for existing session...');
-        const { session, error } = await authService.getSession();
+        return await Sentry.startSpan(
+            { name: 'auth.check-and-restore-session', op: 'auth' },
+            async (rootSpan) => {
+                console.log('[Auth] Checking for existing session...');
 
-        if (error || !session) {
-            console.log('[Auth] No valid session found');
-            authState.isAuthenticated = false;
-            authState.currentUserId = null;
-            // Notify renderer so it can leave the loading state
-            appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
-            return false;
-        }
+                const { session, error } = await Sentry.startSpan(
+                    { name: 'auth.get-session', op: 'auth.local' },
+                    () => authService.getSession(),
+                );
 
-        // Set auth state from the locally-stored session token — no network required
-        authState.isAuthenticated = true;
-        authState.currentUserId = session.user.id;
-        authState.currentAccessToken = session.access_token ?? null;
-        console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
+                if (error || !session) {
+                    rootSpan.setAttribute('result', 'no-session');
+                    console.log('[Auth] No valid session found');
+                    authState.isAuthenticated = false;
+                    authState.currentUserId = null;
+                    appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
+                    return false;
+                }
 
-        // handleSuccessfulAuth already handles online/offline branching for data loading
-        await handleSuccessfulAuth(appWindowManager, session.user);
+                rootSpan.setAttribute('userId', session.user.id);
+                authState.isAuthenticated = true;
+                authState.currentUserId = session.user.id;
+                authState.currentAccessToken = session.access_token ?? null;
+                console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
-        return true;
+                await handleSuccessfulAuth(appWindowManager, session.user);
+
+                rootSpan.setAttribute('result', 'restored');
+                return true;
+            },
+        );
     } catch (error) {
         console.error('[Auth] Error checking session:', error);
         Sentry.captureException(error);
@@ -101,7 +129,8 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
         // Only make network call if we don't already have user data and we're online
         if (!user) {
             if (!networkMonitor.isOnline) {
-                console.warn('[Auth] Offline — cannot validate user via network. Aborting auth load.');
+                console.warn('[Auth] Offline — cannot validate user via network. Sending unauthenticated state.');
+                appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
                 return;
             }
             const result = await authService.getCurrentUser();
@@ -110,6 +139,7 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
 
         if (!user) {
             console.error('[Auth] No user after authentication');
+            appWindowManager.send('auth:state-changed', { isAuthenticated: false, user: null });
             return;
         }
 
@@ -122,13 +152,17 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
             try {
                 const [completeUserData, identitiesResult] = await Sentry.startSpan(
                     { name: 'auth.load-user-data', op: 'http.parallel', attributes: { userId: user.id } },
-                    () => Promise.all([
-                        userService.getCompleteUserData(),
-                        authService.getIdentities().catch(e => {
-                            console.warn('[Auth] Could not load identities:', e);
-                            return { identities: [] as any[], error: null };
-                        }),
-                    ])
+                    () => withTimeout(
+                        Promise.all([
+                            userService.getCompleteUserData(user.id),
+                            authService.getIdentities().catch(e => {
+                                console.warn('[Auth] Could not load identities:', e);
+                                return { identities: [] as any[], error: null };
+                            }),
+                        ]),
+                        AUTH_DATA_TIMEOUT_MS,
+                        'auth.load-user-data',
+                    )
                 );
                 userData = completeUserData;
                 userData.identities = identitiesResult.identities ?? [];
@@ -176,11 +210,10 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
         logger.info(logger.fmt`auth.login_success user=${user.id} email=${user.email ?? ''}`);
 
         // 1. Send Auth State — UI transitions from loading spinner to app view.
+        const authPayload = { isAuthenticated: true, user: userData };
+        _cachedAuthPayload = authPayload;
         console.log('[Auth] 📤 Sending authenticated state to renderer');
-        appWindowManager.send('auth:state-changed', {
-            isAuthenticated: true,
-            user: userData,
-        });
+        appWindowManager.send('auth:state-changed', authPayload);
 
         // 2. Load Chats (from Supabase if online, from cache if offline)
         try {
@@ -230,11 +263,6 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
 export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     const { authService } = getServices();
 
-    // Initialize email service for OTP
-    emailService.initialize();
-    // Periodically clean up expired OTPs
-    setInterval(() => emailService.cleanup(), 5 * 60 * 1000);
-
     // ============================================
     // AUTH IPC HANDLERS
     // ============================================
@@ -245,17 +273,15 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             const email = data.email.toLowerCase().trim();
             console.log('[Auth] Sending signup OTP to:', email);
 
-            // Check if the email is already registered in auth.users
-            const adminClient = SupabaseClientManager.getAdminClient();
-            if (adminClient) {
-                const { data: exists, error: rpcError } = await adminClient
-                    .rpc('check_email_exists', { email_input: email });
+            // Check if the email is already registered (SECURITY DEFINER RPC — works with anon key)
+            const client = SupabaseClientManager.getClient();
+            const { data: exists, error: rpcError } = await client
+                .rpc('check_email_exists', { email_input: email });
 
-                if (rpcError) {
-                    console.warn('[Auth] Email check RPC failed, falling back:', rpcError.message);
-                } else if (exists) {
-                    return { error: 'An account with this email already exists. Please sign in instead.' };
-                }
+            if (rpcError) {
+                console.warn('[Auth] Email check RPC failed, proceeding:', rpcError.message);
+            } else if (exists) {
+                return { error: 'An account with this email already exists. Please sign in instead.' };
             }
 
             const result = await emailService.sendSignupOtp(data);
@@ -275,7 +301,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     ipcMain.handle('auth:verify-signup-otp', async (_event, { email, otp }: { email: string; otp: string }) => {
         try {
             console.log('[Auth] Verifying signup OTP for:', email);
-            const verification = emailService.verifySignupOtp(email, otp);
+            const verification = await emailService.verifySignupOtp(email, otp);
 
             if (!verification.valid || !verification.data) {
                 return { error: verification.error };
@@ -350,45 +376,14 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
         }
     });
 
-    // Verify Reset OTP and update password
+    // Verify Reset OTP and update password (Python handles OTP verification + admin password update atomically)
     ipcMain.handle('auth:verify-reset-otp', async (_event, { email, otp, newPassword }: { email: string; otp: string; newPassword: string }) => {
         try {
-            console.log('[Auth] Verifying reset OTP for:', email);
-            const verification = emailService.verifyResetOtp(email, otp);
+            console.log('[Auth] Verifying reset OTP + resetting password for:', email);
+            const result = await emailService.verifyResetOtpAndResetPassword(email, otp, newPassword);
 
-            if (!verification.valid) {
-                return { error: verification.error };
-            }
-
-            // Use admin client to update the user's password
-            const adminClient = SupabaseClientManager.getAdminClient();
-            if (!adminClient) {
-                return { error: 'Password reset is not configured. Contact support.' };
-            }
-
-            // Find user by email
-            const { data: userData, error: listError } = await adminClient.auth.admin.listUsers();
-            if (listError) {
-                Sentry.captureException(listError, { tags: { op: 'auth:verify-reset-otp', step: 'listUsers' } });
-                console.error('[Auth] Admin listUsers error:', listError);
-                return { error: 'Could not look up user. Please try again.' };
-            }
-
-            const targetUser = userData.users.find(
-                (u: any) => u.email?.toLowerCase() === email.toLowerCase().trim()
-            );
-            if (!targetUser) {
-                return { error: 'No account found with this email address.' };
-            }
-
-            const { error: updateError } = await adminClient.auth.admin.updateUserById(targetUser.id, {
-                password: newPassword,
-            });
-
-            if (updateError) {
-                Sentry.captureException(updateError, { tags: { op: 'auth:verify-reset-otp', step: 'updateUserById' } });
-                console.error('[Auth] Admin updateUser error:', updateError);
-                return { error: updateError.message || 'Failed to update password' };
+            if (!result.success) {
+                return { error: result.error };
             }
 
             Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info', data: { email } });
@@ -445,9 +440,12 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             console.log('[Auth] Sign out request');
             await authService!.signOut();
 
+            _cachedAuthPayload = null;
             authState.isAuthenticated = false;
+            authState.currentAccessToken = null;
             authState.currentUserId = null;
             authState.currentUserEmail = null;
+            clearOverlayHistory();
             Sentry.setUser(null);
             appWindowManager.send('sentry:set-user', null);
 
@@ -471,9 +469,12 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             console.log('[Auth] Sign out request (app:sign-out)');
             await authService!.signOut();
 
+            _cachedAuthPayload = null;
             authState.isAuthenticated = false;
+            authState.currentAccessToken = null;
             authState.currentUserId = null;
             authState.currentUserEmail = null;
+            clearOverlayHistory();
             Sentry.setUser(null);
             appWindowManager.send('sentry:set-user', null);
 
@@ -808,6 +809,12 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
         try {
             console.log('[Auth] 📥 Renderer requested auth check');
 
+            if (_cachedAuthPayload) {
+                Sentry.addBreadcrumb({ category: 'auth', message: 'auth:check — replaying cached payload', level: 'info' });
+                appWindowManager.send('auth:state-changed', _cachedAuthPayload);
+                return;
+            }
+
             // getSession() reads from the local filesystem session.json — works offline
             const { authService } = getServices();
             const { session, error } = await authService.getSession();
@@ -826,9 +833,6 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
             authState.currentAccessToken = session.access_token ?? null;
             console.log('[Auth] ✅ Valid session found, user authenticated (offline-safe)');
 
-            // If checkAndRestoreSession already ran handleSuccessfulAuth on startup,
-            // skip the full data-load to avoid redundant Supabase calls.
-            // We still call handleSuccessfulAuth if it hasn't been run yet (edge case).
             await handleSuccessfulAuth(appWindowManager, session.user);
         } catch (error) {
             console.error('[Auth] Error checking auth:', error);

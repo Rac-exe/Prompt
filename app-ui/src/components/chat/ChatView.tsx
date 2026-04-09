@@ -1,18 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as Sentry from "@sentry/react";
-import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Lightning, WarningCircle, CaretDown, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, Brain, ArrowDown } from "@phosphor-icons/react";
+import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown, CaretRight } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
 import { MessageBubble, Message } from "./MessageBubble";
 import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { PlusMenu } from "./PlusMenu";
 import { SkillPicker, SKILL_ICON_MAP } from "./SkillPicker";
 import { VersionNavigator } from "./VersionNavigator";
+import { ClarificationCard, type ClarifyQuestion } from "./ClarificationCard";
+import { ClarificationSummaryCard } from "./ClarificationSummaryCard";
 import type { AttachedFile } from "@/types/electron";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 
@@ -47,11 +47,15 @@ interface ChatViewProps {
   input: string;
   setInput: (value: string) => void;
   mode: "fast" | "thinking";
-  setMode: (value: "fast" | "thinking") => void;
   attachedFiles: AttachedFile[];
   setAttachedFiles: (files: AttachedFile[]) => void;
   selectedSkill: string | null;
   setSelectedSkill: (skill: string | null) => void;
+  // Clarification
+  clarificationData?: any;
+  onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
+  clarificationAnswersMap?: Record<string, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>;
+  onReoptimize?: (userMessageId: string, answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -64,7 +68,8 @@ export const ChatView = ({
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
-  input, setInput, mode, setMode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
+  input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
+  clarificationData, onSubmitClarification, clarificationAnswersMap, onReoptimize,
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -146,6 +151,7 @@ export const ChatView = ({
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("idle");
     }
+    Sentry.addBreadcrumb({ category: "app.action", message: "Message sent", level: "info", data: { mode, hasFiles: attachedFiles.length > 0, skill: selectedSkill || 'auto' } });
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
     setAttachedFiles([]);
@@ -220,8 +226,6 @@ export const ChatView = ({
 
   const isEmpty = messages.length === 0;
   const canSend = input.trim().length > 0 && !isGenerating && voiceState !== "processing" && isOnline;
-
-  const modeLabel = mode === "fast" ? "Fast" : "Thinking";
 
   // ── Unified input bar (Claude style — textarea + bottom toolbar inside) ──
   const inputBar = (
@@ -383,53 +387,25 @@ export const ChatView = ({
               anchorRef={plusButtonRef}
             />
 
-            {/* Model selector dropdown (inside the bar, like Claude) */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  disabled={!isOnline}
-                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                >
-                  {mode === "fast" ? (
-                    <Lightning size={14} weight="light" />
-                  ) : (
-                    <Brain size={14} weight="light" />
-                  )}
-                  <span>{modeLabel}</span>
-                  <CaretDown size={12} weight="light" className="opacity-50" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" sideOffset={8} className="w-60 bg-popover border-border shadow-elevated rounded-xl p-1">
-                <DropdownMenuItem
-                  onClick={() => setMode("fast")}
-                  className={cn(
-                    "flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
-                    mode === "fast" && "bg-secondary"
-                  )}
-                >
-                  <Lightning size={16} weight="light" className="text-emerald mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Fast</p>
-                    <p className="text-xs text-muted-foreground">Most efficient for everyday tasks</p>
+            {/* Pro Mode badge */}
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="group relative inline-flex items-center gap-1.5 h-8 px-3 pr-5 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none transition-colors duration-150 hover:bg-muted hover:text-foreground">
+                    <Atom size={14} weight="duotone" className="text-emerald" />
+                    <span>Pro Mode</span>
+                    <CaretRight
+                      size={9}
+                      weight="bold"
+                      className="absolute top-1 right-1 text-muted-foreground/30 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:-rotate-90 group-hover:text-muted-foreground/60"
+                    />
                   </div>
-                  {mode === "fast" && <span className="ml-auto text-emerald mt-0.5">✓</span>}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setMode("thinking")}
-                  className={cn(
-                    "flex items-start gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
-                    mode === "thinking" && "bg-secondary"
-                  )}
-                >
-                  <Brain size={16} weight="light" className="text-emerald mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">Thinking</p>
-                    <p className="text-xs text-muted-foreground">Think longer for complex tasks</p>
-                  </div>
-                  {mode === "thinking" && <span className="ml-auto text-emerald mt-0.5">✓</span>}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  You don't need any other mode !!
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
             {/* Skill pill — shows skill-specific icon */}
             {selectedSkill && (() => {
@@ -628,8 +604,24 @@ export const ChatView = ({
 
               const versionInfo = versionInfoMap?.get(message.id);
 
+              // Choices are keyed by assistant ID — find the next assistant in the list.
+              // Fall back to a temp "_pending_" key during streaming (before assistant ID is known).
+              const nextAssistantId = message.role === "user" ? messages[idx + 1]?.id : undefined;
+              const clarificationInfo = message.role === "user"
+                ? (nextAssistantId && clarificationAnswersMap?.[nextAssistantId])
+                  || clarificationAnswersMap?.[`_pending_${message.id}`]
+                  || undefined
+                : undefined;
+
               return (
-              <div key={message.id}>
+              <div key={message.id} className="space-y-4">
+              {message.role === "user" && clarificationInfo && (
+                <ClarificationSummaryCard
+                  info={clarificationInfo}
+                  onReoptimize={onReoptimize ? (answers, wantsSections) => onReoptimize(message.id, answers, wantsSections) : undefined}
+                  isGenerating={isGenerating}
+                />
+              )}
               <MessageBubble
                 message={message}
                 onCopy={() => onCopyPrompt(message.id)}
@@ -682,6 +674,16 @@ export const ChatView = ({
                   avatarUrl={avatarUrl}
                 />
               </div>
+            )}
+
+            {clarificationData && !isGenerating && onSubmitClarification && (
+              <ClarificationCard
+                questions={clarificationData.questions || []}
+                isComplex={clarificationData.is_complex || false}
+                suggestedSections={clarificationData.suggested_sections || []}
+                onSubmit={onSubmitClarification}
+                onSkip={() => onSubmitClarification({}, false)}
+              />
             )}
           </div>
         </div>

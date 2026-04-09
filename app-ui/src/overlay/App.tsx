@@ -9,6 +9,7 @@ import ChatPicker from './components/ChatPicker';
 import CollectionPicker from './components/CollectionPicker';
 import { useTurns } from './hooks/useTurns';
 import type { AttachedFile, SkillInfo, OverlaySettings } from './lib/types';
+import type { ClarifyQuestion } from '@/components/chat/ClarificationCard';
 import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 // ── Settings helpers ─────────────────────────────────────────────────────────
@@ -51,7 +52,17 @@ const OverlayApp: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [streamingContent, setStreamingContent] = useState('');
-  const [currentMode, setCurrentMode] = useState<string>('fast');
+  const [currentMode] = useState<string>('thinking');
+
+  // ── Clarification state ─────────────────────────────────────────────────
+  const [clarificationData, setClarificationData] = useState<any>(null);
+  const clarificationDataRef = useRef<any>(null);
+  clarificationDataRef.current = clarificationData;
+  const [clarificationAnswersByTurn, setClarificationAnswersByTurn] = useState<Record<number, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>>({});
+
+  // ── Section insert state ────────────────────────────────────────────────
+  const [insertedSections, setInsertedSections] = useState<Set<number>>(new Set());
+  const [sourceInfo, setSourceInfo] = useState<{ appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null>(null);
 
   // ── Turn-based versioning ────────────────────────────────────────────────
   const {
@@ -130,6 +141,13 @@ const OverlayApp: React.FC = () => {
       const auth = !!data.isAuthenticated;
       setIsAuthenticated(auth);
       setTriggeredByHook(!!data.triggeredByHook);
+      // Reset section insert state on new session
+      setInsertedSections(new Set());
+      if (data.triggeredByHook) {
+        api.overlay?.getSourceInfo?.().then((info: any) => {
+          if (info?.hwnd) setSourceInfo(info);
+        }).catch(() => {});
+      }
       if (auth) {
         if (data.prefill?.text && inputRef.current) {
           inputRef.current.value = data.prefill.text;
@@ -147,6 +165,13 @@ const OverlayApp: React.FC = () => {
     // ── Auth state changes ──
     const cleanupAuthState = api.overlay?.onAuthState?.((data: { isAuthenticated: boolean }) => {
       setIsAuthenticated(data.isAuthenticated);
+    });
+
+    // ── Clarification required ──
+    const cleanupClarification = api.overlay?.onClarificationRequired?.((data: any) => {
+      setIsOptimizing(false);
+      setIsLoading(false);
+      setClarificationData(data);
     });
 
     // ── Streaming chunks ──
@@ -203,6 +228,7 @@ const OverlayApp: React.FC = () => {
     return () => {
       cleanupOpened?.();
       cleanupAuthState?.();
+      cleanupClarification?.();
       cleanupChunk?.();
       cleanupComplete?.();
       cleanupError?.();
@@ -259,15 +285,110 @@ const OverlayApp: React.FC = () => {
     setIsLoading(false);
     setStreamingContent('');
     setErrorMessage(null);
+    setClarificationData(null);
     streamingTurnIdxRef.current = -1;
     window.electronAPI?.overlay?.newSession?.();
     requestAnimationFrame(() => setTimeout(() => inputRef.current?.focus(), 80));
   }, [clearAll]);
 
+  // ── Submit clarification answers ──
+  const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
+    Sentry.addBreadcrumb({ category: 'overlay.clarification', message: 'Clarification submitted', data: { answerCount: Object.keys(answers).length, wantsSections } });
+    const currentClarification = clarificationDataRef.current;
+    const turnIdx = turns.length - 1;
+    if (turnIdx >= 0) {
+      const questions: ClarifyQuestion[] = (currentClarification?.questions || []).map((q: any) => ({
+        id: q.id,
+        question: q.question,
+        type: q.type,
+        options: q.options || [],
+        optional: q.optional ?? false,
+      }));
+      setClarificationAnswersByTurn(prev => ({ ...prev, [turnIdx]: { questions, answers, mode: wantsSections ? 'tasks' : 'single' } }));
+    }
+    const choicesPayload = turnIdx >= 0
+      ? { questions: (currentClarification?.questions || []).map((q: any) => ({ id: q.id, question: q.question, type: q.type, options: q.options || [], optional: q.optional ?? false })), answers, mode: wantsSections ? 'tasks' : 'single' }
+      : undefined;
+
+    setClarificationData(null);
+    setIsOptimizing(true);
+    setIsLoading(true);
+    setErrorMessage(null);
+    setStreamingContent('');
+    window.electronAPI?.overlay?.submitClarification?.({ answers, wantsSections, clarificationChoices: choicesPayload });
+  }, [turns.length]);
+
+  // ── Skip clarification ──
+  const handleSkipClarification = useCallback(() => {
+    Sentry.addBreadcrumb({ category: 'overlay.clarification', message: 'Clarification skipped' });
+    handleSubmitClarification({}, false);
+  }, [handleSubmitClarification]);
+
+  // ── Re-optimize with changed clarification answers ──
+  const handleReoptimize = useCallback((turnIdx: number, newAnswers: Record<string, string>, wantsSections: boolean) => {
+    if (isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Re-optimize triggered', data: { turnIdx, wantsSections } });
+    const turn = turns[turnIdx];
+    if (!turn) return;
+
+    const activeUserVer = turn.userVersions[turn.userActiveIdx];
+    if (!activeUserVer) return;
+
+    // Update stored choices
+    const prevInfo = clarificationAnswersByTurn[turnIdx];
+    setClarificationAnswersByTurn(prev => ({
+      ...prev,
+      [turnIdx]: {
+        questions: prevInfo?.questions || [],
+        answers: newAnswers,
+        mode: wantsSections ? 'tasks' : 'single',
+      },
+    }));
+
+    // Format answers for the backend
+    const formattedAnswers = Object.entries(newAnswers)
+      .filter(([, v]) => v && v.trim())
+      .map(([key, val]) => `- ${key}: ${val}`)
+      .join('\n');
+
+    // Use the regenerate flow with clarification answers
+    const result = prepareRegenerate(turnIdx);
+    if (!result) return;
+
+    setIsOptimizing(true);
+    setErrorMessage(null);
+    setIsLoading(true);
+    setStreamingContent('');
+    streamingTurnIdxRef.current = turnIdx;
+
+    const choicesPayload = {
+      questions: prevInfo?.questions || [],
+      answers: newAnswers,
+      mode: wantsSections ? 'tasks' : 'single',
+    };
+
+    window.electronAPI?.overlay?.optimize?.({
+      text: activeUserVer.content,
+      isRegenerate: true,
+      mode: currentMode,
+      chatId: selectedChatId || undefined,
+      attachedFiles: activeUserVer.attachedFiles?.length ? activeUserVer.attachedFiles : undefined,
+      forcedSkill: activeUserVer.skill || undefined,
+      assistantGroupId: result.assistGroupId,
+      assistantVersionIndex: result.assistVerIdx,
+      previousOutput: result.previousAssistantContent || undefined,
+      clarificationAnswers: formattedAnswers || undefined,
+      wantsSections,
+      clarificationChoices: choicesPayload,
+    });
+  }, [isOptimizing, turns, clarificationAnswersByTurn, prepareRegenerate, currentMode, selectedChatId]);
+
   // ── Send message ──
   const handleSend = useCallback((text: string) => {
     if (!text.trim() || isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Message sent' });
 
+    setClarificationData(null);
     setIsOptimizing(true);
     setErrorMessage(null);
     setIsLoading(true);
@@ -299,6 +420,7 @@ const OverlayApp: React.FC = () => {
   // ── Stop generation ──
   const handleStop = useCallback(() => {
     if (!isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Generation stopped' });
     window.electronAPI?.overlay?.stopGeneration?.();
 
     const sc = streamingContent;
@@ -341,6 +463,7 @@ const OverlayApp: React.FC = () => {
   // ── Regenerate ──
   const handleRegenerate = useCallback((turnIdx: number) => {
     if (isOptimizing) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Regenerate requested', data: { turnIdx } });
     const result = prepareRegenerate(turnIdx);
     if (!result) return;
 
@@ -365,6 +488,7 @@ const OverlayApp: React.FC = () => {
 
   // ── Copy message ──
   const handleCopy = useCallback((msgId: string) => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Prompt copied', data: { msgId } });
     const content = getMessageContent(msgId);
     if (content) window.electronAPI?.overlay?.copy?.(content);
   }, [getMessageContent]);
@@ -373,13 +497,34 @@ const OverlayApp: React.FC = () => {
   const handleReplace = useCallback(async (msgId: string) => {
     const content = getMessageContent(msgId);
     if (!content) return;
+    Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Replace IPC invoked', level: 'info', data: { msgId, contentLen: content.length } });
     try {
-      await window.electronAPI?.overlay?.insert?.(content);
+      const result = await window.electronAPI?.overlay?.insert?.(content);
+      if (!result?.success) {
+        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Replace IPC returned failure', level: 'warning' });
+      }
     } catch (err) {
-      // Fallback to clipboard
+      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'replace' } });
       window.electronAPI?.overlay?.copy?.(content);
     }
   }, [getMessageContent]);
+
+  // ── Section insert (per-section paste without closing overlay) ──
+  const handleInsertSection = useCallback(async (sectionIdx: number, text: string) => {
+    Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert IPC invoked', level: 'info', data: { sectionIdx, textLen: text.length } });
+    try {
+      const result = await window.electronAPI?.overlay?.insertSection?.(text);
+      if (result?.success) {
+        setInsertedSections(prev => new Set(prev).add(sectionIdx));
+        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert succeeded', level: 'info', data: { sectionIdx } });
+      } else {
+        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert returned failure', level: 'warning', data: { sectionIdx } });
+      }
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'insert-section' }, extra: { sectionIdx } });
+      window.electronAPI?.overlay?.copy?.(text);
+    }
+  }, []);
 
   // ── File attachment ──
   const handleAttachFiles = useCallback((newFiles: AttachedFile[]) => {
@@ -454,13 +599,20 @@ const OverlayApp: React.FC = () => {
                 onRegenerate={handleRegenerate}
                 onNavigateUser={navigateUserVersion}
                 onNavigateAssistant={navigateAssistantVersion}
+                clarificationData={clarificationData}
+                onSubmitClarification={handleSubmitClarification}
+                onSkipClarification={handleSkipClarification}
+                onInsertSection={handleInsertSection}
+                insertedSections={insertedSections}
+                sourceInfo={sourceInfo}
+                clarificationAnswersByTurn={clarificationAnswersByTurn}
+                onReoptimize={handleReoptimize}
               />
 
               <InputSection
                 isOptimizing={isOptimizing}
                 isOnline={isOnline}
                 isAuthenticated={isAuthenticated}
-                currentMode={currentMode}
                 attachedFiles={attachedFiles}
                 selectedSkill={selectedSkill}
                 selectedSkillLabel={selectedSkillLabel}
@@ -469,7 +621,6 @@ const OverlayApp: React.FC = () => {
                 skills={skills}
                 onSend={handleSend}
                 onStop={handleStop}
-                onModeChange={setCurrentMode}
                 onAttachFiles={handleAttachFiles}
                 onRemoveFile={handleRemoveFile}
                 onSelectSkill={handleSelectSkill}

@@ -6,7 +6,7 @@ import FileType from 'file-type';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
-import { PythonClient, ModelsUsed } from '../api/python-client';
+import { PythonClient, ModelsUsed, ClarifyResult } from '../api/python-client';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
@@ -17,6 +17,7 @@ import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
 import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
 import { RateLimitService } from '../database/services/rate-limit-service';
+import { analyticsService } from '../analytics/analytics-service';
 
 // ── Model metadata helper ─────────────────────────────────────────────────────
 function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
@@ -185,6 +186,30 @@ let currentOptimization: {
 // Track in-flight generations so the renderer can resume streaming after a chat switch.
 const activeGenerations = new Map<string, { accumulated: string }>();
 
+interface PendingOptimization {
+    data: {
+        chatId: string | null;
+        content: string;
+        mode?: string;
+        attachedFiles?: AttachedFile[];
+        forcedSkill?: string | null;
+        groupId?: string;
+        versionIndex?: number;
+    };
+    chatId: string;
+    customInstructions: string;
+    messagesContext: Array<{ role: string; content: string }>;
+}
+
+const pendingClarifications = new Map<string, PendingOptimization>();
+
+function formatClarificationAnswers(answers: Record<string, string>): string {
+    return Object.entries(answers)
+        .filter(([, v]) => v && v.trim())
+        .map(([key, val]) => `- ${key}: ${val}`)
+        .join('\n');
+}
+
 /**
  * Register chat & app window IPC handlers.
  *
@@ -200,7 +225,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'fast') => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
@@ -306,6 +331,8 @@ export function registerChatHandlers(
                     optimized: optimizedText,
                 });
             }
+
+            analyticsService.logEvent('optimization', { source: 'app' });
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
@@ -496,8 +523,8 @@ export function registerChatHandlers(
         versionIndex?: number;
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
-        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'fast'} skill=${data.forcedSkill ?? 'none'}`);
-        await Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'fast', skill: data.forcedSkill || 'none' } }, async () => {
+        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'}`);
+        await Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'thinking', skill: data.forcedSkill || 'none' } }, async () => {
         try {
             // ── Offline guard ─────────────────────────────────────────────────
             // File uploads require network access. Reject early with a clear error
@@ -735,13 +762,40 @@ export function registerChatHandlers(
                 console.warn('[Chat] Failed to fetch chat history for context:', historyErr);
             }
 
+            // ── Clarification check ──────────────────────────────────────────
+            // Only on first send (no clarificationAnswers yet) and only for
+            // new requests (not refinements detected by weak-message heuristic)
+            if (!isWeakMessage(data.content)) {
+                try {
+                    const clarifyResult = await pythonClient.clarify(data.content);
+                    Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarify check complete', level: 'info', data: { chatId, should_clarify: clarifyResult.should_clarify, questions: clarifyResult.questions.length, is_complex: clarifyResult.is_complex } });
+                    logger.info(logger.fmt`chat.clarify_result chatId=${chatId ?? ''} should_clarify=${clarifyResult.should_clarify} questions=${clarifyResult.questions.length}`);
+                    if (clarifyResult.should_clarify && clarifyResult.questions.length > 0) {
+                        pendingClarifications.set(chatId!, {
+                            data,
+                            chatId: chatId!,
+                            customInstructions,
+                            messagesContext,
+                        });
+                        Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarification required — pausing optimization', level: 'info', data: { chatId, questionCount: clarifyResult.questions.length } });
+                        if (appWindowManager) {
+                            appWindowManager.send('clarification-required', { chatId, ...clarifyResult });
+                        }
+                        return;
+                    }
+                } catch (clarifyErr) {
+                    Sentry.captureException(clarifyErr, { tags: { component: 'chat-handlers', op: 'clarify' }, level: 'warning' });
+                    logger.warn(logger.fmt`chat.clarify_failed chatId=${chatId ?? ''} error=${clarifyErr instanceof Error ? clarifyErr.message : String(clarifyErr)}`);
+                }
+            }
+
             // Trigger streaming optimization — uses the original attachedFiles (with
             // base64) so the LLM sees the image content regardless of upload status.
             activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
             let modelsUsed: ModelsUsed | undefined;
             Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming started', level: 'info', data: { chatId, mode: data.mode } });
-            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'fast'}`);
+            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'thinking'}`);
             try {
                 const result = await pythonClient.optimizeStream(
                     data.content,
@@ -753,7 +807,7 @@ export function registerChatHandlers(
                             appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
                         }
                     },
-                    data.mode || 'fast',
+                    data.mode || 'thinking',
                     customInstructions,
                     attachedFiles,
                     data.forcedSkill || null
@@ -829,6 +883,8 @@ export function registerChatHandlers(
                 });
             }
 
+            analyticsService.logEvent('ai_response', { source: 'app', model: modelsUsed?.optimizer });
+
             // Invalidate rate-limit cache so the next check reflects the new message
             if (authState.currentUserId && rateLimitService) {
                 rateLimitService.invalidateCache(authState.currentUserId);
@@ -852,6 +908,145 @@ export function registerChatHandlers(
     });
 
     // ============================================
+    // APP WINDOW: Submit clarification answers (resumes paused optimization)
+    // ============================================
+    ipcMain.on('app:submit-clarification', async (event, data: {
+        chatId: string;
+        answers: Record<string, string>;
+        wantsSections: boolean;
+        clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
+    }) => {
+        const pending = pendingClarifications.get(data.chatId);
+        if (!pending) {
+            console.warn('[Chat] submit-clarification: no pending optimization for chatId', data.chatId);
+            Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'submit-clarification: no pending optimization', level: 'warning', data: { chatId: data.chatId } });
+            return;
+        }
+        pendingClarifications.delete(data.chatId);
+
+        const formattedAnswers = formatClarificationAnswers(data.answers);
+
+        Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarification submitted — resuming optimization', level: 'info', data: { chatId: data.chatId, wantsSections: data.wantsSections, answerCount: Object.keys(data.answers).length } });
+        logger.info(logger.fmt`chat.clarification_submitted chatId=${data.chatId} wantsSections=${data.wantsSections} answerCount=${Object.keys(data.answers).length}`);
+
+        try {
+            activeGenerations.set(data.chatId, { accumulated: '' });
+            let optimizedText: string;
+            let modelsUsed: ModelsUsed | undefined;
+
+            try {
+                const result = await pythonClient.optimizeStream(
+                    pending.data.content,
+                    false,
+                    pending.messagesContext.length > 0 ? pending.messagesContext : null,
+                    (chunk, accumulated) => {
+                        activeGenerations.set(data.chatId, { accumulated });
+                        if (appWindowManager) {
+                            appWindowManager.send('optimization-chunk', { chatId: data.chatId, chunk, accumulated });
+                        }
+                    },
+                    pending.data.mode || 'thinking',
+                    pending.customInstructions,
+                    pending.data.attachedFiles || [],
+                    pending.data.forcedSkill || null,
+                    null,
+                    formattedAnswers || null,
+                    data.wantsSections,
+                );
+                optimizedText = result.text;
+                modelsUsed = result.models;
+            } catch (llmErr: any) {
+                activeGenerations.delete(data.chatId);
+                const friendlyError = humanizeLlmError(llmErr);
+                try {
+                    await chatService.addMessage(data.chatId, '', 'assistant', undefined, {
+                        isError: true,
+                        errorMessage: friendlyError,
+                        groupId: crypto.randomUUID(),
+                        versionIndex: 0,
+                    });
+                } catch { /* non-critical */ }
+                throw llmErr;
+            }
+            activeGenerations.delete(data.chatId);
+
+            let optimizationId: string | undefined;
+            if (authState.isAuthenticated) {
+                try {
+                    const optimization = await optimizationService.saveOptimization(
+                        pending.data.content,
+                        optimizedText,
+                        'app_window',
+                        { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: data.chatId } }
+                    );
+                    optimizationId = optimization.id;
+                    if (analyzer && authState.currentUserId) {
+                        analyzer.onNewOptimization(
+                            authState.currentUserId,
+                            pending.data.content,
+                            optimizedText,
+                            pending.data.forcedSkill || null,
+                        ).catch((e: unknown) =>
+                            console.warn('[Memory] Analyzer error (non-critical):', e)
+                        );
+                    }
+                } catch (dbError) {
+                    console.error('[Chat] Failed to save optimization record:', dbError);
+                }
+            }
+
+            const assistantGroupId = crypto.randomUUID();
+            const assistantMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0,
+            };
+            if (data.clarificationChoices) {
+                assistantMeta.clarificationChoices = data.clarificationChoices;
+            }
+            const assistantMessage = await chatService.addMessage(
+                data.chatId,
+                optimizedText,
+                'assistant',
+                optimizationId,
+                assistantMeta
+            );
+
+            if (appWindowManager) {
+                appWindowManager.send('message-received', {
+                    chatId: data.chatId,
+                    message: {
+                        id: assistantMessage.id,
+                        chatId: assistantMessage.chat_id,
+                        role: assistantMessage.role,
+                        content: assistantMessage.content,
+                        createdAt: assistantMessage.created_at,
+                        groupId: assistantGroupId,
+                        versionIndex: 0,
+                    }
+                });
+            }
+
+            analyticsService.logEvent('ai_response', { source: 'app', model: modelsUsed?.optimizer });
+
+            if (authState.currentUserId && rateLimitService) {
+                rateLimitService.invalidateCache(authState.currentUserId);
+            }
+
+            const chats = await chatService.getChats();
+            if (appWindowManager) {
+                appWindowManager.send('chats-loaded', { chats });
+            }
+        } catch (error) {
+            Sentry.captureException(error);
+            console.error('[Chat] Clarification optimization failed:', error);
+            if (appWindowManager) {
+                appWindowManager.send('message-send-error', {
+                    error: humanizeLlmError(error),
+                });
+            }
+        }
+    });
+
+    // ============================================
     // APP WINDOW: Regenerate assistant response (no new user message)
     // ============================================
     ipcMain.on('app:regenerate-response', async (event, data: {
@@ -863,9 +1058,12 @@ export function registerChatHandlers(
         attachedFiles?: AttachedFile[];
         forcedSkill?: string | null;
         previousContent?: string;
+        clarificationAnswers?: string;
+        wantsSections?: boolean;
+        clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
-        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'fast'}`);
+        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'thinking'}`);
         try {
             // ── Rate limit guard ──────────────────────────────────────────────
             if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
@@ -941,11 +1139,13 @@ export function registerChatHandlers(
                             appWindowManager.send('optimization-chunk', { chatId, chunk, accumulated });
                         }
                     },
-                    data.mode || 'fast',
+                    data.mode || 'thinking',
                     customInstructions,
                     attachedFiles,
                     data.forcedSkill || null,
-                    data.previousContent || null
+                    data.previousContent || null,
+                    data.clarificationAnswers || null,
+                    data.wantsSections ?? false,
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -982,12 +1182,18 @@ export function registerChatHandlers(
             // Save assistant message with the caller-provided groupId
             const assistantGroupId = data.groupId || crypto.randomUUID();
             const assistantVersionIndex = data.versionIndex ?? 0;
+            const regenMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex,
+            };
+            if (data.clarificationChoices) {
+                regenMeta.clarificationChoices = data.clarificationChoices;
+            }
             const assistantMessage = await chatService.addMessage(
                 chatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                regenMeta
             );
 
             // Send assistant message to renderer
@@ -1005,6 +1211,8 @@ export function registerChatHandlers(
                     }
                 });
             }
+
+            analyticsService.logEvent('ai_response', { source: 'app', regeneration: true });
 
             // Invalidate rate-limit cache after regeneration
             if (authState.currentUserId && rateLimitService) {
@@ -1148,7 +1356,7 @@ export async function syncChatMessageQueue(
                 false,
                 messagesContext.length > 0 ? messagesContext : null,
                 () => { /* no-op chunk callback */ },
-                mode || 'fast',
+                mode || 'thinking',
                 '',
                 [],
                 forcedSkill || null,

@@ -69,13 +69,14 @@ import { registerAuthHandlers, checkAndRestoreSession } from './ipc-handlers/aut
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
-import { registerOverlayHandlers } from './ipc-handlers/overlay-ipc-handlers';
+import { registerOverlayHandlers, setSourceWindow } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
-import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor } from './utils/native-bridge';
+import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
 import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
+import { analyticsService } from './analytics/analytics-service';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -120,8 +121,10 @@ function startKeystrokeDetection() {
   }
 
   startHook((anchor: TriggerAnchor) => {
-    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}`);
+    const title = getActiveWindowTitle();
+    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
     Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
+    setSourceWindow(anchor.hwnd, title);
     overlayManager.open(authState.isAuthenticated, undefined, undefined, true,
       authState.currentUserId ? { id: authState.currentUserId, email: authState.currentUserEmail ?? '' } : null);
   });
@@ -579,6 +582,11 @@ async function initialize() {
       Sentry.setUser({ id: session.user.id });
       Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_IN', level: 'info', data: { userId: session.user.id } });
       overlayManager.sendAuthState(true);
+
+      analyticsService.initialize(session.user.id);
+      analyticsService.startSession(appVersion).catch((err) => {
+        Sentry.captureException(err, { level: 'warning', tags: { component: 'analytics', trigger: 'signed-in' } });
+      });
     } else if (event === 'SIGNED_OUT') {
       if (!networkMonitor.isOnline) {
         console.warn('[Main] Ignoring SIGNED_OUT — device is offline (spurious token refresh failure)');
@@ -617,6 +625,13 @@ async function initialize() {
       if (hasSession) {
         console.log('[Main] Session restored, user logged in');
         overlayManager.sendAuthState(true);
+
+        if (authState.currentUserId) {
+          analyticsService.initialize(authState.currentUserId);
+          analyticsService.startSession(appVersion).catch((err) => {
+            Sentry.captureException(err, { level: 'warning', tags: { component: 'analytics', trigger: 'session-restore' } });
+          });
+        }
       } else {
         console.log('[Main] No session found, user needs to log in');
       }
@@ -651,6 +666,9 @@ async function shutdown() {
   if (systemTray) {
     systemTray.destroy();
   }
+
+  // Flush analytics events and close the session before Sentry flushes.
+  await analyticsService.shutdown();
 
   // Flush buffered Sentry events before the process exits so nothing is dropped.
   await Sentry.flush(2000);
@@ -790,7 +808,7 @@ if (!gotTheLock) {
   // ============================================
   app.setName('Prmpt');
   if (process.platform === 'win32') {
-    app.setAppUserModelId('Prmpt');
+    app.setAppUserModelId('com.prmpt.desktop');
   }
 
   app.whenReady().then(async () => {

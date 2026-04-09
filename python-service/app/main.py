@@ -18,8 +18,9 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -27,6 +28,11 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.auth import require_auth, require_ws_auth
+from app.email_otp import (
+    send_signup_otp, verify_signup_otp,
+    send_reset_otp, reset_password as otp_reset_password,
+    cleanup_expired as otp_cleanup,
+)
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -128,12 +134,17 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = req_id
         return response
 
-app = FastAPI()
+_is_prod = os.environ.get("APP_ENV", "").lower() == "production"
+app = FastAPI(
+    docs_url=None if _is_prod else "/docs",
+    redoc_url=None if _is_prod else "/redoc",
+    openapi_url=None if _is_prod else "/openapi.json",
+)
 app.add_middleware(RequestIDMiddleware)
 limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["60/minute"],
-    application_limits=["200/minute"],
+    application_limits=["10000/minute"],
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -178,11 +189,18 @@ def _get_np():
     import numpy as np
     return np
 
+async def _otp_cleanup_loop():
+    while True:
+        await asyncio.sleep(300)
+        otp_cleanup()
+
+
 @app.on_event("startup")
 async def startup_event():
     """Kick off model warmup in the background so the port binds immediately."""
     logger.info("Server starting — model preloads will run in background")
     asyncio.create_task(_background_warmup())
+    asyncio.create_task(_otp_cleanup_loop())
 
 
 async def _background_warmup():
@@ -500,7 +518,7 @@ class OptimizeRequest(BaseModel):
     prompt: str = Field(..., min_length=3, max_length=50_000)
     skip_cache: Optional[bool] = False
     messages: Optional[list[Message]] = Field(None, max_length=100)
-    mode: Optional[str] = "fast"
+    mode: Optional[str] = "thinking"
     custom_instructions: Optional[str] = Field("", max_length=10_000)
     user_id: Optional[str] = None
 
@@ -541,8 +559,21 @@ async def _check_rate_limit(user_id: str) -> bool:
         _rate_counters[key] = count + 1
         return True
 
+_CLEAN_ANALYSIS_RE = re.compile(
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+    re.IGNORECASE,
+)
+_CLEAN_LAST_SECTION_RE = re.compile(
+    r'(?:\*{0,2})'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
+    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
+    re.IGNORECASE,
+)
+
+
 def clean_optimized_text(text: str) -> str:
-    """Remove markdown code blocks and other formatting artifacts."""
+    """Remove markdown code blocks, formatting artifacts, and leaked analysis headers."""
     # Remove markdown code blocks
     text = re.sub(r'^```[\w]*\n?', '', text, flags=re.MULTILINE)
     text = re.sub(r'\n?```$', '', text, flags=re.MULTILINE)
@@ -559,10 +590,32 @@ def clean_optimized_text(text: str) -> str:
         "Optimized:",
     ]
     for prefix in prefixes:
-        # Case insensitive check
         if text.strip().lower().startswith(prefix.lower()):
             text = text.strip()[len(prefix):].strip()
-            break  # Only remove first matching prefix
+            break
+
+    # Strip leaked analysis sections (DT/SF/PO/UC) if still present
+    if _CLEAN_ANALYSIS_RE.search(text[:500]):
+        matches = list(_CLEAN_LAST_SECTION_RE.finditer(text))
+        if matches:
+            last = matches[-1]
+            remaining = text[last.end():]
+            sep = remaining.find('\n---')
+            if sep != -1:
+                after_sep = remaining[sep + 4:].lstrip('\n')
+                if after_sep and not _CLEAN_ANALYSIS_RE.search(after_sep[:200]):
+                    text = after_sep
+            else:
+                parts = remaining.split('\n\n')
+                offset = last.end()
+                for i, part in enumerate(parts):
+                    offset += len(part) + 2
+                    if i == 0:
+                        continue
+                    rest = text[offset:]
+                    if rest.strip() and not _CLEAN_ANALYSIS_RE.search(rest[:300]):
+                        text = rest.lstrip('\n')
+                        break
 
     # Remove leading/trailing quotes if present
     text = text.strip()
@@ -578,6 +631,9 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
     user_id = auth.get("sub") or request.user_id
     if user_id:
         sentry_sdk.set_user({"id": user_id})
+        allowed = await _check_rate_limit(user_id)
+        if not allowed:
+            raise HTTPException(status_code=429, detail=f"Daily limit of {DAILY_REQUEST_LIMIT} optimizations reached. Resets at midnight UTC.")
 
     start_time = time.time()
 
@@ -617,7 +673,7 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
                 # msg is a Pydantic Message object with role/content
                 cc.add(msg.role, msg.content)
 
-        mode = getattr(request, 'mode', 'fast')
+        mode = getattr(request, 'mode', 'thinking')
         custom_instructions = getattr(request, 'custom_instructions', '')
         
         models_info = {}
@@ -663,6 +719,43 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
         logger.error(f"Optimization failed: {error_msg}")
         raise HTTPException(status_code=500, detail="Optimization failed — please try again")
 
+
+# ── Clarification endpoint ─────────────────────────────────────────────────
+
+class ClarifyRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+
+class ClarifyQuestion(BaseModel):
+    id: str
+    question: str
+    type: str
+    options: list = []
+    allow_other: bool = False
+    optional: bool = True
+
+class ClarifyResponse(BaseModel):
+    should_clarify: bool
+    is_complex: bool
+    complexity_reason: str = ""
+    suggested_sections: list = []
+    questions: list[ClarifyQuestion] = []
+
+@app.post("/clarify", response_model=ClarifyResponse)
+async def clarify_prompt(request: ClarifyRequest, auth: dict = Depends(require_auth)):
+    """Analyze a prompt and return clarification questions if beneficial."""
+    _ensure_pipeline()
+    try:
+        from pipeline_v2.clarifier import clarify
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, clarify, request.prompt
+        )
+        return ClarifyResponse(**result)
+    except Exception as exc:
+        logger.warning(f"Clarify endpoint failed (returning safe default): {exc}")
+        sentry_sdk.capture_exception(exc)
+        return ClarifyResponse(should_clarify=False, is_complex=False)
+
+
 @app.websocket("/ws/optimize-stream")
 async def optimize_stream(websocket: WebSocket):
     """
@@ -683,10 +776,12 @@ async def optimize_stream(websocket: WebSocket):
             prompt_text = data.get("prompt", "").strip()
             previous_output = data.get("previous_output", None)  # for regeneration self-critique
             messages = data.get("messages", None)
-            mode = data.get("mode", "fast")
+            mode = data.get("mode", "thinking")
             custom_instructions = data.get("custom_instructions", "")
             attached_files = data.get("attached_files", [])
             forced_skill = data.get("forced_skill", None)
+            clarification_answers = data.get("clarification_answers", None)
+            wants_sections = data.get("wants_sections", False)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
             # Use JWT-verified user id; fall back to request body only for legacy local mode
@@ -770,6 +865,28 @@ async def optimize_stream(websocket: WebSocket):
                 loop = asyncio.get_event_loop()
                 chunk_queue: asyncio.Queue = asyncio.Queue()
 
+                task_plan = None
+                if wants_sections:
+                    from pipeline_v2.task_planner import plan_tasks
+                    sentry_sdk.add_breadcrumb(
+                        category="optimize", message="Task planning started",
+                        level="info", data={"request_id": request_id},
+                    )
+                    task_plan = await loop.run_in_executor(
+                        None,
+                        lambda: plan_tasks(
+                            user_input=prompt_text,
+                            model=SUMMARIZER_MODEL,
+                            provider="auto",
+                        ),
+                    )
+                    task_count = len(task_plan) if task_plan else 0
+                    sentry_sdk.add_breadcrumb(
+                        category="optimize", message="Task planning complete",
+                        level="info", data={"request_id": request_id, "task_count": task_count, "success": task_plan is not None},
+                    )
+                    logger.info(f"Task plan: {task_count} tasks")
+
                 def run_stream():
                     """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""
                     try:
@@ -785,6 +902,9 @@ async def optimize_stream(websocket: WebSocket):
                             forced_skill=forced_skill,
                             previous_output=previous_output,
                             models_info=models_info,
+                            clarification_answers=clarification_answers,
+                            wants_sections=wants_sections,
+                            task_plan=task_plan,
                         )
                         for chunk in gen:
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
@@ -1595,7 +1715,7 @@ async def websocket_transcribe_stream(websocket: WebSocket):
 # ── Cloudinary image upload ────────────────────────────────────────────────────
 
 class ImageUploadRequest(BaseModel):
-    base64: str       # raw base64, no data-URL prefix
+    base64: str = Field(..., max_length=10_000_000)  # ~7.5 MB decoded
     filename: str
     mime_type: str = "image/jpeg"
 
@@ -1681,12 +1801,158 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
     return ImageUploadResponse(url=url)
 
 
+# ── Auth OTP Routes (unauthenticated, rate-limited) ──────────────────────────
+
+
+class SendSignupOtpRequest(BaseModel):
+    email: str
+    name: str
+    dob: str
+    password: str
+
+
+class VerifySignupOtpRequest(BaseModel):
+    email: str
+    otp: str
+
+
+class SendResetOtpRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
+
+@app.post("/auth/send-signup-otp")
+@limiter.limit("5/minute")
+async def route_send_signup_otp(request: StarletteRequest, body: SendSignupOtpRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/send-signup-otp invoked", level="info",
+    )
+    result = await send_signup_otp(body.email, body.name, body.dob, body.password)
+    if not result.get("success"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="send-signup-otp failed", level="warning",
+            data={"error": result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
+    return result
+
+
+@app.post("/auth/verify-signup-otp")
+@limiter.limit("10/minute")
+async def route_verify_signup_otp(request: StarletteRequest, body: VerifySignupOtpRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/verify-signup-otp invoked", level="info",
+    )
+    result = verify_signup_otp(body.email, body.otp)
+    if not result.get("valid"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="verify-signup-otp failed", level="warning",
+            data={"error": result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=result.get("error", "Verification failed"))
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="verify-signup-otp success", level="info",
+    )
+    return result
+
+
+@app.post("/auth/send-reset-otp")
+@limiter.limit("5/minute")
+async def route_send_reset_otp(request: StarletteRequest, body: SendResetOtpRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/send-reset-otp invoked", level="info",
+    )
+    result = await send_reset_otp(body.email)
+    if not result.get("success"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="send-reset-otp failed", level="warning",
+            data={"error": result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
+    return result
+
+
+@app.post("/auth/reset-password")
+@limiter.limit("5/minute")
+async def route_reset_password(request: StarletteRequest, body: ResetPasswordRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /auth/reset-password invoked", level="info",
+    )
+    result = await otp_reset_password(body.email, body.otp, body.new_password)
+    if not result.get("valid"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="reset-password failed", level="warning",
+            data={"error": result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=result.get("error", "Password reset failed"))
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="reset-password success", level="info",
+    )
+    return result
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up on SIGTERM/SIGINT."""
     logger.info("[Shutdown] Cleaning up active transcription sessions...")
     _active_stream_sessions.clear()
     logger.info("[Shutdown] Cleanup complete — server stopping.")
+
+
+# ── Download tracking + redirect ──────────────────────────────────────────────
+
+_RELEASES_BASE_URL = os.environ.get(
+    "RELEASES_BASE_URL",
+    "https://tfetlkkdggdkbuycfoun.supabase.co/storage/v1/object/public/releases",
+)
+_LATEST_APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
+_SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+_SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+
+
+@app.get("/download")
+@limiter.limit("10/minute")
+async def download_redirect(request: Request):
+    """Track the download event and redirect to the installer."""
+    import hashlib as _hl
+    import httpx as _hx
+
+    version = _LATEST_APP_VERSION
+    ua = request.headers.get("user-agent", "")
+    referrer = request.headers.get("referer", "")
+    raw_ip = request.client.host if request.client else "unknown"
+    ip_hash = _hl.sha256(raw_ip.encode()).hexdigest()[:16]
+
+    if _SUPABASE_URL and _SUPABASE_ANON_KEY:
+        try:
+            async with _hx.AsyncClient() as client:
+                await client.post(
+                    f"{_SUPABASE_URL}/rest/v1/download_events",
+                    headers={
+                        "apikey": _SUPABASE_ANON_KEY,
+                        "Authorization": f"Bearer {_SUPABASE_ANON_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal",
+                    },
+                    json={
+                        "version": version,
+                        "platform": "windows",
+                        "referrer": referrer[:500] if referrer else None,
+                        "user_agent": ua[:500] if ua else None,
+                        "ip_hash": ip_hash,
+                    },
+                    timeout=5.0,
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to log download event: {exc}")
+
+    exe_url = f"{_RELEASES_BASE_URL}/Prmpt-Setup-{version}.exe"
+    return RedirectResponse(url=exe_url, status_code=302)
 
 
 @app.get("/")
@@ -1698,6 +1964,7 @@ async def root():
         "endpoints": {
             "optimize": "POST /optimize",
             "health": "GET /health",
+            "download": "GET /download",
             "transcribe_audio": "POST /transcribe-audio",
             "transcribe_stream": "WS /ws/transcribe-stream",
         }

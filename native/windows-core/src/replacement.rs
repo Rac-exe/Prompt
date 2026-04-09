@@ -66,7 +66,7 @@ use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
     KEYEVENTF_KEYUP, VIRTUAL_KEY,
-    VK_BACK, VK_CONTROL, VK_V,
+    VK_BACK, VK_CONTROL, VK_RETURN, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, IsWindow,
@@ -89,6 +89,13 @@ pub struct AnchorData {
 
 static LAST_ANCHOR: Mutex<Option<AnchorData>> = Mutex::new(None);
 
+/// Focused child HWND captured at @prompt trigger time.
+/// Persists across inserts (not consumed by replaceAtLastAnchor).
+/// Used by paste_text_to_window to restore keyboard focus to the exact
+/// input control where @prompt was typed, even if the user has switched
+/// windows/tabs in between.
+static STORED_FOCUS_HWND: Mutex<Option<isize>> = Mutex::new(None);
+
 /// Cancellation flag for the clipboard restore thread. Set to `true` at the
 /// start of each new `inject_via_clipboard_paste` call so that any pending
 /// restore from a previous invocation is skipped instead of clobbering the
@@ -96,6 +103,9 @@ static LAST_ANCHOR: Mutex<Option<AnchorData>> = Mutex::new(None);
 static RESTORE_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// Store the foreground window and trigger length captured at trigger time.
+/// Also captures the focused child control via GetGUIThreadInfo so that
+/// subsequent paste_text_to_window calls can restore focus to the exact
+/// input field where @prompt was typed.
 /// Called from hook.rs → fire_trigger(). Not modified.
 pub fn store_anchor(hwnd: isize, trigger_len: u32) {
     let ts = SystemTime::now()
@@ -105,6 +115,19 @@ pub fn store_anchor(hwnd: isize, trigger_len: u32) {
     if let Ok(mut g) = LAST_ANCHOR.lock() {
         *g = Some(AnchorData { hwnd, trigger_len, timestamp_ms: ts });
         println!("[Replacement] Anchor stored: hwnd={hwnd:#x}, trigger_len={trigger_len}");
+    }
+
+    // Capture the focused child control at trigger time.
+    unsafe {
+        let mut gti: GUITHREADINFO = std::mem::zeroed();
+        gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        if GetGUIThreadInfo(0, &mut gti).is_ok() && !gti.hwndFocus.0.is_null() {
+            let focus = gti.hwndFocus.0 as isize;
+            if let Ok(mut g) = STORED_FOCUS_HWND.lock() {
+                *g = Some(focus);
+            }
+            println!("[Replacement] Focus child stored: hwnd={focus:#x}");
+        }
     }
 }
 
@@ -666,6 +689,94 @@ unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
     }
 
     true
+}
+
+// ─── Standalone paste (no anchor) ─────────────────────────────────────────────
+
+/// Paste arbitrary text into a window identified by raw HWND.
+///
+/// Unlike `replace_at_last_anchor`, this does NOT consume any stored anchor
+/// and does NOT delete trigger text. It simply:
+///   1. Validates the target HWND
+///   2. Focuses the target window (SetForegroundWindow + settle)
+///   3. Pastes via clipboard (Ctrl+V) with save/restore
+///
+/// Designed for multi-section insert where the overlay stays open and
+/// pastes sections one at a time into the same target window.
+pub fn paste_text_to_window(hwnd: isize, text: &str) -> bool {
+    let target = HWND(hwnd as *mut _);
+
+    if unsafe { !IsWindow(Some(target)).as_bool() } {
+        eprintln!("[PasteToWindow] Target window gone (hwnd={hwnd:#x})");
+        return false;
+    }
+
+    unsafe {
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+
+        if !SetForegroundWindow(target).as_bool() {
+            eprintln!("[PasteToWindow] SetForegroundWindow failed — proceeding anyway");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+
+        // Restore keyboard focus to the child control that was focused at
+        // @prompt trigger time. This ensures the paste lands in the correct
+        // input field even if the user has clicked elsewhere in the window.
+        let focus_hwnd = STORED_FOCUS_HWND.lock().ok().and_then(|g| *g);
+        if let Some(fh) = focus_hwnd {
+            let child = HWND(fh as *mut _);
+            if IsWindow(Some(child)).as_bool() {
+                let target_thread = GetWindowThreadProcessId(target, None);
+                let our_thread = GetCurrentThreadId();
+                let attached = target_thread != 0
+                    && target_thread != our_thread
+                    && AttachThreadInput(our_thread, target_thread, true).as_bool();
+                let _ = SetFocus(Some(child));
+                if attached {
+                    let _ = AttachThreadInput(our_thread, target_thread, false);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
+        }
+
+        inject_via_clipboard_paste(target, text)
+    }
+}
+
+/// Send Enter (VK_RETURN) to the target window. Used by auto-pilot chat mode
+/// to submit a pasted section in chat interfaces.
+pub fn send_enter_to_window(hwnd: isize) -> bool {
+    let target = HWND(hwnd as *mut _);
+
+    if unsafe { !IsWindow(Some(target)).as_bool() } {
+        eprintln!("[SendEnter] Target window gone (hwnd={hwnd:#x})");
+        return false;
+    }
+
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0 != target.0 {
+            if !SetForegroundWindow(target).as_bool() {
+                eprintln!("[SendEnter] SetForegroundWindow failed");
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+
+        let enter_inputs = [
+            key_vk(VK_RETURN, KEYBD_EVENT_FLAGS(0)),
+            key_vk(VK_RETURN, KEYEVENTF_KEYUP),
+        ];
+        let sent = send_inputs(&enter_inputs);
+        if sent == 0 {
+            eprintln!("[SendEnter] SendInput VK_RETURN failed");
+            return false;
+        }
+        println!("[SendEnter] Enter sent to hwnd={hwnd:#x}");
+        true
+    }
 }
 
 // ─── Input builders ───────────────────────────────────────────────────────────
