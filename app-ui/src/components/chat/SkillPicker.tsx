@@ -82,8 +82,8 @@ export const SkillPicker = ({ onSelect, onClose, className }: SkillPickerProps) 
               onMouseLeave={() => setTooltip(null)}
               className={cn(
                 "w-full max-w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors relative",
-                "hover:bg-accent/50 focus:outline-none",
-                isSelected && "bg-accent/40"
+                "hover:bg-black/5 dark:hover:bg-accent/50 focus:outline-none",
+                isSelected && "bg-black/5 dark:bg-accent/40"
               )}
             >
               {/* Left accent bar */}
