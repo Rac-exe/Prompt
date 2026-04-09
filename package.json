@@ -54,6 +54,10 @@
       {
         "from": "build/tray-icon.png",
         "to": "tray-icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {

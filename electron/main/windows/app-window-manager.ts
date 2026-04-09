@@ -33,10 +33,9 @@ export class AppWindowManager {
     this.isLoaded = false;
 
     // Load the app icon for the taskbar / dock.
-    // Use the ICO on Windows (multi-size, native) and PNG elsewhere.
-    const iconPath = process.platform === 'win32'
-      ? path.join(app.getAppPath(), 'build', 'icon.ico')
-      : path.join(app.getAppPath(), 'electron', 'resources', 'icon.png');
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.ico')
+      : path.join(app.getAppPath(), 'build', 'icon.ico');
     const icon = nativeImage.createFromPath(iconPath);
 
     this.window = new BrowserWindow({
