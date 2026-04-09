@@ -553,8 +553,21 @@ async def _check_rate_limit(user_id: str) -> bool:
         _rate_counters[key] = count + 1
         return True
 
+_CLEAN_ANALYSIS_RE = re.compile(
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+    re.IGNORECASE,
+)
+_CLEAN_LAST_SECTION_RE = re.compile(
+    r'(?:\*{0,2})'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
+    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
+    re.IGNORECASE,
+)
+
+
 def clean_optimized_text(text: str) -> str:
-    """Remove markdown code blocks and other formatting artifacts."""
+    """Remove markdown code blocks, formatting artifacts, and leaked analysis headers."""
     # Remove markdown code blocks
     text = re.sub(r'^```[\w]*\n?', '', text, flags=re.MULTILINE)
     text = re.sub(r'\n?```$', '', text, flags=re.MULTILINE)
@@ -571,10 +584,32 @@ def clean_optimized_text(text: str) -> str:
         "Optimized:",
     ]
     for prefix in prefixes:
-        # Case insensitive check
         if text.strip().lower().startswith(prefix.lower()):
             text = text.strip()[len(prefix):].strip()
-            break  # Only remove first matching prefix
+            break
+
+    # Strip leaked analysis sections (DT/SF/PO/UC) if still present
+    if _CLEAN_ANALYSIS_RE.search(text[:500]):
+        matches = list(_CLEAN_LAST_SECTION_RE.finditer(text))
+        if matches:
+            last = matches[-1]
+            remaining = text[last.end():]
+            sep = remaining.find('\n---')
+            if sep != -1:
+                after_sep = remaining[sep + 4:].lstrip('\n')
+                if after_sep and not _CLEAN_ANALYSIS_RE.search(after_sep[:200]):
+                    text = after_sep
+            else:
+                parts = remaining.split('\n\n')
+                offset = last.end()
+                for i, part in enumerate(parts):
+                    offset += len(part) + 2
+                    if i == 0:
+                        continue
+                    rest = text[offset:]
+                    if rest.strip() and not _CLEAN_ANALYSIS_RE.search(rest[:300]):
+                        text = rest.lstrip('\n')
+                        break
 
     # Remove leading/trailing quotes if present
     text = text.strip()

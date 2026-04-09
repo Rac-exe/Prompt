@@ -114,6 +114,50 @@ def _extract_optimized_prompt(raw: str) -> str:
     return raw.strip()
 
 
+# ── Analysis leak detection & stripping ──────────────────────────────────────
+_TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
+_SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
+_ANALYSIS_LEAK_RE = re.compile(
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+    re.IGNORECASE,
+)
+_ANALYSIS_LAST_SECTION_RE = re.compile(
+    r'(?:\*{0,2})'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
+    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
+    re.IGNORECASE,
+)
+_STRIP_BUFFER_LIMIT_TASK = 2000
+_STRIP_BUFFER_LIMIT_SINGLE = 4000
+_QUICK_CHECK_LEN = 500
+
+
+def _find_prompt_start_after_analysis(buf: str) -> int:
+    """Find where the actual prompt starts after leaked analysis sections."""
+    matches = list(_ANALYSIS_LAST_SECTION_RE.finditer(buf))
+    if not matches:
+        return 0
+    last = matches[-1]
+    search_from = last.end()
+    remaining = buf[search_from:]
+    sep = remaining.find('\n---')
+    if sep != -1:
+        after_sep = remaining[sep + 4:].lstrip('\n')
+        if after_sep and not _ANALYSIS_LEAK_RE.search(after_sep[:200]):
+            return search_from + sep + 4 + (len(remaining[sep + 4:]) - len(remaining[sep + 4:].lstrip('\n')))
+    parts = remaining.split('\n\n')
+    offset = search_from
+    for i, part in enumerate(parts):
+        offset += len(part) + 2
+        if i == 0:
+            continue
+        rest_from_here = buf[offset:]
+        if rest_from_here.strip() and not _ANALYSIS_LEAK_RE.search(rest_from_here[:300]):
+            return offset
+    return min(search_from + len(parts[0]) + 2 if len(parts) > 1 else search_from, len(buf))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM 1 — Context Summarizer
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,7 +431,7 @@ LOADED SKILLS: {', '.join(skill_names)}
 USER REQUEST:
 {final_user_input}
 
-Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant skill techniques, and provide the fully optimized prompt."""
+Apply your internal analysis silently (classify, select skills, choose techniques). Output ONLY the fully optimized prompt — no analysis headers, no reasoning, no section labels."""
 
         # Append regeneration instruction when applicable
         if regen_instruction:
@@ -427,20 +471,18 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             max_tokens=8192, temperature=temperature, stream=True,
             stream_options={"include_usage": True}, **extra,
         )
-        _TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
-        _SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
-        _STRIP_BUFFER_LIMIT = 2000
-
         def _stream_generator():
             result_acc = ""
             usage = None
-            need_strip = wants_sections and bool(task_plan)
-            prefix_buffer = "" if need_strip else None
-            if need_strip:
-                sentry_sdk.add_breadcrumb(
-                    category="optimizer", message="Stream prefix strip enabled",
-                    level="info",
-                )
+            is_task_mode = wants_sections and bool(task_plan)
+            # Always start with a buffer to detect leaks
+            prefix_buffer = ""
+            leak_detected = False
+            buffer_limit = _STRIP_BUFFER_LIMIT_TASK if is_task_mode else _STRIP_BUFFER_LIMIT_SINGLE
+            sentry_sdk.add_breadcrumb(
+                category="optimizer", message="Stream prefix strip enabled (universal)",
+                level="info", data={"is_task_mode": is_task_mode},
+            )
 
             for chunk in response:
                 delta = chunk.choices[0].delta.content or ""
@@ -449,43 +491,98 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
 
                     if prefix_buffer is not None:
                         prefix_buffer += delta
-                        heading_match = _TASK_HEADING_RE.search(prefix_buffer)
-                        if heading_match:
-                            stripped_len = heading_match.start()
-                            clean_start = prefix_buffer[stripped_len:]
-                            prefix_buffer = None
-                            if stripped_len > 0:
+
+                        # Quick check: if first ~500 chars have no analysis headers, flush immediately
+                        if not leak_detected and len(prefix_buffer) >= _QUICK_CHECK_LEN:
+                            if not _ANALYSIS_LEAK_RE.search(prefix_buffer):
                                 sentry_sdk.add_breadcrumb(
-                                    category="optimizer", message="Stripped analysis prefix from stream",
-                                    level="warning", data={"chars_stripped": stripped_len},
-                                )
-                            if clean_start:
-                                yield clean_start
-                        elif len(prefix_buffer) >= _STRIP_BUFFER_LIMIT:
-                            fallback_match = _SECTION_HEADING_RE.search(prefix_buffer)
-                            if fallback_match:
-                                clean_start = prefix_buffer[fallback_match.start():]
-                                prefix_buffer = None
-                                if clean_start:
-                                    yield clean_start
-                            else:
-                                sentry_sdk.add_breadcrumb(
-                                    category="optimizer", message="Stream strip safety valve: no heading found, flushing buffer",
-                                    level="warning", data={"buffer_len": len(prefix_buffer)},
+                                    category="optimizer", message="No analysis leak detected, flushing buffer",
+                                    level="info", data={"buffer_len": len(prefix_buffer)},
                                 )
                                 dump = prefix_buffer
                                 prefix_buffer = None
                                 yield dump
+                                continue
+                            else:
+                                leak_detected = True
+                                sentry_sdk.add_breadcrumb(
+                                    category="optimizer", message="Analysis leak detected in stream",
+                                    level="warning", data={"buffer_len": len(prefix_buffer)},
+                                )
+
+                        if leak_detected or len(prefix_buffer) >= _QUICK_CHECK_LEN:
+                            if is_task_mode:
+                                # Task mode: strip until ## Task heading
+                                heading_match = _TASK_HEADING_RE.search(prefix_buffer)
+                                if heading_match:
+                                    stripped_len = heading_match.start()
+                                    clean_start = prefix_buffer[stripped_len:]
+                                    prefix_buffer = None
+                                    if stripped_len > 0:
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Stripped analysis prefix (task mode)",
+                                            level="warning", data={"chars_stripped": stripped_len},
+                                        )
+                                    if clean_start:
+                                        yield clean_start
+                                elif len(prefix_buffer) >= buffer_limit:
+                                    fallback_match = _SECTION_HEADING_RE.search(prefix_buffer)
+                                    if fallback_match:
+                                        clean_start = prefix_buffer[fallback_match.start():]
+                                        prefix_buffer = None
+                                        if clean_start:
+                                            yield clean_start
+                                    else:
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Task mode safety valve: flushing buffer",
+                                            level="warning", data={"buffer_len": len(prefix_buffer)},
+                                        )
+                                        dump = prefix_buffer
+                                        prefix_buffer = None
+                                        yield dump
+                            else:
+                                # Single-prompt mode: find where actual prompt starts
+                                if len(prefix_buffer) >= buffer_limit:
+                                    prompt_start = _find_prompt_start_after_analysis(prefix_buffer)
+                                    if prompt_start > 0 and prompt_start < len(prefix_buffer):
+                                        clean = prefix_buffer[prompt_start:].lstrip('\n')
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Stripped analysis prefix (single prompt)",
+                                            level="warning", data={"chars_stripped": prompt_start},
+                                        )
+                                        prefix_buffer = None
+                                        if clean:
+                                            yield clean
+                                    else:
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Single prompt safety valve: flushing buffer",
+                                            level="warning", data={"buffer_len": len(prefix_buffer)},
+                                        )
+                                        dump = prefix_buffer
+                                        prefix_buffer = None
+                                        yield dump
                     else:
                         yield delta
 
                 if hasattr(chunk, "usage") and chunk.usage:
                     usage = chunk.usage
 
+            # Flush any remaining buffer
             if prefix_buffer is not None and prefix_buffer:
-                heading_match = _TASK_HEADING_RE.search(prefix_buffer) or _SECTION_HEADING_RE.search(prefix_buffer)
-                if heading_match:
-                    yield prefix_buffer[heading_match.start():]
+                if leak_detected:
+                    if is_task_mode:
+                        heading_match = _TASK_HEADING_RE.search(prefix_buffer) or _SECTION_HEADING_RE.search(prefix_buffer)
+                        if heading_match:
+                            yield prefix_buffer[heading_match.start():]
+                        else:
+                            yield prefix_buffer
+                    else:
+                        prompt_start = _find_prompt_start_after_analysis(prefix_buffer)
+                        if prompt_start > 0 and prompt_start < len(prefix_buffer):
+                            clean = prefix_buffer[prompt_start:].lstrip('\n')
+                            yield clean if clean else prefix_buffer
+                        else:
+                            yield prefix_buffer
                 else:
                     yield prefix_buffer
 
@@ -527,16 +624,29 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
             )
     
         cleaned = result.strip()
+        # Task mode: strip until ## Task heading
         if wants_sections and task_plan and cleaned:
             heading_match = re.search(r'##\s*Task\s', cleaned, re.IGNORECASE)
             if not heading_match:
                 heading_match = re.search(r'##\s*\S', cleaned, re.IGNORECASE)
             if heading_match and heading_match.start() > 0:
                 sentry_sdk.add_breadcrumb(
-                    category="optimizer", message="Stripped analysis prefix from non-stream result",
+                    category="optimizer", message="Stripped analysis prefix from non-stream result (task mode)",
                     level="warning", data={"chars_stripped": heading_match.start()},
                 )
                 cleaned = cleaned[heading_match.start():]
+        # Single-prompt mode: detect and strip analysis headers
+        elif cleaned and re.search(
+            r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+            cleaned[:500], re.IGNORECASE
+        ):
+            prompt_start = _find_prompt_start_after_analysis(cleaned)
+            if prompt_start > 0 and prompt_start < len(cleaned):
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Stripped analysis prefix from non-stream result (single prompt)",
+                    level="warning", data={"chars_stripped": prompt_start},
+                )
+                cleaned = cleaned[prompt_start:].lstrip('\n')
         logger.info(f"Optimization complete ({latency_ms}ms)")
         return cleaned
 
