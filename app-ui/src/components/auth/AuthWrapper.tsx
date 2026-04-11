@@ -1,4 +1,4 @@
-import { useState, useEffect, ReactNode, useCallback } from 'react';
+import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
 import { Logo } from "@/components/ui/Logo";
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
@@ -14,12 +14,18 @@ interface AuthWrapperProps {
 type AuthView = 'loading' | 'login' | 'signup' | 'onboarding' | 'app';
 
 const ONBOARDING_KEY_PREFIX = 'onboarding-completed-';
+const AUTH_SLOW_MS = 6_000;
+const AUTH_RETRY_MS = 12_000;
+const AUTH_GIVEUP_MS = 20_000;
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
   const [authView, setAuthView] = useState<AuthView>('loading');
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
   const { toast } = useToast();
+  const [loadingSlow, setLoadingSlow] = useState(false);
+  const retryTimer = useRef<ReturnType<typeof setTimeout>>();
+  const giveupTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const handleSignOut = useCallback(() => {
     if (window.electronAPI?.signOut) {
@@ -114,6 +120,38 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     window.electronAPI.checkAuth();
   }, []);
 
+  useEffect(() => {
+    if (authView !== 'loading') {
+      setLoadingSlow(false);
+      clearTimeout(retryTimer.current);
+      clearTimeout(giveupTimer.current);
+      return;
+    }
+
+    const slowTimer = setTimeout(() => setLoadingSlow(true), AUTH_SLOW_MS);
+
+    retryTimer.current = setTimeout(() => {
+      if (authView === 'loading' && window.electronAPI) {
+        console.warn('[AuthWrapper] Still loading after', AUTH_RETRY_MS, 'ms — retrying checkAuth');
+        window.electronAPI.checkAuth();
+      }
+    }, AUTH_RETRY_MS);
+
+    giveupTimer.current = setTimeout(() => {
+      setAuthView((current) => {
+        if (current !== 'loading') return current;
+        console.error('[AuthWrapper] Still loading after', AUTH_GIVEUP_MS, 'ms — falling back to login');
+        return 'login';
+      });
+    }, AUTH_GIVEUP_MS);
+
+    return () => {
+      clearTimeout(slowTimer);
+      clearTimeout(retryTimer.current);
+      clearTimeout(giveupTimer.current);
+    };
+  }, [authView]);
+
   // Debug: Log current state before render
   console.log('[AuthWrapper] Current authView:', authView);
 
@@ -124,6 +162,11 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
           <div className="flex flex-col items-center gap-5">
             <Logo size="w-16 h-16" />
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald"></div>
+            {loadingSlow && (
+              <p className="text-sm text-muted-foreground animate-fade-in">
+                Taking longer than usual&hellip;
+              </p>
+            )}
           </div>
         </div>
       );

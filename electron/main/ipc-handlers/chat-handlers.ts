@@ -927,6 +927,7 @@ export function registerChatHandlers(
         chatId: string;
         answers: Record<string, string>;
         wantsSections: boolean;
+        clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
     }) => {
         const pending = pendingClarifications.get(data.chatId);
         if (!pending) {
@@ -1010,12 +1011,18 @@ export function registerChatHandlers(
             }
 
             const assistantGroupId = crypto.randomUUID();
+            const assistantMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0,
+            };
+            if (data.clarificationChoices) {
+                assistantMeta.clarificationChoices = data.clarificationChoices;
+            }
             const assistantMessage = await chatService.addMessage(
                 data.chatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
+                assistantMeta
             );
 
             if (appWindowManager) {
@@ -1066,6 +1073,9 @@ export function registerChatHandlers(
         attachedFiles?: AttachedFile[];
         forcedSkill?: string | null;
         previousContent?: string;
+        clarificationAnswers?: string;
+        wantsSections?: boolean;
+        clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
     }) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
         logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'thinking'}`);
@@ -1149,8 +1159,8 @@ export function registerChatHandlers(
                     attachedFiles,
                     data.forcedSkill || null,
                     data.previousContent || null,
-                    null,
-                    false,
+                    data.clarificationAnswers || null,
+                    data.wantsSections ?? false,
                     getActiveProjectId(),
                     getActiveProjectBranch(),
                 );
@@ -1189,12 +1199,18 @@ export function registerChatHandlers(
             // Save assistant message with the caller-provided groupId
             const assistantGroupId = data.groupId || crypto.randomUUID();
             const assistantVersionIndex = data.versionIndex ?? 0;
+            const regenMeta: Record<string, any> = {
+                ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex,
+            };
+            if (data.clarificationChoices) {
+                regenMeta.clarificationChoices = data.clarificationChoices;
+            }
             const assistantMessage = await chatService.addMessage(
                 chatId,
                 optimizedText,
                 'assistant',
                 optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: assistantVersionIndex }
+                regenMeta
             );
 
             // Send assistant message to renderer

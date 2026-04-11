@@ -17,10 +17,14 @@ import time
 from pathlib import Path
 from typing import Tuple, List, Dict, Union, Optional, Generator
 
+import logging
+
 import litellm
 import sentry_sdk
 
 from .context import ChatContext
+
+logger = logging.getLogger(__name__)
 from .skills import load_selected_skills, load_skill_file
 from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
@@ -111,6 +115,50 @@ def _extract_optimized_prompt(raw: str) -> str:
     return raw.strip()
 
 
+# ── Analysis leak detection & stripping ──────────────────────────────────────
+_TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
+_SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
+_ANALYSIS_LEAK_RE = re.compile(
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+    re.IGNORECASE,
+)
+_ANALYSIS_LAST_SECTION_RE = re.compile(
+    r'(?:\*{0,2})'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
+    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
+    re.IGNORECASE,
+)
+_STRIP_BUFFER_LIMIT_TASK = 2000
+_STRIP_BUFFER_LIMIT_SINGLE = 4000
+_QUICK_CHECK_LEN = 500
+
+
+def _find_prompt_start_after_analysis(buf: str) -> int:
+    """Find where the actual prompt starts after leaked analysis sections."""
+    matches = list(_ANALYSIS_LAST_SECTION_RE.finditer(buf))
+    if not matches:
+        return 0
+    last = matches[-1]
+    search_from = last.end()
+    remaining = buf[search_from:]
+    sep = remaining.find('\n---')
+    if sep != -1:
+        after_sep = remaining[sep + 4:].lstrip('\n')
+        if after_sep and not _ANALYSIS_LEAK_RE.search(after_sep[:200]):
+            return search_from + sep + 4 + (len(remaining[sep + 4:]) - len(remaining[sep + 4:].lstrip('\n')))
+    parts = remaining.split('\n\n')
+    offset = search_from
+    for i, part in enumerate(parts):
+        offset += len(part) + 2
+        if i == 0:
+            continue
+        rest_from_here = buf[offset:]
+        if rest_from_here.strip() and not _ANALYSIS_LEAK_RE.search(rest_from_here[:300]):
+            return offset
+    return min(search_from + len(parts[0]) + 2 if len(parts) > 1 else search_from, len(buf))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM 1 — Context Summarizer
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,6 +206,62 @@ Compress this conversation into the required JSON format."""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Task-plan aware delivery format
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_delivery_format(task_plan: Optional[list] = None) -> str:
+    """Build the DELIVERY FORMAT appendix for the system prompt.
+
+    When a task_plan is available (from task_planner.py), each task gets a
+    precise state anchor so the optimizer writes continuations, not repeats.
+    Without a plan, falls back to the original generic instruction.
+    """
+    sentry_sdk.add_breadcrumb(
+        category="optimizer", message="Building delivery format",
+        level="info", data={"has_task_plan": bool(task_plan), "task_count": len(task_plan) if task_plan else 0},
+    )
+    if task_plan:
+        plan_text = "\n".join(
+            f"Task {t['number']}: {t['name']}\n"
+            f"  Goal: {t['goal']}\n"
+            f"  Produces: {', '.join(t.get('produces', []))}\n"
+            f"  State after: {t.get('state_after', '')}"
+            for t in task_plan
+        )
+        return (
+            "\n\n<internal_reference>\n"
+            "The following task plan is for your internal reference ONLY. "
+            "Do NOT reproduce, echo, or summarize it in your output.\n\n"
+            f"{plan_text}\n"
+            "</internal_reference>\n\n"
+            "DELIVERY FORMAT: Write each task as a standalone executable prompt "
+            "for an AI coding assistant using the hybrid format:\n"
+            "1. One-line project anchor (tech stack + goal)\n"
+            "2. 'At this point:' — list what previous tasks built (from the reference above)\n"
+            "3. Task instructions — actionable, specific, not spec-like\n"
+            "4. Exit condition — what should work/exist when done\n"
+            "Use ## Task N: Name as the heading. Each task must be independently "
+            "executable if pasted into the same ongoing chat.\n\n"
+            "CRITICAL: Do NOT output any analysis, classification, or internal reasoning. "
+            "No DECISION TAKER, SKILL SELECTOR, OPTIMIZATION TECHNIQUES, or USER CONTEXT sections. "
+            "No DT, SF, PO, or UC headers. Skip all preamble. "
+            "Begin your response DIRECTLY with ## Task 1: — the very first characters you output "
+            "must be the ## Task 1 heading."
+        )
+    return (
+        "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
+        "Output each section with a ## Section Title header followed by its prompt content. "
+        "Within each section, use bullet points (- ) for individual requirements and instructions. "
+        "Never write dense paragraphs — every requirement must be its own bullet point. "
+        "Sections should be self-contained and executable in sequence.\n\n"
+        "CRITICAL: Do NOT output any analysis, classification, or internal reasoning. "
+        "No DECISION TAKER, SKILL SELECTOR, OPTIMIZATION TECHNIQUES, or USER CONTEXT sections. "
+        "No DT, SF, PO, or UC headers. Skip all preamble. "
+        "Begin your response DIRECTLY with the first ## Section heading."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LLM 2 — Prompt Optimizer (DT + SF + PO)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -175,6 +279,7 @@ def optimize(
     models_info: Optional[Dict] = None,
     clarification_answers: Optional[str] = None,
     wants_sections: bool = False,
+    task_plan: Optional[list] = None,
     project_id: Optional[str] = None,
     project_branch: Optional[str] = None,
     auth_token: Optional[str] = None,
@@ -269,13 +374,7 @@ def optimize(
         system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
 
         if wants_sections:
-            system_content += (
-                "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
-                "Output each section with a ## Section Title header followed by its prompt content. "
-                "Within each section, use bullet points (- ) for individual requirements and instructions. "
-                "Never write dense paragraphs — every requirement must be its own bullet point. "
-                "Sections should be self-contained and executable in sequence."
-            )
+            system_content += _build_delivery_format(task_plan)
 
         if custom_instructions and custom_instructions.strip():
             system_content += (
@@ -318,27 +417,30 @@ def optimize(
         
         # Select skills (or use forced skill)
         if forced_skill:
-            print(f"[Optimizer] Using forced skill: {forced_skill}")
+            logger.info(f"Using forced skill: {forced_skill}")
             skill_names = [forced_skill]
             skills_content = load_skill_file(forced_skill)
             if not skills_content:
-                print(f"[Optimizer] WARNING: Forced skill '{forced_skill}' not found, falling back to auto-selection")
+                logger.warning(f"Forced skill '{forced_skill}' not found, falling back to auto-selection")
                 skill_names, skills_content = load_selected_skills(user_input)
         else:
             skill_names, skills_content = load_selected_skills(user_input)
     
         # Context management: compact if CC exceeds token budget
         if cc.token_estimate() > SUMMARIZE_THRESHOLD:
-            print(f"[Optimizer] Compacting context ({SUMMARIZER_MODEL})...")
+            logger.info(f"Compacting context ({SUMMARIZER_MODEL})...")
             try:
                 summary_text = summarize_context(cc, provider)
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
                 if models_info is not None:
                     models_info["summarizer"] = SUMMARIZER_MODEL
-                from .context import save_chat_context as _save
-                _save(cc)
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Context compacted in-memory",
+                    level="info", data={"kept_recent": CC_KEEP_RECENT, "new_msg_count": len(cc.messages)},
+                )
             except Exception as exc:
-                print(f"[Optimizer] WARNING: Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
+                logger.warning(f"Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
+                sentry_sdk.capture_exception(exc)
     
         cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
         
@@ -358,20 +460,14 @@ LOADED SKILLS: {', '.join(skill_names)}
 USER REQUEST:
 {final_user_input}
 
-Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant skill techniques, and provide the fully optimized prompt."""
+Apply your internal analysis silently (classify, select skills, choose techniques). Output ONLY the fully optimized prompt — no analysis headers, no reasoning, no section labels."""
 
         # Append regeneration instruction when applicable
         if regen_instruction:
             user_prompt = user_prompt + regen_instruction
 
         if wants_sections:
-            system_prompt += (
-                "\n\nDELIVERY FORMAT: The user wants this prompt broken into ordered task sections. "
-                "Output each section with a ## Section Title header followed by its prompt content. "
-                "Within each section, use bullet points (- ) for individual requirements and instructions. "
-                "Never write dense paragraphs — every requirement must be its own bullet point. "
-                "Sections should be self-contained and executable in sequence."
-            )
+            system_prompt += _build_delivery_format(task_plan)
 
         if custom_instructions and custom_instructions.strip():
             system_prompt += (
@@ -407,14 +503,118 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
         def _stream_generator():
             result_acc = ""
             usage = None
+            is_task_mode = wants_sections and bool(task_plan)
+            # Always start with a buffer to detect leaks
+            prefix_buffer = ""
+            leak_detected = False
+            buffer_limit = _STRIP_BUFFER_LIMIT_TASK if is_task_mode else _STRIP_BUFFER_LIMIT_SINGLE
+            sentry_sdk.add_breadcrumb(
+                category="optimizer", message="Stream prefix strip enabled (universal)",
+                level="info", data={"is_task_mode": is_task_mode},
+            )
+
             for chunk in response:
                 delta = chunk.choices[0].delta.content or ""
                 if delta:
                     result_acc += delta
-                    yield delta
+
+                    if prefix_buffer is not None:
+                        prefix_buffer += delta
+
+                        # Quick check: if first ~500 chars have no analysis headers, flush immediately
+                        if not leak_detected and len(prefix_buffer) >= _QUICK_CHECK_LEN:
+                            if not _ANALYSIS_LEAK_RE.search(prefix_buffer):
+                                sentry_sdk.add_breadcrumb(
+                                    category="optimizer", message="No analysis leak detected, flushing buffer",
+                                    level="info", data={"buffer_len": len(prefix_buffer)},
+                                )
+                                dump = prefix_buffer
+                                prefix_buffer = None
+                                yield dump
+                                continue
+                            else:
+                                leak_detected = True
+                                sentry_sdk.add_breadcrumb(
+                                    category="optimizer", message="Analysis leak detected in stream",
+                                    level="warning", data={"buffer_len": len(prefix_buffer)},
+                                )
+
+                        if leak_detected or len(prefix_buffer) >= _QUICK_CHECK_LEN:
+                            if is_task_mode:
+                                # Task mode: strip until ## Task heading
+                                heading_match = _TASK_HEADING_RE.search(prefix_buffer)
+                                if heading_match:
+                                    stripped_len = heading_match.start()
+                                    clean_start = prefix_buffer[stripped_len:]
+                                    prefix_buffer = None
+                                    if stripped_len > 0:
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Stripped analysis prefix (task mode)",
+                                            level="warning", data={"chars_stripped": stripped_len},
+                                        )
+                                    if clean_start:
+                                        yield clean_start
+                                elif len(prefix_buffer) >= buffer_limit:
+                                    fallback_match = _SECTION_HEADING_RE.search(prefix_buffer)
+                                    if fallback_match:
+                                        clean_start = prefix_buffer[fallback_match.start():]
+                                        prefix_buffer = None
+                                        if clean_start:
+                                            yield clean_start
+                                    else:
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Task mode safety valve: flushing buffer",
+                                            level="warning", data={"buffer_len": len(prefix_buffer)},
+                                        )
+                                        dump = prefix_buffer
+                                        prefix_buffer = None
+                                        yield dump
+                            else:
+                                # Single-prompt mode: find where actual prompt starts
+                                if len(prefix_buffer) >= buffer_limit:
+                                    prompt_start = _find_prompt_start_after_analysis(prefix_buffer)
+                                    if prompt_start > 0 and prompt_start < len(prefix_buffer):
+                                        clean = prefix_buffer[prompt_start:].lstrip('\n')
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Stripped analysis prefix (single prompt)",
+                                            level="warning", data={"chars_stripped": prompt_start},
+                                        )
+                                        prefix_buffer = None
+                                        if clean:
+                                            yield clean
+                                    else:
+                                        sentry_sdk.add_breadcrumb(
+                                            category="optimizer", message="Single prompt safety valve: flushing buffer",
+                                            level="warning", data={"buffer_len": len(prefix_buffer)},
+                                        )
+                                        dump = prefix_buffer
+                                        prefix_buffer = None
+                                        yield dump
+                    else:
+                        yield delta
+
                 if hasattr(chunk, "usage") and chunk.usage:
                     usage = chunk.usage
-                    
+
+            # Flush any remaining buffer
+            if prefix_buffer is not None and prefix_buffer:
+                if leak_detected:
+                    if is_task_mode:
+                        heading_match = _TASK_HEADING_RE.search(prefix_buffer) or _SECTION_HEADING_RE.search(prefix_buffer)
+                        if heading_match:
+                            yield prefix_buffer[heading_match.start():]
+                        else:
+                            yield prefix_buffer
+                    else:
+                        prompt_start = _find_prompt_start_after_analysis(prefix_buffer)
+                        if prompt_start > 0 and prompt_start < len(prefix_buffer):
+                            clean = prefix_buffer[prompt_start:].lstrip('\n')
+                            yield clean if clean else prefix_buffer
+                        else:
+                            yield prefix_buffer
+                else:
+                    yield prefix_buffer
+
             latency_ms = int((time.perf_counter() - t0) * 1000)
             if usage:
                 log_usage(
@@ -427,7 +627,6 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
                     skills=skill_names,
                     latency_ms=latency_ms,
                 )
-            # print("Stream completed.")
             
         return _stream_generator()
         
@@ -453,6 +652,30 @@ Analyze the request, classify it (NEW/REFINEMENT/ADDITION), apply the relevant s
                 latency_ms=latency_ms,
             )
     
-        print(result.strip())
-        return result.strip()
+        cleaned = result.strip()
+        # Task mode: strip until ## Task heading
+        if wants_sections and task_plan and cleaned:
+            heading_match = re.search(r'##\s*Task\s', cleaned, re.IGNORECASE)
+            if not heading_match:
+                heading_match = re.search(r'##\s*\S', cleaned, re.IGNORECASE)
+            if heading_match and heading_match.start() > 0:
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Stripped analysis prefix from non-stream result (task mode)",
+                    level="warning", data={"chars_stripped": heading_match.start()},
+                )
+                cleaned = cleaned[heading_match.start():]
+        # Single-prompt mode: detect and strip analysis headers
+        elif cleaned and re.search(
+            r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+            cleaned[:500], re.IGNORECASE
+        ):
+            prompt_start = _find_prompt_start_after_analysis(cleaned)
+            if prompt_start > 0 and prompt_start < len(cleaned):
+                sentry_sdk.add_breadcrumb(
+                    category="optimizer", message="Stripped analysis prefix from non-stream result (single prompt)",
+                    level="warning", data={"chars_stripped": prompt_start},
+                )
+                cleaned = cleaned[prompt_start:].lstrip('\n')
+        logger.info(f"Optimization complete ({latency_ms}ms)")
+        return cleaned
 

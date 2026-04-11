@@ -109,6 +109,9 @@ export interface ElectronAPI {
     attachedFiles?: AttachedFile[];
     forcedSkill?: string | null;
     previousContent?: string;
+    clarificationAnswers?: string;
+    wantsSections?: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => void;
   onMessageSent: (callback: (data: { chatId: string; chat: any; userMessage: any }) => void) => void;
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;

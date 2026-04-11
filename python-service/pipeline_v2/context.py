@@ -49,8 +49,7 @@ class ChatContext:
     def compact_with_summary(self, summary_text: str, keep_recent: int = 4) -> None:
         """
         Replace old messages with a summary block, keep the most recent ones.
-        This mutates the messages list in place — call save_chat_context() after
-        to persist the compacted version to disk.
+        This mutates the messages list in place.
 
         Before: [msg1, msg2, ..., msg13, msg14, msg15]
         After:  [SUMMARY_BLOCK, msg14, msg15]

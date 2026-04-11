@@ -450,7 +450,6 @@ ipcMain.handle('prompt-library:get-shared-prompt', async (event, { token }) => {
             level: 'info',
             data: { tokenLength: token?.length || 0 },
         });
-        console.log('[IPC] prompt-library:get-shared-prompt:', token);
         const result = await getService().getSharedPrompt(token);
         console.log('[IPC] ✅ Shared prompt loaded:', result.id);
         return result;
@@ -472,7 +471,6 @@ ipcMain.handle('prompt-library:get-shared-collection', async (event, { token }) 
             level: 'info',
             data: { tokenLength: token?.length || 0, userId: authState.currentUserId || 'anonymous' },
         });
-        console.log('[IPC] prompt-library:get-shared-collection:', token);
         const result = await getService().getSharedCollection(token);
         console.log('[IPC] ✅ Shared collection loaded:', result.id);
         return result;

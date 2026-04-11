@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils";
 import { PlusMenu } from "./PlusMenu";
 import { SkillPicker, SKILL_ICON_MAP } from "./SkillPicker";
 import { VersionNavigator } from "./VersionNavigator";
-import { ClarificationCard } from "./ClarificationCard";
+import { ClarificationCard, type ClarifyQuestion } from "./ClarificationCard";
+import { ClarificationSummaryCard } from "./ClarificationSummaryCard";
 import type { AttachedFile } from "@/types/electron";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 
@@ -53,6 +54,8 @@ interface ChatViewProps {
   // Clarification
   clarificationData?: any;
   onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
+  clarificationAnswersMap?: Record<string, { questions: ClarifyQuestion[]; answers: Record<string, string>; mode: 'single' | 'tasks' }>;
+  onReoptimize?: (userMessageId: string, answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 type VoiceState = "idle" | "listening" | "processing";
@@ -66,7 +69,7 @@ export const ChatView = ({
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
   input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
-  clarificationData, onSubmitClarification,
+  clarificationData, onSubmitClarification, clarificationAnswersMap, onReoptimize,
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -176,6 +179,7 @@ export const ChatView = ({
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("idle");
     }
+    Sentry.addBreadcrumb({ category: "app.action", message: "Message sent", level: "info", data: { mode, hasFiles: attachedFiles.length > 0, skill: selectedSkill || 'auto' } });
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
     setInput("");
     setAttachedFiles([]);
@@ -415,7 +419,7 @@ export const ChatView = ({
             <TooltipProvider delayDuration={100}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="group relative inline-flex items-center gap-1.5 h-8 px-3 pr-5 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none">
+                  <div className="group relative inline-flex items-center gap-1.5 h-8 px-3 pr-5 rounded-lg text-xs font-medium text-muted-foreground cursor-default select-none transition-colors duration-150 hover:bg-muted hover:text-foreground">
                     <Atom size={14} weight="duotone" className="text-emerald" />
                     <span>Pro Mode</span>
                     <CaretRight
@@ -639,8 +643,24 @@ export const ChatView = ({
 
               const versionInfo = versionInfoMap?.get(message.id);
 
+              // Choices are keyed by assistant ID — find the next assistant in the list.
+              // Fall back to a temp "_pending_" key during streaming (before assistant ID is known).
+              const nextAssistantId = message.role === "user" ? messages[idx + 1]?.id : undefined;
+              const clarificationInfo = message.role === "user"
+                ? (nextAssistantId && clarificationAnswersMap?.[nextAssistantId])
+                  || clarificationAnswersMap?.[`_pending_${message.id}`]
+                  || undefined
+                : undefined;
+
               return (
-              <div key={message.id}>
+              <div key={message.id} className="space-y-4">
+              {message.role === "user" && clarificationInfo && (
+                <ClarificationSummaryCard
+                  info={clarificationInfo}
+                  onReoptimize={onReoptimize ? (answers, wantsSections) => onReoptimize(message.id, answers, wantsSections) : undefined}
+                  isGenerating={isGenerating}
+                />
+              )}
               <MessageBubble
                 message={message}
                 onCopy={() => onCopyPrompt(message.id)}

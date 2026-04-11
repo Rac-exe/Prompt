@@ -7,7 +7,8 @@ import type { AttachedFile, OverlayMessage, Turn } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON } from '../lib/constants';
 import { useScrollController } from '../../hooks/useScrollController';
 import { MarkdownContent } from '@/components/ui/MarkdownContent';
-import { ClarificationCard } from '@/components/chat/ClarificationCard';
+import { ClarificationCard, type ClarifyQuestion } from '@/components/chat/ClarificationCard';
+import { ClarificationSummaryCard } from '@/components/chat/ClarificationSummaryCard';
 
 // ── Inline sub-components (small, tightly coupled to overlay) ────────────────
 
@@ -170,6 +171,14 @@ const AssistantBrandMark: React.FC<{ size: number }> = ({ size }) => {
   );
 };
 
+// ── ClarificationInfo type ──────────────────────────────────────────────────
+
+interface ClarificationInfo {
+  questions: ClarifyQuestion[];
+  answers: Record<string, string>;
+  mode: 'single' | 'tasks';
+}
+
 // ── UserMessage ──────────────────────────────────────────────────────────────
 
 interface UserMessageProps {
@@ -204,7 +213,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
     onEdit(turnIdx, trimmed);
   }, [editText, msg.content, cancelEdit, onEdit, turnIdx]);
 
-  // auto-resize textarea
   useEffect(() => {
     if (editing && taRef.current) {
       const ta = taRef.current;
@@ -219,7 +227,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
     <div className="chat-message">
       <div className="message-label">You</div>
 
-      {/* Display mode */}
       {!editing && (
         <div>
           <FilesDisplay files={msg.attachedFiles} />
@@ -240,7 +247,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
         </div>
       )}
 
-      {/* Edit mode */}
       {editing && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <textarea
@@ -250,7 +256,6 @@ const UserMessage: React.FC<UserMessageProps> = ({ msg, turnIdx, isOptimizing, o
             value={editText}
             onChange={(e) => {
               setEditText(e.target.value);
-              // auto-resize
               const ta = e.target;
               ta.style.height = 'auto';
               ta.style.height = ta.scrollHeight + 'px';
@@ -577,12 +582,14 @@ interface TurnItemProps {
   onInsertSection?: (sectionIdx: number, text: string) => void;
   insertedSections?: Set<number>;
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  clarificationInfo?: ClarificationInfo;
+  onReoptimize?: (turnIdx: number, answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 const TurnItem: React.FC<TurnItemProps> = ({
   turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
-  onInsertSection, insertedSections, sourceInfo,
+  onInsertSection, insertedSections, sourceInfo, clarificationInfo, onReoptimize,
 }) => {
   const uIdx = turn.userActiveIdx;
   const assistGroup = turn.assistantGroups[uIdx];
@@ -590,7 +597,17 @@ const TurnItem: React.FC<TurnItemProps> = ({
 
   return (
     <div style={{ marginBottom: 0 }}>
-      {/* Render all user versions (only active visible) */}
+      {/* Clarification summary card — shown before user message */}
+      {clarificationInfo && (
+        <div style={{ marginBottom: 4 }}>
+          <ClarificationSummaryCard
+            info={clarificationInfo}
+            onReoptimize={onReoptimize ? (answers, wantsSections) => onReoptimize(turnIdx, answers, wantsSections) : undefined}
+            isGenerating={isOptimizing}
+          />
+        </div>
+      )}
+
       {turn.userVersions.map((uMsg, i) => (
         <div key={uMsg.id} style={{ display: i === turn.userActiveIdx ? undefined : 'none' }}>
           <UserMessage
@@ -602,7 +619,6 @@ const TurnItem: React.FC<TurnItemProps> = ({
         </div>
       ))}
 
-      {/* User version navigator */}
       <VersionNav
         current={turn.userActiveIdx + 1}
         total={turn.userVersions.length}
@@ -611,7 +627,6 @@ const TurnItem: React.FC<TurnItemProps> = ({
         onNext={() => onNavigateUser(turnIdx, 1)}
       />
 
-      {/* Render all assistant versions for active user (only active visible) */}
       {assistGroup?.map((aMsg, i) => (
         <div key={aMsg.id} style={{ display: i === assistActiveIdx ? undefined : 'none' }}>
           <AssistantMessage
@@ -629,10 +644,8 @@ const TurnItem: React.FC<TurnItemProps> = ({
         </div>
       ))}
 
-      {/* Streaming message */}
       {isStreamingHere && streamingContent && <StreamingMessage content={streamingContent} />}
 
-      {/* Assistant version navigator */}
       <VersionNav
         current={(assistGroup?.length ?? 0) > 0 ? assistActiveIdx + 1 : 0}
         total={assistGroup?.length ?? 0}
@@ -666,13 +679,15 @@ interface ChatAreaProps {
   onInsertSection?: (sectionIdx: number, text: string) => void;
   insertedSections?: Set<number>;
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
+  clarificationAnswersByTurn?: Record<number, ClarificationInfo>;
+  onReoptimize?: (turnIdx: number, answers: Record<string, string>, wantsSections: boolean) => void;
 }
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
   onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
   clarificationData, onSubmitClarification, onSkipClarification,
-  onInsertSection, insertedSections, sourceInfo,
+  onInsertSection, insertedSections, sourceInfo, clarificationAnswersByTurn, onReoptimize,
 }) => {
   const isDark = useIsDark();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -728,6 +743,8 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onInsertSection={onInsertSection}
           insertedSections={insertedSections}
           sourceInfo={sourceInfo}
+          clarificationInfo={clarificationAnswersByTurn?.[i]}
+          onReoptimize={onReoptimize}
         />
       ))}
 

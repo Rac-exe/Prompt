@@ -65,7 +65,6 @@ export const SettingsView = () => {
   const [localInstructions, setLocalInstructions] = useState("");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
 
-  const [localName, setLocalName] = useState("");
   const [nameSaving, setNameSaving] = useState(false);
 
   const [identities, setIdentities] = useState<any[]>([]);
@@ -292,20 +291,25 @@ export const SettingsView = () => {
   const userEmail = user?.profile?.email || "";
   const userInitial = (userName[0] || "U").toUpperCase();
 
-  useEffect(() => {
-    setLocalName(userName);
-  }, [userName]);
+  const [editedName, setEditedName] = useState(userName);
+  const nameChanged = editedName.trim() !== userName;
 
-  const nameDirty = localName.trim() !== "" && localName !== userName;
+  useEffect(() => { setEditedName(userName); }, [userName]);
 
   const saveName = async () => {
-    if (!nameDirty || nameSaving) return;
+    const trimmed = editedName.trim();
+    if (!trimmed || trimmed === userName) return;
     setNameSaving(true);
     try {
-      window.electronAPI?.updateProfile({ name: localName.trim() });
-      toast({ title: "Username updated", description: "Your display name has been changed." });
-    } catch {
-      toast({ title: "Update failed", description: "Could not update your username.", variant: "destructive" });
+      await Sentry.startSpan({ name: 'settings.update-username', op: 'ui.action' }, async () => {
+        if (window.electronAPI?.updateProfile) {
+          window.electronAPI.updateProfile({ name: trimmed });
+        }
+      });
+      toast({ title: "Username updated", description: "Your username has been saved." });
+    } catch (err) {
+      Sentry.captureException(err);
+      toast({ title: "Error", description: "Failed to update username.", variant: "destructive" });
     } finally {
       setNameSaving(false);
     }
@@ -451,25 +455,18 @@ export const SettingsView = () => {
                   <RowLabel label="Username" />
                   <div className="flex items-center gap-2">
                     <Input
-                      value={localName}
-                      onChange={(e) => setLocalName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") saveName(); }}
+                      value={editedName}
+                      onChange={(e) => setEditedName(e.target.value)}
                       className="w-48 h-8 text-sm bg-secondary border-border focus-visible:border-emerald/50 focus-visible:ring-emerald/15"
                     />
-                    {nameDirty && (
+                    {nameChanged && (
                       <Button
-                        variant="outline"
                         size="sm"
-                        className="h-8 text-xs flex-shrink-0"
-                        disabled={nameSaving}
                         onClick={saveName}
+                        disabled={nameSaving || !editedName.trim()}
+                        className="h-8 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold"
                       >
-                        {nameSaving ? (
-                          <CircleNotch size={14} weight="light" className="animate-spin" />
-                        ) : (
-                          <Check size={14} weight="bold" className="mr-1" />
-                        )}
-                        {nameSaving ? "" : "Save"}
+                        {nameSaving ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <Check size={14} weight="bold" />}
                       </Button>
                     )}
                   </div>

@@ -116,7 +116,7 @@ export const SavePromptModal = ({
               <Button
                 variant="ghost"
                 size="sm"
-                className="text-emerald hover:text-emerald/80 transition-button"
+                className="text-emerald hover:text-emerald/80 hover:bg-emerald/10 dark:hover:bg-emerald/10 transition-button"
                 onClick={() => setIsCreatingNew(true)}
               >
                 <FolderPlus size={16} weight="light" className="mr-2" />

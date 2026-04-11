@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
+import * as Sentry from "@sentry/react";
 import { Copy, Check, BookmarkSimple, User, Sparkle, PencilSimple, ArrowCounterClockwise, FileText, ImageSquare, MagnifyingGlassPlus, Paperclip, CaretLeft, CaretRight, WarningCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/Logo";
@@ -70,6 +71,7 @@ const SectionCopyButton = ({ text }: { text: string }) => {
   return (
     <button
       onClick={() => {
+        Sentry.addBreadcrumb({ category: 'app.action', message: 'Section copied' });
         navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -149,6 +151,7 @@ export const MessageBubble = ({
   }, [isEditing]);
 
   const handleCopy = () => {
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Prompt copied', data: { messageId: message.id } });
     navigator.clipboard.writeText(message.content);
     setCopied(true);
     onCopy();
@@ -162,6 +165,7 @@ export const MessageBubble = ({
       setEditValue(message.content);
       return;
     }
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message edit submitted', data: { messageId: message.id } });
     onEdit?.(message.id, trimmed);
     setIsEditing(false);
   };

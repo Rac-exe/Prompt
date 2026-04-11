@@ -112,7 +112,7 @@ declare global {
       // OVERLAY API (for overlay.html)
       // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number }) => void;
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => void;
         save: (data: { title: string; content: string; collectionId?: string }) => Promise<any>;
         copy: (text: string) => void;
         close: () => void;
@@ -337,7 +337,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -391,7 +391,7 @@ const electronAPI = {
       ipcRenderer.on('overlay:clarification-required', handler);
       return () => ipcRenderer.removeListener('overlay:clarification-required', handler);
     },
-    submitClarification: (data: { answers: Record<string, string>; wantsSections: boolean }) => {
+    submitClarification: (data: { answers: Record<string, string>; wantsSections: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
       ipcRenderer.send('overlay:submit-clarification', data);
     },
     onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => {
@@ -549,6 +549,9 @@ const electronAPI = {
     attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>;
     forcedSkill?: string | null;
     previousContent?: string;
+    clarificationAnswers?: string;
+    wantsSections?: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => {
     ipcRenderer.send('app:regenerate-response', data);
   },
@@ -561,6 +564,7 @@ const electronAPI = {
     chatId: string;
     answers: Record<string, string>;
     wantsSections: boolean;
+    clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
   }) => {
     ipcRenderer.send('app:submit-clarification', data);
   },
