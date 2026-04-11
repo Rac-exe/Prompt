@@ -18,9 +18,8 @@ if hasattr(sys.stdout, 'reconfigure'):
 if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Request
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -1904,56 +1903,6 @@ async def shutdown_event():
     logger.info("[Shutdown] Cleanup complete — server stopping.")
 
 
-# ── Download tracking + redirect ──────────────────────────────────────────────
-
-_RELEASES_BASE_URL = os.environ.get(
-    "RELEASES_BASE_URL",
-    "https://tfetlkkdggdkbuycfoun.supabase.co/storage/v1/object/public/releases",
-)
-_LATEST_APP_VERSION = os.environ.get("APP_VERSION", "1.0.0")
-_SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-_SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
-
-
-@app.get("/download")
-@limiter.limit("10/minute")
-async def download_redirect(request: Request):
-    """Track the download event and redirect to the installer."""
-    import hashlib as _hl
-    import httpx as _hx
-
-    version = _LATEST_APP_VERSION
-    ua = request.headers.get("user-agent", "")
-    referrer = request.headers.get("referer", "")
-    raw_ip = request.client.host if request.client else "unknown"
-    ip_hash = _hl.sha256(raw_ip.encode()).hexdigest()[:16]
-
-    if _SUPABASE_URL and _SUPABASE_ANON_KEY:
-        try:
-            async with _hx.AsyncClient() as client:
-                await client.post(
-                    f"{_SUPABASE_URL}/rest/v1/download_events",
-                    headers={
-                        "apikey": _SUPABASE_ANON_KEY,
-                        "Authorization": f"Bearer {_SUPABASE_ANON_KEY}",
-                        "Content-Type": "application/json",
-                        "Prefer": "return=minimal",
-                    },
-                    json={
-                        "version": version,
-                        "platform": "windows",
-                        "referrer": referrer[:500] if referrer else None,
-                        "user_agent": ua[:500] if ua else None,
-                        "ip_hash": ip_hash,
-                    },
-                    timeout=5.0,
-                )
-        except Exception as exc:
-            logger.warning(f"Failed to log download event: {exc}")
-
-    exe_url = f"{_RELEASES_BASE_URL}/Prmpt%20Setup%20{version}.exe"
-    return RedirectResponse(url=exe_url, status_code=302)
-
 
 @app.get("/")
 @limiter.exempt
@@ -1964,7 +1913,6 @@ async def root():
         "endpoints": {
             "optimize": "POST /optimize",
             "health": "GET /health",
-            "download": "GET /download",
             "transcribe_audio": "POST /transcribe-audio",
             "transcribe_stream": "WS /ws/transcribe-stream",
         }
