@@ -248,7 +248,6 @@
   .animate-slide-up      { animation: slideUp 0.28s ease-out; }
   .animate-scale-in      { animation: scaleIn 0.2s  ease-out; }
   .animate-pulse-subtle  { animation: pulseSubtle 2.4s ease-in-out infinite; }
-
   .transition-button {
     transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -282,7 +281,6 @@
   0%, 100% { opacity: 1;   }
   50%       { opacity: 0.6; }
 }
-
 /* ─── Date input styling ────────────────── */
 input[type="date"] {
   display: flex;

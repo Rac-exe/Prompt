@@ -1,12 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  PaperPlaneRight, CircleNotch, Lightning,
-  Sparkle, ArrowsClockwise, GitBranch, TreeStructure,
-  MagnifyingGlass, FolderOpen, Plus,
-  Trash, Clock, Square, Power,
+  PaperPlaneRight, CircleNotch,
+  Sparkle, ArrowsClockwise, GitBranch,
+  FolderOpen, Plus,
+  Trash, Clock, Square, Power, CaretLeft,
+  DotsThree,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuTrigger, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -26,19 +31,11 @@ interface ProjectInfo {
   last_indexed_at?: string;
 }
 
-const STATUS_META: Record<string, { color: string; bg: string; dot: string; label: string }> = {
-  ready:    { color: "text-emerald-400", bg: "bg-emerald-400/10", dot: "bg-emerald-400", label: "Indexed" },
-  indexing: { color: "text-amber-400",   bg: "bg-amber-400/10",   dot: "bg-amber-400",   label: "Indexing" },
-  stale:    { color: "text-red-400",     bg: "bg-red-400/10",     dot: "bg-red-400",     label: "Stale" },
+const STATUS_META: Record<string, { dot: string; label: string; color: string }> = {
+  ready:    { dot: "bg-emerald-400", label: "Ready",    color: "text-emerald-400" },
+  indexing: { dot: "bg-amber-400",   label: "Indexing", color: "text-amber-400" },
+  stale:    { dot: "bg-red-400",     label: "Stale",    color: "text-red-400" },
 };
-
-const QUICK_ACTIONS = [
-  { id: "refactor", label: "Refactor", icon: ArrowsClockwise, prefix: "Refactor and improve code quality: " },
-  { id: "replace", label: "Replace Dep", icon: GitBranch, prefix: "Replace a dependency or service: " },
-  { id: "fix-auth", label: "Fix Auth", icon: TreeStructure, prefix: "Fix authentication flow: " },
-  { id: "debug", label: "Debug", icon: MagnifyingGlass, prefix: "Find and fix a bug: " },
-  { id: "perf", label: "Performance", icon: Lightning, prefix: "Optimize performance: " },
-];
 
 function relativeTime(iso?: string): string {
   if (!iso) return "Never";
@@ -52,22 +49,17 @@ function relativeTime(iso?: string): string {
 }
 
 function spaceMessageToMessage(sm: SpaceMessage): Message {
-  return {
-    id: sm.id,
-    role: sm.role,
-    content: sm.content,
-    timestamp: new Date(sm.timestamp),
-    feedback: sm.feedback,
-  };
+  return { id: sm.id, role: sm.role, content: sm.content, timestamp: new Date(sm.timestamp), feedback: sm.feedback };
 }
 
 interface SpaceWorkspaceProps {
   space: Space;
   onUpdateSpace: (space: Space) => void;
   onSendToChat?: (prompt: string) => void;
+  onBack: () => void;
 }
 
-export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWorkspaceProps) => {
+export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: SpaceWorkspaceProps) => {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [addingFolder, setAddingFolder] = useState(false);
@@ -84,38 +76,18 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
 
   const api = (window as any).electronAPI?.project;
   const electronAPI = (window as any).electronAPI;
-
   const messages: Message[] = space.messages.map(spaceMessageToMessage);
 
-  // Smooth streaming hook
-  const {
-    streamingMessage,
-    startStreaming,
-    handleChunk,
-    handleFinalMessage,
-    stopStreaming,
-    resetStreaming,
-  } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
     onStreamingComplete: (finalMessage: Message) => {
-      const assistantMsg: SpaceMessage = {
-        id: finalMessage.id || crypto.randomUUID(),
-        role: "assistant",
-        content: finalMessage.content,
-        timestamp: Date.now(),
-      };
-
-      onUpdateSpace({
-        ...space,
-        messages: [...space.messages, assistantMsg],
-        lastUsedAt: Date.now(),
-      });
-
+      const assistantMsg: SpaceMessage = { id: finalMessage.id || crypto.randomUUID(), role: "assistant", content: finalMessage.content, timestamp: Date.now() };
+      onUpdateSpace({ ...space, messages: [...space.messages, assistantMsg], lastUsedAt: Date.now() });
       setIsGenerating(false);
       isStreamingRef.current = false;
     },
   });
 
-  // Auto-start watchers for all projects on mount and when projects change
+  // ── Hooks (unchanged logic) ─────────────────────────────
   useEffect(() => {
     if (!api?.toggleWatching) return;
     for (const proj of space.projects) {
@@ -125,680 +97,376 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
     }
   }, [api, space.projects]);
 
-  // Load project statuses and auto-reindex stale projects
   useEffect(() => {
     if (!api) return;
     const load = async () => {
       const statuses: Record<string, ProjectInfo> = {};
       for (const p of space.projects) {
-        try {
-          const status = await api.status(p.projectId);
-          if (status) statuses[p.projectId] = status;
-        } catch { /* project may have been deleted */ }
+        try { const s = await api.status(p.projectId); if (s) statuses[p.projectId] = s; } catch {}
       }
       setProjectStatuses(statuses);
-
-      // Auto-reindex any stale projects
       for (const p of space.projects) {
         const s = statuses[p.projectId];
-        if (s && s.index_status === "stale" && p.localPath) {
-          try {
-            api.reindex(p.projectId, p.localPath).catch(() => {});
-          } catch { /* ignore */ }
-        }
+        if (s?.index_status === "stale" && p.localPath) try { api.reindex(p.projectId, p.localPath).catch(() => {}); } catch {}
       }
     };
     load();
   }, [api, space.projects]);
 
-  // Subscribe to project status updates
   useEffect(() => {
     if (!api?.onStatusUpdate) return;
     const unsub = api.onStatusUpdate((data: any) => {
       if (!data?.projectId) return;
-      const proj = space.projects.find((p) => p.projectId === data.projectId);
-      if (!proj) return;
-      if (data.status) {
-        setProjectStatuses((prev) => ({
-          ...prev,
-          [data.projectId]: { ...prev[data.projectId], index_status: data.status } as ProjectInfo,
-        }));
-      }
+      if (!space.projects.find((p) => p.projectId === data.projectId)) return;
+      if (data.status) setProjectStatuses((prev) => ({ ...prev, [data.projectId]: { ...prev[data.projectId], index_status: data.status } as ProjectInfo }));
     });
     return () => unsub?.();
   }, [api, space.projects]);
 
-  // Subscribe to optimization streaming events (stable refs prevent re-subscribing on every render)
   useEffect(() => {
     if (!electronAPI) return;
-
-    const cleanupChunk = electronAPI.onOptimizationChunk?.((data: { chatId: string | null; chunk: string; accumulated: string; source?: 'chat' | 'space' }) => {
-      if (data.source !== 'space') return;
-      if (!isStreamingRef.current) return;
-      handleChunk(data.chunk, data.accumulated);
+    const c1 = electronAPI.onOptimizationChunk?.((d: any) => { if (d.source === 'space' && isStreamingRef.current) handleChunk(d.chunk, d.accumulated); });
+    const c2 = electronAPI.onOptimizationComplete?.((d: any) => { if (d.source === 'space' && isStreamingRef.current) handleFinalMessage({ id: crypto.randomUUID(), role: "assistant", content: d.optimized || "", timestamp: new Date() }); });
+    const c3 = electronAPI.onOptimizationError?.((d: any) => {
+      if (d.source !== 'space' || !isStreamingRef.current) return;
+      isStreamingRef.current = false; resetStreaming(); setIsGenerating(false);
+      const cur = spaceRef.current;
+      onUpdateSpaceRef.current({ ...cur, messages: [...cur.messages, { id: crypto.randomUUID(), role: "assistant", content: `Optimization failed: ${d.error}`, timestamp: Date.now() }], lastUsedAt: Date.now() });
     });
-
-    const cleanupComplete = electronAPI.onOptimizationComplete?.((data: { original: string; optimized: string; source?: 'chat' | 'space' }) => {
-      if (data.source !== 'space') return;
-      if (!isStreamingRef.current) return;
-      handleFinalMessage({
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: data.optimized || "",
-        timestamp: new Date(),
-      });
-    });
-
-    const cleanupError = electronAPI.onOptimizationError?.((data: { error: string; source?: 'chat' | 'space' }) => {
-      if (data.source !== 'space') return;
-      if (!isStreamingRef.current) return;
-      isStreamingRef.current = false;
-      resetStreaming();
-      setIsGenerating(false);
-
-      const errorMsg: SpaceMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: `Optimization failed: ${data.error}`,
-        timestamp: Date.now(),
-      };
-      const currentSpace = spaceRef.current;
-      onUpdateSpaceRef.current({
-        ...currentSpace,
-        messages: [...currentSpace.messages, errorMsg],
-        lastUsedAt: Date.now(),
-      });
-    });
-
-    return () => {
-      cleanupChunk?.();
-      cleanupComplete?.();
-      cleanupError?.();
-    };
+    return () => { c1?.(); c2?.(); c3?.(); };
   }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
 
-  // Auto-scroll to bottom
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [space.messages.length, streamingMessage?.content]);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [space.messages.length, streamingMessage?.content]);
 
-  const autoResize = useCallback(() => {
-    const ta = inputRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 160) + "px";
-  }, []);
-
+  const autoResize = useCallback(() => { const ta = inputRef.current; if (!ta) return; ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 160) + "px"; }, []);
   useEffect(() => { autoResize(); }, [input, autoResize]);
 
+  // ── Handlers (unchanged logic) ──────────────────────────
   const handleToggleProjectMode = useCallback((enabled: boolean) => {
     onUpdateSpace({ ...space, projectMode: enabled });
-
     if (enabled) {
-      // Reindex stale projects when project mode is re-enabled
-      for (const proj of space.projects) {
-        if (!proj.localPath) continue;
-        const status = projectStatuses[proj.projectId];
-        if (!status || status.index_status === "stale") {
-          api?.reindex?.(proj.projectId, proj.localPath).then((result: any) => {
-            toast({ title: `Re-indexed ${proj.name}`, description: `${result.totalFiles} files` });
-          }).catch(() => {});
-        }
-        // Ensure watcher is running
-        api?.toggleWatching?.(proj.projectId, proj.localPath, true).catch(() => {});
-      }
+      for (const proj of space.projects) { if (!proj.localPath) continue; const s = projectStatuses[proj.projectId]; if (!s || s.index_status === "stale") api?.reindex?.(proj.projectId, proj.localPath).then((r: any) => toast({ title: `Re-indexed ${proj.name}`, description: `${r.totalFiles} files` })).catch(() => {}); api?.toggleWatching?.(proj.projectId, proj.localPath, true).catch(() => {}); }
       toast({ title: "Project Mode enabled", description: "Code context will be injected into prompts" });
     } else {
-      for (const proj of space.projects) {
-        if (!proj.localPath) continue;
-        api?.toggleWatching?.(proj.projectId, proj.localPath, false).catch(() => {});
-      }
-      toast({ title: "Project Mode disabled", description: "Prompts will be optimized without code context" });
+      for (const proj of space.projects) { if (proj.localPath) api?.toggleWatching?.(proj.projectId, proj.localPath, false).catch(() => {}); }
+      toast({ title: "Project Mode disabled" });
     }
   }, [space, onUpdateSpace, api, projectStatuses]);
 
   const handleSubmit = useCallback(async () => {
     const query = input.trim();
     if (!query || isGenerating || space.projects.length === 0) return;
-
-    setIsGenerating(true);
-    setInput("");
-
-    const userMsg: SpaceMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: query,
-      timestamp: Date.now(),
-    };
-
-    onUpdateSpace({
-      ...space,
-      messages: [...space.messages, userMsg],
-      lastUsedAt: Date.now(),
-    });
-
+    setIsGenerating(true); setInput("");
+    const userMsg: SpaceMessage = { id: crypto.randomUUID(), role: "user", content: query, timestamp: Date.now() };
+    onUpdateSpace({ ...space, messages: [...space.messages, userMsg], lastUsedAt: Date.now() });
     try {
       let tailoredPrompt = query;
-
-      // Only inject code context if project mode is ON
       if (space.projectMode) {
-        let allRanked: any[] = [];
-        let allRelated: any[] = [];
-        let retrieveFailures = 0;
-
-        for (const proj of space.projects) {
-          try {
-            const data: RetrieveResult = await api.retrieve({
-              project_id: proj.projectId,
-              query,
-              branch: proj.branch || undefined,
-              limit: 10,
-            });
-            if (data.ranked_chunks) allRanked.push(...data.ranked_chunks);
-            if (data.related_chunks) allRelated.push(...data.related_chunks);
-          } catch (e: any) {
-            retrieveFailures++;
-            console.warn(`[SpaceWorkspace] retrieve failed for ${proj.name}:`, e.message);
-          }
-        }
-
-        if (retrieveFailures === space.projects.length) {
-          toast({
-            title: "Code intelligence unavailable",
-            description: "Could not retrieve codebase context. Make sure the code-intelligence-service is running (npm run code-intel:dev). Sending prompt without project context.",
-            variant: "destructive",
-          });
-        } else if (allRanked.length === 0 && retrieveFailures === 0) {
-          toast({
-            title: "No relevant code found",
-            description: "The index returned no matching chunks. Try reindexing your projects.",
-          });
-        }
-
-        allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
-        allRanked = allRanked.slice(0, 10);
-        allRelated = allRelated.slice(0, 5);
-
+        let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
+        for (const proj of space.projects) { try { const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query, branch: proj.branch || undefined, limit: 10 }); if (d.ranked_chunks) allRanked.push(...d.ranked_chunks); if (d.related_chunks) allRelated.push(...d.related_chunks); } catch { fails++; } }
+        if (fails === space.projects.length) toast({ title: "Code intelligence unavailable", description: "Sending prompt without project context.", variant: "destructive" });
+        else if (allRanked.length === 0 && fails === 0) toast({ title: "No relevant code found", description: "Try reindexing your projects." });
+        allRanked.sort((a, b) => b.similarity_score - a.similarity_score); allRanked = allRanked.slice(0, 10); allRelated = allRelated.slice(0, 5);
         tailoredPrompt = buildTailoredPrompt(query, allRanked, allRelated);
       }
-
-      isStreamingRef.current = true;
-      startStreaming();
+      isStreamingRef.current = true; startStreaming();
       electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
-    } catch (e: any) {
-      setIsGenerating(false);
-      isStreamingRef.current = false;
-      toast({ title: "Failed to process", description: e.message, variant: "destructive" });
-    }
+    } catch (e: any) { setIsGenerating(false); isStreamingRef.current = false; toast({ title: "Failed to process", description: e.message, variant: "destructive" }); }
   }, [input, isGenerating, space, api, electronAPI, onUpdateSpace, startStreaming]);
 
-  const handleStopGeneration = useCallback(() => {
-    stopStreaming();
-    electronAPI?.stopGeneration?.();
-  }, [stopStreaming, electronAPI]);
-
-  const handleQuickAction = (action: typeof QUICK_ACTIONS[0]) => {
-    const current = input.trim();
-    setInput(action.prefix + current);
-    inputRef.current?.focus();
-  };
+  const handleStopGeneration = useCallback(() => { stopStreaming(); electronAPI?.stopGeneration?.(); }, [stopStreaming, electronAPI]);
 
   const handleAddFolder = async () => {
-    if (!api || addingFolder) return;
-    setAddingFolder(true);
+    if (!api || addingFolder) return; setAddingFolder(true);
     try {
-      const result = await api.add();
-      if (result) {
-        const newProject: SpaceProject = {
-          projectId: result.id,
-          name: result.name,
-          localPath: result.local_path || "",
-          branch: result.current_branch,
-          indexStatus: result.index_status,
-        };
-        onUpdateSpace({
-          ...space,
-          projects: [...space.projects, newProject],
-          lastUsedAt: Date.now(),
-        });
-
-        // Auto-start watching immediately
-        if (result.local_path) {
-          api.toggleWatching?.(result.id, result.local_path, true).catch(() => {});
-          watchStartedRef.current.add(result.id);
-        }
-
-        toast({ title: "Folder added", description: result.name });
-      }
-    } catch (e: any) {
-      toast({ title: "Failed to add folder", description: e.message, variant: "destructive" });
-    } finally {
-      setAddingFolder(false);
-    }
+      const r = await api.add();
+      if (r) { onUpdateSpace({ ...space, projects: [...space.projects, { projectId: r.id, name: r.name, localPath: r.local_path || "", branch: r.current_branch, indexStatus: r.index_status }], lastUsedAt: Date.now() }); if (r.local_path) { api.toggleWatching?.(r.id, r.local_path, true).catch(() => {}); watchStartedRef.current.add(r.id); } toast({ title: "Folder added", description: r.name }); }
+    } catch (e: any) { toast({ title: "Failed to add folder", description: e.message, variant: "destructive" }); }
+    finally { setAddingFolder(false); }
   };
 
   const handleRemoveProject = (projectId: string) => {
-    // Stop watcher for the removed project
     const proj = space.projects.find(p => p.projectId === projectId);
-    if (proj?.localPath) {
-      api?.toggleWatching?.(projectId, proj.localPath, false).catch(() => {});
-    }
+    if (proj?.localPath) api?.toggleWatching?.(projectId, proj.localPath, false).catch(() => {});
     watchStartedRef.current.delete(projectId);
-
-    onUpdateSpace({
-      ...space,
-      projects: space.projects.filter((p) => p.projectId !== projectId),
-    });
-    toast({ title: "Folder removed from space" });
+    onUpdateSpace({ ...space, projects: space.projects.filter((p) => p.projectId !== projectId) });
+    toast({ title: "Folder removed" });
   };
 
   const handleReindex = async (proj: SpaceProject) => {
-    if (!api || !proj.localPath || reindexingId) return;
-    setReindexingId(proj.projectId);
-    try {
-      const result = await api.reindex(proj.projectId, proj.localPath);
-      toast({ title: "Re-index complete", description: `${result.totalFiles} files, ${result.totalChunks} chunks` });
-      const status = await api.status(proj.projectId);
-      if (status) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: status }));
-    } catch (e: any) {
-      toast({ title: "Re-index failed", description: e.message, variant: "destructive" });
-    } finally {
-      setReindexingId(null);
-    }
+    if (!api || !proj.localPath || reindexingId) return; setReindexingId(proj.projectId);
+    try { const r = await api.reindex(proj.projectId, proj.localPath); toast({ title: "Re-index complete", description: `${r.totalFiles} files, ${r.totalChunks} chunks` }); const s = await api.status(proj.projectId); if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s })); }
+    catch (e: any) { toast({ title: "Re-index failed", description: e.message, variant: "destructive" }); }
+    finally { setReindexingId(null); }
   };
 
-  const handleCopyMessage = (id: string) => {
-    const msg = space.messages.find((m) => m.id === id);
-    if (msg) {
-      navigator.clipboard.writeText(msg.content);
-      toast({ title: "Copied to clipboard" });
-    }
-  };
-
-  const handleSaveMessage = (id: string) => {
-    const msg = space.messages.find((m) => m.id === id);
-    if (msg && onSendToChat) {
-      onSendToChat(msg.content);
-      toast({ title: "Sent to chat" });
-    }
-  };
-
-  const handleFeedback = (messageId: string, rating: "positive" | "negative") => {
-    onUpdateSpace({
-      ...space,
-      messages: space.messages.map((m) =>
-        m.id === messageId ? { ...m, feedback: { rating } } : m,
-      ),
-    });
-  };
+  const handleCopyMessage = (id: string) => { const m = space.messages.find((m) => m.id === id); if (m) { navigator.clipboard.writeText(m.content); toast({ title: "Copied to clipboard" }); } };
+  const handleSaveMessage = (id: string) => { const m = space.messages.find((m) => m.id === id); if (m && onSendToChat) { onSendToChat(m.content); toast({ title: "Sent to chat" }); } };
+  const handleFeedback = (messageId: string, rating: "positive" | "negative") => { onUpdateSpace({ ...space, messages: space.messages.map((m) => m.id === messageId ? { ...m, feedback: { rating } } : m) }); };
+  const handleClearHistory = () => { onUpdateSpace({ ...space, messages: [] }); toast({ title: "History cleared" }); };
 
   const handleRegenerate = (messageId: string) => {
-    const idx = space.messages.findIndex((m) => m.id === messageId);
-    if (idx <= 0) return;
-    const userMsg = space.messages[idx - 1];
-    if (userMsg.role !== "user") return;
-
-    onUpdateSpace({
-      ...space,
-      messages: space.messages.filter((m) => m.id !== messageId),
-    });
-
+    const idx = space.messages.findIndex((m) => m.id === messageId); if (idx <= 0) return;
+    const userMsg = space.messages[idx - 1]; if (userMsg.role !== "user") return;
+    onUpdateSpace({ ...space, messages: space.messages.filter((m) => m.id !== messageId) });
     setTimeout(() => {
       setIsGenerating(true);
-
       (async () => {
         try {
           let tailoredPrompt = userMsg.content;
-
           if (space.projectMode) {
-            let allRanked: any[] = [];
-            let allRelated: any[] = [];
-            let retrieveFailures = 0;
-
-            for (const proj of space.projects) {
-              try {
-                const data: RetrieveResult = await api.retrieve({
-                  project_id: proj.projectId,
-                  query: userMsg.content,
-                  branch: proj.branch || undefined,
-                  limit: 10,
-                });
-                if (data.ranked_chunks) allRanked.push(...data.ranked_chunks);
-                if (data.related_chunks) allRelated.push(...data.related_chunks);
-              } catch (e: any) {
-                retrieveFailures++;
-                console.warn(`[SpaceWorkspace] retrieve failed for ${proj.name}:`, e.message);
-              }
-            }
-
-            if (retrieveFailures === space.projects.length) {
-              toast({
-                title: "Code intelligence unavailable",
-                description: "Regenerating without project context. Start code-intel:dev to enable.",
-                variant: "destructive",
-              });
-            }
-
-            allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
-            allRanked = allRanked.slice(0, 10);
-            allRelated = allRelated.slice(0, 5);
+            let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
+            for (const proj of space.projects) { try { const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query: userMsg.content, branch: proj.branch || undefined, limit: 10 }); if (d.ranked_chunks) allRanked.push(...d.ranked_chunks); if (d.related_chunks) allRelated.push(...d.related_chunks); } catch { fails++; } }
+            if (fails === space.projects.length) toast({ title: "Code intelligence unavailable", variant: "destructive" });
+            allRanked.sort((a, b) => b.similarity_score - a.similarity_score); allRanked = allRanked.slice(0, 10); allRelated = allRelated.slice(0, 5);
             tailoredPrompt = buildTailoredPrompt(userMsg.content, allRanked, allRelated);
           }
-
-          isStreamingRef.current = true;
-          startStreaming();
+          isStreamingRef.current = true; startStreaming();
           electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
-        } catch (e: any) {
-          isStreamingRef.current = false;
-          resetStreaming();
-          setIsGenerating(false);
-          toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
-        }
+        } catch (e: any) { isStreamingRef.current = false; resetStreaming(); setIsGenerating(false); toast({ title: "Regeneration failed", description: e.message, variant: "destructive" }); }
       })();
     }, 50);
-  };
-
-  const handleClearHistory = () => {
-    onUpdateSpace({ ...space, messages: [] });
-    toast({ title: "History cleared" });
   };
 
   const hasProjects = space.projects.length > 0;
   const canSend = input.trim().length > 0 && !isGenerating;
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* ── Header ──────────────────────────────────────────────── */}
-      <div className="border-b border-border/40 px-6 py-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald/20 to-emerald/5 flex items-center justify-center border border-emerald/10">
-              <Sparkle size={18} weight="duotone" className="text-emerald" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-foreground tracking-tight">{space.name}</h2>
-              <p className="text-[11px] text-muted-foreground/70">
-                {space.projects.length} project{space.projects.length !== 1 ? "s" : ""} attached
-                {space.messages.length > 0 && ` · ${space.messages.filter(m => m.role === "assistant").length} response${space.messages.filter(m => m.role === "assistant").length !== 1 ? "s" : ""}`}
-              </p>
-            </div>
-          </div>
+    <div className="flex h-full bg-background">
+      {/* ════════ Main Content ════════ */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* ── Top nav ─────────────────────────────── */}
+        <div className="flex items-center gap-2 px-8 h-12 border-b border-border/15 flex-shrink-0">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-[13px] text-muted-foreground/50 hover:text-foreground transition-colors font-medium"
+          >
+            <CaretLeft size={12} weight="bold" />
+            Spaces
+          </button>
+          <span className="text-muted-foreground/20 text-[13px]">/</span>
+          <span className="text-[13px] font-medium text-foreground truncate">{space.name}</span>
 
-          <div className="flex items-center gap-3">
-            {/* Project Mode toggle */}
+          <div className="ml-auto flex items-center gap-2">
             {hasProjects && (
-              <div className="flex items-center gap-2">
+              <div className={cn(
+                "flex items-center gap-2 h-7 px-2.5 rounded-lg border transition-colors duration-200",
+                space.projectMode ? "border-emerald/15 bg-emerald/[0.04]" : "border-border/15 bg-transparent",
+              )}>
                 <label
-                  htmlFor="project-mode-toggle"
-                  className={cn(
-                    "flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer select-none transition-colors",
-                    space.projectMode ? "text-emerald" : "text-muted-foreground/60",
-                  )}
+                  htmlFor="pm"
+                  className={cn("text-[10px] font-semibold cursor-pointer select-none flex items-center gap-1", space.projectMode ? "text-emerald" : "text-muted-foreground/30")}
                 >
-                  <Power size={13} weight="bold" />
-                  Project Mode
+                  <Power size={10} weight="bold" />
+                  Context
                 </label>
-                <Switch
-                  id="project-mode-toggle"
-                  checked={space.projectMode}
-                  onCheckedChange={handleToggleProjectMode}
-                  className="data-[state=checked]:bg-emerald"
-                />
+                <Switch id="pm" checked={space.projectMode} onCheckedChange={handleToggleProjectMode} className="data-[state=checked]:bg-emerald scale-[0.8]" />
               </div>
             )}
-
-            {space.messages.length > 0 && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost" size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
-                    onClick={handleClearHistory}
-                  >
-                    <Trash size={15} weight="bold" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs">Clear history</TooltipContent>
-              </Tooltip>
-            )}
-            <Button
-              size="sm"
-              className="h-8 px-3 text-[11px] font-semibold gap-1.5 bg-emerald hover:bg-emerald/90 text-white rounded-lg"
-              onClick={handleAddFolder}
-              disabled={addingFolder}
-            >
-              {addingFolder ? <CircleNotch size={12} className="animate-spin" /> : <Plus size={12} weight="bold" />}
-              Add Folder
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/25 hover:text-muted-foreground hover:bg-muted/20 transition-colors">
+                  <DotsThree size={16} weight="bold" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40 rounded-xl shadow-elevated border-border/40">
+                {space.messages.length > 0 && (
+                  <DropdownMenuItem className="text-xs gap-2 cursor-pointer text-destructive focus:text-destructive rounded-lg" onClick={handleClearHistory}>
+                    <Trash size={13} /> Clear history
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
-        {/* ── Project Cards (always visible) ─────────────────────── */}
-        {space.projects.length > 0 && (
-          <div className="space-y-2">
-            {space.projects.map((proj) => {
-              const status = projectStatuses[proj.projectId];
-              const isReindexing = reindexingId === proj.projectId;
-              const indexStatus = status?.index_status || proj.indexStatus || "stale";
-              const meta = STATUS_META[indexStatus] ?? STATUS_META.stale;
+        {/* ── Space header ────────────────────────── */}
+        <div className="px-8 pt-8 pb-2 flex-shrink-0">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <Sparkle size={18} weight="duotone" className="text-emerald" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-foreground tracking-tight">{space.name}</h1>
+              <p className="text-[12px] text-muted-foreground/40 mt-0.5">
+                {space.projectMode ? "Prompts are optimized with codebase context" : "Prompts are optimized without codebase context"}
+              </p>
+            </div>
+          </div>
+        </div>
 
-              return (
-                <div
-                  key={proj.projectId}
-                  className="group rounded-xl border border-border/50 bg-card/40 hover:bg-card/60 transition-all px-4 py-3"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-muted/50 flex items-center justify-center flex-shrink-0">
-                      <FolderOpen size={16} weight="duotone" className="text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm font-medium text-foreground truncate block">{proj.name}</span>
-                      <div className="flex items-center gap-2.5 mt-1 flex-wrap">
-                        <span className={cn(
-                          "inline-flex items-center gap-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-md",
-                          meta.bg, meta.color,
-                        )}>
-                          <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot, indexStatus === "indexing" && "animate-pulse")} />
-                          {meta.label}
-                        </span>
-                        {(status?.current_branch || proj.branch) && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/70 bg-muted/30 px-2 py-0.5 rounded-md">
-                            <GitBranch size={10} weight="bold" />
-                            {status?.current_branch || proj.branch}
-                          </span>
-                        )}
-                        {status?.last_indexed_at && (
-                          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground/60">
-                            <Clock size={9} />
-                            {relativeTime(status.last_indexed_at)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-0.5 flex-shrink-0 opacity-40 group-hover:opacity-100 transition-opacity">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                            onClick={() => handleReindex(proj)}
-                            disabled={isReindexing}
-                          >
-                            {isReindexing
-                              ? <CircleNotch size={15} weight="bold" className="animate-spin" />
-                              : <ArrowsClockwise size={15} weight="bold" />}
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs">Re-index</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-8 w-8 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => handleRemoveProject(proj.projectId)}
-                          >
-                            <Trash size={15} weight="bold" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs">Remove</TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </div>
+        {/* ── Chat thread ─────────────────────────── */}
+        <div className="flex-1 overflow-y-auto" ref={scrollRef}>
+          <div className="max-w-3xl px-8 py-6">
+            {!hasProjects && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <FolderOpen size={32} weight="duotone" className="text-muted-foreground/20 mb-4" />
+                <h3 className="text-[15px] font-semibold text-foreground mb-1.5">Add a project folder</h3>
+                <p className="text-[13px] text-muted-foreground/40 max-w-[300px] leading-relaxed mb-5">
+                  Attach a codebase so the optimizer understands your project.
+                </p>
+                <Button size="sm" className="h-9 px-4 text-[12px] font-semibold gap-2 bg-emerald hover:bg-emerald/90 text-white rounded-xl" onClick={handleAddFolder} disabled={addingFolder}>
+                  {addingFolder ? <CircleNotch size={13} className="animate-spin" /> : <FolderOpen size={13} weight="bold" />}
+                  Select Folder
+                </Button>
+              </div>
+            )}
+
+            {hasProjects && space.messages.length === 0 && !isGenerating && (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <h3 className="text-lg font-semibold text-foreground mb-2 tracking-tight">What do you want to build?</h3>
+                <p className="text-[13px] text-muted-foreground/40 max-w-[340px] leading-relaxed">
+                  Describe a task and get an optimized{space.projectMode ? ", project-aware" : ""} prompt.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              {messages.map((msg) => (
+                <MessageBubble key={msg.id} message={msg} onCopy={() => handleCopyMessage(msg.id)} onSave={() => handleSaveMessage(msg.id)} isSaved={false}
+                  onFeedback={msg.role === "assistant" ? handleFeedback : undefined} onRegenerate={msg.role === "assistant" ? handleRegenerate : undefined} isGenerating={isGenerating} />
+              ))}
+              {streamingMessage && (
+                <MessageBubble message={streamingMessage} onCopy={() => { navigator.clipboard.writeText(streamingMessage.content); toast({ title: "Copied" }); }} onSave={() => {}} isSaved={false} isGenerating={true} />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Input ───────────────────────────────── */}
+        {hasProjects && (
+          <div className="px-8 pb-6 pt-3 flex-shrink-0">
+            <div className="max-w-3xl">
+              {!space.projectMode && (
+                <div className="flex items-center gap-2 mb-2 pl-1">
+                  <span className="w-1 h-1 rounded-full bg-amber-400/50" />
+                  <span className="text-[11px] text-muted-foreground/30">Context off — prompts optimized without codebase</span>
                 </div>
-              );
-            })}
+              )}
+              <div className={cn(
+                "rounded-2xl border transition-all duration-200",
+                isGenerating ? "border-emerald/15 bg-emerald/[0.02]" : "border-border/25 bg-card/20 focus-within:border-border/40 focus-within:bg-card/40",
+              )}>
+                <textarea
+                  ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
+                  placeholder="Describe what you want to do..."
+                  rows={1} disabled={isGenerating}
+                  className="w-full bg-transparent border-0 outline-none resize-none px-5 pt-4 pb-2 text-[14px] text-foreground leading-relaxed placeholder:text-muted-foreground/20 disabled:opacity-50"
+                  style={{ minHeight: 48 }}
+                />
+                <div className="flex items-center justify-end px-3 pb-3">
+                  {isGenerating ? (
+                    <Button size="sm" variant="ghost" className="h-8 px-3.5 text-[11px] font-semibold gap-1.5 text-muted-foreground hover:text-foreground rounded-xl" onClick={handleStopGeneration}>
+                      <Square size={10} weight="fill" /> Stop
+                    </Button>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button size="icon" className="h-8 w-8 bg-emerald hover:bg-emerald/90 text-white rounded-xl shadow-sm disabled:opacity-20 transition-all" onClick={handleSubmit} disabled={!canSend}>
+                          <PaperPlaneRight size={14} weight="fill" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">Optimize prompt</TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
 
-      {/* ── Chat thread ────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto" ref={scrollRef}>
-        <div className="max-w-3xl mx-auto px-6 py-6">
-          {!hasProjects && (
-            <div className="flex flex-col items-center justify-center py-20 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-muted/60 to-muted/20 flex items-center justify-center mb-4 border border-border/40">
-                <FolderOpen size={28} weight="duotone" className="text-muted-foreground/50" />
-              </div>
-              <h3 className="text-sm font-semibold text-foreground mb-1.5">Add a project folder</h3>
-              <p className="text-[12px] text-muted-foreground max-w-[280px] leading-relaxed mb-4">
-                Attach a codebase to this space so the optimizer can understand your project.
+      {/* ════════ Right Panel — Projects ════════ */}
+      <div className="w-[260px] flex-shrink-0 border-l border-border/15 flex flex-col overflow-y-auto">
+        <div className="p-5 space-y-5">
+          {/* Section heading */}
+          <div className="flex items-center justify-between">
+            <h3 className="text-[13px] font-semibold text-foreground">Projects</h3>
+            <span className="text-[10px] text-muted-foreground/30 font-medium">{space.projects.length}</span>
+          </div>
+
+          {/* Project list */}
+          {space.projects.length === 0 ? (
+            <div className="py-6 text-center">
+              <p className="text-[11px] text-muted-foreground/30 leading-relaxed mb-4">
+                Add project folders to use as context for your prompts.
               </p>
               <Button
+                variant="ghost"
                 size="sm"
-                className="h-9 px-4 text-xs font-semibold gap-1.5 bg-emerald hover:bg-emerald/90 text-white"
+                className="h-8 px-3 text-[11px] font-semibold gap-1.5 text-muted-foreground hover:text-foreground border border-dashed border-border/20 hover:border-border/40 rounded-lg w-full"
                 onClick={handleAddFolder}
                 disabled={addingFolder}
               >
-                {addingFolder ? <CircleNotch size={13} className="animate-spin" /> : <FolderOpen size={13} weight="bold" />}
-                Select Folder
+                {addingFolder ? <CircleNotch size={11} className="animate-spin" /> : <Plus size={11} weight="bold" />}
+                Add Folder
               </Button>
             </div>
-          )}
+          ) : (
+            <div className="space-y-1">
+              {space.projects.map((proj) => {
+                const status = projectStatuses[proj.projectId];
+                const isReindexing = reindexingId === proj.projectId;
+                const indexStatus = status?.index_status || proj.indexStatus || "stale";
+                const meta = STATUS_META[indexStatus] ?? STATUS_META.stale;
 
-          {hasProjects && space.messages.length === 0 && !isGenerating && (
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500/15 to-purple-500/5 flex items-center justify-center mb-4 border border-purple-500/10">
-                <Sparkle size={28} weight="duotone" className="text-purple-400" />
-              </div>
-              <h3 className="text-sm font-semibold text-foreground mb-1.5">
-                Describe an issue or task
-              </h3>
-              <p className="text-[12px] text-muted-foreground max-w-[320px] leading-relaxed">
-                Type what you want to accomplish and get an optimized{space.projectMode ? ", project-aware" : ""} prompt.
-                {space.projectMode && " Your codebase context is injected automatically."}
-              </p>
+                return (
+                  <div key={proj.projectId} className="group rounded-xl p-3 hover:bg-muted/20 transition-colors">
+                    <div className="flex items-center gap-2.5">
+                      <FolderOpen size={14} weight="duotone" className="text-muted-foreground/40 flex-shrink-0" />
+                      <span className="text-[13px] font-medium text-foreground/80 truncate flex-1">{proj.name}</span>
+                      <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", meta.dot, indexStatus === "indexing" && "animate-pulse")} />
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5 ml-[26px]">
+                      <span className={cn("text-[10px] font-medium", meta.color)}>{meta.label}</span>
+                      {(status?.current_branch || proj.branch) && (
+                        <span className="text-[10px] text-muted-foreground/30 flex items-center gap-0.5">
+                          <GitBranch size={9} weight="bold" />
+                          {status?.current_branch || proj.branch}
+                        </span>
+                      )}
+                      {status?.last_indexed_at && (
+                        <span className="text-[10px] text-muted-foreground/20 flex items-center gap-0.5">
+                          <Clock size={8} /> {relativeTime(status.last_indexed_at)}
+                        </span>
+                      )}
+                    </div>
+                    {/* Actions on hover */}
+                    <div className="flex items-center gap-1 mt-2 ml-[26px] opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        className="h-6 px-2 rounded text-[10px] font-medium text-muted-foreground/40 hover:text-foreground hover:bg-muted/30 flex items-center gap-1 transition-colors disabled:opacity-30"
+                        onClick={() => handleReindex(proj)}
+                        disabled={isReindexing}
+                      >
+                        {isReindexing ? <CircleNotch size={10} className="animate-spin" /> : <ArrowsClockwise size={10} weight="bold" />}
+                        Re-index
+                      </button>
+                      <button
+                        className="h-6 px-2 rounded text-[10px] font-medium text-muted-foreground/40 hover:text-destructive hover:bg-destructive/10 flex items-center gap-1 transition-colors"
+                        onClick={() => handleRemoveProject(proj.projectId)}
+                      >
+                        <Trash size={10} weight="bold" />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Add folder */}
+              <button
+                onClick={handleAddFolder}
+                disabled={addingFolder}
+                className="w-full flex items-center gap-2 rounded-xl p-3 text-[12px] font-medium text-muted-foreground/30 hover:text-muted-foreground hover:bg-muted/15 border border-dashed border-border/10 hover:border-border/20 transition-all disabled:opacity-30"
+              >
+                {addingFolder ? <CircleNotch size={12} className="animate-spin" /> : <Plus size={12} weight="bold" />}
+                Add folder
+              </button>
             </div>
           )}
-
-          <div className="space-y-1">
-            {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                onCopy={() => handleCopyMessage(msg.id)}
-                onSave={() => handleSaveMessage(msg.id)}
-                isSaved={false}
-                onFeedback={msg.role === "assistant" ? handleFeedback : undefined}
-                onRegenerate={msg.role === "assistant" ? handleRegenerate : undefined}
-                isGenerating={isGenerating}
-              />
-            ))}
-
-            {streamingMessage && (
-              <MessageBubble
-                message={streamingMessage}
-                onCopy={() => {
-                  navigator.clipboard.writeText(streamingMessage.content);
-                  toast({ title: "Copied" });
-                }}
-                onSave={() => {}}
-                isSaved={false}
-                isGenerating={true}
-              />
-            )}
-          </div>
         </div>
       </div>
-
-      {/* ── Input bar ───────────────────────────────────────────── */}
-      {hasProjects && (
-        <div className="border-t border-border/40 px-6 py-4 bg-card/30">
-          <div className="max-w-3xl mx-auto">
-            {!space.projectMode && (
-              <div className="flex items-center gap-2 mb-2 px-1">
-                <span className="text-[10px] text-amber-500/80 font-medium">
-                  Project Mode is off — prompts will be optimized without codebase context
-                </span>
-              </div>
-            )}
-            <div className={cn(
-              "rounded-xl border transition-all",
-              isGenerating ? "border-purple-500/30 bg-purple-500/[0.02]" : "border-border/60 bg-card/50",
-            )}>
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); }
-                }}
-                placeholder={space.projectMode ? "Describe what you want to do..." : "Enter a prompt to optimize..."}
-                rows={1}
-                disabled={isGenerating}
-                className={cn(
-                  "w-full bg-transparent border-0 outline-none resize-none",
-                  "px-4 pt-3 pb-1.5 text-sm text-foreground leading-relaxed",
-                  "placeholder:text-muted-foreground/40",
-                  "disabled:opacity-50",
-                )}
-                style={{ minHeight: 42 }}
-              />
-              <div className="flex items-center justify-between px-3 py-2">
-                <div className="flex items-center gap-1 flex-wrap">
-                  {QUICK_ACTIONS.map((action) => {
-                    const Icon = action.icon;
-                    return (
-                      <button
-                        key={action.id}
-                        onClick={() => handleQuickAction(action)}
-                        disabled={isGenerating}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-muted-foreground/70 hover:text-foreground hover:bg-muted/50 border border-transparent transition-all disabled:opacity-40"
-                      >
-                        <Icon size={10} weight="bold" />
-                        {action.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                {isGenerating ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-3 text-[11px] font-semibold gap-1.5 border-border/60"
-                    onClick={handleStopGeneration}
-                  >
-                    <Square size={10} weight="fill" />
-                    Stop
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    className="h-7 px-3.5 text-[11px] font-semibold gap-1.5 bg-emerald hover:bg-emerald/90 text-white shadow-sm disabled:opacity-40"
-                    onClick={handleSubmit}
-                    disabled={!canSend}
-                  >
-                    <PaperPlaneRight size={12} weight="fill" />
-                    Optimize
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
