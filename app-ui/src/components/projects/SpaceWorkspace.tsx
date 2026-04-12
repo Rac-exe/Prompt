@@ -73,11 +73,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
   const [addingFolder, setAddingFolder] = useState(false);
   const [reindexingId, setReindexingId] = useState<string | null>(null);
   const [projectStatuses, setProjectStatuses] = useState<Record<string, ProjectInfo>>({});
-  const [savedPromptIds] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isStreamingRef = useRef(false);
   const watchStartedRef = useRef<Set<string>>(new Set());
+  const spaceRef = useRef(space);
+  const onUpdateSpaceRef = useRef(onUpdateSpace);
+  spaceRef.current = space;
+  onUpdateSpaceRef.current = onUpdateSpace;
 
   const api = (window as any).electronAPI?.project;
   const electronAPI = (window as any).electronAPI;
@@ -165,16 +168,18 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
     return () => unsub?.();
   }, [api, space.projects]);
 
-  // Subscribe to optimization streaming events
+  // Subscribe to optimization streaming events (stable refs prevent re-subscribing on every render)
   useEffect(() => {
     if (!electronAPI) return;
 
-    const cleanupChunk = electronAPI.onOptimizationChunk?.((data: { chatId: string | null; chunk: string; accumulated: string }) => {
+    const cleanupChunk = electronAPI.onOptimizationChunk?.((data: { chatId: string | null; chunk: string; accumulated: string; source?: 'chat' | 'space' }) => {
+      if (data.source !== 'space') return;
       if (!isStreamingRef.current) return;
       handleChunk(data.chunk, data.accumulated);
     });
 
-    const cleanupComplete = electronAPI.onOptimizationComplete?.((data: { original: string; optimized: string }) => {
+    const cleanupComplete = electronAPI.onOptimizationComplete?.((data: { original: string; optimized: string; source?: 'chat' | 'space' }) => {
+      if (data.source !== 'space') return;
       if (!isStreamingRef.current) return;
       handleFinalMessage({
         id: crypto.randomUUID(),
@@ -184,7 +189,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
       });
     });
 
-    const cleanupError = electronAPI.onOptimizationError?.((data: { error: string }) => {
+    const cleanupError = electronAPI.onOptimizationError?.((data: { error: string; source?: 'chat' | 'space' }) => {
+      if (data.source !== 'space') return;
       if (!isStreamingRef.current) return;
       isStreamingRef.current = false;
       resetStreaming();
@@ -196,9 +202,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
         content: `Optimization failed: ${data.error}`,
         timestamp: Date.now(),
       };
-      onUpdateSpace({
-        ...space,
-        messages: [...space.messages, errorMsg],
+      const currentSpace = spaceRef.current;
+      onUpdateSpaceRef.current({
+        ...currentSpace,
+        messages: [...currentSpace.messages, errorMsg],
         lastUsedAt: Date.now(),
       });
     });
@@ -208,7 +215,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
       cleanupComplete?.();
       cleanupError?.();
     };
-  }, [electronAPI, space, onUpdateSpace, handleChunk, handleFinalMessage, resetStreaming]);
+  }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -244,6 +251,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
       }
       toast({ title: "Project Mode enabled", description: "Code context will be injected into prompts" });
     } else {
+      for (const proj of space.projects) {
+        if (!proj.localPath) continue;
+        api?.toggleWatching?.(proj.projectId, proj.localPath, false).catch(() => {});
+      }
       toast({ title: "Project Mode disabled", description: "Prompts will be optimized without code context" });
     }
   }, [space, onUpdateSpace, api, projectStatuses]);
@@ -275,6 +286,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
       if (space.projectMode) {
         let allRanked: any[] = [];
         let allRelated: any[] = [];
+        let retrieveFailures = 0;
 
         for (const proj of space.projects) {
           try {
@@ -287,8 +299,22 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
             if (data.ranked_chunks) allRanked.push(...data.ranked_chunks);
             if (data.related_chunks) allRelated.push(...data.related_chunks);
           } catch (e: any) {
+            retrieveFailures++;
             console.warn(`[SpaceWorkspace] retrieve failed for ${proj.name}:`, e.message);
           }
+        }
+
+        if (retrieveFailures === space.projects.length) {
+          toast({
+            title: "Code intelligence unavailable",
+            description: "Could not retrieve codebase context. Make sure the code-intelligence-service is running (npm run code-intel:dev). Sending prompt without project context.",
+            variant: "destructive",
+          });
+        } else if (allRanked.length === 0 && retrieveFailures === 0) {
+          toast({
+            title: "No relevant code found",
+            description: "The index returned no matching chunks. Try reindexing your projects.",
+          });
         }
 
         allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
@@ -300,7 +326,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
 
       isStreamingRef.current = true;
       startStreaming();
-      electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking");
+      electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
     } catch (e: any) {
       setIsGenerating(false);
       isStreamingRef.current = false;
@@ -429,6 +455,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
           if (space.projectMode) {
             let allRanked: any[] = [];
             let allRelated: any[] = [];
+            let retrieveFailures = 0;
 
             for (const proj of space.projects) {
               try {
@@ -440,7 +467,18 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
                 });
                 if (data.ranked_chunks) allRanked.push(...data.ranked_chunks);
                 if (data.related_chunks) allRelated.push(...data.related_chunks);
-              } catch { /* skip */ }
+              } catch (e: any) {
+                retrieveFailures++;
+                console.warn(`[SpaceWorkspace] retrieve failed for ${proj.name}:`, e.message);
+              }
+            }
+
+            if (retrieveFailures === space.projects.length) {
+              toast({
+                title: "Code intelligence unavailable",
+                description: "Regenerating without project context. Start code-intel:dev to enable.",
+                variant: "destructive",
+              });
             }
 
             allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
@@ -451,8 +489,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
 
           isStreamingRef.current = true;
           startStreaming();
-          electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking");
+          electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
         } catch (e: any) {
+          isStreamingRef.current = false;
+          resetStreaming();
           setIsGenerating(false);
           toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
         }
@@ -660,7 +700,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat }: SpaceWork
                 message={msg}
                 onCopy={() => handleCopyMessage(msg.id)}
                 onSave={() => handleSaveMessage(msg.id)}
-                isSaved={savedPromptIds.includes(msg.id)}
+                isSaved={false}
                 onFeedback={msg.role === "assistant" ? handleFeedback : undefined}
                 onRegenerate={msg.role === "assistant" ? handleRegenerate : undefined}
                 isGenerating={isGenerating}

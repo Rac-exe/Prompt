@@ -40,7 +40,7 @@ async def retrieve(
     )
 
     try:
-        result = retrieve_context(
+        result = await retrieve_context(
             project_id=project_id,
             user_id=user_id,
             query=query,

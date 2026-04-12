@@ -7,6 +7,7 @@ OpenRouter's embedding endpoint can be flaky, so we retry with
 exponential backoff.
 """
 
+import asyncio
 import time
 import logging
 import litellm
@@ -33,14 +34,15 @@ def _get_model_and_kwargs() -> tuple[str, dict]:
     )
 
 
-def _embed_with_retry(texts: list[str]) -> list[list[float]]:
+async def _embed_with_retry(texts: list[str]) -> list[list[float]]:
     """Call litellm.embedding with retries for transient provider failures."""
     model, kwargs = _get_model_and_kwargs()
     last_error: Exception | None = None
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = litellm.embedding(
+            response = await asyncio.to_thread(
+                litellm.embedding,
                 model=model,
                 input=texts,
                 dimensions=EMBEDDING_DIMENSIONS,
@@ -55,19 +57,19 @@ def _embed_with_retry(texts: list[str]) -> list[list[float]]:
                 attempt + 1, MAX_RETRIES, str(e)[:120], delay,
             )
             if attempt < MAX_RETRIES - 1:
-                time.sleep(delay)
+                await asyncio.sleep(delay)
 
     raise RuntimeError(
         f"Embedding failed after {MAX_RETRIES} attempts: {last_error}"
     ) from last_error
 
 
-def embed_text(text: str) -> list[float]:
-    results = _embed_with_retry([text])
+async def embed_text(text: str) -> list[float]:
+    results = await _embed_with_retry([text])
     return results[0]
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+async def embed_texts(texts: list[str]) -> list[list[float]]:
     """Batch embed multiple texts (max 2048 per call)."""
     if not texts:
         return []
@@ -77,6 +79,6 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        all_embeddings.extend(_embed_with_retry(batch))
+        all_embeddings.extend(await _embed_with_retry(batch))
 
     return all_embeddings

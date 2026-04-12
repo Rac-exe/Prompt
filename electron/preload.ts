@@ -154,7 +154,7 @@ declare global {
       // ============================================
       // APP WINDOW API
       // ============================================
-      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string) => void;
+      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string, source?: 'chat' | 'space') => void;
       saveToChat: (originalText: string, optimizedText: string) => void;
       requestUserData: () => void;
       onUserDataLoaded: (callback: (user: any) => void) => void;
@@ -176,9 +176,9 @@ declare global {
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
-      onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
-      onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
-      onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
+      onOptimizationComplete: (callback: (data: { optimized: string; original: string; source?: 'chat' | 'space' }) => void) => (() => void);
+      onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string; source?: 'chat' | 'space' }) => void) => (() => void);
+      onOptimizationError: (callback: (data: { error: string; source?: 'chat' | 'space' }) => void) => (() => void);
 
       // Clarification API
       submitClarification: (data: { chatId: string; answers: Record<string, string>; wantsSections: boolean }) => void;
@@ -463,8 +463,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);
@@ -614,7 +614,9 @@ const electronAPI = {
 
   // Streaming optimization (app window uses these channels)
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
-    ipcRenderer.on('optimization-complete', (_event, data) => callback(data));
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('optimization-complete', handler);
+    return () => ipcRenderer.removeListener('optimization-complete', handler);
   },
   onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);

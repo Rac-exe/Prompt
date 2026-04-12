@@ -9,7 +9,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import type { FSWatcher } from 'chokidar';
 import { getLanguageForFile, parseFile } from './code-parser';
-import { getCachedHash, setCachedHash } from '../database/local-project-cache';
+import { getCachedHash, setCachedHash, clearFileCache } from '../database/local-project-cache';
 import type { CodeIntelClient, ChunkData, CallGraphEdge } from '../api/code-intel-client';
 
 let chokidar: typeof import('chokidar') | null = null;
@@ -65,6 +65,8 @@ async function handleFileChange(
 
   let content: string;
   try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > 500_000) return;
     content = fs.readFileSync(filePath, 'utf-8');
   } catch {
     return;
@@ -143,6 +145,10 @@ export function startWatching(
   watcher.on('unlink', (filePath: string) => {
     const relativePath = path.relative(projectPath, filePath).replace(/\\/g, '/');
     console.log(`[FileWatcher] File deleted: ${relativePath}`);
+    clearFileCache(state.projectId, relativePath);
+    client.deleteChunksForFile(state.projectId, relativePath).catch((e) => {
+      console.error(`[FileWatcher] Failed to delete chunks for ${relativePath}:`, e);
+    });
   });
 
   activeWatchers.set(projectId, state);

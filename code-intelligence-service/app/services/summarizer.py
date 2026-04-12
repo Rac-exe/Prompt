@@ -54,7 +54,7 @@ def summarize_chunk(
 
     try:
         response = litellm.completion(**kwargs)
-        summary = response.choices[0].message.content.strip()
+        summary = (response.choices[0].message.content or "").strip()
         logger.debug(f"Summarized {name}: {summary[:80]}...")
         return summary
     except Exception as e:

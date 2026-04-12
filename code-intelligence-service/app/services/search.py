@@ -33,14 +33,14 @@ def _rerank(chunks: list[dict], branch: Optional[str] = None) -> list[dict]:
     return chunks
 
 
-def retrieve_context(
+async def retrieve_context(
     project_id: str,
     user_id: str,
     query: str,
     branch: Optional[str] = None,
     limit: int = 10,
 ) -> RetrieveResponse:
-    query_embedding = embed_text(query)
+    query_embedding = await embed_text(query)
 
     candidates = vector_search(
         project_id=project_id,

@@ -470,8 +470,8 @@ const Index = () => {
   // Listen for streaming chunks (real-time text updates)
   useEffect(() => {
     if (isElectron && window.electronAPI?.onOptimizationChunk) {
-      const handleOptimizationChunk = (data: { chatId: string | null; chunk: string; accumulated: string }) => {
-        // Only process chunks for the currently selected chat
+      const handleOptimizationChunk = (data: { chatId: string | null; chunk: string; accumulated: string; source?: 'chat' | 'space' }) => {
+        if (data.source === 'space') return;
         if (data.chatId && data.chatId !== selectedChatIdRef.current) return;
 
         handleChunk(data.chunk, data.accumulated);
@@ -1479,6 +1479,7 @@ Your prompt was: "${content}"`;
       case "projects":
         return (
           <ProjectsView onSendToChat={(prompt: string) => {
+            handleNewChat();
             setCurrentView("chat");
             setInput(prompt);
           }} />

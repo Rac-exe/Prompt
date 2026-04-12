@@ -90,9 +90,15 @@ class WorkerSettings:
     health_check_interval = 30
 
 
+_pool = None
+
+
 async def get_pool():
-    """Get a shared arq connection pool for enqueuing jobs."""
-    return await create_pool(parse_redis_url(REDIS_URL))
+    """Get or create a shared arq connection pool for enqueuing jobs."""
+    global _pool
+    if _pool is None:
+        _pool = await create_pool(parse_redis_url(REDIS_URL))
+    return _pool
 
 
 async def enqueue_ingest(

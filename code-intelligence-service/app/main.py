@@ -106,9 +106,9 @@ async def health_ready():
         checks["supabase"] = client is not None
     except Exception:
         checks["supabase"] = False
-    from app.config import OPENAI_API_KEY
-    checks["openai_key"] = bool(OPENAI_API_KEY)
-    all_ok = checks.get("supabase") and checks.get("openai_key")
+    from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY
+    checks["embedding_key"] = bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
+    all_ok = checks.get("supabase") and checks.get("embedding_key")
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 

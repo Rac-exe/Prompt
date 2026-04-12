@@ -90,8 +90,8 @@ async def poll_project(project: dict, github_token: Optional[str] = None):
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     if not GITHUB_WEBHOOK_SECRET:
-        logger.warning("No GITHUB_WEBHOOK_SECRET configured — skipping verification")
-        return True
+        logger.warning("No GITHUB_WEBHOOK_SECRET configured — rejecting webhook")
+        return False
 
     expected = hmac.new(
         GITHUB_WEBHOOK_SECRET.encode(),

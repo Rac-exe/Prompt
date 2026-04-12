@@ -123,6 +123,12 @@ export class CodeIntelClient {
     await this.client.delete(`/api/projects/${projectId}`);
   }
 
+  async deleteChunksForFile(projectId: string, filePath: string): Promise<void> {
+    await this.client.delete(`/api/projects/${projectId}/chunks`, {
+      params: { file_path: filePath },
+    });
+  }
+
   async ingestSkeleton(payload: IngestPayload): Promise<{ status: string; chunks_queued: number }> {
     const resp = await this.client.post('/api/index/ingest', payload, {
       timeout: 300_000,

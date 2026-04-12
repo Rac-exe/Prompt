@@ -41,8 +41,15 @@ export const ProjectsView = ({ onSendToChat }: ProjectsViewProps = {}) => {
   }, []);
 
   const handleDeleteSpace = useCallback((id: string) => {
-    setSpaces((prev) => prev.filter((s) => s.id !== id));
-    setActiveSpaceId((current) => current === id ? null : current);
+    setSpaces((prev) => {
+      const remaining = prev.filter((s) => s.id !== id);
+      setActiveSpaceId((current) => {
+        if (current !== id) return current;
+        if (remaining.length === 0) return null;
+        return remaining.sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0].id;
+      });
+      return remaining;
+    });
   }, []);
 
   const handleSelectSpace = useCallback((id: string) => {

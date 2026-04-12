@@ -873,10 +873,27 @@ async def optimize_stream(websocket: WebSocket):
                         category="optimize", message="Task planning started",
                         level="info", data={"request_id": request_id},
                     )
+                    planner_input = prompt_text
+                    if project_id:
+                        try:
+                            from pipeline_v2.project_context import fetch_project_context
+                            planner_ctx = await loop.run_in_executor(
+                                None,
+                                lambda: fetch_project_context(
+                                    project_id=project_id,
+                                    user_query=prompt_text,
+                                    branch=project_branch,
+                                    auth_token=websocket.query_params.get("token", ""),
+                                ),
+                            )
+                            if planner_ctx:
+                                planner_input = f"{planner_ctx}\n\n{prompt_text}"
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch project context for task planner: {e}")
                     task_plan = await loop.run_in_executor(
                         None,
                         lambda: plan_tasks(
-                            user_input=prompt_text,
+                            user_input=planner_input,
                             model=SUMMARIZER_MODEL,
                             provider="auto",
                         ),

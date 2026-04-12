@@ -81,6 +81,15 @@ export function registerProjectHandlers(
 
     await setActiveProject(project.id, projectPath);
 
+    // Trigger initial full scan so the index isn't empty until the first file edit
+    performFullScan(project.id, projectPath, _client!, defaultBranch).then((result) => {
+      console.log(`[ProjectHandlers] Initial index complete: ${result.totalFiles} files, ${result.totalChunks} chunks`);
+      broadcastProjectStatus({ projectId: project.id, status: 'ready' });
+    }).catch((e) => {
+      console.error('[ProjectHandlers] Initial index failed:', e);
+      broadcastProjectStatus({ projectId: project.id, status: 'stale' });
+    });
+
     console.log(`[ProjectHandlers] Project added: ${projectName} (${project.id})`);
     return project;
   });
@@ -89,8 +98,8 @@ export function registerProjectHandlers(
     if (!_client) throw new Error('Code intelligence client not initialized');
 
     stopWatching(projectId);
-    clearProjectCache(projectId);
     await _client.deleteProject(projectId);
+    clearProjectCache(projectId);
 
     if (activeProjectId === projectId) {
       activeProjectId = null;
@@ -197,6 +206,8 @@ async function setActiveProject(projectId: string, localPath?: string): Promise<
     if (isGit) {
       const branchInfo = await getBranchInfo(localPath);
       activeProjectBranch = branchInfo.currentBranch;
+    } else {
+      activeProjectBranch = null;
     }
 
     startWatching(projectId, localPath, _client, activeProjectBranch || undefined);

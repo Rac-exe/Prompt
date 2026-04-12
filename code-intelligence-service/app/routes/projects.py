@@ -51,3 +51,13 @@ async def delete_project(project_id: str, auth: dict = Depends(require_auth)):
         raise HTTPException(status_code=404, detail="Project not found")
     queries.delete_project(project_id, user_id)
     logger.info(f"Deleted project {project_id} for user {user_id}")
+
+
+@router.delete("/projects/{project_id}/chunks", status_code=204)
+async def delete_chunks_for_file(project_id: str, file_path: str, auth: dict = Depends(require_auth)):
+    user_id = auth.get("sub")
+    project = queries.get_project(project_id, user_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    queries.delete_chunks_for_file(project_id, file_path)
+    logger.info(f"Deleted chunks for file {file_path} in project {project_id}")

@@ -226,7 +226,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
@@ -278,7 +278,7 @@ export function registerChatHandlers(
                     (chunk, accumulated) => {
                         if (chatId) activeGenerations.set(chatId, { accumulated });
                         if (appWindowManager) {
-                            appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated });
+                            appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated, source });
                         }
                     },
                     mode,
@@ -337,6 +337,7 @@ export function registerChatHandlers(
                 appWindowManager.send('optimization-complete', {
                     original: promptText,
                     optimized: optimizedText,
+                    source,
                 });
             }
 
@@ -345,10 +346,9 @@ export function registerChatHandlers(
             Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
             if (appWindowManager) {
-                appWindowManager.send('optimization-complete', {
-                    original: promptText,
-                    optimized: 'Optimization failed. Please try again.',
+                appWindowManager.send('optimization-error', {
                     error: error instanceof Error ? error.message : 'Unknown error',
+                    source,
                 });
             }
         }

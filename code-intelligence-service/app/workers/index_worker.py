@@ -41,7 +41,7 @@ async def process_chunk(
         language=chunk.language,
     )
 
-    embedding = embed_text(summary)
+    embedding = await embed_text(summary)
 
     upsert_chunk(
         project_id=project_id,
@@ -88,7 +88,12 @@ async def process_ingest_batch(
             errors += 1
 
     now = datetime.now(timezone.utc).isoformat()
-    update_project_status(project_id, "ready", last_indexed_at=now)
+    if errors > 0 and processed == 0:
+        update_project_status(project_id, "error", last_indexed_at=now)
+    elif errors > 0:
+        update_project_status(project_id, "partial", last_indexed_at=now)
+    else:
+        update_project_status(project_id, "ready", last_indexed_at=now)
 
     logger.info(
         f"Ingest complete for project {project_id}: "
