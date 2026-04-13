@@ -78,7 +78,7 @@ import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
 import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
 import { analyticsService } from './analytics/analytics-service';
 import { CodeIntelClient } from './api/code-intel-client';
-import { registerProjectHandlers, cleanupProjectHandlers } from './ipc-handlers/project-handlers';
+import { registerProjectHandlers, cleanupProjectHandlers, restoreActiveProject } from './ipc-handlers/project-handlers';
 import { initializeParser } from './services/code-parser';
 import { setKnownProjects, startDetection, stopDetection } from './services/active-window-detector';
 
@@ -374,6 +374,10 @@ async function initialize() {
   }).catch(() => {
     // Code intel service not available yet — detection starts when projects are loaded
   });
+
+  restoreActiveProject().catch(e =>
+    console.warn('[Main] Active project restore failed:', e)
+  );
 
   // Transcription IPC handlers (inline — depend on transcriptionClient)
   ipcMain.on('transcription:debug', (_event, msg: string) => {

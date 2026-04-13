@@ -87,7 +87,7 @@ async function handleFileChange(
     await client.ingestSkeleton({
       project_id: state.projectId,
       chunks,
-      call_graph: [],
+      call_graph: buildCallGraph(chunks),
       language_map: { [language]: chunks.length },
       branch,
     });
@@ -177,6 +177,74 @@ export function isWatching(projectId: string): boolean {
   return activeWatchers.has(projectId);
 }
 
+const MAX_CALL_GRAPH_EDGES = 2000;
+
+function buildCallGraph(chunks: ChunkData[]): CallGraphEdge[] {
+  const edges: CallGraphEdge[] = [];
+
+  const chunkByName = new Map<string, ChunkData>();
+  const chunksByFile = new Map<string, ChunkData[]>();
+
+  for (const chunk of chunks) {
+    const shortName = chunk.name.includes('.') ? chunk.name.split('.').pop()! : chunk.name;
+    if (!chunkByName.has(shortName)) {
+      chunkByName.set(shortName, chunk);
+    }
+    const fileChunks = chunksByFile.get(chunk.file_path) ?? [];
+    fileChunks.push(chunk);
+    chunksByFile.set(chunk.file_path, fileChunks);
+  }
+
+  for (const chunk of chunks) {
+    if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
+
+    for (const callee of chunk.callees) {
+      if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
+      const target = chunkByName.get(callee);
+      if (target && target.name !== chunk.name) {
+        edges.push({
+          from_name: chunk.name,
+          from_file: chunk.file_path,
+          to_name: target.name,
+          to_file: target.file_path,
+          relationship_type: 'calls',
+        });
+      }
+    }
+
+    for (const imp of chunk.imports) {
+      if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
+      const match = imp.match(/from\s+['"]([^'"]+)['"]/);
+      if (!match) continue;
+      const modulePath = match[1];
+      if (!modulePath.startsWith('.')) continue;
+
+      const resolved = path.posix.normalize(
+        path.posix.join(path.posix.dirname(chunk.file_path), modulePath),
+      );
+
+      for (const [filePath, fileChunks] of chunksByFile) {
+        const withoutExt = filePath.replace(/\.\w+$/, '');
+        if (withoutExt === resolved || filePath === resolved) {
+          const fileChunk = fileChunks.find((c) => c.chunk_type === 'file') ?? fileChunks[0];
+          if (fileChunk) {
+            edges.push({
+              from_name: chunk.name,
+              from_file: chunk.file_path,
+              to_name: fileChunk.name,
+              to_file: fileChunk.file_path,
+              relationship_type: 'imports',
+            });
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  return edges;
+}
+
 export async function performFullScan(
   projectId: string,
   projectPath: string,
@@ -258,6 +326,9 @@ export async function performFullScan(
   }
 
   if (allChunks.length > 0) {
+    callGraph.push(...buildCallGraph(allChunks));
+    console.log(`[FileWatcher] Built call graph: ${callGraph.length} edges from ${allChunks.length} chunks`);
+
     const batchSize = 500;
     for (let i = 0; i < allChunks.length; i += batchSize) {
       const batch = allChunks.slice(i, i + batchSize);

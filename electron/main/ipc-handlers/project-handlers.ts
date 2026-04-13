@@ -3,7 +3,9 @@
  * Handles project CRUD, indexing triggers, and status queries.
  */
 
-import { ipcMain, dialog } from 'electron';
+import * as fs from 'fs';
+import * as path from 'path';
+import { ipcMain, dialog, app } from 'electron';
 import type { CodeIntelClient, ProjectInfo } from '../api/code-intel-client';
 import type { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import type { AppWindowManager } from '../windows/app-window-manager';
@@ -17,6 +19,30 @@ let _appWindowManager: AppWindowManager | null = null;
 
 let activeProjectId: string | null = null;
 let activeProjectBranch: string | null = null;
+
+const STATE_FILE = path.join(app.getPath('userData'), 'active-project.json');
+
+function persistActiveProject(): void {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({
+      projectId: activeProjectId,
+      branch: activeProjectBranch,
+    }));
+  } catch (e) {
+    console.warn('[ProjectHandlers] Failed to persist active project:', e);
+  }
+}
+
+function loadPersistedProject(): { projectId: string | null; branch: string | null } {
+  try {
+    if (fs.existsSync(STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+    }
+  } catch (e) {
+    console.warn('[ProjectHandlers] Failed to load persisted project:', e);
+  }
+  return { projectId: null, branch: null };
+}
 
 export function registerProjectHandlers(
   client: CodeIntelClient,
@@ -104,6 +130,7 @@ export function registerProjectHandlers(
     if (activeProjectId === projectId) {
       activeProjectId = null;
       activeProjectBranch = null;
+      persistActiveProject();
       broadcastProjectStatus(null);
     }
 
@@ -220,6 +247,8 @@ async function setActiveProject(projectId: string, localPath?: string): Promise<
     name: project?.name,
     branch: activeProjectBranch,
   });
+
+  persistActiveProject();
 }
 
 function broadcastProjectStatus(data: any): void {
@@ -237,6 +266,31 @@ export function getActiveProjectId(): string | null {
 
 export function getActiveProjectBranch(): string | null {
   return activeProjectBranch;
+}
+
+export async function restoreActiveProject(): Promise<void> {
+  const { projectId, branch } = loadPersistedProject();
+  if (!projectId || !_client) return;
+
+  try {
+    const project = await _client.getProject(projectId);
+    if (project) {
+      activeProjectId = project.id;
+      activeProjectBranch = branch;
+      if (project.local_path) {
+        startWatching(project.id, project.local_path, _client!, branch || undefined);
+      }
+      broadcastProjectStatus({
+        projectId: project.id,
+        status: project.index_status || 'stale',
+        name: project.name,
+        branch,
+      });
+      console.log(`[ProjectHandlers] Restored active project: ${project.name}`);
+    }
+  } catch (e) {
+    console.warn('[ProjectHandlers] Could not restore active project:', e);
+  }
 }
 
 export function cleanupProjectHandlers(): void {

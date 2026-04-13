@@ -130,6 +130,41 @@ function extractNodeName(node: any): string {
   return '<anonymous>';
 }
 
+function resolveAnonymousFnName(node: any): string | null {
+  let current = node.parent;
+  for (let depth = 0; current && depth < 4; depth++, current = current.parent) {
+    switch (current.type) {
+      case 'variable_declarator': {
+        const name = current.childForFieldName('name');
+        if (name) return name.text;
+        break;
+      }
+      case 'assignment_expression': {
+        const left = current.childForFieldName('left');
+        if (left) {
+          const text = left.text;
+          return text.includes('.') ? text.split('.').pop()! : text;
+        }
+        break;
+      }
+      case 'pair':
+      case 'property_definition': {
+        const key = current.childForFieldName('key');
+        if (key) return key.text;
+        break;
+      }
+      case 'export_statement':
+      case 'expression_statement':
+      case 'arguments':
+      case 'call_expression':
+        continue;
+      default:
+        break;
+    }
+  }
+  return null;
+}
+
 function extractSignature(node: any, sourceCode: string): string | undefined {
   const params = node.childForFieldName('parameters');
   const returnType = node.childForFieldName('return_type') || node.childForFieldName('type');
@@ -241,7 +276,10 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
     }
 
     if (functionTypes.includes(node.type)) {
-      const name = extractNodeName(node);
+      let name = extractNodeName(node);
+      if (name === '<anonymous>') {
+        name = resolveAnonymousFnName(node) ?? '<anonymous>';
+      }
       const fullName = parentClass ? `${parentClass}.${name}` : name;
 
       if (name !== '<anonymous>') {
