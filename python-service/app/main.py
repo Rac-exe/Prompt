@@ -1931,7 +1931,7 @@ async def shutdown_event():
 async def root():
     return {
         "service": "Prompt Optimizer API",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "endpoints": {
             "optimize": "POST /optimize",
             "health": "GET /health",
