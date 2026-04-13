@@ -34,6 +34,8 @@ export interface RetrievedChunk {
   signature?: string;
   language: string;
   semantic_summary?: string;
+  code_body?: string;
+  concepts?: string[];
   similarity_score: number;
 }
 
@@ -107,28 +109,41 @@ export function buildTailoredPrompt(
     for (const chunk of chunks.slice(0, 8)) {
       const path = shortenPath(chunk.file_path);
       lines.push(
-        `- **${chunk.name}** (${chunk.chunk_type}) in \`${path}\` (lines ${chunk.start_line}-${chunk.end_line})`,
+        `**${chunk.name}** (${chunk.chunk_type}) in \`${path}\` (lines ${chunk.start_line}-${chunk.end_line})`,
       );
-      if (chunk.signature) {
-        lines.push(`  Signature: \`${chunk.signature}\``);
+      if (chunk.concepts && chunk.concepts.length > 0) {
+        lines.push(`Concepts: ${chunk.concepts.join(", ")}`);
       }
       if (chunk.semantic_summary) {
-        lines.push(`  Summary: ${chunk.semantic_summary}`);
+        lines.push(`Summary: ${chunk.semantic_summary}`);
       }
+      if (chunk.code_body) {
+        lines.push(`\`\`\`${chunk.language}`);
+        lines.push(chunk.code_body.slice(0, 2000));
+        lines.push("```");
+      } else if (chunk.signature) {
+        lines.push(`Signature: \`${chunk.signature}\``);
+      }
+      lines.push("");
     }
-    lines.push("");
   }
 
   if (relatedChunks.length > 0) {
     lines.push("Related/connected code:");
+    lines.push("");
     for (const chunk of relatedChunks.slice(0, 5)) {
       const path = shortenPath(chunk.file_path);
-      lines.push(`- **${chunk.name}** in \`${path}\``);
+      lines.push(`**${chunk.name}** in \`${path}\``);
       if (chunk.semantic_summary) {
-        lines.push(`  ${chunk.semantic_summary}`);
+        lines.push(`${chunk.semantic_summary}`);
       }
+      if (chunk.code_body) {
+        lines.push(`\`\`\`${chunk.language}`);
+        lines.push(chunk.code_body.slice(0, 1500));
+        lines.push("```");
+      }
+      lines.push("");
     }
-    lines.push("");
   }
 
   lines.push(

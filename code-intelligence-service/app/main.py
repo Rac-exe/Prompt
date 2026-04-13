@@ -27,10 +27,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
-from app.config import APP_ENV, APP_VERSION, SENTRY_DSN
+from app.config import (
+    APP_ENV, APP_VERSION, SENTRY_DSN,
+    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
+    SUMMARIZER_CONCURRENCY, GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED,
+    RETRIEVAL_DEFAULT_LIMIT,
+)
 
+log_level = logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     stream=sys.stdout,
 )
@@ -59,6 +65,16 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 app = FastAPI(title="Prmpt Code Intelligence Service", version=APP_VERSION)
 app.add_middleware(RequestIDMiddleware)
+
+logger.info(
+    "Code Intelligence Service starting — env=%s, version=%s, "
+    "embed_model=%s (dim=%s), summarizer=%s (concurrency=%d), "
+    "graph_depth=%d, graph_max_related=%d, retrieval_limit=%d, log_level=%s",
+    APP_ENV, APP_VERSION,
+    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL, SUMMARIZER_CONCURRENCY,
+    GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, RETRIEVAL_DEFAULT_LIMIT,
+    logging.getLevelName(log_level),
+)
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 app.state.limiter = limiter

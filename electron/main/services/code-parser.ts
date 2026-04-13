@@ -220,18 +220,19 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
     if (classTypes.includes(node.type)) {
       const name = extractNodeName(node);
       chunks.push({
-        file_path: filePath,
-        start_line: node.startPosition.row + 1,
-        end_line: node.endPosition.row + 1,
-        chunk_type: 'class',
-        name,
-        signature: undefined,
-        language,
-        docstring: extractDocstring(node, content),
-        content_hash: computeContentHash(node.text),
-        callees: [],
-        imports,
-      });
+          file_path: filePath,
+          start_line: node.startPosition.row + 1,
+          end_line: node.endPosition.row + 1,
+          chunk_type: 'class',
+          name,
+          signature: undefined,
+          language,
+          docstring: extractDocstring(node, content),
+          content_hash: computeContentHash(node.text),
+          callees: [],
+          imports,
+          code_body: node.text.slice(0, 3000),
+        });
 
       for (let i = 0; i < node.childCount; i++) {
         walkForChunks(node.child(i), name);
@@ -256,6 +257,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
           content_hash: computeContentHash(node.text),
           callees: collectCallees(node),
           imports: parentClass ? [] : imports,
+          code_body: node.text.slice(0, 3000),
         });
       }
       return;
@@ -282,6 +284,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
       content_hash: computeContentHash(content),
       callees: [],
       imports,
+      code_body: content.slice(0, 3000),
     });
   }
 

@@ -1,15 +1,18 @@
 """
-Raw SQL queries for pgvector search, chunk upserts, and graph operations.
-Uses the Supabase client's rpc() for vector operations and standard
-table operations for CRUD.
+Queries for pgvector search, full-text search, chunk upserts, graph
+operations, and observation tracking.  Uses the Supabase client's rpc()
+for vector/text search and standard table operations for CRUD.
 """
 
 import logging
 from typing import Optional
 from app.db.supabase_client import get_client
+from app.config import GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED
 
 logger = logging.getLogger("code-intel.queries")
 
+
+# ── Projects ────────────────────────────────────────────────────────────────
 
 def upsert_project(
     user_id: str,
@@ -76,6 +79,8 @@ def delete_project(project_id: str, user_id: str):
     client.table("projects").delete().eq("id", project_id).eq("user_id", user_id).execute()
 
 
+# ── Chunks ──────────────────────────────────────────────────────────────────
+
 def upsert_chunk(
     project_id: str,
     user_id: str,
@@ -91,6 +96,8 @@ def upsert_chunk(
     content_hash: str,
     branch: Optional[str] = None,
     last_modified_commit: Optional[str] = None,
+    code_body: Optional[str] = None,
+    concepts: Optional[list[str]] = None,
 ) -> dict:
     client = get_client()
     data = {
@@ -109,6 +116,8 @@ def upsert_chunk(
         "branch": branch,
         "last_modified_commit": last_modified_commit,
         "branch_diverged": False,
+        "code_body": code_body,
+        "concepts": concepts or [],
     }
     result = (
         client.table("code_chunks")
@@ -138,6 +147,8 @@ def delete_chunks_for_file(project_id: str, file_path: str):
     client.table("code_chunks").delete().eq("project_id", project_id).eq("file_path", file_path).execute()
 
 
+# ── Relationships ───────────────────────────────────────────────────────────
+
 def upsert_relationship(project_id: str, from_chunk_id: str, to_chunk_id: str, relationship_type: str):
     client = get_client()
     data = {
@@ -165,6 +176,14 @@ def find_chunk_by_name(project_id: str, name: str, file_path: Optional[str] = No
     return result.data[0] if result.data else None
 
 
+# ── Vector search ───────────────────────────────────────────────────────────
+
+_CHUNK_SELECT_FIELDS = (
+    "id,file_path,start_line,end_line,chunk_type,name,signature,"
+    "language,semantic_summary,code_body,concepts,branch,branch_diverged"
+)
+
+
 def vector_search(
     project_id: str,
     user_id: str,
@@ -172,10 +191,7 @@ def vector_search(
     limit: int = 10,
     branch: Optional[str] = None,
 ) -> list[dict]:
-    """
-    Cosine similarity search via Supabase RPC.
-    Requires the match_code_chunks function to be created in the DB.
-    """
+    """Cosine similarity search via the match_code_chunks RPC."""
     client = get_client()
     params = {
         "query_embedding": query_embedding,
@@ -186,9 +202,41 @@ def vector_search(
     if branch:
         params["filter_branch"] = branch
 
-    result = client.rpc("match_code_chunks", params).execute()
-    return result.data or []
+    try:
+        result = client.rpc("match_code_chunks", params).execute()
+        rows = result.data or []
+        logger.debug(f"vector_search: {len(rows)} results for project {project_id}")
+        return rows
+    except Exception as e:
+        logger.error(f"vector_search RPC failed for project {project_id}: {e}")
+        return []
 
+
+def text_search(
+    project_id: str,
+    user_id: str,
+    query: str,
+    limit: int = 10,
+) -> list[dict]:
+    """Full-text keyword search via the search_code_chunks_text RPC."""
+    client = get_client()
+    params = {
+        "search_query": query,
+        "match_count": limit,
+        "filter_project_id": project_id,
+        "filter_user_id": user_id,
+    }
+    try:
+        result = client.rpc("search_code_chunks_text", params).execute()
+        rows = result.data or []
+        logger.debug(f"text_search: {len(rows)} results for query={query[:60]!r}")
+        return rows
+    except Exception as e:
+        logger.error(f"text_search RPC failed for project {project_id}: {e}")
+        return []
+
+
+# ── Graph traversal ─────────────────────────────────────────────────────────
 
 def get_related_chunks(chunk_ids: list[str], project_id: str) -> list[dict]:
     """Fetch direct callers and callees for a set of chunks."""
@@ -223,12 +271,68 @@ def get_related_chunks(chunk_ids: list[str], project_id: str) -> list[dict]:
 
     result = (
         client.table("code_chunks")
-        .select("id,file_path,start_line,end_line,chunk_type,name,signature,language,semantic_summary,branch,branch_diverged")
+        .select(_CHUNK_SELECT_FIELDS)
         .in_("id", list(related_ids))
         .execute()
     )
     return result.data or []
 
+
+def get_related_chunks_multihop(
+    chunk_ids: list[str],
+    project_id: str,
+    max_depth: int = GRAPH_MAX_DEPTH,
+    max_total: int = GRAPH_MAX_RELATED,
+) -> list[dict]:
+    """
+    BFS walk on the code_relationships graph up to *max_depth* hops.
+    Returns chunks at each depth with a ``graph_depth`` annotation.
+    Already-seen chunk IDs (including the seed set) are never revisited.
+    """
+    visited: set[str] = set(chunk_ids)
+    frontier: list[str] = list(chunk_ids)
+    all_related: list[dict] = []
+
+    for depth in range(1, max_depth + 1):
+        if not frontier or len(all_related) >= max_total:
+            break
+
+        neighbors = get_related_chunks(frontier, project_id)
+        new_frontier: list[str] = []
+
+        for n in neighbors:
+            if n["id"] in visited:
+                continue
+            visited.add(n["id"])
+            n["graph_depth"] = depth
+            all_related.append(n)
+            new_frontier.append(n["id"])
+            if len(all_related) >= max_total:
+                break
+
+        logger.debug(
+            f"Graph hop {depth}: {len(frontier)} seeds → {len(neighbors)} neighbors, "
+            f"{len(new_frontier)} new, {len(all_related)} total related"
+        )
+        frontier = new_frontier
+
+    return all_related
+
+
+# ── Observation tracking ────────────────────────────────────────────────────
+
+def increment_observation_counts(chunk_ids: list[str]):
+    """Atomically increment observation_count for retrieved chunks."""
+    if not chunk_ids:
+        return
+    client = get_client()
+    try:
+        client.rpc("increment_observation_counts", {"chunk_ids": chunk_ids}).execute()
+    except Exception as e:
+        logger.warning(f"Failed to increment observation counts: {e}")
+
+
+# ── Branches ────────────────────────────────────────────────────────────────
 
 def get_branch_context(project_id: str, branch: Optional[str] = None) -> Optional[dict]:
     if not branch:

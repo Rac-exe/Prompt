@@ -1,15 +1,22 @@
 """
 Project context retrieval — calls the Code Intelligence Service
-to fetch relevant code chunks before prompt optimization.
+to fetch relevant code chunks (with code bodies) before prompt
+optimization.  Formats the result so the downstream LLM receives
+actual source code, not just metadata pointers.
 """
 
 import os
+import time
 import logging
 import httpx
 
 logger = logging.getLogger("prmpt.project_context")
 
 CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
+
+MAX_BODY_PER_CHUNK = 2000
+MAX_RANKED_IN_CONTEXT = 5
+MAX_RELATED_IN_CONTEXT = 5
 
 
 def fetch_project_context(
@@ -31,6 +38,11 @@ def fetch_project_context(
     if not project_id:
         return None
 
+    logger.info(
+        f"Fetching project context: project={project_id}, "
+        f"query={user_query[:80]!r}, branch={branch}, limit={limit}"
+    )
+
     headers = {"Content-Type": "application/json"}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
@@ -44,11 +56,16 @@ def fetch_project_context(
         params["branch"] = branch
 
     try:
+        t0 = time.perf_counter()
         with httpx.Client(timeout=15.0) as client:
             resp = client.get(f"{CODE_INTEL_URL}/api/retrieve", params=params, headers=headers)
+        elapsed = time.perf_counter() - t0
 
         if resp.status_code != 200:
-            logger.warning(f"Code Intel retrieve returned {resp.status_code}: {resp.text[:200]}")
+            logger.warning(
+                f"Code Intel retrieve returned {resp.status_code} in {elapsed:.2f}s: "
+                f"{resp.text[:200]}"
+            )
             return None
 
         data = resp.json()
@@ -56,16 +73,32 @@ def fetch_project_context(
         related_chunks = data.get("related_chunks", [])
         branch_context = data.get("branch_context")
 
+        bodies_count = sum(1 for c in ranked_chunks if c.get("code_body"))
+        concepts_count = sum(1 for c in ranked_chunks if c.get("concepts"))
+        logger.info(
+            f"Code Intel responded in {elapsed:.2f}s: "
+            f"{len(ranked_chunks)} ranked ({bodies_count} with code, "
+            f"{concepts_count} with concepts), "
+            f"{len(related_chunks)} related, "
+            f"branch_ctx={'yes' if branch_context else 'no'}"
+        )
+
         if not ranked_chunks:
+            logger.info("No ranked chunks returned — skipping project context")
             return None
 
-        return _format_context(ranked_chunks, related_chunks, branch_context)
+        formatted = _format_context(ranked_chunks, related_chunks, branch_context)
+        logger.info(
+            f"Project context formatted: {len(formatted)} chars, "
+            f"~{len(formatted.split())} words"
+        )
+        return formatted
 
     except httpx.TimeoutException:
-        logger.warning("Code Intelligence Service timed out")
+        logger.warning(f"Code Intelligence Service timed out (15s) for project {project_id}")
         return None
     except Exception as e:
-        logger.error(f"Failed to fetch project context: {e}")
+        logger.error(f"Failed to fetch project context: {e}", exc_info=True)
         return None
 
 
@@ -76,25 +109,49 @@ def _format_context(
 ) -> str:
     lines = ["[CODEBASE CONTEXT — auto-retrieved from project index]", ""]
 
-    for i, chunk in enumerate(ranked_chunks[:5]):
+    for i, chunk in enumerate(ranked_chunks[:MAX_RANKED_IN_CONTEXT]):
         label = "PRIMARY" if i == 0 else f"RELEVANT #{i+1}"
         lines.append(f"[{label}]")
         lines.append(f"{chunk['file_path']} (lines {chunk['start_line']}–{chunk['end_line']})")
         lines.append(f"{chunk['chunk_type'].title()}: {chunk['name']}")
-        if chunk.get("signature"):
-            lines.append(f"Signature: {chunk['signature']}")
+
+        concepts = chunk.get("concepts") or []
+        if concepts:
+            lines.append(f"Concepts: {', '.join(concepts)}")
+
         if chunk.get("semantic_summary"):
             lines.append(f"Summary: {chunk['semantic_summary']}")
+
         if chunk.get("branch_diverged"):
-            lines.append("(modified in current branch)")
+            lines.append("⚠ Modified in current branch")
+
+        code_body = chunk.get("code_body")
+        if code_body:
+            lang = chunk.get("language", "")
+            lines.append(f"```{lang}")
+            lines.append(code_body[:MAX_BODY_PER_CHUNK])
+            lines.append("```")
+        elif chunk.get("signature"):
+            lines.append(f"Signature: {chunk['signature']}")
+
         lines.append("")
 
     if related_chunks:
-        lines.append("[RELATED CODE — called by / calls into the above]")
-        for chunk in related_chunks[:5]:
-            lines.append(f"  {chunk['file_path']}:{chunk['start_line']}–{chunk['end_line']} — {chunk['name']}")
+        lines.append("[RELATED CODE — connected via call graph]")
+        for chunk in related_chunks[:MAX_RELATED_IN_CONTEXT]:
+            lines.append(
+                f"  {chunk['file_path']}:{chunk['start_line']}–{chunk['end_line']} "
+                f"— {chunk['name']}"
+            )
             if chunk.get("semantic_summary"):
                 lines.append(f"    {chunk['semantic_summary']}")
+            code_body = chunk.get("code_body")
+            if code_body:
+                lang = chunk.get("language", "")
+                lines.append(f"    ```{lang}")
+                for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
+                    lines.append(f"    {code_line}")
+                lines.append("    ```")
         lines.append("")
 
     if branch_context:
@@ -111,7 +168,9 @@ def _format_context(
         if last_msg:
             lines.append(f"  Last commit: {last_msg[:100]}")
         if diverged:
-            lines.append(f"  {len(diverged)} files diverged from main")
+            lines.append(f"  Diverged files: {', '.join(diverged[:10])}")
+            if len(diverged) > 10:
+                lines.append(f"  ... and {len(diverged) - 10} more")
         lines.append("")
 
     lines.append("[END CODEBASE CONTEXT]")

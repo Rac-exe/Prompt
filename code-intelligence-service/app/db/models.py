@@ -7,6 +7,8 @@ class IndexStatus(str, Enum):
     INDEXING = "indexing"
     READY = "ready"
     STALE = "stale"
+    ERROR = "error"
+    PARTIAL = "partial"
 
 
 class ChunkType(str, Enum):
@@ -58,6 +60,7 @@ class ChunkInput(BaseModel):
     content_hash: str
     callees: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
+    code_body: Optional[str] = Field(default=None, max_length=5000)
 
 
 class CallGraphEdge(BaseModel):
@@ -93,6 +96,8 @@ class RetrievedChunk(BaseModel):
     signature: Optional[str] = None
     language: str
     semantic_summary: Optional[str] = None
+    code_body: Optional[str] = None
+    concepts: list[str] = Field(default_factory=list)
     similarity_score: float
     branch: Optional[str] = None
     branch_diverged: bool = False

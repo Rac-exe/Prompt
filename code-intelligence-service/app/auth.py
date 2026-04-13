@@ -76,9 +76,13 @@ async def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
     if not _AUTH_ENABLED:
+        logger.debug("Auth bypassed (disabled in dev mode), returning dev-user")
         return {"sub": "dev-user", "role": "authenticated"}
 
     if not credentials or not credentials.credentials:
+        logger.warning("Request rejected: missing Authorization header")
         raise HTTPException(status_code=401, detail="Authorization header missing")
 
-    return _decode_token(credentials.credentials)
+    payload = _decode_token(credentials.credentials)
+    logger.debug(f"Auth ok: user={payload.get('sub')}, role={payload.get('role')}")
+    return payload

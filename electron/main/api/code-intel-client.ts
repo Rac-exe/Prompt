@@ -21,6 +21,7 @@ export interface ChunkData {
   content_hash: string;
   callees: string[];
   imports: string[];
+  code_body?: string;
 }
 
 export interface CallGraphEdge {
@@ -55,6 +56,8 @@ export interface RetrievedChunk {
   signature?: string;
   language: string;
   semantic_summary?: string;
+  code_body?: string;
+  concepts?: string[];
   similarity_score: number;
   branch?: string;
   branch_diverged: boolean;

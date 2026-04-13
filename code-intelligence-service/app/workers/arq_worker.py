@@ -10,7 +10,7 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from app.config import REDIS_URL
 from app.db.models import ChunkInput, CallGraphEdge
-from app.workers.index_worker import process_chunk, process_ingest_batch
+from app.workers.index_worker import process_ingest_batch
 from app.services.graph import process_call_graph
 from app.db.queries import update_project_status
 from datetime import datetime, timezone

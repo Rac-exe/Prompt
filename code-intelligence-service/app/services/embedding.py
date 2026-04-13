@@ -22,10 +22,12 @@ RETRY_BASE_DELAY = 1.0
 def _get_model_and_kwargs() -> tuple[str, dict]:
     """Pick the right model string and auth kwargs for litellm.embedding()."""
     if OPENAI_API_KEY:
+        logger.debug(f"Using direct OpenAI for embeddings (model={EMBEDDING_MODEL})")
         return EMBEDDING_MODEL, {"api_key": OPENAI_API_KEY}
 
     if OPENROUTER_API_KEY:
         model = f"openrouter/openai/{EMBEDDING_MODEL}"
+        logger.debug(f"Using OpenRouter for embeddings (model={model})")
         return model, {"api_key": OPENROUTER_API_KEY}
 
     raise RuntimeError(
@@ -41,12 +43,18 @@ async def _embed_with_retry(texts: list[str]) -> list[list[float]]:
 
     for attempt in range(MAX_RETRIES):
         try:
+            t0 = time.perf_counter()
             response = await asyncio.to_thread(
                 litellm.embedding,
                 model=model,
                 input=texts,
                 dimensions=EMBEDDING_DIMENSIONS,
                 **kwargs,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.debug(
+                f"Embedding batch ok: {len(texts)} texts, "
+                f"dim={EMBEDDING_DIMENSIONS}, took {elapsed:.2f}s"
             )
             return [d["embedding"] for d in response.data]
         except Exception as e:
@@ -76,9 +84,17 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
 
     batch_size = 2048
     all_embeddings: list[list[float]] = []
+    total_batches = (len(texts) + batch_size - 1) // batch_size
+
+    logger.info(
+        f"Batch embedding: {len(texts)} texts in {total_batches} batch(es)"
+    )
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
+        batch_num = (i // batch_size) + 1
+        logger.debug(f"Embedding batch {batch_num}/{total_batches}: {len(batch)} texts")
         all_embeddings.extend(await _embed_with_retry(batch))
 
+    logger.info(f"Batch embedding complete: {len(all_embeddings)} vectors produced")
     return all_embeddings

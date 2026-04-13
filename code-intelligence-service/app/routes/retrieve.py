@@ -19,8 +19,10 @@ async def retrieve(
     auth: dict = Depends(require_auth),
 ):
     """
-    Semantic search across indexed code chunks.
-    Called by the optimizer before prompt construction.
+    Hybrid semantic + keyword search across indexed code chunks.
+    Returns ranked chunks with code bodies, related graph-expanded
+    chunks, and branch context.  Called by the optimizer before prompt
+    construction.
     """
     user_id = auth.get("sub")
 
@@ -29,14 +31,19 @@ async def retrieve(
         raise HTTPException(status_code=404, detail="Project not found")
 
     if project.get("index_status") == "indexing":
+        logger.info(
+            f"Retrieve blocked: project {project_id} is still indexing "
+            f"(user={user_id})"
+        )
         raise HTTPException(
             status_code=409,
             detail="Project is currently indexing. Please wait.",
         )
 
     logger.info(
-        f"Retrieve: project={project_id}, query_len={len(query)}, "
-        f"branch={branch}, limit={limit}"
+        f"Retrieve request: project={project_id}, user={user_id}, "
+        f"query={query[:80]!r}, branch={branch}, limit={limit}, "
+        f"index_status={project.get('index_status')}"
     )
 
     try:
@@ -47,12 +54,17 @@ async def retrieve(
             branch=branch,
             limit=limit,
         )
+
+        bodies_count = sum(1 for c in result.ranked_chunks if c.code_body)
+        concepts_count = sum(1 for c in result.ranked_chunks if c.concepts)
         logger.info(
-            f"Retrieved {len(result.ranked_chunks)} ranked + "
-            f"{len(result.related_chunks)} related chunks"
+            f"Retrieve response: project={project_id}, "
+            f"{len(result.ranked_chunks)} ranked ({bodies_count} with code, "
+            f"{concepts_count} with concepts) + "
+            f"{len(result.related_chunks)} related"
         )
         return result
 
     except Exception as e:
-        logger.error(f"Retrieval failed: {e}")
+        logger.error(f"Retrieval failed for project {project_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Retrieval failed")

@@ -1,5 +1,4 @@
 import logging
-import asyncio
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.auth import require_auth
 from app.db.models import IngestRequest
@@ -34,10 +33,13 @@ async def ingest_skeleton(
             detail=f"Too many chunks ({len(body.chunks)}). Maximum is {MAX_CHUNKS_PER_INGEST}.",
         )
 
+    has_bodies = sum(1 for c in body.chunks if c.code_body)
+    languages = body.language_map
     logger.info(
-        f"Ingest received: project={body.project_id}, "
-        f"chunks={len(body.chunks)}, edges={len(body.call_graph)}, "
-        f"languages={body.language_map}"
+        f"Ingest received: project={body.project_id}, user={user_id}, "
+        f"chunks={len(body.chunks)} ({has_bodies} with code bodies), "
+        f"edges={len(body.call_graph)}, languages={languages}, "
+        f"branch={body.branch}"
     )
 
     if body.branch:
@@ -48,10 +50,10 @@ async def ingest_skeleton(
             client.table("projects").update(
                 {"current_branch": body.branch}
             ).eq("id", body.project_id).execute()
+            logger.info(f"Updated current_branch to {body.branch} for project {body.project_id}")
         except Exception as e:
             logger.warning(f"Failed to update current_branch: {e}")
 
-    # Phase 2: Use arq Redis queue when available, fall back to background tasks
     use_arq = bool(REDIS_URL and REDIS_URL != "redis://localhost:6379")
     if use_arq:
         try:
@@ -71,6 +73,7 @@ async def ingest_skeleton(
             user_id=user_id,
             body=body,
         )
+        logger.info(f"Ingest queued via FastAPI BackgroundTasks for project {body.project_id}")
 
     return {
         "status": "accepted",
@@ -92,8 +95,11 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
         )
 
         if body.call_graph:
+            logger.info(f"Processing {len(body.call_graph)} call graph edges for project {project_id}")
             process_call_graph(project_id, body.call_graph)
 
+        logger.info(f"Background ingest task complete for project {project_id}")
+
     except Exception as e:
-        logger.error(f"Ingest background task failed for project {project_id}: {e}")
+        logger.error(f"Ingest background task failed for project {project_id}: {e}", exc_info=True)
         queries.update_project_status(project_id, "stale")
