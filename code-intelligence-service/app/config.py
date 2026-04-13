@@ -15,7 +15,7 @@ GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 APP_ENV = os.environ.get("APP_ENV", "development")
-APP_VERSION = os.environ.get("APP_VERSION", "0.0.1-dev")
+APP_VERSION = os.environ.get("APP_VERSION", "1.0.1")
 SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 
 GITHUB_POLLING_INTERVAL_SECONDS = 300
