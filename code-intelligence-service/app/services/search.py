@@ -4,6 +4,7 @@ Rank Fusion → rerank → multi-hop graph expansion → observation tracking.
 """
 
 import math
+import re
 import time
 import logging
 from typing import Optional
@@ -18,6 +19,70 @@ from app.db.queries import (
 from app.db.models import RetrievedChunk, RetrieveResponse
 
 logger = logging.getLogger("code-intel.search")
+
+
+# ── Concept detection ───────────────────────────────────────────────────────
+
+CONCEPT_KEYWORDS: dict[str, list[str]] = {
+    "state-management": ["state", "store", "redux", "toggle", "setter", "getter", "usestate", "dispatch", "context"],
+    "auth": ["auth", "login", "signup", "password", "token", "session", "jwt", "oauth", "credential"],
+    "routing": ["route", "router", "navigate", "path", "url", "redirect", "endpoint"],
+    "database": ["database", "db", "query", "model", "schema", "migration", "mongoose", "sql", "mongo", "prisma"],
+    "API": ["api", "endpoint", "request", "response", "rest", "graphql", "controller", "handler"],
+    "error-handling": ["error", "exception", "catch", "throw", "handler", "retry", "fallback"],
+    "validation": ["valid", "validate", "schema", "sanitize", "check", "constraint", "zod", "joi"],
+    "data-fetching": ["fetch", "get", "load", "retrieve", "download", "http", "axios", "httpx"],
+    "caching": ["cache", "memoize", "store", "invalidate", "ttl", "redis"],
+    "middleware": ["middleware", "interceptor", "pipe", "guard", "filter"],
+    "file-io": ["file", "read", "write", "stream", "upload", "download", "fs"],
+    "security": ["security", "encrypt", "hash", "cors", "csrf", "xss"],
+    "UI-rendering": ["render", "component", "view", "template", "dom", "jsx", "tsx"],
+    "config": ["config", "env", "settings", "options", "preference"],
+    "logging": ["log", "logger", "debug", "trace", "monitor"],
+    "testing": ["test", "spec", "mock", "assert", "expect", "jest", "mocha"],
+    "concurrency": ["async", "await", "promise", "thread", "worker", "parallel", "concurrent"],
+    "search": ["search", "find", "filter", "query", "index", "match"],
+    "payments": ["payment", "stripe", "checkout", "billing", "invoice", "charge"],
+    "notifications": ["notification", "email", "sms", "push", "alert", "webhook"],
+}
+
+
+def _detect_concepts(query: str) -> list[str]:
+    """Detect which domain concepts are relevant to a query."""
+    query_lower = query.lower()
+    query_words = set(re.findall(r"\w+", query_lower))
+    matched = []
+    for concept, keywords in CONCEPT_KEYWORDS.items():
+        if any(kw in query_words for kw in keywords):
+            matched.append(concept)
+    return matched
+
+
+def _split_identifiers(text: str) -> str:
+    """Mirror the SQL split_identifiers(): camelCase → spaces, _ → spaces, . → spaces."""
+    result = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    result = result.replace("_", " ").replace(".", " ")
+    return result
+
+
+MAX_CONCEPT_KEYWORDS_PER = 3
+
+
+def _expand_query(query: str, detected_concepts: list[str]) -> str:
+    """
+    Expand a natural-language query for full-text search by:
+    1. Splitting camelCase/snake_case terms in the original query
+    2. Adding top keywords from each detected concept
+    """
+    split_query = _split_identifiers(query)
+    words = set(re.findall(r"\w+", split_query.lower()))
+    words.update(re.findall(r"\w+", query.lower()))
+
+    for concept in detected_concepts:
+        kws = CONCEPT_KEYWORDS.get(concept, [])
+        words.update(kws[:MAX_CONCEPT_KEYWORDS_PER])
+
+    return " or ".join(sorted(words))
 
 
 # ── Reciprocal Rank Fusion ──────────────────────────────────────────────────
@@ -49,10 +114,14 @@ def _reciprocal_rank_fusion(
 
 # ── Reranking ───────────────────────────────────────────────────────────────
 
-def _rerank(chunks: list[dict], branch: Optional[str] = None) -> list[dict]:
+def _rerank(
+    chunks: list[dict],
+    branch: Optional[str] = None,
+    query_concepts: Optional[list[str]] = None,
+) -> list[dict]:
     """
     Re-rank fused candidates using:
-    score = rrf_score * log(2 + observation_count) * branch_weight
+    score = rrf_score * min(log(2 + obs), 2.0) * branch_weight * concept_boost
     """
     for chunk in chunks:
         base = chunk.get("rrf_score", chunk.get("similarity", 0.0))
@@ -64,7 +133,14 @@ def _rerank(chunks: list[dict], branch: Optional[str] = None) -> list[dict]:
         if chunk.get("branch_diverged"):
             branch_weight *= 1.2
 
-        chunk["final_score"] = base * math.log(2 + obs) * branch_weight
+        concept_boost = 1.0
+        if query_concepts and chunk.get("concepts"):
+            overlap = len(set(chunk["concepts"]) & set(query_concepts))
+            if overlap:
+                concept_boost = 1.0 + 0.15 * overlap
+
+        obs_factor = min(math.log(2 + obs), 2.0)
+        chunk["final_score"] = base * obs_factor * branch_weight * concept_boost
 
     chunks.sort(key=lambda c: c.get("final_score", 0), reverse=True)
     return chunks
@@ -86,26 +162,38 @@ async def retrieve_context(
         f"query={query[:100]!r}, branch={branch}, limit={limit}"
     )
 
+    query_concepts = _detect_concepts(query)
+    if query_concepts:
+        logger.info(
+            f"[project={project_id}] Detected concepts: {query_concepts}"
+        )
+
     t_embed = time.perf_counter()
     query_embedding = await embed_text(query)
     logger.debug(
         f"[project={project_id}] Query embedded in {time.perf_counter() - t_embed:.3f}s"
     )
 
+    expanded_query = _expand_query(query, query_concepts)
+    logger.debug(
+        f"[project={project_id}] Expanded text query: {expanded_query[:200]!r}"
+    )
+
     t_search = time.perf_counter()
+    overfetch = limit * 2
     vec_candidates = vector_search(
         project_id=project_id,
         user_id=user_id,
         query_embedding=query_embedding,
-        limit=limit + 10,
+        limit=overfetch,
         branch=branch,
     )
 
     txt_candidates = text_search(
         project_id=project_id,
         user_id=user_id,
-        query=query,
-        limit=limit + 10,
+        query=expanded_query,
+        limit=overfetch,
     )
     logger.info(
         f"[project={project_id}] Search results: "
@@ -128,7 +216,7 @@ async def retrieve_context(
             f"[project={project_id}] No text search results, using vector-only"
         )
 
-    ranked = _rerank(fused, branch=branch)[:limit]
+    ranked = _rerank(fused, branch=branch, query_concepts=query_concepts)[:limit]
 
     if ranked:
         top = ranked[0]

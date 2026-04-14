@@ -128,10 +128,15 @@ def upsert_chunk(
 
 
 def get_chunk_by_hash(project_id: str, file_path: str, name: str, content_hash: str) -> Optional[dict]:
+    """
+    Check if a chunk with matching hash already exists AND has an embedding.
+    Returns None if embedding is missing (e.g. after dimension migration),
+    forcing re-processing even when content is unchanged.
+    """
     client = get_client()
     result = (
         client.table("code_chunks")
-        .select("id,content_hash")
+        .select("id,content_hash,embedding")
         .eq("project_id", project_id)
         .eq("file_path", file_path)
         .eq("name", name)
@@ -139,7 +144,12 @@ def get_chunk_by_hash(project_id: str, file_path: str, name: str, content_hash: 
         .limit(1)
         .execute()
     )
-    return result.data[0] if result.data else None
+    if not result.data:
+        return None
+    row = result.data[0]
+    if row.get("embedding") is None:
+        return None
+    return row
 
 
 def delete_chunks_for_file(project_id: str, file_path: str):
@@ -238,8 +248,11 @@ def text_search(
 
 # ── Graph traversal ─────────────────────────────────────────────────────────
 
+EDGE_WEIGHTS = {"calls": 3, "imports": 2, "inherits": 1, "implements": 1}
+
+
 def get_related_chunks(chunk_ids: list[str], project_id: str) -> list[dict]:
-    """Fetch direct callers and callees for a set of chunks."""
+    """Fetch direct callers and callees for a set of chunks, preserving edge type."""
     if not chunk_ids:
         return []
     client = get_client()
@@ -259,13 +272,19 @@ def get_related_chunks(chunk_ids: list[str], project_id: str) -> list[dict]:
         .execute()
     )
 
-    related_ids = set()
+    best_edge: dict[str, str] = {}
     for row in outgoing.data or []:
-        related_ids.add(row["to_chunk_id"])
+        cid = row["to_chunk_id"]
+        rtype = row["relationship_type"]
+        if cid not in best_edge or EDGE_WEIGHTS.get(rtype, 0) > EDGE_WEIGHTS.get(best_edge[cid], 0):
+            best_edge[cid] = rtype
     for row in incoming.data or []:
-        related_ids.add(row["from_chunk_id"])
+        cid = row["from_chunk_id"]
+        rtype = row["relationship_type"]
+        if cid not in best_edge or EDGE_WEIGHTS.get(rtype, 0) > EDGE_WEIGHTS.get(best_edge[cid], 0):
+            best_edge[cid] = rtype
 
-    related_ids -= set(chunk_ids)
+    related_ids = set(best_edge.keys()) - set(chunk_ids)
     if not related_ids:
         return []
 
@@ -275,7 +294,10 @@ def get_related_chunks(chunk_ids: list[str], project_id: str) -> list[dict]:
         .in_("id", list(related_ids))
         .execute()
     )
-    return result.data or []
+    chunks = result.data or []
+    for chunk in chunks:
+        chunk["_edge_type"] = best_edge.get(chunk["id"], "imports")
+    return chunks
 
 
 def get_related_chunks_multihop(
@@ -287,7 +309,8 @@ def get_related_chunks_multihop(
     """
     BFS walk on the code_relationships graph up to *max_depth* hops.
     Returns chunks at each depth with a ``graph_depth`` annotation.
-    Already-seen chunk IDs (including the seed set) are never revisited.
+    Neighbors are sorted by edge weight (calls > imports > inherits)
+    so high-value relationships fill the budget first.
     """
     visited: set[str] = set(chunk_ids)
     frontier: list[str] = list(chunk_ids)
@@ -298,6 +321,10 @@ def get_related_chunks_multihop(
             break
 
         neighbors = get_related_chunks(frontier, project_id)
+        neighbors.sort(
+            key=lambda n: EDGE_WEIGHTS.get(n.get("_edge_type", ""), 0),
+            reverse=True,
+        )
         new_frontier: list[str] = []
 
         for n in neighbors:

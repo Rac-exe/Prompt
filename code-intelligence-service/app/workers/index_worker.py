@@ -11,9 +11,24 @@ from app.db.models import ChunkInput
 from app.db.queries import get_chunk_by_hash, upsert_chunk, update_project_status
 from app.services.summarizer import summarize_chunk, SummaryResult
 from app.services.embedding import embed_texts
-from app.config import SUMMARIZER_CONCURRENCY
+from app.config import SUMMARIZER_CONCURRENCY, MAX_CODE_BODY_LEN
 
 logger = logging.getLogger("code-intel.worker.index")
+
+EMBED_BODY_LIMIT = 1500
+
+
+def _build_embedding_text(chunk: ChunkInput, summary: SummaryResult) -> str:
+    """Build a rich embedding input from chunk metadata, summary, and code body."""
+    parts = [chunk.name]
+    if chunk.signature:
+        parts.append(chunk.signature)
+    parts.append(summary.summary)
+    if summary.concepts:
+        parts.append(f"Concepts: {', '.join(summary.concepts)}")
+    if chunk.code_body:
+        parts.append(chunk.code_body[:EMBED_BODY_LIMIT])
+    return "\n".join(parts)
 
 
 def _filter_unchanged(
@@ -117,13 +132,14 @@ async def process_ingest_batch(
 
     summaries = await _summarize_parallel(new_chunks)
 
-    summary_texts = [s.summary for s in summaries]
+    embed_inputs = [_build_embedding_text(c, s) for c, s in zip(new_chunks, summaries)]
     logger.info(
-        f"[project={project_id}] Starting batch embedding for {len(summary_texts)} summaries"
+        f"[project={project_id}] Starting batch embedding for {len(embed_inputs)} chunks "
+        f"(name + signature + summary + concepts + code_body)"
     )
     t_embed = time.perf_counter()
     try:
-        embeddings = await embed_texts(summary_texts)
+        embeddings = await embed_texts(embed_inputs)
         logger.info(
             f"[project={project_id}] Batch embedding complete: "
             f"{len(embeddings)} vectors in {time.perf_counter() - t_embed:.1f}s"

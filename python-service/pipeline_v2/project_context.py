@@ -8,6 +8,7 @@ actual source code, not just metadata pointers.
 import os
 import time
 import logging
+from collections import OrderedDict
 import httpx
 
 logger = logging.getLogger("prmpt.project_context")
@@ -15,8 +16,8 @@ logger = logging.getLogger("prmpt.project_context")
 CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
 
 MAX_BODY_PER_CHUNK = 2000
-MAX_RANKED_IN_CONTEXT = 5
-MAX_RELATED_IN_CONTEXT = 5
+MAX_RANKED_IN_CONTEXT = 8
+MAX_RELATED_IN_CONTEXT = 8
 
 
 def fetch_project_context(
@@ -109,49 +110,72 @@ def _format_context(
 ) -> str:
     lines = ["[CODEBASE CONTEXT — auto-retrieved from project index]", ""]
 
-    for i, chunk in enumerate(ranked_chunks[:MAX_RANKED_IN_CONTEXT]):
-        label = "PRIMARY" if i == 0 else f"RELEVANT #{i+1}"
-        lines.append(f"[{label}]")
-        lines.append(f"{chunk['file_path']} (lines {chunk['start_line']}–{chunk['end_line']})")
-        lines.append(f"{chunk['chunk_type'].title()}: {chunk['name']}")
+    selected = ranked_chunks[:MAX_RANKED_IN_CONTEXT]
 
-        concepts = chunk.get("concepts") or []
-        if concepts:
-            lines.append(f"Concepts: {', '.join(concepts)}")
+    file_groups: OrderedDict[str, list[tuple[int, dict]]] = OrderedDict()
+    for i, chunk in enumerate(selected):
+        fp = chunk["file_path"]
+        if fp not in file_groups:
+            file_groups[fp] = []
+        file_groups[fp].append((i, chunk))
 
-        if chunk.get("semantic_summary"):
-            lines.append(f"Summary: {chunk['semantic_summary']}")
+    for file_path, chunks_in_file in file_groups.items():
+        lang = chunks_in_file[0][1].get("language", "")
+        lines.append(f"[FILE: {file_path}]")
 
-        if chunk.get("branch_diverged"):
-            lines.append("⚠ Modified in current branch")
-
-        code_body = chunk.get("code_body")
-        if code_body:
-            lang = chunk.get("language", "")
-            lines.append(f"```{lang}")
-            lines.append(code_body[:MAX_BODY_PER_CHUNK])
-            lines.append("```")
-        elif chunk.get("signature"):
-            lines.append(f"Signature: {chunk['signature']}")
-
-        lines.append("")
-
-    if related_chunks:
-        lines.append("[RELATED CODE — connected via call graph]")
-        for chunk in related_chunks[:MAX_RELATED_IN_CONTEXT]:
+        for idx, chunk in chunks_in_file:
+            label = "PRIMARY" if idx == 0 else f"RELEVANT #{idx+1}"
             lines.append(
-                f"  {chunk['file_path']}:{chunk['start_line']}–{chunk['end_line']} "
-                f"— {chunk['name']}"
+                f"  [{label}] {chunk['chunk_type'].title()}: {chunk['name']} "
+                f"(lines {chunk['start_line']}–{chunk['end_line']})"
             )
+
+            concepts = chunk.get("concepts") or []
+            if concepts:
+                lines.append(f"  Concepts: {', '.join(concepts)}")
+
             if chunk.get("semantic_summary"):
-                lines.append(f"    {chunk['semantic_summary']}")
+                lines.append(f"  Summary: {chunk['semantic_summary']}")
+
+            if chunk.get("branch_diverged"):
+                lines.append("  ⚠ Modified in current branch")
+
             code_body = chunk.get("code_body")
             if code_body:
-                lang = chunk.get("language", "")
-                lines.append(f"    ```{lang}")
+                lines.append(f"  ```{lang}")
                 for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
-                    lines.append(f"    {code_line}")
-                lines.append("    ```")
+                    lines.append(f"  {code_line}")
+                lines.append("  ```")
+            elif chunk.get("signature"):
+                lines.append(f"  Signature: {chunk['signature']}")
+
+            lines.append("")
+
+    if related_chunks:
+        rel_groups: OrderedDict[str, list[dict]] = OrderedDict()
+        for chunk in related_chunks[:MAX_RELATED_IN_CONTEXT]:
+            fp = chunk["file_path"]
+            if fp not in rel_groups:
+                rel_groups[fp] = []
+            rel_groups[fp].append(chunk)
+
+        lines.append("[RELATED CODE — connected via call graph]")
+        for file_path, chunks_in_file in rel_groups.items():
+            lines.append(f"  {file_path}:")
+            for chunk in chunks_in_file:
+                lines.append(
+                    f"    {chunk['name']} "
+                    f"(lines {chunk['start_line']}–{chunk['end_line']})"
+                )
+                if chunk.get("semantic_summary"):
+                    lines.append(f"      {chunk['semantic_summary']}")
+                code_body = chunk.get("code_body")
+                if code_body:
+                    lang = chunk.get("language", "")
+                    lines.append(f"      ```{lang}")
+                    for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
+                        lines.append(f"      {code_line}")
+                    lines.append("      ```")
         lines.append("")
 
     if branch_context:

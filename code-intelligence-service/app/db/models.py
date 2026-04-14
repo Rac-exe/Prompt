@@ -83,7 +83,7 @@ class RetrieveRequest(BaseModel):
     project_id: str
     query: str = Field(..., min_length=1, max_length=10_000)
     branch: Optional[str] = None
-    limit: int = Field(default=10, ge=1, le=25)
+    limit: int = Field(default=15, ge=1, le=50)
 
 
 class RetrievedChunk(BaseModel):
