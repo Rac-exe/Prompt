@@ -7,6 +7,135 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Lightning, ArrowRight, ArrowLeft, CircleNotch, Minus, Square, X, GithubLogo, Key } from '@phosphor-icons/react';
 import { OtpVerification } from './OtpVerification';
+import { motion } from 'motion/react';
+
+/* ─────────────────────────────────────────────────────────────
+   Rocket drop animation for the left panel hero
+   ───────────────────────────────────────────────────────────── */
+type HeroPhase = 'idle' | 'rocket-in' | 'logo-drop' | 'rocket-out' | 'text-in' | 'hold' | 'fade-out';
+
+function LoginHeroAnimation() {
+  const [phase, setPhase] = useState<HeroPhase>('idle');
+
+  useEffect(() => {
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const add = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms));
+    switch (phase) {
+      case 'idle':       add(() => setPhase('rocket-in'),   500);  break;
+      case 'rocket-in':  add(() => setPhase('logo-drop'),  1650);  break;
+      case 'logo-drop':  add(() => setPhase('rocket-out'),  350); break;
+      case 'rocket-out': add(() => setPhase('text-in'),     450); break;
+      case 'text-in':    add(() => setPhase('hold'),       1400); break;
+      case 'hold':       add(() => setPhase('fade-out'),   5500); break;
+      case 'fade-out':   add(() => setPhase('idle'),        600); break;
+    }
+    return () => timers.forEach(clearTimeout);
+  }, [phase]);
+
+  const rocketGone  = ['rocket-out', 'text-in', 'hold', 'fade-out'].includes(phase);
+  const logoVisible = !['idle', 'rocket-in'].includes(phase);
+  const textVisible = ['text-in', 'hold'].includes(phase);
+  const fadingOut   = phase === 'fade-out';
+
+  return (
+    <div className="relative z-10 flex flex-col items-center justify-center flex-1 text-center">
+      {/* Rocket + Logo — stacked at the same anchor point */}
+      <div className="relative flex items-center justify-center mb-6" style={{ width: 96, height: 96 }}>
+        {/* Rocket 🚀 */}
+        <motion.div
+          initial={{ x: 165, y: -170, opacity: 0, rotate: -80, scale: 1 }}
+          animate={
+            phase === 'idle'
+              ? { x: 165, y: -170, opacity: 0, rotate: -80, scale: 1 }
+              : phase === 'rocket-in'
+                ? {
+                    // Hook path: top-right → sweep left across top → down left side → curve back to center
+                    x:       [165,  -60, -160,  -50,   0],
+                    y:       [-170, -150,   15,   80,   0],
+                    opacity: [0,      1,    1,    1,    1],
+                    rotate:  [-80,  -65,   20,   30,   0],
+                    scale: 1,
+                  }
+                : rocketGone
+                  ? { x: 220, y: -150, opacity: 0, rotate: -30, scale: 0.55 }
+                  : phase === 'logo-drop'
+                    ? { x: 0, y: 8, opacity: 1, rotate: 6, scale: 0.92 }
+                    : { x: 0, y: 0, opacity: 1, rotate: 0, scale: 1 }
+          }
+          transition={
+            phase === 'rocket-in'
+              ? { duration: 1.55, ease: [0.4, 0, 0.2, 1], times: [0, 0.18, 0.52, 0.76, 1] }
+              : rocketGone
+                ? { type: 'spring', damping: 12, stiffness: 160, mass: 0.7 }
+                : { type: 'spring', damping: 16, stiffness: 130 }
+          }
+          style={{ position: 'absolute', fontSize: 56, lineHeight: 1, filter: 'drop-shadow(0 4px 12px rgba(0,0,0,0.15))' }}
+        >
+          🚀
+        </motion.div>
+
+        {/* Logo — appears where the rocket rested */}
+        <motion.div
+          animate={
+            fadingOut
+              ? { scale: 0.82, opacity: 0 }
+              : logoVisible
+                ? { scale: 1, opacity: 1 }
+                : { scale: 0, opacity: 0 }
+          }
+          transition={
+            logoVisible && !fadingOut
+              ? { type: 'spring', damping: 9, stiffness: 220, delay: 0.05 }
+              : { duration: 0.32 }
+          }
+          style={{ position: 'absolute' }}
+        >
+          <Logo size="w-20 h-20" />
+        </motion.div>
+      </div>
+
+      {/* Badge */}
+      <motion.div
+        animate={fadingOut ? { opacity: 0, y: -4 } : textVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }}
+        transition={{ duration: 0.42, delay: textVisible ? 0 : 0 }}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-muted text-emerald text-xs font-semibold tracking-wide mb-4"
+      >
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald animate-pulse-subtle" />
+        Optimization Studio
+      </motion.div>
+
+      {/* Title */}
+      <motion.h1
+        animate={fadingOut ? { opacity: 0, y: -4 } : textVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 18 }}
+        transition={{ duration: 0.42, delay: textVisible ? 0.14 : 0 }}
+        className="text-3xl font-bold text-foreground leading-tight mb-3"
+      >
+        Transform your prompts.<br />
+        <span className="text-gradient-primary">Amplify your results.</span>
+      </motion.h1>
+
+      {/* Description */}
+      <motion.p
+        animate={fadingOut ? { opacity: 0, y: -4 } : textVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }}
+        transition={{ duration: 0.42, delay: textVisible ? 0.28 : 0 }}
+        className="text-muted-foreground text-sm leading-relaxed max-w-xs mb-5"
+      >
+        Precision-engineered AI prompts that deliver clearer, faster, and more consistent outputs every time.
+      </motion.p>
+
+      {/* Feature pills */}
+      <motion.div
+        animate={fadingOut ? { opacity: 0, y: -4 } : textVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 10 }}
+        transition={{ duration: 0.42, delay: textVisible ? 0.42 : 0 }}
+        className="flex flex-wrap gap-2 justify-center"
+      >
+        {['AI-Powered Optimization', 'Prompt Library', 'Voice Input', 'Team Sharing'].map((f) => (
+          <span key={f} className="px-3 py-1 rounded-full bg-sidebar-accent text-sidebar-foreground text-xs font-medium border border-sidebar-border">{f}</span>
+        ))}
+      </motion.div>
+    </div>
+  );
+}
 
 interface LoginPageProps {
   onSwitchToSignup: () => void;
@@ -196,9 +325,9 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-        <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
-        <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
-        <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
+        <button onClick={() => (window.electronAPI as any)?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+        <button onClick={() => (window.electronAPI as any)?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+        <button onClick={() => (window.electronAPI as any)?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
       </div>
     </div>
   );
@@ -322,34 +451,8 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
           <span className="font-bold text-foreground text-lg tracking-tight">Prmpt</span>
         </div>
 
-        {/* Hero content */}
-        <div className="relative z-10 space-y-6">
-          <div className="space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-muted text-emerald text-xs font-semibold tracking-wide">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald animate-pulse-subtle" />
-              Optimization Studio
-            </div>
-            <h1 className="text-3xl font-bold text-foreground leading-tight">
-              Transform your prompts.<br />
-              <span className="text-gradient-primary">Amplify your results.</span>
-            </h1>
-            <p className="text-muted-foreground text-sm leading-relaxed max-w-xs">
-              Precision-engineered AI prompts that deliver clearer, faster, and more consistent outputs every time.
-            </p>
-          </div>
-
-          {/* Feature pills */}
-          <div className="flex flex-wrap gap-2">
-            {['AI-Powered Optimization', 'Prompt Library', 'Voice Input', 'Team Sharing'].map((f) => (
-              <span
-                key={f}
-                className="px-3 py-1 rounded-full bg-sidebar-accent text-sidebar-foreground text-xs font-medium border border-sidebar-border"
-              >
-                {f}
-              </span>
-            ))}
-          </div>
-        </div>
+        {/* Hero animation */}
+        <LoginHeroAnimation />
 
         {/* Footer quote */}
         <p className="relative z-10 text-xs text-muted-foreground/50 italic">
