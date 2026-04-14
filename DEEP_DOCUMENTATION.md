@@ -3728,3 +3728,722 @@ The security audit noted:
 ---
 
 *This document covers every aspect of the Prmpt codebase — from the physics of sound waves to the Win32 API calls in the Rust module, from the TCP handshake to the React component hierarchy. If you've read this, you understand not just what the code does, but why it works the way it does at every level.*
+
+---
+
+## Chapter 16: Code Intelligence Service — The Codebase Indexing Brain
+
+> **This entire service is new and not covered anywhere in the existing documentation.**
+
+### What It Is
+
+The Code Intelligence Service (`code-intelligence-service/`) is a standalone Python FastAPI microservice that provides **semantic code search and indexing** capabilities to the Prmpt desktop application. It runs on port **8002** (separate from the AI optimization service on port 8001) and is deployed to Render.com as its own service.
+
+Its purpose: when a user opens a project folder in the "Spaces" workspace, Prmpt reads every source file, extracts function/class/method definitions (structural skeletons) using Tree-sitter WASM grammars, generates LLM semantic summaries of each chunk, embeds those summaries as 1536-dimensional vectors, and stores them in Supabase using pgvector. When the user types a query, the service does cosine similarity search across all indexed chunks and returns the most relevant code segments — which are then injected into the prompt to make optimizations codebase-aware.
+
+### Architecture
+
+The service has four layers:
+
+1. **Routes** (`app/routes/`): Five FastAPI routers — `projects`, `ingest`, `retrieve`, `sync`, `webhooks`.
+2. **Services** (`app/services/`): Five domain services — `embedding`, `search`, `graph`, `github_sync`, `summarizer`.
+3. **Workers** (`app/workers/`): Three worker modules — `index_worker`, `sync_worker`, `arq_worker` (Redis-backed task queue).
+4. **DB** (`app/db/`): Raw Supabase queries, models (Pydantic), and client initialization.
+
+### Database Schema Tables (new tables in Supabase)
+
+| Table | Purpose |
+|-------|---------|
+| `projects` | One row per user project: `id`, `user_id`, `name`, `repo_url`, `local_path`, `current_branch`, `default_branch`, `index_status` (`stale`/`indexing`/`ready`/`error`/`partial`), `last_indexed_at`, `github_repo_owner`, `github_repo_name` |
+| `code_chunks` | One row per function/class/method: `id`, `project_id`, `user_id`, `file_path`, `start_line`, `end_line`, `chunk_type` (file/class/function/method), `name`, `signature`, `language`, `semantic_summary`, `embedding` (vector 1536), `content_hash`, `branch`, `branch_diverged`, `last_modified_commit` |
+| `code_relationships` | Call graph edges: `project_id`, `from_chunk_id`, `to_chunk_id`, `relationship_type` (calls/imports/inherits/implements). Unique on `(from_chunk_id, to_chunk_id, relationship_type)` |
+| `project_branches` | Branch metadata: `project_id`, `branch_name`, `last_commit_sha`, `last_commit_message`, `ahead_of_main_by`, `behind_main_by`, `diverged_files` (array of file paths) |
+
+A Supabase RPC function `match_code_chunks` (created via migration) does the pgvector cosine similarity search using the `embedding <=> query_embedding` operator with `LIMIT` and filters on `project_id`, `user_id`, and optionally `branch`.
+
+### Route Reference
+
+**`POST /api/projects`** — Create a project. Takes `name`, `repo_url`, `local_path`, `default_branch`, `github_repo_owner`, `github_repo_name`. Returns `ProjectResponse`. The index_status starts as `"stale"`.
+
+**`GET /api/projects`** — List all projects for the authenticated user, ordered by `created_at` descending.
+
+**`GET /api/projects/{project_id}`** — Get a single project (with ownership validation).
+
+**`DELETE /api/projects/{project_id}`** — Delete a project and all its `code_chunks`, `code_relationships`, and `project_branches` in sequence (no cascades — manually ordered to avoid FK constraint violations).
+
+**`DELETE /api/projects/{project_id}/chunks`** — Delete all chunks for a specific file path within a project. Called when a file is deleted from disk.
+
+**`POST /api/index/ingest`** (202 Accepted) — The main indexing endpoint. Receives an `IngestRequest` with `project_id`, `chunks` (list of up to 10,000 `ChunkInput`), `call_graph` (list of `CallGraphEdge`), `language_map` (dict of language to chunk count), and optional `branch`. Returns `202` immediately and runs indexing in the background (either via arq Redis queue if `REDIS_URL` is set and non-default, or via FastAPI `BackgroundTasks` otherwise). Updates `index_status` to `"indexing"` synchronously before returning.
+
+**`GET /api/retrieve`** — The semantic search endpoint. Parameters: `project_id`, `query` (string, max 10k chars), `branch` (optional), `limit` (1-25, default 10). Returns `RetrieveResponse` with `ranked_chunks`, `related_chunks`, and `branch_context`. Raises `409` if the project is currently indexing.
+
+**`POST /api/sync`** — Trigger GitHub polling sync for one or all projects. Body: `{ project_id?: string }`. If project_id is omitted, polls all GitHub-connected projects.
+
+**`POST /api/webhooks/github`** — Receives GitHub `push` events. Signature-verified via HMAC-SHA256 using `GITHUB_WEBHOOK_SECRET`. Extracts changed files from the push payload, marks corresponding chunks as `branch_diverged = true`, and upserts branch metadata. Supports both arq queue and direct processing.
+
+**`GET /health`** — Simple health check returning `{"status": "ok"}`.
+
+**`GET /health/ready`** — Readiness check that verifies Supabase connectivity and that at least one embedding key (`OPENAI_API_KEY` or `OPENROUTER_API_KEY`) is configured.
+
+### Ingest Pipeline: `index_worker.py`
+
+For each `ChunkInput` received from Electron:
+
+1. **Deduplication check**: Query `code_chunks` for a row matching `(project_id, file_path, name, content_hash)`. If found, skip — the chunk is unchanged.
+2. **Summarization**: Call `summarize_chunk()` — a synchronous LiteLLM call to `SUMMARIZER_MODEL` (default: `openrouter/anthropic/claude-3-haiku`). The system prompt instructs the model to produce a 1-2 sentence description of what the function does and why, in 60 tokens or less. If summarization fails, falls back to a concatenation of `name + signature + docstring[:100]`.
+3. **Embedding**: Call `embed_text(summary)` — async LiteLLM `embedding()` call using `text-embedding-3-small` (1536 dimensions) via OpenAI or `openrouter/openai/text-embedding-3-small` via OpenRouter. Retries up to 3 times with exponential backoff (1s, 2s, 4s).
+4. **Upsert**: `INSERT INTO code_chunks ... ON CONFLICT(project_id, file_path, name, chunk_type) DO UPDATE`. Stores the embedding, summary, content hash, branch, and resets `branch_diverged = False`.
+
+After all chunks are processed, `index_status` is set to `"ready"` (0 errors), `"partial"` (some errors), or `"error"` (all failed, 0 processed). `last_indexed_at` is set to the current UTC timestamp.
+
+### Search Pipeline: `search.py`
+
+The `retrieve_context()` function:
+
+1. **Embed the query**: Call `embed_text(query)` to get a 1536-dim vector.
+2. **Vector search**: Call the Supabase `match_code_chunks` RPC with `limit + 5` candidates (extra 5 to allow re-ranking to cut down to `limit`).
+3. **Re-ranking**: Score each candidate using `score = similarity * log(1 + observation_count) * branch_weight`. Branch weight is 1.3x if the chunk's branch matches the requested branch, and 1.2x additional if `branch_diverged` is True (recently changed files rank higher). Sort descending by final score.
+4. **Related chunks**: Take the top 5 ranked chunks, query `code_relationships` for their callers and callees (both incoming `from_chunk_id` and outgoing `to_chunk_id`), fetch those chunk records. These are returned as `related_chunks` — not vector-ranked but relationship-connected.
+5. **Branch context**: Query `project_branches` for the requested branch metadata (ahead/behind counts, last commit, diverged files). Returned as `branch_context`.
+
+### Call Graph Processing: `graph.py`
+
+`process_call_graph()` iterates over `CallGraphEdge` objects. For each edge, it looks up the `from_chunk` and `to_chunk` in `code_chunks` by `(project_id, name, file_path)`. If both are found, it upserts a row in `code_relationships`. Edges that reference unknown chunks (e.g., external library calls) are silently skipped and counted as `skipped`.
+
+Supported relationship types: `calls`, `imports`, `inherits`, `implements`.
+
+### GitHub Sync: `github_sync.py`
+
+**Phase 1 — Polling** (`poll_project()`): For a project with a non-main `current_branch`, calls the GitHub compare API (`/repos/{owner}/{repo}/compare/{default}...{branch}`) to get `ahead_by`, `behind_by`, and the list of changed files. Updates `project_branches` with this info and marks all changed file chunks as `branch_diverged = True`.
+
+**Phase 2 — Webhooks** (`webhooks.py`): Receives GitHub `push` events. Extracts added/modified/removed files from all commits in the push payload. Calls `flag_diverged_chunks()` to mark those file paths as stale. Upserts branch metadata with the HEAD commit SHA and message.
+
+**Webhook signature verification**: `verify_webhook_signature()` computes `HMAC-SHA256(GITHUB_WEBHOOK_SECRET, payload_bytes)` and compares with `X-Hub-Signature-256` header using `hmac.compare_digest()` — a timing-safe comparison that prevents timing attacks.
+
+### arq Redis Task Queue: `arq_worker.py`
+
+When `REDIS_URL` is set and points to a real Redis server (not the default `redis://localhost:6379`), the service uses `arq` for durable, retried background jobs:
+
+- **`WorkerSettings`**: `max_jobs = 10`, `job_timeout = 600s`, `max_tries = 3`, `health_check_interval = 30s`.
+- **`index_chunks_task`**: Deserializes `chunks_data` and `call_graph_data` (dicts for Redis serialization), runs `process_ingest_batch()` + `process_call_graph()`.
+- **`sync_project_task`**: Runs `process_push_webhook()` for webhook-triggered syncs.
+- **`enqueue_ingest()`** / **`enqueue_sync()`**: Use a shared arq connection pool (`create_pool()`) to push jobs to Redis.
+
+Without Redis (development), FastAPI's `BackgroundTasks` is used instead — simpler but not retried if the server restarts mid-indexing.
+
+### Middleware Stack
+
+From outermost to innermost:
+1. `SlowAPIMiddleware` — rate limiting (120 requests/minute per IP, using `slowapi`)
+2. `CORSMiddleware` — allows origins from `ALLOWED_ORIGINS` env var (defaults to localhost)
+3. `RequestIDMiddleware` — adds `X-Request-ID` response header (uses incoming header or generates UUID)
+
+### Authentication
+
+All routes use `require_auth` (from `app/auth.py`), a FastAPI `Depends` that:
+1. Extracts `Authorization: Bearer <token>` from the request header
+2. Decodes the Supabase JWT using `SUPABASE_JWT_SECRET` (HS256) via `PyJWT`
+3. Returns the decoded payload (including `sub` = user ID) on success
+4. Raises `HTTP 401` on missing/invalid/expired token
+
+### Configuration (`config.py`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SUPABASE_URL` | (required) | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | (required) | Service role for admin DB access |
+| `SUPABASE_JWT_SECRET` | (required) | JWT verification secret |
+| `OPENAI_API_KEY` | — | Direct OpenAI embeddings (primary) |
+| `OPENROUTER_API_KEY` | — | OpenRouter for embeddings + summarization (fallback/alternative) |
+| `SUMMARIZER_MODEL` | `openrouter/anthropic/claude-3-haiku` | LLM for chunk summarization |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `EMBEDDING_DIMENSIONS` | `1536` | Vector dimensions |
+| `GITHUB_WEBHOOK_SECRET` | — | Webhook HMAC secret |
+| `REDIS_URL` | `redis://localhost:6379` | arq job queue (non-default = use arq) |
+| `APP_ENV` | `development` | Sentry environment tag |
+| `APP_VERSION` | `1.0.1` | Release tag in Sentry |
+| `SENTRY_DSN` | — | Code-intel Sentry project DSN |
+| `MAX_CHUNKS_PER_INGEST` | `10,000` | Hard cap on chunks per ingest request |
+| `SUMMARY_MAX_TOKENS` | `80` | LLM summary token cap |
+| `RETRIEVAL_DEFAULT_LIMIT` | `10` | Default search result count |
+| `RETRIEVAL_MAX_LIMIT` | `25` | Maximum search result count |
+| `GITHUB_POLLING_INTERVAL_SECONDS` | `300` | Cron sync frequency (5 minutes) |
+
+### Deployment
+
+The service uses a `Dockerfile` (Python 3.12-slim base, uvicorn entrypoint on port 8002) and a `render.yaml` for one-click Render.com deployment. The Electron app connects to it via `CODE_INTELLIGENCE_SERVICE_URL` environment variable (defaults to `http://127.0.0.1:8002` for local development).
+
+### Dependencies (`requirements.txt`)
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `fastapi` | 0.128.0 | HTTP + WebSocket framework |
+| `uvicorn[standard]` | 0.40.0 | ASGI server |
+| `pydantic` | 2.12.5 | Request/response validation |
+| `httpx` | 0.28.1 | Async HTTP (GitHub API calls) |
+| `PyJWT` | >=2.9.0 | JWT verification |
+| `cryptography` | >=44.0.0 | Crypto primitives for JWT |
+| `sentry-sdk[fastapi]` | 2.56.0 | Error tracking + LoggingIntegration |
+| `slowapi` | 0.1.9 | Rate limiting middleware |
+| `litellm` | 1.81.14 | LLM abstraction (embeddings + summarization) |
+| `supabase` | 2.15.2 | DB client |
+| `python-dotenv` | 1.1.0 | .env file loading |
+| `arq` | 0.26.1 | Redis-backed async task queue |
+| `redis` | 5.3.0 | Redis client (arq dependency) |
+
+---
+
+## Chapter 17: The Spaces Feature — Project-Aware Prompt Workspaces
+
+> **This entire feature is new and not covered anywhere in the existing documentation.**
+
+### What Spaces Are
+
+"Spaces" is a new top-level navigation section in the App Window sidebar (rendered by `ProjectsView`). A Space is a named workspace that combines:
+
+- One or more **local project folders** attached to it (each connected to a project record in the Code Intelligence Service).
+- A **chat thread** (user/assistant message history, stored in localStorage).
+- A **Project Mode toggle** — when on, every prompt sent is enriched with retrieved code context before being sent to the AI optimizer.
+- **Index status tracking** — the UI shows whether each attached project is `ready`, `indexing`, or `stale`, along with the last indexed timestamp and current git branch.
+
+The entry point is `ProjectsView` (`app-ui/src/components/projects/ProjectsView.tsx`), which shows an onboarding screen (when empty), a space card grid (`SpacesList`), or the active workspace detail (`SpaceWorkspace`).
+
+### Data Model and Local Persistence
+
+All Space data is stored in **localStorage** under the key `"prmpt_spaces"`. There is no Supabase persistence for Spaces — they are local to the machine.
+
+```typescript
+interface Space {
+  id: string;                 // UUID, generated at creation
+  name: string;               // User-defined name
+  projects: SpaceProject[];   // Attached project folders
+  messages: SpaceMessage[];   // Chat history (user + assistant turns)
+  projectMode: boolean;       // Whether context injection is active
+  createdAt: number;          // Unix timestamp (ms)
+  lastUsedAt: number;         // Updated on every interaction
+}
+
+interface SpaceProject {
+  projectId: string;          // ID from Code Intelligence Service
+  name: string;               // Folder basename
+  localPath: string;          // Absolute local path on disk
+  branch?: string;            // Git branch at time of add
+  indexStatus?: string;       // Last known status (for display)
+}
+
+interface SpaceMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;          // Unix timestamp (ms)
+  feedback?: { rating: "positive" | "negative" };
+}
+```
+
+`loadSpaces()` includes a **schema migration**: old Space objects that had a `history` field (array of `{ id, issue, optimizedPrompt, timestamp }`) are automatically converted to the new `messages` format (one user message + one assistant message per history entry).
+
+### Adding a Project Folder
+
+When a user clicks "Add Folder" in `SpaceWorkspace`:
+
+1. `electronAPI.project.add()` is called (IPC channel `project:add`).
+2. In the main process (`project-handlers.ts`), `dialog.showOpenDialog({ properties: ['openDirectory'] })` opens the native folder picker.
+3. The folder path is checked with `isGitRepo()` (running `git rev-parse --is-inside-work-tree`).
+4. If it's a git repo: `getBranchInfo()` fetches the current branch, and `getGitRemoteUrl()` + `parseGitHubUrl()` extract the GitHub owner/repo if the remote is on GitHub.
+5. `CodeIntelClient.createProject()` sends `POST /api/projects` with name, local_path, repo_url, default_branch, github_repo_owner, github_repo_name.
+6. `performFullScan()` is triggered immediately as a background task — it walks the directory tree, parses every source file, and sends the chunks to the Code Intelligence Service for indexing.
+7. Status is broadcast to both the overlay and app window via IPC.
+
+### File Watching
+
+When a project is attached to a Space and Project Mode is on, `api.toggleWatching(projectId, localPath, true)` is called (IPC `project:toggle-watching`). This starts a chokidar watcher on the folder. When Project Mode is turned off or the Space is navigated away from, `toggleWatching(..., false)` stops the watcher.
+
+The `watchStartedRef` in `SpaceWorkspace` tracks which project IDs already have watchers started (to avoid double-starting on re-renders).
+
+### Context Injection Flow (Project Mode)
+
+When the user types a query and presses Send in Project Mode:
+
+1. `retrieve()` is called for each attached project: `electronAPI.project.retrieve({ project_id, query, branch, limit: 10 })` (IPC `project:retrieve` → `CodeIntelClient.retrieve()` → `GET /api/retrieve`).
+2. All `ranked_chunks` from all projects are merged and sorted by `similarity_score` descending. The top 10 are kept.
+3. All `related_chunks` (callers/callees of top results) are merged; the top 5 are kept.
+4. `buildTailoredPrompt(query, rankedChunks, relatedChunks)` constructs the enriched prompt string injecting the code context as structured markdown.
+5. This tailored prompt is sent to `electronAPI.optimizePrompt(tailoredPrompt, false, undefined, "thinking", "space")`.
+6. The optimization streams back via `onOptimizationChunk` / `onOptimizationComplete` events, filtered by `source === 'space'` to avoid collision with main chat stream events.
+7. The streaming response is rendered in the Space's chat thread using `useSmoothStreaming`.
+
+### `buildTailoredPrompt()` Format
+
+```
+{original user query}
+
+Here are the most relevant parts of my codebase for this task:
+
+- **{name}** ({chunk_type}) in `{...shortened_path}` (lines {start}-{end})
+  Signature: `{signature}`
+  Summary: {semantic_summary}
+
+Related/connected code:
+- **{name}** in `{...shortened_path}`
+  {semantic_summary}
+
+Please provide a detailed, step-by-step plan considering these specific files and functions.
+Include exact file paths and function names in your response.
+```
+
+`shortenPath()` trims paths to the last 3 segments with `...` prefix when longer (e.g., `".../src/auth/login.ts"`).
+
+### Index Status UI
+
+The right panel of `SpaceWorkspace` shows each attached project with:
+- A colored dot (green = ready, amber = indexing + CSS pulse animation, red = stale).
+- The index status label.
+- The current git branch (with a `GitBranch` icon).
+- Time since last indexed (e.g., "2h ago"), computed client-side.
+- On hover: "Re-index" and "Remove" buttons.
+
+`broadcastProjectStatus()` in `project-handlers.ts` sends `project:status-update` to the app window and `overlay:project-status` to the overlay, which updates `projectStatuses` state in real-time.
+
+If a project has `index_status === "stale"` when the Space is loaded, `api.reindex()` is called automatically.
+
+---
+
+## Chapter 18: Code Parser — Tree-Sitter WASM Code Parsing
+
+> **This module is new and not covered anywhere in the existing documentation.**
+
+`electron/main/services/code-parser.ts` runs entirely in the **Electron main process** and uses **web-tree-sitter** (the WASM build of Tree-sitter) to parse source files into structural skeletons without executing the code.
+
+### Initialization
+
+`initializeParser()` dynamically requires `web-tree-sitter` and calls its `init()` method to load the WASM binary. This is called lazily before the first parse. Each language grammar is loaded on demand via `Language.load(wasmPath)` and cached in `languageParsers: Map<string, any>`.
+
+### Supported Languages
+
+| File Extensions | Language | Grammar WASM |
+|----------------|---------|-------------|
+| `.js`, `.jsx` | javascript | `tree-sitter-javascript.wasm` |
+| `.ts`, `.tsx` | typescript | `tree-sitter-typescript.wasm` |
+| `.py` | python | `tree-sitter-python.wasm` |
+| `.go` | go | `tree-sitter-go.wasm` |
+| `.rs` | rust | `tree-sitter-rust.wasm` |
+| `.java` | java | `tree-sitter-java.wasm` |
+| `.rb` | ruby | `tree-sitter-ruby.wasm` |
+| `.c`, `.h` | c | `tree-sitter-c.wasm` |
+| `.cpp`, `.hpp` | cpp | `tree-sitter-cpp.wasm` |
+| `.cs` | c_sharp | `tree-sitter-c_sharp.wasm` |
+
+WASM files are stored in `tree-sitter-wasms/` at the project root.
+
+### `parseFile(filePath, content): Promise<ChunkData[]>`
+
+1. Detect language from extension. Return `[]` if unsupported.
+2. Load grammar parser for the detected language.
+3. Call `parser.parse(content)` to get a CST.
+4. **Import collection**: Walk the entire tree for import-type nodes and collect their text (up to 200 chars each).
+5. **Chunk extraction** (`walkForChunks()` recursive traversal):
+   - **Class nodes**: Create a `class` chunk. Recurse into children to find method nodes (which become `method` chunks named `{ClassName}.{methodName}`).
+   - **Function nodes**: Create a `function` chunk. Extract `name` via `childForFieldName('name')`, `signature` via `parameters` + optional `return_type` (truncated to 500 chars), `docstring` from the first string literal in the body or a preceding comment node (truncated to 500 chars), and `callees` by walking child nodes for call expressions (max 50, method calls stripped to bare function name).
+   - Skip anonymous functions (`name === '<anonymous>'`).
+6. **File-level fallback**: If no chunks were extracted, create a single `file` chunk for the whole file using the basename.
+7. **Content hash**: `sha256(node.text).hex().slice(0, 16)` — used for deduplication.
+
+### `ChunkData` Structure
+
+```typescript
+{
+  file_path: string,       // relative path
+  start_line: number,      // 1-indexed
+  end_line: number,
+  chunk_type: 'file' | 'class' | 'function' | 'method',
+  name: string,            // e.g., "AuthService.login"
+  signature?: string,      // e.g., "(email: string): Promise<User>"
+  language: string,
+  docstring?: string,      // first docstring/comment, max 500 chars
+  content_hash: string,    // 16-char hex sha256
+  callees: string[],       // called function names, max 50
+  imports: string[],       // file-level import texts
+}
+```
+
+---
+
+## Chapter 19: File Watcher — Incremental Re-indexing on File Changes
+
+> **This module is new and not covered anywhere in the existing documentation.**
+
+`electron/main/services/file-watcher.ts` uses **chokidar** to monitor project directories for file changes and triggers incremental re-indexing.
+
+### `startWatching(projectId, projectPath, client, branch?)`
+
+Creates a chokidar watcher with:
+- `persistent: true` — keeps watching until explicitly stopped
+- `ignoreInitial: true` — does not fire events for pre-existing files
+- `awaitWriteFinish: { stabilityThreshold: 500ms, pollInterval: 200ms }` — waits for writes to stabilize before emitting
+- `ignored` patterns: `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.venv`, `venv`, `.next`, `target`, `*.min.js`, `*.map`, `*.lock`, `package-lock.json`, `yarn.lock`
+
+All `change` and `add` events are **debounced at 2000ms** per file — rapid saves only trigger one reindex.
+
+### On File Change / Add (`handleFileChange`)
+
+1. Check if file language is supported. Skip if not.
+2. Skip files larger than 500KB.
+3. Compute SHA-256 hash of file content.
+4. Compare with cached hash from `local-project-cache.ts`. Skip if unchanged.
+5. Parse file with `parseFile()`.
+6. If chunks extracted: update local cache hash, call `client.ingestSkeleton()`.
+
+### On File Delete (`unlink`)
+
+1. Clear the file's entry from local SQLite cache.
+2. Call `client.deleteChunksForFile(projectId, relativePath)`.
+
+### `performFullScan(projectId, projectPath, client, branch?, onProgress?)`
+
+Recursively collects all parseable files (skipping hidden dirs, node_modules, dist, build, target, venv). For each file:
+1. Skip if >500KB.
+2. Check hash against local cache. Skip unchanged files (incremental).
+3. Parse with `parseFile()` and accumulate chunks.
+
+The full batch is sent in **500-chunk sub-batches** to avoid HTTP payload size limits. Returns `{ totalFiles, totalChunks }`. The `onProgress` callback is called every 50 files for progress display in the UI.
+
+### State Management
+
+`activeWatchers: Map<string, WatcherState>` tracks all running watchers. Each `WatcherState` contains the chokidar watcher instance, projectId, projectPath, and a `debounceTimers` Map per file path.
+
+`stopAllWatchers()` is called on app quit to close all chokidar instances and cancel pending debounce timers.
+
+---
+
+## Chapter 20: Git Service — Local Repository Introspection
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/services/git-service.ts` wraps the `git` CLI via `child_process.execFile`. All operations use a 10-second timeout and 1MB buffer.
+
+### Functions
+
+| Function | Git Command | Returns |
+|----------|------------|---------|
+| `isGitRepo(path)` | `git rev-parse --is-inside-work-tree` | `boolean` |
+| `getCurrentBranch(path)` | `git rev-parse --abbrev-ref HEAD` | branch name string |
+| `getDefaultBranch(path)` | `git symbolic-ref refs/remotes/origin/HEAD --short` | branch name (fallback: `main` or `master`) |
+| `getAheadBehind(path, branch, default)` | `git rev-list --left-right --count origin/{default}...{branch}` | `{ ahead, behind }` |
+| `getRecentCommits(path, count)` | `git log --max-count={n} --format=%H|%s|%an|%aI` | `GitCommitInfo[]` |
+| `getChangedFiles(path, default)` | `git diff --name-only origin/{default}...HEAD` | `string[]` |
+| `getGitRemoteUrl(path)` | `git config --get remote.origin.url` | URL string or `null` |
+| `parseGitHubUrl(url)` | (regex) | `{ owner, repo }` or `null` |
+| `getBranchInfo(path)` | (aggregates all above) | `GitBranchInfo` |
+
+`parseGitHubUrl()` matches both HTTPS (`https://github.com/owner/repo`) and SSH (`git@github.com:owner/repo`) formats.
+
+---
+
+## Chapter 21: Local Project Cache — SQLite File Hash Store
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/database/local-project-cache.ts` maintains a **SQLite database** at `{userData}/project-cache.db` using the synchronous `better-sqlite3` library.
+
+**Purpose**: Avoid re-parsing and re-sending unchanged files. Before parsing any file, the watcher checks the local cache; if the content hash matches the last successfully indexed version, the file is skipped.
+
+**Schema**:
+```sql
+CREATE TABLE file_cache (
+  project_id    TEXT NOT NULL,
+  file_path     TEXT NOT NULL,      -- relative path
+  content_hash  TEXT NOT NULL,      -- 16-char hex SHA-256
+  chunk_count   INTEGER NOT NULL DEFAULT 0,
+  last_parsed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (project_id, file_path)
+)
+```
+
+WAL journal mode is enabled for better concurrent read performance.
+
+**API**: `getCachedHash(projectId, filePath)`, `setCachedHash(projectId, filePath, contentHash, chunkCount)`, `clearProjectCache(projectId)`, `clearFileCache(projectId, filePath)`, `getProjectFileCount(projectId)`.
+
+If `better-sqlite3` is not available, all functions gracefully degrade (return `null`/`0`) — the watcher still works but every file is treated as changed.
+
+---
+
+## Chapter 22: Code Intelligence Client — Electron-Side HTTP Client
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/api/code-intel-client.ts` is the axios-based HTTP client that the Electron main process uses to communicate with the Code Intelligence Service.
+
+`CodeIntelClient` is initialized with `baseUrl` from `CODE_INTELLIGENCE_SERVICE_URL` env var (defaults to `http://127.0.0.1:8002`). It uses an **axios request interceptor** to automatically attach `Authorization: Bearer {currentAccessToken}` from `authState` to every outgoing request.
+
+Timeouts: 120s for most requests, 300s for `ingestSkeleton()` (large batch operations may take longer).
+
+---
+
+## Chapter 23: Project IPC Handlers
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/ipc-handlers/project-handlers.ts` registers all project-related IPC channels. These are exposed via `electronAPI.project.*` in the preload.
+
+| IPC Channel | Action |
+|-------------|--------|
+| `project:add` | Native folder dialog, git detection, `createProject()`, initial full scan |
+| `project:remove` | Stop watcher, `deleteProject()`, clear local cache, broadcast null status |
+| `project:list` | Return all user projects |
+| `project:status` | Return single project info |
+| `project:set-active` | Set active project, start watcher, broadcast status |
+| `project:get-active` | Return `{ projectId, branch }` |
+| `project:reindex` | Clear cache, broadcast `indexing`, `performFullScan()` with progress, broadcast result |
+| `project:sync` | Call `client.syncProject()` |
+| `project:toggle-watching` | `startWatching()` or `stopWatching()` |
+| `project:is-watching` | Return `isWatching(projectId)` |
+| `project:retrieve` | Call `client.retrieve(params)` |
+
+`broadcastProjectStatus(data)` sends `overlay:project-status` to the overlay and `project:status-update` to the app window simultaneously.
+
+---
+
+## Chapter 24: Analytics Service — Session Tracking and Usage Events
+
+> **This feature is new and not covered in the existing documentation.**
+
+### `AnalyticsService` (`electron/main/analytics/analytics-service.ts`)
+
+Singleton (`analyticsService`) that manages:
+1. **App sessions**: `app_sessions` Supabase table row created on `startSession()`, updated with duration on `endSession()`.
+2. **Usage events**: Discrete named events queued in `EventBuffer` and batch-flushed to `usage_events` table.
+
+**Crash recovery**: On `startSession()`, any session rows where `ended_at IS NULL` are closed first with `duration_seconds = null` (indicating unclean termination).
+
+All public methods are designed to never throw — exceptions are captured to Sentry but never surfaced.
+
+### `EventBuffer` (`electron/main/analytics/event-buffer.ts`)
+
+Batched write system for analytics events:
+- **Auto-flush**: Every **10 seconds** via `setInterval`, or immediately when buffer reaches **50 events**.
+- **Offline persistence**: If a Supabase flush fails, events are written to `{userData}/offline-cache/analytics-{userId}.json`. On next `initialize()`, `drainOfflineQueue()` retries the upload and deletes the file on success.
+- **Shutdown flush**: `flushSync()` is awaited on app quit to ensure no events are lost.
+
+### Database Tables
+
+| Table | Columns |
+|-------|---------|
+| `app_sessions` | `id UUID`, `user_id`, `app_version`, `platform`, `started_at`, `ended_at`, `duration_seconds` |
+| `usage_events` | `id UUID`, `user_id`, `event_type`, `metadata JSONB`, `created_at` |
+| `user_feedback` | `id UUID`, `user_id`, `rating` (positive/negative), `comment TEXT`, `created_at` |
+
+---
+
+## Chapter 25: Clarification System — Pre-Optimization Questionnaire
+
+> **This feature is new and not covered in the existing documentation.**
+
+### Overview
+
+Before the optimizer runs, the Python service can optionally return a set of clarification questions about the user's prompt. Answering these helps the optimizer produce more targeted output.
+
+### `ClarificationCard` (`app-ui/src/components/chat/ClarificationCard.tsx`)
+
+Rendered inline in the chat stream before the optimized response appears.
+
+**Question types**:
+- `multiple_choice` — multi-select by default (checkboxes). "Delivery format" questions (detected by keywords: "task sections", "broken into", "delivery", "one complete", "delivered") are single-select (radio buttons).
+- `text` — free-text input.
+
+**UX details**:
+- Questions fade in one by one with a 120ms stagger (CSS `translate-y` + `opacity` transition).
+- An "Other" option with a revealed text input is added to all multiple-choice questions.
+- A progress bar shows which questions have been answered.
+- An "Anything else?" free-text textarea is always shown at the bottom.
+- The "Optimize" button brightens once at least one answer is given.
+- `compact` prop renders a smaller variant for use in the Overlay.
+- `initialAnswers` pre-fills all fields for re-edit mode.
+
+**`wantsSections` detection**: If the user selected an option containing "section", "broken", or "task" in the delivery-format question, `wantsSections = true` is passed to `onSubmit`. The optimizer uses this to generate a multi-section structured output rather than a single block.
+
+**Answer serialization**: Multiple-choice answers are joined with `", "`. Free-text "Other" input is appended to the same string. `parseAnswerToSelections()` reverses this on re-edit.
+
+### `ClarificationSummaryCard` (`app-ui/src/components/chat/ClarificationSummaryCard.tsx`)
+
+Shown after optimization completes, displaying which preferences were selected. Features:
+- A "Tasks" or "Single" mode badge.
+- Each answered question with pill badges for selected values.
+- "Additional context" text if provided.
+- An "Edit" button that replaces the summary with a pre-filled `ClarificationCard` for re-optimization.
+
+---
+
+## Chapter 26: Feedback System
+
+> **This feature is new and not fully covered in the existing documentation.**
+
+### Inline Message Feedback (`FeedbackWidget`)
+
+`app-ui/src/components/chat/FeedbackWidget.tsx` renders thumbs-up/thumbs-down buttons below assistant messages. Selecting a rating calls `onFeedback(messageId, rating)`, then auto-dismisses after 900ms. Accepts `initialRating` prop for persisted ratings.
+
+### App-Level Feedback Modal (`FeedbackModal`)
+
+`app-ui/src/components/feedback/FeedbackModal.tsx` is a `Dialog` for rating the overall app experience. Renders rating buttons, optional comment textarea (shown after rating is selected with fade-in animation), and submit. Shows a success animation on submit, then closes after 1.5s.
+
+### IPC Handler (`feedback-handlers.ts`)
+
+`feedback:submit` IPC channel saves `{ rating, comment }` to the `user_feedback` Supabase table under the authenticated user's ID. Errors are captured to Sentry.
+
+---
+
+## Chapter 27: Skill System — Optimization Domain Skills
+
+> **This feature is new and not covered in the existing documentation.**
+
+Skills are markdown files in the `files/` directory, named `skill_{name}.md`. The Python service injects the selected skill's content into the optimizer system prompt to apply domain-specific guidance.
+
+### `registerSkillHandlers()` (`electron/main/ipc-handlers/skill-handlers.ts`)
+
+`skills:list` IPC channel:
+1. Resolves the skills directory: `files/` (dev) or `process.resourcesPath/files` (packaged).
+2. Finds all `skill_*.md` files.
+3. Parses each with `parseSkillMetadata()`:
+   - **Label**: First `# Heading` line, `SKILL FILE:` prefix stripped, title-cased.
+   - **Description**: First two bullet points from the `## WHEN TO USE THIS SKILL` section, joined with `", "`, truncated to 80 chars.
+4. Returns alphabetically sorted `SkillInfo[]`: `{ name, label, description }`.
+
+`app-ui/src/components/chat/SkillPicker.tsx` renders the skill selection UI in the chat input. `app-ui/src/lib/skillIcons.tsx` maps skill names to Phosphor icon components.
+
+---
+
+## Chapter 28: AI Guardrails — Request Deduplication and Rate Control
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/optimization/ai-guardrails.ts` — `AIGuardrails` class — protects against spam and concurrent request conflicts.
+
+### Rules
+
+| Rule | Value | Effect |
+|------|-------|--------|
+| Minimum length | 10 chars | Rejects very short prompts |
+| Similarity threshold | 0.9 (90%) | Skips near-duplicate requests (Levenshtein distance) |
+| Cooldown | 3000ms | Enforces 3-second gap between requests |
+| Max in-flight | 1 | Rejects if an optimization is already running |
+
+### `optimize(promptText, requestId, skipCache)`
+
+If an in-flight request with the same `requestId` exists and `skipCache` is false, returns the existing promise (deduplication). Otherwise creates a new optimization request, stores the promise in `inFlightRequests`, and removes it on completion.
+
+### Levenshtein Similarity
+
+```
+similarity = 1 - (levenshteinDistance(a, b) / max(len(a), len(b)))
+```
+
+A score above 0.9 means the texts are considered too similar to re-optimize.
+
+---
+
+## Chapter 29: New Overlay Components
+
+> **These components are new and not covered in the existing documentation.**
+
+### `ChatPicker` (`app-ui/src/overlay/components/ChatPicker.tsx`)
+
+A modal panel inside the overlay for selecting an existing app-window chat to attach as context. On open, loads the full chat list via `window.electronAPI.overlay.getChats()`. Renders a search input that filters by title, a scrollable list, and confirm/cancel buttons. Escape closes the picker. Confirming calls `onConfirm(chatId, chatName)`.
+
+### `ProjectStatus` (`app-ui/src/overlay/components/ProjectStatus.tsx`)
+
+A small status badge in the overlay header. Subscribes to `api.project.onOverlayStatus()` for real-time status updates. Shows:
+- A colored dot (green/amber/red) with a pulsing animation when indexing.
+- Project name + optional branch name.
+- Indexing percentage when `status === 'indexing'` and `progress` is provided.
+- Returns `null` if no active project.
+
+### `CollectionPicker` (`app-ui/src/overlay/components/CollectionPicker.tsx`)
+
+A modal panel in the overlay for selecting a prompt library collection to save the current optimization result to.
+
+---
+
+## Chapter 30: History View
+
+`app-ui/src/components/history/HistoryView.tsx` — a read-only list of past chat sessions grouped by date.
+
+**Date grouping**: "Today", "Yesterday", named weekday (within 7 days), or formatted date. Grouping is done client-side in a `reduce()`.
+
+**`HistoryItem`**: `{ id, title, preview, date: Date, messageCount }`. Rendered as clickable bordered cards with truncated title, message count badge, and relative timestamp. Clicking calls `onSelectItem(id)` to navigate to the chat.
+
+---
+
+## Chapter 31: Updated File Map — All New Files Since Last Documentation
+
+### `code-intelligence-service/` (entirely new service)
+
+| File | Purpose |
+|------|---------|
+| `app/main.py` | FastAPI factory, middleware, router registration, health endpoints |
+| `app/config.py` | All environment variables and runtime constants |
+| `app/auth.py` | JWT Bearer auth FastAPI dependency |
+| `app/routes/projects.py` | Project CRUD (create/list/get/delete/delete-chunks) |
+| `app/routes/ingest.py` | Async chunk ingestion (202, arq or BackgroundTasks) |
+| `app/routes/retrieve.py` | Semantic search with re-ranking |
+| `app/routes/sync.py` | GitHub polling sync endpoint |
+| `app/routes/webhooks.py` | GitHub push webhook receiver with HMAC verification |
+| `app/services/embedding.py` | LiteLLM embedding with retry backoff |
+| `app/services/search.py` | Vector search + re-ranking + related chunks |
+| `app/services/graph.py` | Call graph edge resolution and relationship upsert |
+| `app/services/github_sync.py` | GitHub API polling and webhook utilities |
+| `app/services/summarizer.py` | LLM-based 60-token semantic chunk summaries |
+| `app/db/models.py` | Pydantic request/response models for all routes |
+| `app/db/queries.py` | All raw Supabase queries (CRUD, vector search RPC, branch ops) |
+| `app/db/supabase_client.py` | Supabase client singleton (service role) |
+| `app/workers/index_worker.py` | Per-chunk pipeline: hash check → summarize → embed → upsert |
+| `app/workers/sync_worker.py` | Webhook-triggered delta re-indexing worker |
+| `app/workers/arq_worker.py` | arq WorkerSettings, task functions, enqueue helpers |
+| `Dockerfile` | Python 3.12-slim, uvicorn on port 8002 |
+| `render.yaml` | Render.com deployment configuration |
+| `requirements.txt` | Python dependency list |
+
+### `electron/main/` (new files)
+
+| File | Purpose |
+|------|---------|
+| `analytics/analytics-service.ts` | Session tracking + event logging singleton |
+| `analytics/event-buffer.ts` | Batched analytics flusher with offline JSON persistence |
+| `api/code-intel-client.ts` | axios HTTP client for Code Intelligence Service |
+| `database/local-project-cache.ts` | better-sqlite3 file hash cache for incremental indexing |
+| `ipc-handlers/feedback-handlers.ts` | `feedback:submit` IPC → `user_feedback` Supabase table |
+| `ipc-handlers/project-handlers.ts` | All project/space IPC channels |
+| `ipc-handlers/skill-handlers.ts` | `skills:list` IPC → parse skill markdown files |
+| `optimization/ai-guardrails.ts` | Request deduplication, cooldown, similarity, in-flight limits |
+| `optimization/response-validator.ts` | AI response structure validation |
+| `optimization/session-state.ts` | Per-session optimization phase state machine |
+| `optimization/stability-tracker.ts` | Optimization request success rate tracking |
+| `services/code-parser.ts` | web-tree-sitter WASM code parser (13 languages, 4 chunk types) |
+| `services/file-watcher.ts` | Chokidar watcher with 2s debounce and incremental ingest |
+| `services/git-service.ts` | Git CLI wrapper (branch, commits, ahead/behind, remote URL) |
+
+### `app-ui/src/` (new files)
+
+| File | Purpose |
+|------|---------|
+| `components/chat/ClarificationCard.tsx` | Pre-optimization questionnaire with multi-select, stagger animation |
+| `components/chat/ClarificationSummaryCard.tsx` | Post-optimization preference summary with re-edit |
+| `components/chat/FeedbackWidget.tsx` | Inline thumbs up/down message rating |
+| `components/chat/SkillPicker.tsx` | Skill selection UI in chat input |
+| `components/feedback/FeedbackModal.tsx` | App-level rating dialog with optional comment |
+| `components/history/HistoryView.tsx` | Date-grouped chat history list |
+| `components/projects/ProjectsView.tsx` | Top-level Spaces navigation view |
+| `components/projects/SpacesList.tsx` | Card grid of all user Spaces |
+| `components/projects/SpaceWorkspace.tsx` | Space detail: chat thread, project panel, context toggle |
+| `components/projects/types.ts` | Space data types, localStorage helpers, `buildTailoredPrompt()` |
+| `lib/skillIcons.tsx` | Skill name to Phosphor icon component mapping |
+| `overlay/components/ChatPicker.tsx` | Overlay modal for attaching existing chat context |
+| `overlay/components/CollectionPicker.tsx` | Overlay modal for saving to prompt library collection |
+| `overlay/components/ProjectStatus.tsx` | Overlay project indexing status badge |
+
+### `tree-sitter-wasms/` (new directory)
+
+WASM grammar files used by `code-parser.ts`:
+`tree-sitter-javascript.wasm`, `tree-sitter-typescript.wasm`, `tree-sitter-python.wasm`, `tree-sitter-go.wasm`, `tree-sitter-rust.wasm`, `tree-sitter-java.wasm`, `tree-sitter-ruby.wasm`, `tree-sitter-c.wasm`, `tree-sitter-cpp.wasm`, `tree-sitter-c_sharp.wasm`.
+
+---
+
+*Documentation last extended: April 2026. Chapters 16–31 cover the Code Intelligence Service, Spaces workspaces, code parsing pipeline, file watching, git integration, analytics system, clarification questionnaire, feedback system, skill system, AI guardrails, and all new overlay components — none of which appeared in the original documentation.*
