@@ -1,6 +1,7 @@
 """
-Hybrid retrieval engine: vector search + full-text search → Reciprocal
-Rank Fusion → rerank → multi-hop graph expansion → observation tracking.
+Hybrid retrieval engine: query decomposition → multi-query vector search +
+full-text search + concept search → Reciprocal Rank Fusion → rerank →
+multi-hop graph expansion → observation tracking.
 """
 
 import math
@@ -9,9 +10,11 @@ import time
 import logging
 from typing import Optional
 from app.services.embedding import embed_text
+from app.services.query_analyzer import decompose_query
 from app.db.queries import (
     vector_search,
     text_search,
+    concept_search,
     get_related_chunks_multihop,
     get_branch_context,
     increment_observation_counts,
@@ -121,7 +124,7 @@ def _rerank(
 ) -> list[dict]:
     """
     Re-rank fused candidates using:
-    score = rrf_score * min(log(2 + obs), 2.0) * branch_weight * concept_boost
+    score = rrf_score * obs_factor * branch_weight * concept_boost * export_boost
     """
     for chunk in chunks:
         base = chunk.get("rrf_score", chunk.get("similarity", 0.0))
@@ -139,8 +142,9 @@ def _rerank(
             if overlap:
                 concept_boost = 1.0 + 0.15 * overlap
 
+        export_boost = 1.2 if chunk.get("is_exported") else 1.0
         obs_factor = min(math.log(2 + obs), 2.0)
-        chunk["final_score"] = base * obs_factor * branch_weight * concept_boost
+        chunk["final_score"] = base * obs_factor * branch_weight * concept_boost * export_boost
 
     chunks.sort(key=lambda c: c.get("final_score", 0), reverse=True)
     return chunks
@@ -162,59 +166,72 @@ async def retrieve_context(
         f"query={query[:100]!r}, branch={branch}, limit={limit}"
     )
 
-    query_concepts = _detect_concepts(query)
-    if query_concepts:
-        logger.info(
-            f"[project={project_id}] Detected concepts: {query_concepts}"
-        )
+    t_decompose = time.perf_counter()
+    analysis = await decompose_query(query)
+    query_concepts = analysis.concepts or _detect_concepts(query)
+    sub_queries = analysis.sub_queries
 
-    t_embed = time.perf_counter()
-    query_embedding = await embed_text(query)
-    logger.debug(
-        f"[project={project_id}] Query embedded in {time.perf_counter() - t_embed:.3f}s"
-    )
-
-    expanded_query = _expand_query(query, query_concepts)
-    logger.debug(
-        f"[project={project_id}] Expanded text query: {expanded_query[:200]!r}"
+    logger.info(
+        f"[project={project_id}] Query decomposed in "
+        f"{time.perf_counter() - t_decompose:.3f}s: "
+        f"intent={analysis.intent}, sub_queries={len(sub_queries)}, "
+        f"concepts={query_concepts}"
     )
 
     t_search = time.perf_counter()
     overfetch = limit * 2
-    vec_candidates = vector_search(
-        project_id=project_id,
-        user_id=user_id,
-        query_embedding=query_embedding,
-        limit=overfetch,
-        branch=branch,
-    )
+    result_lists: list[list[dict]] = []
 
-    txt_candidates = text_search(
-        project_id=project_id,
-        user_id=user_id,
-        query=expanded_query,
-        limit=overfetch,
-    )
+    for sq in sub_queries:
+        emb = await embed_text(sq)
+        vec_results = vector_search(
+            project_id=project_id,
+            user_id=user_id,
+            query_embedding=emb,
+            limit=overfetch,
+            branch=branch,
+        )
+        result_lists.append(vec_results)
+
+        expanded = _expand_query(sq, query_concepts)
+        txt_results = text_search(
+            project_id=project_id,
+            user_id=user_id,
+            query=expanded,
+            limit=overfetch,
+        )
+        if txt_results:
+            result_lists.append(txt_results)
+
+    if query_concepts:
+        concept_results = concept_search(
+            project_id=project_id,
+            user_id=user_id,
+            concepts=query_concepts,
+            limit=overfetch,
+        )
+        if concept_results:
+            result_lists.append(concept_results)
+
+    total_candidates = sum(len(rl) for rl in result_lists)
     logger.info(
-        f"[project={project_id}] Search results: "
-        f"vector={len(vec_candidates)}, text={len(txt_candidates)}, "
+        f"[project={project_id}] Multi-query search: "
+        f"{len(result_lists)} result lists, {total_candidates} total candidates, "
         f"took {time.perf_counter() - t_search:.3f}s"
     )
 
-    if txt_candidates:
-        fused = _reciprocal_rank_fusion(vec_candidates, txt_candidates)
-        overlap = len(set(c["id"] for c in vec_candidates) & set(c["id"] for c in txt_candidates))
+    if len(result_lists) > 1:
+        fused = _reciprocal_rank_fusion(*result_lists)
         logger.info(
             f"[project={project_id}] RRF fusion: "
-            f"{len(fused)} unique candidates, {overlap} in both search paths"
+            f"{len(fused)} unique candidates from {len(result_lists)} search paths"
         )
-    else:
-        for rank, c in enumerate(vec_candidates):
+    elif result_lists:
+        fused = result_lists[0]
+        for rank, c in enumerate(fused):
             c["rrf_score"] = c.get("similarity", 0.0)
-        fused = vec_candidates
-        logger.debug(
-            f"[project={project_id}] No text search results, using vector-only"
-        )
+    else:
+        fused = []
 
     ranked = _rerank(fused, branch=branch, query_concepts=query_concepts)[:limit]
 
@@ -257,6 +274,8 @@ async def retrieve_context(
         ranked_chunks=ranked_chunks,
         related_chunks=related_chunks,
         branch_context=branch_ctx,
+        query_intent=analysis.intent,
+        query_concepts=query_concepts,
     )
 
 

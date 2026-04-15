@@ -198,6 +198,24 @@ function extractDocstring(node: any, sourceCode: string): string | undefined {
   return undefined;
 }
 
+function isExported(node: any, language: string): boolean {
+  if (language === 'python') {
+    const name = extractNodeName(node);
+    return !name.startsWith('_');
+  }
+  let current = node.parent;
+  for (let depth = 0; current && depth < 3; depth++, current = current.parent) {
+    if (
+      current.type === 'export_statement' ||
+      current.type === 'export_default_declaration' ||
+      current.type === 'export_declaration'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function collectCallees(node: any): string[] {
   const callees: Set<string> = new Set();
 
@@ -267,6 +285,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
           callees: [],
           imports,
           code_body: node.text.slice(0, 3000),
+          is_exported: isExported(node, language),
         });
 
       for (let i = 0; i < node.childCount; i++) {
@@ -296,6 +315,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
           callees: collectCallees(node),
           imports: parentClass ? [] : imports,
           code_body: node.text.slice(0, 3000),
+          is_exported: isExported(node, language),
         });
       }
       return;
@@ -323,6 +343,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
       callees: [],
       imports,
       code_body: content.slice(0, 3000),
+      is_exported: false,
     });
   }
 

@@ -30,7 +30,8 @@ from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 from .document_parser import parse_files
 from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
-from .project_context import fetch_project_context
+from .project_context import fetch_project_context, ProjectContext
+from .code_analyzer import analyze_code, format_analysis_block
 
 litellm.set_verbose = False
 
@@ -317,19 +318,44 @@ def optimize(
 
     # Fetch project codebase context if a project is attached
     project_context_text = ""
+    project_ctx: ProjectContext | None = None
     if project_id:
+        logger.info(f"Fetching project context for project={project_id}")
         try:
-            ctx = fetch_project_context(
+            project_ctx = fetch_project_context(
                 project_id=project_id,
                 user_query=user_input,
                 branch=project_branch,
                 auth_token=auth_token,
             )
-            if ctx:
-                project_context_text = ctx
-                print(f"[Optimizer] Project context retrieved ({len(ctx)} chars)")
+            if project_ctx:
+                project_context_text = project_ctx.text
+                logger.info(f"Project context retrieved ({len(project_context_text)} chars), "
+                            f"intent={project_ctx.intent}, concepts={project_ctx.concepts}")
+            else:
+                logger.info("Project context returned None")
         except Exception as e:
-            print(f"[Optimizer] Project context fetch failed: {e}")
+            logger.error(f"Project context fetch failed: {e}", exc_info=True)
+
+    # Run code analyzer if we have project context
+    code_analysis_block = ""
+    if project_context_text and project_ctx:
+        logger.info("Starting code analysis...")
+        try:
+            findings = analyze_code(
+                user_query=user_input,
+                project_context_text=project_context_text,
+                intent=project_ctx.intent,
+                concepts=project_ctx.concepts,
+            )
+            if findings:
+                code_analysis_block = format_analysis_block(findings)
+                logger.info(f"Code analysis complete ({len(code_analysis_block)} chars), "
+                            f"root_cause={findings.get('root_cause', 'N/A')[:80]}")
+            else:
+                logger.info("Code analyzer returned no findings")
+        except Exception as e:
+            logger.error(f"Code analysis failed: {e}", exc_info=True)
 
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
@@ -371,7 +397,11 @@ def optimize(
         prompt_type = detect_prompt_type(user_input)
         optimization_strategy = get_optimization_strategy(prompt_type)
         
-        system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
+        if project_context_text:
+            code_system_prompt = _load_system_prompt("system_prompt_code_optimizer.md")
+            system_content = f"{code_system_prompt}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
+        else:
+            system_content = f"{FAST_SYSTEM_PROMPT}\n\nSpecific strategy for this {prompt_type} prompt:\n\n{optimization_strategy}"
 
         if wants_sections:
             system_content += _build_delivery_format(task_plan)
@@ -394,6 +424,8 @@ def optimize(
         final_user_input = user_input
         if project_context_text:
             final_user_input = f"{project_context_text}\n\n{final_user_input}"
+        if code_analysis_block:
+            final_user_input = f"{final_user_input}\n\n{code_analysis_block}"
         if file_text_context:
             final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{final_user_input}"
 
@@ -413,7 +445,10 @@ def optimize(
         skill_names = []
         
     else:
-        system_prompt = _load_system_prompt("system_prompt_optimizer.md")
+        if project_context_text:
+            system_prompt = _load_system_prompt("system_prompt_code_optimizer.md")
+        else:
+            system_prompt = _load_system_prompt("system_prompt_optimizer.md")
         
         # Select skills (or use forced skill)
         if forced_skill:
@@ -448,6 +483,8 @@ def optimize(
         final_user_input = user_input
         if project_context_text:
             final_user_input = f"{project_context_text}\n\n{final_user_input}"
+        if code_analysis_block:
+            final_user_input = f"{final_user_input}\n\n{code_analysis_block}"
         if file_text_context:
             final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{final_user_input}"
     

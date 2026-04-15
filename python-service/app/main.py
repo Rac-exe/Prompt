@@ -887,7 +887,7 @@ async def optimize_stream(websocket: WebSocket):
                                 ),
                             )
                             if planner_ctx:
-                                planner_input = f"{planner_ctx}\n\n{prompt_text}"
+                                planner_input = f"{planner_ctx.text}\n\n{prompt_text}"
                         except Exception as e:
                             logger.warning(f"Failed to fetch project context for task planner: {e}")
                     task_plan = await loop.run_in_executor(

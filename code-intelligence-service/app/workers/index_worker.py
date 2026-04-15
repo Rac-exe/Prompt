@@ -8,24 +8,24 @@ import time
 import logging
 from datetime import datetime, timezone
 from app.db.models import ChunkInput
-from app.db.queries import get_chunk_by_hash, upsert_chunk, update_project_status
+from app.db.queries import get_existing_chunk_hashes, upsert_chunk, update_project_status, cleanup_stale_chunks
 from app.services.summarizer import summarize_chunk, SummaryResult
 from app.services.embedding import embed_texts
 from app.config import SUMMARIZER_CONCURRENCY, MAX_CODE_BODY_LEN
 
 logger = logging.getLogger("code-intel.worker.index")
 
-EMBED_BODY_LIMIT = 1500
+EMBED_BODY_LIMIT = 600
 
 
 def _build_embedding_text(chunk: ChunkInput, summary: SummaryResult) -> str:
-    """Build a rich embedding input from chunk metadata, summary, and code body."""
-    parts = [chunk.name]
-    if chunk.signature:
-        parts.append(chunk.signature)
-    parts.append(summary.summary)
+    """Build embedding input with semantic signal first, reduced code body (strategy B)."""
+    parts = [summary.summary]
     if summary.concepts:
         parts.append(f"Concepts: {', '.join(summary.concepts)}")
+    parts.append(chunk.name)
+    if chunk.signature:
+        parts.append(chunk.signature)
     if chunk.code_body:
         parts.append(chunk.code_body[:EMBED_BODY_LIMIT])
     return "\n".join(parts)
@@ -35,19 +35,15 @@ def _filter_unchanged(
     project_id: str,
     chunks: list[ChunkInput],
 ) -> list[ChunkInput]:
-    """Return only chunks whose content_hash differs from the DB copy."""
+    """Return only chunks whose content_hash differs from the DB copy (single batch query)."""
+    existing = get_existing_chunk_hashes(project_id)
     new: list[ChunkInput] = []
     for chunk in chunks:
-        existing = get_chunk_by_hash(
-            project_id=project_id,
-            file_path=chunk.file_path,
-            name=chunk.name,
-            content_hash=chunk.content_hash,
-        )
-        if existing:
+        cached = existing.get((chunk.file_path, chunk.name))
+        if cached and cached["content_hash"] == chunk.content_hash and cached.get("embedding") is not None:
             logger.debug(f"Skipping unchanged chunk: {chunk.name} in {chunk.file_path}")
-        else:
-            new.append(chunk)
+            continue
+        new.append(chunk)
     return new
 
 
@@ -121,12 +117,17 @@ async def process_ingest_batch(
     )
 
     if not new_chunks:
+        valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
+        stale_count = cleanup_stale_chunks(project_id, valid_keys)
+        if stale_count:
+            logger.info(f"[project={project_id}] Cleaned up {stale_count} stale chunks")
+
         now = datetime.now(timezone.utc).isoformat()
         update_project_status(project_id, "ready", last_indexed_at=now)
         logger.info(
             f"[project={project_id}] Ingest complete: "
             f"0 processed, {skipped} skipped (all unchanged), "
-            f"took {time.perf_counter() - t_start:.1f}s"
+            f"{stale_count} stale removed, took {time.perf_counter() - t_start:.1f}s"
         )
         return
 
@@ -135,7 +136,7 @@ async def process_ingest_batch(
     embed_inputs = [_build_embedding_text(c, s) for c, s in zip(new_chunks, summaries)]
     logger.info(
         f"[project={project_id}] Starting batch embedding for {len(embed_inputs)} chunks "
-        f"(name + signature + summary + concepts + code_body)"
+        f"(summary + concepts + name + signature + code_body[:{EMBED_BODY_LIMIT}])"
     )
     t_embed = time.perf_counter()
     try:
@@ -175,11 +176,17 @@ async def process_ingest_batch(
                 branch=branch,
                 code_body=chunk.code_body,
                 concepts=summary_result.concepts,
+                is_exported=chunk.is_exported,
             )
             processed += 1
         except Exception as e:
             logger.error(f"[project={project_id}] Failed to upsert chunk {chunk.name}: {e}")
             errors += 1
+
+    valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
+    stale_count = cleanup_stale_chunks(project_id, valid_keys)
+    if stale_count:
+        logger.info(f"[project={project_id}] Cleaned up {stale_count} stale chunks")
 
     now = datetime.now(timezone.utc).isoformat()
     if errors > 0 and processed == 0:
@@ -195,5 +202,5 @@ async def process_ingest_batch(
     logger.info(
         f"[project={project_id}] Ingest complete: status={final_status}, "
         f"{processed} processed, {skipped} skipped, {errors} errors, "
-        f"took {total_elapsed:.1f}s total"
+        f"{stale_count} stale removed, took {total_elapsed:.1f}s total"
     )

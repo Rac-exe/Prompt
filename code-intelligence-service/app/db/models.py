@@ -61,6 +61,7 @@ class ChunkInput(BaseModel):
     callees: list[str] = Field(default_factory=list)
     imports: list[str] = Field(default_factory=list)
     code_body: Optional[str] = Field(default=None, max_length=5000)
+    is_exported: bool = False
 
 
 class CallGraphEdge(BaseModel):
@@ -107,6 +108,8 @@ class RetrieveResponse(BaseModel):
     ranked_chunks: list[RetrievedChunk]
     related_chunks: list[RetrievedChunk]
     branch_context: Optional[dict] = None
+    query_intent: Optional[str] = None
+    query_concepts: list[str] = Field(default_factory=list)
 
 
 class SyncRequest(BaseModel):

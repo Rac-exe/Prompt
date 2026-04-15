@@ -8,6 +8,7 @@ actual source code, not just metadata pointers.
 import os
 import time
 import logging
+from dataclasses import dataclass, field
 from collections import OrderedDict
 import httpx
 
@@ -20,17 +21,25 @@ MAX_RANKED_IN_CONTEXT = 8
 MAX_RELATED_IN_CONTEXT = 8
 
 
+@dataclass
+class ProjectContext:
+    text: str
+    intent: str = "general"
+    concepts: list[str] = field(default_factory=list)
+
+
 def fetch_project_context(
     project_id: str,
     user_query: str,
     branch: str | None = None,
     auth_token: str | None = None,
     limit: int = 10,
-) -> str | None:
+) -> ProjectContext | None:
     """
     Call the Code Intelligence Service /api/retrieve endpoint to get
-    relevant code context for a user's prompt. Returns a formatted
-    context string to prepend to the user's prompt, or None on failure.
+    relevant code context for a user's prompt. Returns a ProjectContext
+    with formatted text, query intent, and detected concepts, or None
+    on failure.
     """
     if not CODE_INTEL_URL:
         logger.debug("CODE_INTELLIGENCE_SERVICE_URL not set — skipping project context")
@@ -73,6 +82,8 @@ def fetch_project_context(
         ranked_chunks = data.get("ranked_chunks", [])
         related_chunks = data.get("related_chunks", [])
         branch_context = data.get("branch_context")
+        query_intent = data.get("query_intent", "general")
+        query_concepts = data.get("query_concepts", [])
 
         bodies_count = sum(1 for c in ranked_chunks if c.get("code_body"))
         concepts_count = sum(1 for c in ranked_chunks if c.get("concepts"))
@@ -81,7 +92,8 @@ def fetch_project_context(
             f"{len(ranked_chunks)} ranked ({bodies_count} with code, "
             f"{concepts_count} with concepts), "
             f"{len(related_chunks)} related, "
-            f"branch_ctx={'yes' if branch_context else 'no'}"
+            f"branch_ctx={'yes' if branch_context else 'no'}, "
+            f"intent={query_intent}, concepts={query_concepts}"
         )
 
         if not ranked_chunks:
@@ -93,7 +105,11 @@ def fetch_project_context(
             f"Project context formatted: {len(formatted)} chars, "
             f"~{len(formatted.split())} words"
         )
-        return formatted
+        return ProjectContext(
+            text=formatted,
+            intent=query_intent or "general",
+            concepts=query_concepts or [],
+        )
 
     except httpx.TimeoutException:
         logger.warning(f"Code Intelligence Service timed out (15s) for project {project_id}")

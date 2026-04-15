@@ -22,6 +22,7 @@ export interface ChunkData {
   callees: string[];
   imports: string[];
   code_body?: string;
+  is_exported?: boolean;
 }
 
 export interface CallGraphEdge {

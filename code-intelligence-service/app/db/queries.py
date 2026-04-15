@@ -98,6 +98,7 @@ def upsert_chunk(
     last_modified_commit: Optional[str] = None,
     code_body: Optional[str] = None,
     concepts: Optional[list[str]] = None,
+    is_exported: bool = False,
 ) -> dict:
     client = get_client()
     data = {
@@ -118,6 +119,7 @@ def upsert_chunk(
         "branch_diverged": False,
         "code_body": code_body,
         "concepts": concepts or [],
+        "is_exported": is_exported,
     }
     result = (
         client.table("code_chunks")
@@ -127,29 +129,43 @@ def upsert_chunk(
     return result.data[0] if result.data else {}
 
 
-def get_chunk_by_hash(project_id: str, file_path: str, name: str, content_hash: str) -> Optional[dict]:
-    """
-    Check if a chunk with matching hash already exists AND has an embedding.
-    Returns None if embedding is missing (e.g. after dimension migration),
-    forcing re-processing even when content is unchanged.
-    """
+def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str], dict]:
+    """Fetch all (file_path, name) -> {content_hash, embedding} for a project in one query."""
     client = get_client()
     result = (
         client.table("code_chunks")
-        .select("id,content_hash,embedding")
+        .select("file_path,name,content_hash,embedding")
         .eq("project_id", project_id)
-        .eq("file_path", file_path)
-        .eq("name", name)
-        .eq("content_hash", content_hash)
-        .limit(1)
         .execute()
     )
-    if not result.data:
-        return None
-    row = result.data[0]
-    if row.get("embedding") is None:
-        return None
-    return row
+    lookup: dict[tuple[str, str], dict] = {}
+    for row in (result.data or []):
+        key = (row["file_path"], row["name"])
+        lookup[key] = row
+    return lookup
+
+
+def cleanup_stale_chunks(project_id: str, valid_keys: set[tuple[str, str, str]]) -> int:
+    """Delete chunks not in the latest ingest batch. valid_keys = {(file_path, name, chunk_type)}."""
+    client = get_client()
+    result = (
+        client.table("code_chunks")
+        .select("id,file_path,name,chunk_type")
+        .eq("project_id", project_id)
+        .execute()
+    )
+    stale_ids = [
+        row["id"] for row in (result.data or [])
+        if (row["file_path"], row["name"], row["chunk_type"]) not in valid_keys
+    ]
+    if not stale_ids:
+        return 0
+    for i in range(0, len(stale_ids), 100):
+        batch = stale_ids[i:i + 100]
+        client.table("code_relationships").delete().in_("from_chunk_id", batch).execute()
+        client.table("code_relationships").delete().in_("to_chunk_id", batch).execute()
+        client.table("code_chunks").delete().in_("id", batch).execute()
+    return len(stale_ids)
 
 
 def delete_chunks_for_file(project_id: str, file_path: str):
@@ -190,7 +206,7 @@ def find_chunk_by_name(project_id: str, name: str, file_path: Optional[str] = No
 
 _CHUNK_SELECT_FIELDS = (
     "id,file_path,start_line,end_line,chunk_type,name,signature,"
-    "language,semantic_summary,code_body,concepts,branch,branch_diverged"
+    "language,semantic_summary,code_body,concepts,branch,branch_diverged,is_exported"
 )
 
 
@@ -219,6 +235,32 @@ def vector_search(
         return rows
     except Exception as e:
         logger.error(f"vector_search RPC failed for project {project_id}: {e}")
+        return []
+
+
+def concept_search(
+    project_id: str,
+    user_id: str,
+    concepts: list[str],
+    limit: int = 10,
+) -> list[dict]:
+    """Concept-overlap search via the search_by_concepts RPC (uses GIN index)."""
+    if not concepts:
+        return []
+    client = get_client()
+    params = {
+        "filter_concepts": concepts,
+        "match_count": limit,
+        "filter_project_id": project_id,
+        "filter_user_id": user_id,
+    }
+    try:
+        result = client.rpc("search_by_concepts", params).execute()
+        rows = result.data or []
+        logger.debug(f"concept_search: {len(rows)} results for concepts={concepts}")
+        return rows
+    except Exception as e:
+        logger.error(f"concept_search RPC failed for project {project_id}: {e}")
         return []
 
 
