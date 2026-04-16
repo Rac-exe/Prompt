@@ -32,10 +32,11 @@ export class AppWindowManager {
   private createWindowHidden() {
     this.isLoaded = false;
 
-    // Load the app icon for the taskbar / dock.
+    const isMac = process.platform === 'darwin';
+    const iconExt = isMac ? 'icon.icns' : 'icon.ico';
     const iconPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'icon.ico')
-      : path.join(app.getAppPath(), 'build', 'icon.ico');
+      ? path.join(process.resourcesPath, iconExt)
+      : path.join(app.getAppPath(), 'build', iconExt);
     const icon = nativeImage.createFromPath(iconPath);
 
     this.window = new BrowserWindow({
@@ -44,23 +45,27 @@ export class AppWindowManager {
       minWidth: 1200,
       minHeight: 700,
       show: false,
-      frame: false,          // removes native title bar + menu bar entirely
-      autoHideMenuBar: true, // belt-and-suspenders: also hides the menu bar
+      ...(isMac
+        ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 12, y: 12 } }
+        : { frame: false }),
+      autoHideMenuBar: true,
       backgroundColor: '#0d1117',
       ...(icon && !icon.isEmpty() ? { icon } : {}),
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
-        plugins: true, // Enable Chromium PDF viewer for inline PDF preview
+        plugins: true,
         devTools: !app.isPackaged,
         preload: path.join(app.getAppPath(), 'dist', 'preload.js'),
       },
     });
 
-    // Explicitly set icon after creation — Windows taskbar requires this
-    // in addition to the constructor option to reliably show the correct icon.
     if (icon && !icon.isEmpty()) {
-      this.window.setIcon(icon);
+      if (isMac) {
+        app.dock?.setIcon(icon);
+      } else {
+        this.window.setIcon(icon);
+      }
     }
 
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'index.html');
