@@ -576,6 +576,7 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.checkAccessibilityPermission = nativeBinding.checkAccessibilityPermission
 module.exports.forceFocusWindow = nativeBinding.forceFocusWindow
 module.exports.getActiveWindowTitle = nativeBinding.getActiveWindowTitle
 module.exports.pasteTextToWindow = nativeBinding.pasteTextToWindow
