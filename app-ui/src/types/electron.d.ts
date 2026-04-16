@@ -66,6 +66,9 @@ export interface SharedPromptView {
 }
 
 export interface ElectronAPI {
+  // Platform
+  platform: 'darwin' | 'win32' | 'linux';
+
   // Auth
   signIn: (data: { email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
   signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
