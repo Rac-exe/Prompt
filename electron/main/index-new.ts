@@ -71,7 +71,7 @@ import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 import { registerOverlayHandlers, setSourceWindow } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
-import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle } from './utils/native-bridge';
+import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle, checkAccessibilityPermission } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
@@ -119,15 +119,61 @@ function toWsBaseUrl(httpBaseUrl: string): string {
 // ============================================
 // KEYSTROKE DETECTION (Rust native bridge)
 // ============================================
+async function ensureAccessibilityPermission(): Promise<boolean> {
+  if (process.platform !== 'darwin') return true;
+  if (checkAccessibilityPermission()) return true;
+
+  const { dialog, shell } = require('electron');
+  await dialog.showMessageBox({
+    type: 'warning',
+    title: 'Accessibility Permission Required',
+    message: 'Prmpt needs Accessibility access to detect @prompt anywhere on your Mac.',
+    detail: 'Click "Open System Settings" to grant Accessibility access to Prmpt, then return here.',
+    buttons: ['Open System Settings', 'Later'],
+    defaultId: 0,
+  }).then((result: { response: number }) => {
+    if (result.response === 0) {
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+    }
+  });
+
+  // Poll every 2 seconds for up to 60 seconds
+  for (let i = 0; i < 30; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    if (checkAccessibilityPermission()) {
+      console.log('[Main] Accessibility permission granted');
+      return true;
+    }
+  }
+
+  console.warn('[Main] Accessibility permission not granted after timeout');
+  return false;
+}
+
 function startKeystrokeDetection() {
   if (!isNativeBridgeAvailable()) {
     console.warn('[Main] Native bridge not available — @prompt hook disabled. Run: npm run native:build');
     return;
   }
 
+  if (process.platform === 'darwin') {
+    ensureAccessibilityPermission().then(granted => {
+      if (!granted) {
+        console.warn('[Main] Accessibility permission not granted — @prompt hook disabled');
+        Sentry.addBreadcrumb({ category: 'accessibility', message: 'macOS Accessibility permission not granted', level: 'warning' });
+        return;
+      }
+      installHook();
+    });
+  } else {
+    installHook();
+  }
+}
+
+function installHook() {
   startHook((anchor: TriggerAnchor) => {
     const title = getActiveWindowTitle();
-    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
+    console.log(`[Main] @prompt detected — pid=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
     Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
     setSourceWindow(anchor.hwnd, title);
     overlayManager.open(authState.isAuthenticated, undefined, undefined, true,
