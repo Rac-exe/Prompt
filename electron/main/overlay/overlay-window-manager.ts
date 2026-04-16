@@ -141,22 +141,30 @@ export class OverlayWindowManager {
     this.shouldShowOnReady = false;
     this.isOpen = false;
 
-    // Listen for renderer signal (registered once per window via
-    // webContents.ipc so it auto-cleans on destroy).
-    this.window.webContents.ipc.once('overlay:ready', () => {
-      this.preheatCompositor();
-    });
+    if (process.platform === 'win32') {
+      this.window.webContents.ipc.once('overlay:ready', () => {
+        this.preheatCompositor();
+      });
 
-    // Safety fallback: if the renderer signal never arrives (e.g. preload
-    // error), pre-heat after did-finish-load + a short delay.
-    this.window.webContents.once('did-finish-load', () => {
-      setTimeout(() => {
-        if (!this.isLoaded && this.window && !this.window.isDestroyed()) {
-          console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback pre-heat');
-          this.preheatCompositor();
+      this.window.webContents.once('did-finish-load', () => {
+        setTimeout(() => {
+          if (!this.isLoaded && this.window && !this.window.isDestroyed()) {
+            console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback pre-heat');
+            this.preheatCompositor();
+          }
+        }, 200);
+      });
+    } else {
+      // macOS: no DWM pre-heat needed, mark as loaded once content is ready
+      this.window.webContents.once('did-finish-load', () => {
+        this.isLoaded = true;
+        console.log('[OverlayWindowManager] Overlay ready (no pre-heat needed on macOS)');
+        if (this.shouldShowOnReady) {
+          this.shouldShowOnReady = false;
+          this.showAndFocus();
         }
-      }, 200);
-    });
+      });
+    }
 
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'overlay.html');
     this.window.loadFile(htmlPath);
@@ -286,6 +294,9 @@ export class OverlayWindowManager {
   private showAndFocus() {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
+    if (process.platform === 'darwin') {
+      this.window.show();
+    }
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     analyticsService.logEvent('overlay_open');
     this.focusWindow();
@@ -300,11 +311,14 @@ export class OverlayWindowManager {
    */
   private focusWindow() {
     if (!this.window || this.window.isDestroyed()) return;
-    const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
-    const focused = forceFocusWindow(Number(overlayHwnd));
-    if (!focused) {
-      // AttachThreadInput fallback failed — try Electron's own focus as last resort.
+    if (process.platform === 'darwin') {
       this.window.focus();
+    } else {
+      const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
+      const focused = forceFocusWindow(Number(overlayHwnd));
+      if (!focused) {
+        this.window.focus();
+      }
     }
   }
 
@@ -357,8 +371,12 @@ export class OverlayWindowManager {
     if (this.window && !this.window.isDestroyed()) {
       this.isOpen = false;
       Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay closed', level: 'info' });
-      this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
-      this.window.blur();
+      if (process.platform === 'darwin') {
+        this.window.hide();
+      } else {
+        this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
+        this.window.blur();
+      }
     }
   }
 
