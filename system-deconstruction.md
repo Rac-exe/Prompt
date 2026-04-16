@@ -609,7 +609,7 @@ The IPC layer is organized into 12 handler modules, each responsible for a domai
 | `user-handlers.ts` | `registerUserHandlers(appWindowManager)` | `user:profile`, `user:update`, `user:preferences`, `user:memory-*` | UserService, MemoryService, SettingsService |
 | `settings-handlers.ts` | `registerSettingsHandlers(overlayManager)` | `settings:load`, `settings:save` | SettingsService, localCache |
 | `chat-handlers.ts` | `registerChatHandlers(appWindowManager, pythonClient)` | `app:send-message`, `app:load-chats`, `app:load-messages`, `app:rename-chat`, `app:delete-chat`, `app:regenerate`, `app:stop-generation`, `app:get-generation-status` | ChatService, OptimizationService, PythonClient, MemoryAnalyzer |
-| `overlay-ipc-handlers.ts` | `registerOverlayHandlers(overlayManager, pythonClient, appWindowManager)` | `overlay:optimize`, `overlay:save`, `overlay:copy`, `overlay:insert`, `overlay:close`, `overlay:open-app`, `overlay:check-auth`, `overlay:get-settings`, `overlay:get-collections` | Overlay window, PythonClient, native-bridge |
+| `overlay-ipc-handlers.ts` | `registerOverlayHandlers(overlayManager, pythonClient, appWindowManager)` | `overlay:optimize`, `overlay:submit-clarification`, `overlay:save`, `overlay:copy`, `overlay:insert`, `overlay:insert-section`, `overlay:close`, `overlay:open-app`, `overlay:check-auth`, `overlay:get-settings`, `overlay:get-collections`, `overlay:create-collection`, `overlay:get-chats`, `overlay:save-to-chat`, `overlay:get-source-info`, `overlay:new-session`, `overlay:stop-generation`, `overlay:truncate-history` + cursor polling | Overlay window, PythonClient, native-bridge, RateLimitService, MemoryService, ChatService |
 | `prompt-library-handlers.ts` | Auto-registers on import | `prompt-library:get-all`, `prompt-library:save`, `prompt-library:delete`, `prompt-library:create-collection`, `prompt-library:share-*` | PromptLibraryService, offlineQueue |
 | `skill-handlers.ts` | `registerSkillHandlers()` | `skills:list` | filesystem (reads `files/skill_*.md`) |
 | `avatar-handlers.ts` | `registerAvatarHandlers(pythonClient)` | `avatar:upload` | PythonClient (Cloudinary proxy) |
@@ -1524,4 +1524,347 @@ Several architectural decisions would change with hindsight: (1) **State managem
 ---
 
 *This document was generated from a deep analysis of the Prmpt codebase at commit HEAD on the `dashboard` branch. All code references, file paths, and architectural descriptions reflect the actual implementation as of the generation date.*
+
+---
+
+# Part 10: Extended Architecture — New Systems (April 2026)
+
+This part documents systems added since the original deconstruction — the Clarification Engine, Task Planner, Code Intelligence Service, Spaces, OTP Authentication, GDPR Deletion, and Analytics — with the same senior architect Q&A format.
+
+## 10.1 Clarification System
+
+### What Is It?
+
+Before the optimizer runs, the `/clarify` endpoint uses a fast LLM call to analyze the user's raw prompt for missing context. It returns structured JSON describing whether clarification questions are needed, what those questions are (as multiple-choice options), and whether the prompt represents a complex multi-part build.
+
+The `ClarificationCard` React component renders these questions with a staggered animation (questions appear one by one, 120ms apart), multi-select checkboxes, single-select radio buttons for the delivery format question, an "Other" freetext option, and an extra notes textarea.
+
+### Why a Pre-Pass LLM Call Instead of Static Heuristics?
+
+Static heuristics (keyword matching, length checks) would produce too many false positives (showing questions for already-specific prompts) and miss implicit ambiguity (a short prompt can be highly ambiguous). The LLM understands that "fix the hover" is missing framework context in a way that rule-based systems cannot. The cost is minimal — the clarifier uses `SUMMARIZER_MODEL` (`gpt-4o-mini`), which is ~10x cheaper than the optimizer, with a 512-token limit. A typical clarification call costs <$0.001.
+
+### What Happens When `should_clarify: false`?
+
+The optimization proceeds immediately without showing any questions. The clarifier returns `should_clarify: false` only for:
+- Very simple, already-complete prompts ("Write a hello world function in Python")
+- Follow-up refinements like "make it shorter" or "add error handling"
+- Already-detailed prompts that leave nothing ambiguous
+
+The system is intentionally biased toward asking: the instruction to the clarifier LLM states "almost every prompt benefits from clarification — default to true."
+
+### How Does Multi-Select Work for the Delivery Format Question?
+
+The delivery format question (`id: "delivery_format"`) is detected by either its explicit ID or by checking if the question text includes "task sections", "broken into", or "one complete". This question uses **single-select** (radio button behavior) because the user must make a binary choice: one complete prompt vs. sectioned tasks. All other questions use **multi-select** (checkboxes) because multiple options can be valid simultaneously (e.g., "React + Tailwind" and "TypeScript" are both relevant tech stack answers).
+
+The `isDeliveryQuestion()` function in `ClarificationCard` implements this detection, rendering `RadioButton` / `Circle` icons instead of `CheckSquare` / `Square` icons for single-select questions.
+
+### How Are Answers Injected Into the Optimizer?
+
+The clarification answers are serialized as a formatted string:
+
+```
+CONTEXT FROM USER:
+Framework / tech stack: React + Tailwind
+Project type: Web app
+Tone: Professional
+Additional context: This is for a B2B SaaS dashboard with existing Supabase backend
+```
+
+This string is prepended to the user's prompt in the optimizer's message. The optimizer's system prompt instructs it to treat this context as ground truth and not to fabricate alternatives.
+
+---
+
+## 10.2 Task Planner
+
+### When Does It Run vs. When Is It Skipped?
+
+The task planner runs **only** when:
+1. The clarification system determined `is_complex: true`
+2. The user chose "Broken into task sections" in the delivery format question
+
+If the user chose "One complete prompt" or skipped clarification entirely, the task planner is not called. The optimizer produces a single flat optimized prompt in that case.
+
+### How Does the Planner's Output Change the Optimizer's Behavior?
+
+The task plan is serialized into the optimizer's system prompt as a structured list:
+
+```
+TASK PLAN (pre-computed — follow this exactly):
+Task 1: Project Setup & Scaffolding
+  Goal: Initialize Next.js 14 with TypeScript, Tailwind, and Supabase
+  Produces: package.json, tailwind.config.ts, lib/supabase.ts
+  State after: Running dev server with Supabase client configured
+
+Task 2: Authentication Layer
+  Goal: Implement Supabase Auth with email/password sign-in
+  Depends on: Task 1
+  Produces: app/login/page.tsx, app/auth/callback/route.ts, middleware.ts
+  State after: Working login, logout, and session persistence
+...
+```
+
+The optimizer is instructed to write one section per task, in order, following the exact state declarations. The `state_after` field is particularly important — it tells the optimizer what assumptions it can make in subsequent tasks (e.g., "Supabase is configured, so Task 2 can import from `lib/supabase.ts`").
+
+### Why Is the Planner Allowed to Return `None`?
+
+The task planner is best-effort infrastructure. If the LLM call fails, returns malformed JSON, or produces fewer than 2 valid tasks, the optimizer falls back to its own internal task-section format (which is less precise but still produces sectioned output). This fallback ensures the `wantsSections: true` user preference is always honored in some form, even when the planner fails.
+
+---
+
+## 10.3 Code Intelligence Architecture
+
+### Why Is Code Intelligence a Separate Service?
+
+The Code Intelligence Service runs a completely different workload from the optimizer:
+- **Optimizer**: Stateless, request-response, CPU-bound (LLM calls)
+- **Code Intelligence**: Stateful (project registry, embeddings), I/O-bound (Supabase, vector search), long-running (file indexing)
+
+Merging them would couple their scaling, deployment, and failure modes. When the optimizer crashes, the code index should remain intact. When the indexer is running a full scan of a large codebase (potentially minutes), it should not block optimization requests. Separate services also allow different resource profiles — the optimizer needs fast CPU for the Python process; the indexer needs higher memory for Tree-sitter parsing multiple files in parallel.
+
+### How Does Tree-sitter Parse Code Without Spawning a Native Process?
+
+Tree-sitter is compiled to WebAssembly (`tree-sitter.wasm`) and loaded via `web-tree-sitter` in Node.js. The WASM binary provides the core parser, and language-specific grammar files (e.g., `tree-sitter-typescript.wasm`) are loaded lazily per language. The WASM runs inside the Electron main process's V8 context — no subprocess, no IPC overhead. The parser returns a Concrete Syntax Tree (CST) as a JavaScript object, which `code-parser.ts` traverses to extract function/class/method nodes.
+
+### How Does pgvector ANN Search Work?
+
+pgvector's IVFFlat index divides the 768-dimensional embedding space into clusters (lists). At query time, the search examines only the nearest `nprobes` clusters rather than the full table. The tradeoff: fewer `nprobes` = faster but less accurate retrieval; more `nprobes` = slower but more complete. The index is created with `lists = 100` (for a corpus up to ~1M chunks) and query uses `nprobes = 10`. This provides a good accuracy/speed tradeoff for codebases up to 100K functions. The migration `20260414_fix_vector_index.sql` tuned these parameters after observing retrieval quality metrics on real codebases.
+
+### Why 768-Dimensional Embeddings?
+
+768 dimensions is the output size of `text-embedding-3-small` (OpenAI's embedding model available via OpenRouter), which provides a strong accuracy/cost/latency balance. The migration `20260414_reduce_embedding_dims.sql` reduced from 1536 to 768 dimensions after discovering that code chunks (which are structurally similar within a repo) achieved comparable retrieval quality at half the storage cost. The pgvector column is `vector(768)` — this is enforced at the database schema level.
+
+### How Does Branch Divergence Detection Work?
+
+The `GitService.getBranchInfo()` function runs `git diff origin/main...HEAD --name-only` to get the list of files modified in the current branch relative to the default branch. These file paths are stored in the `branch_context` object returned by the retrieval endpoint. The indexer marks each chunk with `branch_diverged: true` if its `file_path` appears in this diverged file list. In the formatted context, these chunks receive a `⚠ Modified in current branch` warning, alerting the optimizer that the chunk may represent uncommitted or unreviewed changes.
+
+### Why Is LocalProjectCache SQLite Instead of JSON?
+
+The JSON file-based `localCache` (for chat history) works because it stores at most 5 chats, each with a bounded number of messages. The project hash cache can store hundreds of thousands of file paths (for large codebases). SQLite with a `(project_id, file_path)` primary key provides O(log n) lookups vs. O(n) JSON parsing. It also supports atomic updates — if the app crashes mid-indexing, the SQLite write is either fully committed or rolled back. A JSON file write could leave a partially-written file in an unreadable state. `better-sqlite3` is chosen over `node-sqlite3` because it provides a synchronous API (no callback hell), which is appropriate for the main process where async/await overhead adds up across hundreds of hash lookups during a full scan.
+
+---
+
+## 10.4 Analytics Architecture
+
+### Why Not Use a Third-Party Analytics Platform?
+
+Third-party platforms (Mixpanel, Amplitude, PostHog) would require sending user behavioral data to external servers. Prmpt's users are often developers who are privacy-conscious and may object to third-party telemetry. Building analytics on top of Supabase (which the user already trusts with their data) keeps all data in the same trust boundary and allows using the existing RLS policies for data isolation. It also means no additional cost — analytics storage is included in the Supabase plan.
+
+### How Does the EventBuffer Prevent Data Loss?
+
+The `EventBuffer` implements a write-through cache with disk fallback:
+1. Events are pushed to the in-memory buffer
+2. Every 10 seconds (or when 50 events accumulate), the buffer is flushed to Supabase
+3. If the flush fails (offline, Supabase down), events are serialized to `userData/offline-cache/analytics-{userId}.json`
+4. On the next successful flush, `drainOfflineQueue()` is called first, replaying the offline events
+5. After successful drain, the offline file is deleted
+
+This guarantees **at-least-once delivery** — events may be delivered multiple times (if the app crashes after a successful Supabase write but before the offline file is deleted), but they are never permanently lost. The Supabase `usage_events` table does not enforce uniqueness on events (by design) — duplicate events are acceptable in analytics systems where approximate counts are sufficient.
+
+### How Does Crash Recovery Session Detection Work?
+
+When the app starts a new session (`analyticsService.startSession()`), it first closes any sessions left open by a previous crash:
+
+```sql
+UPDATE app_sessions
+SET ended_at = NOW(), duration_seconds = NULL
+WHERE user_id = $1 AND ended_at IS NULL;
+```
+
+Setting `duration_seconds = NULL` (instead of computing an estimated duration) signals that this was a crash-recovered session. The `daily_usage_summaries` trigger checks for this:
+
+```sql
+-- Only increment total_sessions for clean (non-crash) endings
+IF NEW.duration_seconds IS NOT NULL THEN
+    UPDATE daily_usage_summaries
+    SET total_sessions = total_sessions + 1
+    WHERE user_id = NEW.user_id AND date = CURRENT_DATE;
+END IF;
+```
+
+This prevents a user who experiences a crash from having their session count artificially inflated by the crash-recovery process inserting a null-duration session.
+
+---
+
+## 10.5 OTP Authentication Architecture
+
+### Why Not Use Supabase's Built-in Magic Links?
+
+Supabase Magic Links work by sending a tokenized URL via email that redirects to a web page. This creates a problem for a desktop app: the magic link opens a browser, the user must click "Return to app" or the app must register a custom URL scheme to receive the token. This is fragile — if the user doesn't have a default browser, or the URL scheme isn't registered, the flow breaks. The OTP approach (6-digit code entered in the app itself) keeps the entire flow within the desktop app, with no browser dependency.
+
+### What Is the OTP Security Model?
+
+- **6-digit numeric code**: 1,000,000 possible values. With a 10-minute expiry, a brute-force attacker would need to make ~500,000 guesses — prevented by SlowAPI's rate limiting (60/minute → max 600 guesses in 10 minutes → 0.06% success chance even with optimal guessing)
+- **In-memory storage**: OTPs are never stored in the database, reducing the attack surface. A database breach does not expose valid OTPs.
+- **Single-use**: Once an OTP is verified (whether successful or expired), it's deleted from the store
+- **Purpose binding**: OTPs are bound to `purpose` ("signup" or "reset") — a signup OTP cannot be used for a password reset
+
+The primary weakness is the in-memory store: service restarts invalidate all pending OTPs, requiring users to request a new code. For a desktop productivity app where restarts are rare and OTPs expire in 10 minutes, this is an acceptable tradeoff.
+
+---
+
+## 10.6 GDPR Deletion and Data Lifecycle
+
+### Why 30 Days Instead of Immediate Deletion?
+
+30 days serves two purposes: (1) It gives users a window to change their mind — account deletions are often impulsive and users frequently want to reverse them. (2) It allows the engineering team to manually intervene if a user claims their account was maliciously deleted (e.g., via account takeover). Immediate deletion would make recovery impossible. The Supabase edge function that actually executes deletions runs daily, checking `scheduled_for <= NOW() AND cancelled_at IS NULL`. The deletion is permanent and irreversible once executed.
+
+### How Is the Deletion Actually Executed?
+
+The `process-deletions` Supabase Edge Function (Deno runtime):
+1. Authenticates using the service role key as a Bearer token (passed by the scheduler)
+2. Selects all pending, non-cancelled deletion requests past their scheduled date
+3. For each user:
+   a. Deletes all Supabase Storage files in the `attachments/{userId}/` prefix
+   b. Calls `supabaseAdmin.auth.admin.deleteUser(userId)` — this CASCADE deletes all FK-constrained rows
+   c. Manually deletes from tables without FK constraints (e.g., `analytics.usage_events`)
+   d. Updates `deletion_requests` to `status='completed'`
+4. Returns a summary of completed deletions to the scheduler for logging
+
+The CASCADE on `auth.users → user_profiles → chats → messages` handles most of the deletion automatically. The manual deletions are for tables that reference `user_id` directly rather than via FK to `user_profiles`.
+
+---
+
+## 10.7 Twelve More Senior Architect Questions (Q51–Q62)
+
+### Q51: How does the clarification system handle prompts that are follow-up refinements?
+
+The clarifier's system prompt explicitly instructs it: "Set `should_clarify` to false if the prompt is a follow-up refinement like 'make it shorter.'" The `Decision Taker` in the optimizer pipeline classifies the request as `REFINEMENT` or `ADDITION` (vs. `NEW`). For `REFINEMENT`/`ADDITION` requests, the frontend skips the clarification API call entirely and proceeds directly to optimization. This is because refinements have context from the previous exchange — asking "what framework?" again after the user already specified it would be annoying and incorrect. The clarification flow is only triggered for `NEW` type requests where context must be established fresh.
+
+### Q52: What happens if the Code Intelligence Service is unavailable when a Space is active?
+
+The `project_context.py` module wraps the `/api/retrieve` call in a try/except that catches `httpx.TimeoutException` (15-second timeout) and any other exception. On failure, it returns `None`. The optimizer checks: if `project_context is None`, it proceeds without codebase context — the prompt is optimized using only the user's text, memory, and skills. The UI shows a warning in `ProjectStatus` that the context service is unavailable. This graceful degradation ensures that a Code Intelligence Service outage doesn't block the core optimization flow.
+
+### Q53: How does the `LocalProjectCache` handle two projects with files at the same relative path?
+
+The SQLite schema uses a composite primary key `(project_id, file_path)`. Two projects can have identical relative file paths (e.g., both have `src/index.ts`) without conflict because the `project_id` disambiguates them. Hash lookups always scope to a specific project: `SELECT hash FROM file_hashes WHERE project_id = ? AND file_path = ?`. This design supports unlimited projects without namespace collision.
+
+### Q54: Why does the analytics `EventBuffer` use a flat JSON file instead of SQLite for offline storage?
+
+The offline analytics cache only accumulates events during network outages. Even a 24-hour outage would generate at most a few hundred events (assuming normal usage — a user optimizes ~10-50 times per day). A flat JSON file handles this scale without issue. SQLite would add dependency overhead, migration complexity, and write-ahead log files for a use case that's both rare and bounded in size. The file is always read as a complete document (parsed in full) — there's no need for indexed queries. JSON is the right tool for "occasional small writes, full reads on reconnect."
+
+### Q55: How does the `AIGuardrails` similarity check scale with long prompts?
+
+The Levenshtein distance algorithm is O(n×m) where n and m are the string lengths. For prompts of 1000+ characters, this could be slow. In practice, `AIGuardrails` applies the check against `lastRequestText` — only the immediately preceding request, not a history. For typical prompts (50-200 characters), the O(n²) cost is negligible (sub-millisecond). For very long prompts (1000+ characters), the check could take 5-10ms, which is acceptable in a UI context where the user clicks Send and waits for a network round trip anyway. A production hardening would add an early exit when `|len(a) - len(b)| / max(len(a), len(b)) > threshold` — dissimilar-length strings are always under the similarity threshold.
+
+### Q56: What is the `StabilityTracker` and when does it trigger fallback behavior?
+
+`StabilityTracker` counts consecutive failures of the Python service WebSocket connection. If the failure count exceeds a configurable threshold (default: 5), it sets a `degraded` flag that the IPC handlers check before starting new optimization requests. In degraded mode, the UI shows a warning banner: "The AI service is experiencing issues. Some features may be slow." The tracker resets to 0 on any successful response. This prevents a flapping WebSocket (rapidly connecting and disconnecting) from spawning dozens of in-flight requests that all fail. It's the circuit breaker pattern applied to the Python service connection.
+
+### Q57: How does the `buildTailoredPrompt` function in `types.ts` decide how much code to include?
+
+`buildTailoredPrompt` includes at most 8 ranked chunks (capped at 2000 characters of code body each) and 5 related chunks (capped at 1500 characters each). The total maximum code context is ~8×2000 + 5×1500 = 23,500 characters (~6,000 tokens). This is intentionally kept under the 8,000-token window reserved for codebase context in the optimizer's system prompt. Chunks are sorted by `similarity_score` (highest first), so the most semantically relevant code appears first. If a chunk has no `code_body` (e.g., only a signature was stored), the signature is included instead. The function is client-side — it runs in the React renderer and is used to compose the prompt for the "Send to chat" button in `SpaceWorkspace`.
+
+### Q58: Why does the overlay use a 520×600 px fixed size instead of being resizable?
+
+The overlay is designed for quick in-context use — it should appear, deliver results, and close. A resizable window would add complexity (resizing event handling, persisting size preferences, edge cases near screen edges) without meaningful user benefit. The fixed size was chosen through user testing: 520px width accommodates typical prompt text and results without horizontal scrolling; 600px height fits the input, streaming result, and action buttons without vertical scrolling for typical prompts. For very long optimized outputs, the result area is scrollable within the fixed window. This matches the design pattern of Raycast (macOS) and macOS Spotlight — fixed-size, modal-like overlays that don't demand spatial attention.
+
+### Q59: How does the RequestID middleware enable cross-runtime tracing?
+
+Every HTTP request to the Python service receives a `X-Request-ID` header (either passed from Electron's axios client or generated by `RequestIDMiddleware`). The Python service logs every LLM call with this ID: `logger.info(f"[{request_id}] Optimizer call: model={model}, tokens={tokens}")`. Electron's `PythonClient` logs the same ID when it initiates the request. This creates a correlation thread: when debugging a slow optimization, you can grep for the request ID in Electron's logs to see the IPC timing, then find the same ID in the Python service logs to see the LLM latency breakdown. Sentry enriches its traces with the request ID as a tag. This is primitive compared to OpenTelemetry's distributed tracing, but it's pragmatic and requires no additional infrastructure.
+
+### Q60: What is `ElectronStorageAdapter` and why does it exist?
+
+`electron-storage-adapter.ts` wraps Electron's `app.getPath('userData')` for use by libraries that expect a storage interface (e.g., the Supabase JS client's auth token persistence). The Supabase client stores JWT tokens in a key-value store — in browser environments, this is `localStorage`; in Electron's main process, there's no `localStorage`. The adapter provides a `getItem(key)`, `setItem(key, value)`, and `removeItem(key)` interface backed by a JSON file in `userData/supabase-auth.json`. This allows the Supabase client to persist auth sessions across app restarts without any changes to the library.
+
+### Q61: How does the "Continue in App" button work in the overlay?
+
+When the user clicks "Continue in App" in the overlay's `ChatPicker`, the overlay sends an `overlay:continue-in-app` IPC message with the `chatId`. The main process:
+1. Calls `appWindowManager.show()` to make the App Window visible
+2. Sends `navigate:to-chat` IPC to the App Window renderer with the `chatId`
+3. The App Window's `Index.tsx` handles this event by loading the chat and switching to the Chat view
+
+This requires the App Window to be preloaded (which it is — `AppWindowManager.preload()` is called at startup). The window is shown rather than created, so the navigation is immediate. The overlay then closes itself. This is the same pattern VS Code uses for opening a file in the main window from the terminal panel.
+
+### Q62: What is the `windows-key-sender.ts` module and when is it used?
+
+`windows-key-sender.ts` wraps the Win32 `SendInput` API (via the Rust native module) to inject keystrokes into the currently focused window. It's used in two scenarios:
+
+1. **`@prompt` text erasure**: After the Rust hook detects `@prompt`, `TextReplacer.replace(hwnd, triggerLen)` calls `windows-key-sender` to send `triggerLen` Backspace keystrokes to the originating window, erasing the trigger text.
+
+2. **Paste injection**: After the user clicks "Insert" in the overlay, the result text is placed on the clipboard via Electron's `clipboard.writeText()`, then `windows-key-sender` sends `Ctrl+V` to the originating window (identified by `WindowTracker`'s stored HWND) to paste the result.
+
+The module handles the edge case where the originating window has lost focus (the user clicked somewhere else while the overlay was open) — it refocuses the window by sending `SetForegroundWindow(hwnd)` via the Rust module before injecting keystrokes.
+
+---
+
+### Q63: There are two Rust native modules — what do they each do?
+
+There are two separate Rust crates in `native/`:
+
+**`native/windows-core/`** — the original keyboard hook + text injection module. Compiled to `windows-core.win32-x64-msvc.node`. Exports:
+- `startHook(cb)` — installs `WH_KEYBOARD_LL` global hook, fires `cb(anchor)` on `@prompt` detection
+- `stopHook()` — removes hook
+- `getActiveWindowTitle()` — returns Win32 title bar text of focused window
+- `replaceAtLastAnchor(text)` — `SetForegroundWindow` + `Shift+Left×7` selection + `KEYEVENTF_UNICODE` injection
+- `pasteTextToWindow(hwnd, text)` — pastes at current cursor in a specific window (used as fallback when anchor is consumed)
+- `sendEnterToWindow(hwnd)` — sends Enter keystroke to a specific window (used by `overlay:insert-section` to auto-submit in Slack/Teams/Discord/ChatGPT chat windows)
+- `forceFocusWindow(hwnd)` — bypasses Windows foreground lock via `AttachThreadInput` + `AllowSetForegroundWindow`
+
+**`native/platform-core/`** — a newer, broader platform capabilities module. Built with `@napi-rs/cli` (a more modern toolchain). Has a richer dependency set: `@octokit` (GitHub API), `@emnapi` (enhanced N-API runtime), `es-toolkit` (utility), `fast-string-width`. Compiled for `x86_64-pc-windows-msvc`. Provides active window detection and platform abstractions for future cross-platform support. Used by `ActiveWindowDetector`.
+
+Both are wrapped by `electron/main/utils/native-bridge.ts` which lazy-loads them via `require()` and provides stub fallbacks if the binaries are missing.
+
+### Q64: How does `overlay:insert-section` differ from `overlay:insert`?
+
+`overlay:insert` is the standard single-result insert: it closes the overlay, waits 150ms, calls `replaceAtLastAnchor(text)` (or falls back to `pasteTextToWindow`), and returns `{ success }`. The overlay is fully dismissed.
+
+`overlay:insert-section` is for multi-task sectioned output (when the user enables "Task by task" mode). It does NOT close the overlay. Flow:
+1. Temporarily sets overlay window opacity to 0 (visually hides without closing)
+2. Waits 100ms for focus transition
+3. First section: calls `replaceAtLastAnchor(text)`, sets `firstSectionDone = true`
+4. Subsequent sections: calls `pasteTextToWindow(sourceHwnd, text)` directly
+5. If the source window is a chat app (`detectWindowMode(title).mode === 'chat'`): calls `sendEnterToWindow(sourceHwnd)` after each section to auto-submit the task as a message
+6. Restores overlay opacity to 1 and calls `forceFocusWindow(overlayHwnd)` to return control to the overlay
+7. Returns `{ success }` — the user can then continue interacting with the overlay (e.g., to insert the next section)
+
+The `detectWindowMode()` utility classifies the source window as `chat` or `document` based on the window title string, with a confidence score (`high`/`low`). Chat apps detected include Slack, Discord, Teams, ChatGPT, Claude, Gemini web interfaces, and similar.
+
+### Q65: How does the clarification pause-and-resume work in the overlay?
+
+The clarification system uses a suspend/resume pattern:
+
+1. User sends a prompt via `overlay:optimize`
+2. Before calling the optimizer, the handler calls `pythonClient.clarify(text)`
+3. If `should_clarify: true` and questions are returned, the handler:
+   - Stores the ENTIRE optimization state (`data`, `customInstructions`, `historyContext`) in `pendingOverlayClarification`
+   - Sends `overlay:clarification-required` to the overlay renderer with the questions
+   - **Returns early** — the optimizer is NOT called
+4. The overlay renderer shows `ClarificationCard` with the questions
+5. User answers the questions and clicks Submit
+6. Renderer sends `overlay:submit-clarification` with `{ answers, wantsSections, clarificationChoices }`
+7. The handler reads `pendingOverlayClarification`, clears it atomically, formats answers via `formatOverlayClarificationAnswers()`, and calls `pythonClient.optimizeStream()` with the ORIGINAL prompt + formatted answers as `clarificationAnswers`
+8. The clarification choices are stored as metadata on the assistant message in the DB (`clarificationChoices` field) so the UI can render "answered 3 questions" badges
+
+The `isWeakMessage(text)` guard prevents the clarification pass from triggering on very short messages (< ~5 words) or obvious refinements/follow-ups — skipping directly to optimization for these.
+
+### Q66: What is the SYSTEM_PROMPT and how is it enforced?
+
+The `SYSTEM_PROMPT` constant in `main.py` is the core behavioral contract for the LLM acting as prompt optimizer. It contains:
+
+**`DO NOT` rules**:
+- Do not answer the prompt
+- Do not explain what you're doing
+- Do not include symbols like ❌ or ✅
+- Do not write "Here is..." or "CORRECT:" or any meta-text
+- Do not write the final deliverable (not the email, code, or poem itself)
+- Do not have a conversation
+
+**`DO` rules**:
+- Output ONLY the improved version of the prompt itself
+- Start immediately with the improved prompt text
+- Make prompts more specific, detailed, and actionable
+
+**3 canonical input→output examples** are embedded directly in the system prompt to demonstrate the expected behavior.
+
+On top of this, `clean_optimized_text()` is a post-processing scrubber that runs on every LLM response before it's sent to the client. It:
+1. Strips markdown code fences (` ```language ... ``` `)
+2. Strips 8 known prefix patterns ("Here is an optimized prompt:", "Optimized version:", etc.)
+3. Uses two compiled regexes (`_CLEAN_ANALYSIS_RE`, `_CLEAN_LAST_SECTION_RE`) to detect and remove any leaked internal analysis headers (DECISION TAKER, SKILL SELECTOR, OPTIMIZATION TECHNIQUES, USER CONTEXT INTEGRATION) that the LLM occasionally leaks into its output
+4. Strips surrounding double-quotes if present
+
+This two-layer approach (system prompt + post-processing scrubber) makes output quality robust against model drift and prompt injection.
+
+---
+
+*Part 11 extended: April 2026. Covers the dual native module architecture (windows-core + platform-core), complete overlay IPC channel inventory (overlay:insert-section, overlay:submit-clarification, overlay:truncate-history, overlay:stop-generation, overlay:save-to-chat, overlay:get-source-info), the clarification pause-resume state machine, the SYSTEM_PROMPT enforcement and clean_optimized_text() scrubber, the dual-chat persistence paths, and the Deepgram Nova-2 transcription proxy architecture (Q63–Q66).*
 

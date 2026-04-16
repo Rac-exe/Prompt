@@ -1031,19 +1031,31 @@ If the model doesn't support vision, the image attachment is mentioned in text b
 
 Prmpt is composed of five distinct subsystems that communicate via well-defined interfaces. Understanding these subsystems and their boundaries is essential to navigating the codebase.
 
-### Subsystem 1: Rust Native Module (`native/windows-core/`)
+### Subsystem 1: Rust Native Modules (`native/`)
 
-The Rust native module is a compiled binary (`.node` file) that provides low-level Windows OS integration. It runs as a native addon within the Node.js main process.
+There are **two** Rust native modules in the project. Both compile to `.node` binaries loaded by Electron via `require()`.
+
+#### 1A. `windows-core` — Keyboard Hook + Text Injection
+
+The primary keystroke-interception module. A compiled binary (`.node` file) that provides low-level Windows OS integration. It runs as a native addon within the Node.js main process.
 
 **Responsibilities:**
 - **Global Keyboard Hook**: Installs a `WH_KEYBOARD_LL` low-level keyboard hook that intercepts all keystrokes across the entire operating system, even in other applications. The hook runs on a dedicated Windows message pump thread.
 - **@prompt Detection**: Maintains a buffer of recent keystrokes and detects when the user types the literal sequence "@prompt" (7 characters, case-sensitive).
 - **Anchor Storage**: When @prompt is detected, captures the HWND (window handle) of the currently focused window and the trigger length (7). This anchor information is stored for later use by the text replacement function.
 - **JavaScript Callback**: Uses napi-rs ThreadsafeFunction to safely call a JavaScript callback on the Node.js event loop thread when @prompt is detected, passing the anchor data.
-- **Text Replacement**: `replaceAtLastAnchor(text)` — focuses the original window (using `SetForegroundWindow` with the foreground steal sequence: `AttachThreadInput` + `AllowSetForegroundWindow`), selects the @prompt text (simulates Shift+Left arrow key presses for `triggerLen` characters), and pastes the replacement text (copies to clipboard, simulates Ctrl+V).
+- **Text Replacement**: `replaceAtLastAnchor(text)` — focuses the original window (using `SetForegroundWindow` with the foreground steal sequence: `AttachThreadInput` + `AllowSetForegroundWindow`), selects the @prompt text (simulates Shift+Left arrow key presses for `triggerLen` characters), and injects the replacement text using `KEYEVENTF_UNICODE` for character-by-character injection.
+- **Direct Paste**: `pasteTextToWindow(hwnd, text)` — pastes text at current cursor position in a specific window; used as fallback when anchor has been consumed.
+- **Chat Enter**: `sendEnterToWindow(hwnd)` — sends an Enter keystroke to a specific window; used by `overlay:insert-section` to auto-submit in chat applications (Slack, Discord, Teams, etc.).
 - **Window Focus**: `forceFocusWindow(hwnd)` — force-focuses a window by HWND, bypassing Windows' focus-stealing prevention.
 
 **Communication**: The Rust module communicates with JavaScript exclusively through the N-API interface. It exports functions that JavaScript can call, and uses ThreadsafeFunction to call JavaScript callbacks from Rust threads.
+
+#### 1B. `platform-core` — Cross-Platform Capabilities
+
+A newer, second Rust module at `native/platform-core/`. Built using the `napi-rs` CLI toolchain (`@napi-rs/cli`) with a richer dependency set: `@octokit` (GitHub API), `@emnapi` (enhanced N-API), `es-toolkit` (utility functions), `fast-string-width`, and others. Compiled for `x86_64-pc-windows-msvc` target.
+
+Provides broader platform-level capabilities beyond Win32 keyboard hooks — including active window detection used by the `ActiveWindowDetector` subsystem, and platform abstractions intended to support future cross-platform expansion. Wrapped by `electron/main/utils/native-bridge.ts` alongside `windows-core`.
 
 ### Subsystem 2: Electron Main Process (`electron/main/`)
 
@@ -1424,15 +1436,60 @@ The `app:send-message` handler orchestrates the full send flow:
 
 #### overlay-ipc-handlers.ts
 
-Handles: `overlay:optimize`, `overlay:copy`, `overlay:close`, `overlay:open-app`, `overlay:insert`, `overlay:save`, `overlay:check-auth`, `overlay:get-collections`, `overlay:create-collection`, `overlay:get-chats`, `overlay:save-to-chat`, `overlay:new-session`, `overlay:stop-generation`, `overlay:truncate-history`, `overlay:get-settings`.
+The most complex IPC module in the application. Handles the complete overlay optimization lifecycle, clarification state machine, dual-chat persistence, real-time app window sync, and all overlay utility operations.
 
-- **`overlay:optimize`**: Similar to `app:send-message` but sends chunks/completion/error to the overlay window via `overlay:optimization-chunk/complete/error` channels.
-- **`overlay:insert`**: Calls `replaceAtLastAnchor(text)` from the native bridge. Returns `{ success: true }` if the native module performed the replacement. Returns `{ success: false, fallback: "clipboard" }` if the native module is unavailable (the text is copied to clipboard as a fallback).
-- **`overlay:copy`**: Copies text to the system clipboard via `clipboard.writeText()`.
-- **`overlay:close`**: Hides the overlay window.
-- **`overlay:open-app`**: Shows the app window, hides the overlay.
-- **`overlay:save`**: Saves a prompt to the prompt library.
-- **`overlay:get-settings`**: Returns user settings (used by overlay to match app settings like mode preference).
+**Full channel list**: `overlay:optimize`, `overlay:submit-clarification`, `overlay:copy`, `overlay:close`, `overlay:open-app`, `overlay:insert`, `overlay:insert-section`, `overlay:save`, `overlay:check-auth`, `overlay:get-collections`, `overlay:create-collection`, `overlay:get-chats`, `overlay:save-to-chat`, `overlay:get-source-info`, `overlay:new-session`, `overlay:stop-generation`, `overlay:truncate-history`, `overlay:get-settings`.
+
+**Key module-level state**:
+- `inMemoryOverlayHistory` — rolling 20-message conversation buffer (trimmed to last 20 when exceeded); used as LLM context when no `chatId` is provided
+- `currentOverlayChatId` — tracks the overlay session's DB chat so all messages within a session go to the same chat
+- `pendingOverlayClarification` — stores the full `PendingOverlayOptimization` state (prompt, custom instructions, history context) while the user is answering clarification questions; set to `null` before resuming
+- `sourceHwnd` / `sourceWindowTitle` / `firstSectionDone` — source window state captured at `@prompt` trigger time; `firstSectionDone` tracks whether the first section has been inserted (used by `overlay:insert-section`)
+
+**`overlay:optimize` flow**:
+1. Auth check → offline check (blocks file attachments, warns; allows text through)
+2. Client-side rate limit check via `RateLimitService.checkRateLimit(userId)` — sends error frame immediately if exceeded, no LLM call
+3. Fetch custom instructions from `SettingsService` + memory context from `MemoryService` (both silent-fail)
+4. Build history context: if `chatId` is attached → load last 8 messages from DB; otherwise use in-memory overlay session history
+5. Clarification pre-pass: if NOT a regeneration AND `!isWeakMessage(text)` → call `pythonClient.clarify(text)`. If questions returned, store `pendingOverlayClarification` and send `overlay:clarification-required` — **optimization is completely paused here**
+6. If no clarification needed → call `pythonClient.optimizeStream()` with all parameters including `projectId`, `projectBranch`, `wantsSections`, `clarificationAnswers`
+7. On complete: send `overlay:optimization-complete`, log analytics event, invalidate rate-limit cache
+8. Fire-and-forget DB save: save optimization record, trigger background memory analysis, persist user+assistant messages
+
+**Dual-chat persistence paths** (in both `overlay:optimize` and `overlay:submit-clarification`):
+- **Context chat path** (when `chatId` is attached): Append messages to that existing chat. Pre-generate user message ID for file upload paths. Call `svc.touchChat()` to bump `updated_at` so the chat rises to the top of the sidebar. Push `overlay:messages-appended` to the app window for instant real-time sync without a full reload.
+- **Session chat path** (no `chatId`): Create or reuse `currentOverlayChatId`. On first message, create a placeholder chat title (first 4 words), then fire-and-forget a smart AI title from `pythonClient.generateTitle()` and push `chat-renamed` to the app window sidebar.
+
+**`overlay:submit-clarification`**:
+- Reads `pendingOverlayClarification`, clears it atomically, formats answers via `formatOverlayClarificationAnswers()`, then calls `pythonClient.optimizeStream()` with the original prompt data plus the formatted answers as `clarificationAnswers`
+- Full DB save with `clarificationChoices` metadata stored on the assistant message so the UI can display "answered X questions" badges
+- Same dual-chat persistence logic as `overlay:optimize`
+
+**`overlay:insert`**:
+Closes the overlay immediately, waits 150ms for focus to return to the source window, calls `replaceAtLastAnchor(text)`. If that fails (anchor consumed), falls back to `pasteTextToWindow(sourceHwnd, text)`. Sets `firstSectionDone = true` on success.
+
+**`overlay:insert-section`** (multi-task output):
+Does NOT close the overlay. Temporarily sets overlay opacity to 0 (visually hides it) so the native focus manipulation doesn't flash. First section uses `replaceAtLastAnchor`, subsequent sections use `pasteTextToWindow(sourceHwnd)`. For chat windows (`detectWindowMode(sourceWindowTitle).mode === 'chat'`): calls `sendEnterToWindow(sourceHwnd)` to auto-submit the message into the chat. After paste, restores overlay opacity to 1 and calls `forceFocusWindow(overlayHwnd)` to return focus to the overlay.
+
+**`overlay:copy`**: Copies text to the system clipboard via `clipboard.writeText()`.
+
+**`overlay:close`**: Hides the overlay window.
+
+**`overlay:open-app`**: Shows the main app window (used for unauthenticated users prompted to log in).
+
+**`overlay:save`** (prompt library save): Fully offline-aware — when offline, creates temp IDs with `offline-pmt-*` prefix, stores in `localCache`, and queues to `offlineQueue` for sync on reconnect. Auto-creates "Quick Saves" collection if none specified, then notifies the app window to refresh the library in real-time.
+
+**`overlay:get-settings`**: Fetches and caches user settings to `localCache`; offline falls back to cached settings or defaults `{ theme: 'dark', font_size: 'medium', font_family: 'inter', prompt_instructions: '' }`.
+
+**`overlay:get-chats`**: Returns `{ id, title }[]` lightweight list for the context picker; offline falls back to `localCache.getChats()`.
+
+**`overlay:get-source-info`**: Returns source window metadata `{ hwnd, title, detectedMode, confidence, appName }` using `detectWindowMode(sourceWindowTitle)`.
+
+**`overlay:stop-generation`**: Calls `pythonClient.abortLatestStream()` to abort the current in-flight WebSocket stream.
+
+**`overlay:truncate-history`**: Truncates `inMemoryOverlayHistory` to `keepCount` messages — called by the overlay frontend when the user edits a message or retries, to keep backend history in sync with the rendered conversation.
+
+**Cursor polling** (`startCursorPolling`): Sets up a `setInterval` at ~60fps that reads `screen.getCursorScreenPoint()`, offsets it relative to the overlay window position, and sends `overlay:cursor-pos` to drive the emerald glow animation in the renderer. Started when `registerOverlayHandlers` is called; stopped via `stopCursorPolling()` on shutdown.
 
 #### settings-handlers.ts
 
@@ -2774,9 +2831,17 @@ Handles file attachments (PDFs and images) sent with optimization requests.
 
 ### Rate Limiting
 
-Two layers:
-1. **IP-based** (SlowAPI): 60 requests/minute per IP, 200/minute application-wide. Applied to ALL endpoints.
-2. **User-based** (custom): Daily limit per user (default 50, env `DAILY_REQUEST_LIMIT`). Applied ONLY to the WebSocket optimizer. In-memory counters keyed by `user_id:YYYY-MM-DD`. Counters clear at midnight UTC.
+Three layers:
+
+1. **IP-based** (SlowAPI): 60 requests/minute per IP, 200/minute application-wide. Applied to ALL HTTP endpoints. `/health` and `/health/ready` are exempt via `@limiter.exempt`.
+2. **User-based daily cap** (custom `_check_rate_limit()`): In-memory counters keyed by `"{user_id}:{YYYY-MM-DD}"`. Default limit: `DAILY_REQUEST_LIMIT=50` (env-configurable). Applied to BOTH `POST /optimize` and the `WS /ws/optimize-stream` endpoint (per-request inside the WebSocket receive loop). On limit exceeded, the WebSocket path sends an error JSON frame and `continue`s — the connection stays alive. Counters reset at UTC midnight via `_rate_last_date` comparison.
+3. **Concurrency semaphore**: `_optimize_semaphore = Semaphore(MAX_CONCURRENT_OPTIMIZATIONS=50)` — caps simultaneous in-flight LLM inference calls. The `async with _optimize_semaphore:` block inside the WebSocket handler ensures no more than 50 optimization requests run concurrently regardless of the number of connected clients.
+
+**Client-side mirror**: `RateLimitService` in Electron applies the same daily cap check BEFORE sending to Python, allowing immediate UI feedback without a round-trip. The service is invalidated via `getRateLimitService().invalidateCache(userId)` after each successful optimization so the next check reflects the fresh count.
+
+### CORS Configuration
+
+CORS is restricted to `localhost`/`127.0.0.1` by default — the service is never intended to be publicly reachable. Override via `ALLOWED_ORIGINS` env var (comma-separated list of allowed origins). The `X-Request-ID` header is explicitly allowed so distributed Sentry traces can propagate between Electron and Python.
 
 ---
 
@@ -4447,3 +4512,308 @@ WASM grammar files used by `code-parser.ts`:
 ---
 
 *Documentation last extended: April 2026. Chapters 16–31 cover the Code Intelligence Service, Spaces workspaces, code parsing pipeline, file watching, git integration, analytics system, clarification questionnaire, feedback system, skill system, AI guardrails, and all new overlay components — none of which appeared in the original documentation.*
+
+---
+
+## Chapter 32: Task Planner — Structured Builds for Complex Prompts
+
+> **New module in `pipeline_v2/task_planner.py` — not covered in any previous documentation.**
+
+### The Problem It Solves
+
+When a user submits a complex, multi-part build request (e.g., "Build a full SaaS dashboard with auth, billing, and analytics"), a single flat optimized prompt is insufficient. The optimizer needs to know what comes first, what each phase produces, and what state the codebase is in after each step. Without this, the AI coding assistant either tries to do everything at once or makes assumptions about what already exists.
+
+The `task_planner.py` module runs a pre-pass before the optimizer in these cases, producing a structured task graph that the optimizer can use to write accurate, dependency-aware sectioned output.
+
+### When It Runs
+
+Task planning is triggered when the user's clarification answer indicates they want **sectioned task output** (the `wantsSections: true` flag from `ClarificationCard`). The flow is:
+
+```
+Clarification answers received
+    └── wantsSections: true
+            │
+            ▼
+plan_tasks(user_input, model=SUMMARIZER_MODEL)
+            │
+            ├── Returns None (failure) → optimizer falls back to generic sectioned format
+            └── Returns List[TaskDict] → injected into optimizer system prompt
+```
+
+### `plan_tasks(user_input, model?, provider?)` Function
+
+**Model**: `SUMMARIZER_MODEL` (cheap, fast — `gpt-4o-mini` or equivalent)
+**Temperature**: 0.2 (deterministic — consistency is critical for dependency ordering)
+**Response format**: `json_object`
+**Max tokens**: 1024
+
+The planner is given a strict system prompt with these rules:
+1. Order tasks by dependency — earlier tasks must not depend on later ones
+2. Each task must be independently executable by an AI coding assistant
+3. Task 1 always handles project setup / scaffolding
+4. 3–12 tasks. Merge trivial steps; split overly large ones
+5. Be specific in "produces" — name actual files, components, or endpoints
+6. "state_after" must describe what a developer would see after running this task
+7. Do not include testing, deployment, or CI/CD unless explicitly requested
+
+### Task Schema
+
+Each task in the returned list has this shape:
+
+```python
+{
+    "number": 1,
+    "name": "Project Setup & Scaffolding",
+    "goal": "Initialize the Next.js project with TypeScript, Tailwind, and Supabase",
+    "depends_on": "",                          # Empty for task 1
+    "produces": ["package.json", "tailwind.config.ts", "lib/supabase.ts"],
+    "state_after": "A running Next.js dev server with Supabase client configured"
+}
+```
+
+### Failure Handling
+
+`plan_tasks` returns `None` on any error (LLM failure, JSON parse error, fewer than 2 valid tasks). The optimizer catches `None` and falls back to its own internal task-section format. This ensures the feature degrades gracefully without surfacing errors to the user.
+
+### Token Logging
+
+Every successful call logs to the daily usage `.jsonl` file with `call_type="task_planner"`, enabling cost tracking separate from optimization calls.
+
+---
+
+## Chapter 33: OTP-Based Email Authentication
+
+> **New module in `app/email_otp.py` and `components/auth/OtpVerification.tsx` — not covered in any previous documentation.**
+
+### Why OTP?
+
+The app supports two email-based auth flows that don't map cleanly to Supabase's standard JWT flow:
+1. **Signup OTP verification** — confirm email ownership before creating the Supabase account
+2. **Password reset OTP** — reset password without Supabase's magic link flow (which requires a web redirect)
+
+Both flows use a self-contained OTP system managed entirely by the Python service.
+
+### OTP Service (`app/email_otp.py`)
+
+**Storage**: In-memory Python dict — `_store: Dict[str, OTPRecord]` — no database required for OTP codes.
+
+**OTPRecord shape**:
+```python
+{
+    "otp": "847291",           # 6-digit random string
+    "email": "user@example.com",
+    "purpose": "signup",       # or "reset"
+    "expires_at": datetime,    # now() + 10 minutes
+    "data": {...}              # Optional extra data (for signup: display_name, custom_instructions)
+}
+```
+
+**Key Functions**:
+
+| Function | Description |
+|---|---|
+| `send_signup_otp(email, display_name?, custom_instructions?)` | Generate 6-digit OTP, store in `_store`, send via SMTP, return `{ message }` |
+| `verify_signup_otp(email, otp)` | Verify OTP + expiry, create Supabase user via Admin API, return JWT session, delete OTP record |
+| `send_reset_otp(email)` | Generate OTP, store with `purpose="reset"`, send via SMTP |
+| `reset_password(email, otp, new_password)` | Verify OTP, call Supabase Admin API to update password, delete OTP record |
+| `cleanup_expired()` | Removes all OTPRecords where `expires_at < now()` — called every 5 minutes by a background asyncio task started in `startup_event()` |
+
+**OTP Expiry**: 10 minutes. After expiry, `verify_signup_otp` and `reset_password` return a 400 error.
+
+**Brute-force protection**: No explicit lockout in the current implementation — rate limiting via SlowAPI (`60/minute` default) provides the primary protection.
+
+### Frontend OTP UI (`OtpVerification.tsx`)
+
+A 6-digit OTP entry form rendered after signup or password reset initiation. Features:
+- 6 separate single-character `<input>` fields for controlled input
+- Auto-advances focus to the next field on input
+- Auto-submits when all 6 digits are entered
+- Backspace on an empty field focuses the previous field
+- Paste support — pasting a 6-digit string fills all fields and auto-submits
+- Countdown timer showing remaining validity
+
+### API Endpoints
+
+```
+POST /auth/send-signup-otp    { email, display_name?, custom_instructions? }
+POST /auth/verify-signup-otp  { email, otp }  → { access_token, refresh_token, user }
+POST /auth/send-reset-otp     { email }
+POST /auth/reset-password     { email, otp, new_password }
+```
+
+None of these endpoints require a JWT (`require_auth` dependency is not applied).
+
+---
+
+## Chapter 34: GDPR Account Deletion — 30-Day Graceful Wipe
+
+> **New modules in `database/services/deletion-service.ts`, `ipc-handlers/deletion-handlers.ts`, and the `deletion_requests` Supabase table.**
+
+### The Lifecycle
+
+```
+User → Settings → "Delete Account" → Confirmation dialog
+        │
+        ▼
+account:request-deletion IPC
+  → DeletionService.scheduleDeletion(userId)
+  → INSERT into deletion_requests { user_id, scheduled_for: now() + 30 days }
+  → Return { scheduledFor: Date }
+        │
+        ▼
+UI shows: "Your account is scheduled for deletion on [date]. You can cancel anytime."
+        │
+        ├── User clicks "Cancel Deletion"
+        │       → account:cancel-deletion IPC
+        │       → UPDATE deletion_requests SET cancelled_at = now()
+        │       → Deletion prevented
+        │
+        └── 30 days pass without cancellation
+                → Supabase edge function (cron job, runs daily)
+                → SELECT from deletion_requests WHERE scheduled_for <= now() AND cancelled_at IS NULL
+                → Permanently delete all user data (using service role key)
+                → Auth.deleteUser(userId)
+```
+
+### `DeletionService`
+
+| Method | Supabase Operation |
+|---|---|
+| `scheduleDeletion(userId)` | INSERT into `deletion_requests` |
+| `cancelDeletion(userId)` | UPDATE `deletion_requests` SET `cancelled_at = now()` WHERE `cancelled_at IS NULL` |
+| `getPendingDeletion(userId)` | SELECT most recent non-cancelled deletion request |
+
+### Security
+
+The Supabase edge function that executes deletions uses the **service role key** — it can bypass RLS and delete any user's data. The function validates that the caller is the cron scheduler (via a secret header) before executing. This ensures no user can trigger another user's deletion.
+
+### Data Wiped on Deletion
+
+All rows in every table where `user_id = userId`:
+- `user_profiles`, `user_preferences`, `chats`, `messages`, `prompt_collections`, `saved_prompts`, `user_memory`, `app_sessions`, `usage_events`, `code_intel_projects`, `deletion_requests`
+
+Cloudinary avatars and Supabase Storage attachments are deleted via their respective APIs. The Supabase Auth user (`auth.users`) is deleted last.
+
+---
+
+## Chapter 35: Rate Limiting and Daily Usage Caps
+
+> **New module in `database/services/rate-limit-service.ts`.**
+
+Prmpt enforces two layers of rate limiting:
+
+### Layer 1: API-Level Rate Limiting (Python Service)
+
+Implemented via **SlowAPI** middleware on every HTTP/WebSocket endpoint:
+- Default: `60/minute` per IP address
+- Application-wide: `10000/minute`
+- Specific endpoints can override: e.g., OTP endpoints may have stricter limits
+
+When a rate limit is exceeded, SlowAPI returns HTTP 429 with a `Retry-After` header. The Electron main process surfaces this as a toast notification: "You're going too fast. Wait a moment before sending again."
+
+### Layer 2: Daily Usage Cap (Per-User, Electron-Side)
+
+`RateLimitService` enforces a daily optimization count cap per user:
+
+```typescript
+interface DailyUsage {
+  user_id: string;
+  date: string;           // "YYYY-MM-DD"
+  optimization_count: number;
+  limit: number;          // Per-tier cap
+}
+```
+
+**Flow**:
+1. Before each optimization: `RateLimitService.checkLimit(userId)` → returns `{ allowed: boolean, remaining: number, resetAt: Date }`
+2. If `allowed: false`: request is rejected with a specific error surfaced in the UI
+3. If `allowed: true`: optimization proceeds, then `RateLimitService.increment(userId)` is called after completion
+4. The `daily_usage_summaries` Supabase table is updated via a database trigger on every INSERT into `usage_events`
+
+**Daily Summary Trigger**: The Supabase `upsert_daily_session_on_close` trigger (added in migration `20260415_fix_session_trigger_crash_recovery.sql`) ensures that crash-recovered sessions — where `duration_seconds IS NULL` — do **not** increment the `total_sessions` counter in `daily_usage_summaries`. This prevents inflated session counts from crashed app instances.
+
+---
+
+## Chapter 36: Active Window Detector and Zoom Indicator
+
+### Active Window Detector (`services/active-window-detector.ts`)
+
+Wraps the Rust native module's `getActiveWindowTitle()` function in a polling mechanism. Polls the currently focused window title at configurable intervals (default: 1 second) when the overlay is open.
+
+Used by `ProjectStatus` in the overlay to determine if the user's current application matches any configured Space project path — enabling automatic context surfacing without manual selection.
+
+**Polling stops** when the overlay closes to avoid unnecessary OS calls while the app is in the background.
+
+### Zoom Indicator (`components/layout/ZoomIndicator.tsx`)
+
+A floating indicator rendered in `AppLayout.tsx` that appears temporarily when the user adjusts font size in Settings.
+
+**Behavior**:
+- Watches the `--font-size` CSS variable on the document root
+- When the value changes, a pill-shaped badge slides in from the bottom-right corner showing the current zoom level (e.g., "100%", "115%", "85%")
+- Auto-dismisses after 1.5 seconds via a CSS transition
+- Uses `animate-slide-up` from the design system for entry animation
+
+**Implementation**: Uses a `MutationObserver` on `document.documentElement` watching the `style` attribute. When `--font-size` changes, it parses the value, sets the visible label, and starts a dismiss timer. The observer is cleaned up on component unmount.
+
+---
+
+## Chapter 37: Request ID Middleware and Production API Hardening
+
+### Request ID Middleware
+
+`RequestIDMiddleware` is applied to the FastAPI app as a Starlette `BaseHTTPMiddleware`. On every request:
+1. Reads the `X-Request-ID` header from the incoming request (if present)
+2. Falls back to generating a new UUID if not present
+3. Attaches the `X-Request-ID` header to the outgoing response
+
+This enables distributed tracing — Electron's `axios` can log the request ID, Python logs can reference the same ID, and Sentry breadcrumbs can include it.
+
+### Production API Hardening
+
+When `APP_ENV=production`:
+- `/docs` (Swagger UI) is disabled
+- `/redoc` is disabled
+- `/openapi.json` is disabled
+
+This prevents API schema disclosure in production environments. In development, all three are enabled for rapid iteration.
+
+### Prompt Content Scrubbing
+
+The `_scrub_prompts` Sentry `before_send` hook redacts any key containing "prompt", "content", "message", or "text" from:
+- `event.extra` dict
+- Breadcrumb `data` dicts
+- `request.data` dict
+- Exception `value` strings
+- Stack frame `vars` dicts
+
+This is applied before any data leaves the machine, ensuring no user prompt content appears in error reports.
+
+### Lazy Pipeline Loading
+
+`_ensure_pipeline()` is a once-guarded lazy loader that imports `pipeline_v2` (and its transitive dependencies: LiteLLM, tiktoken, torch, etc.) on first use, not at server startup. This allows the uvicorn server to bind its port immediately on startup — critical for Render.com's health check polling during cold starts — while the expensive model loading happens in a background `asyncio.create_task`.
+
+The warmup sequence:
+1. `_background_warmup()` runs as a fire-and-forget task on `startup_event`
+2. Loads the pipeline (imports all heavy deps)
+3. Makes a warm-up LLM call to OpenRouter to establish the connection
+4. Pre-loads the Whisper and Silero VAD models
+
+After warmup, the first user request is served with zero cold-start latency.
+
+---
+
+## Updated Table of Contents (Chapters 32–37)
+
+| Chapter | Topic |
+|---|---|
+| 32 | Task Planner — Structured Builds for Complex Prompts |
+| 33 | OTP-Based Email Authentication |
+| 34 | GDPR Account Deletion — 30-Day Graceful Wipe |
+| 35 | Rate Limiting and Daily Usage Caps |
+| 36 | Active Window Detector and Zoom Indicator |
+| 37 | Request ID Middleware and Production API Hardening |
+
+---
+
+*Documentation extended: April 2026. Chapters 32–37 document the Task Planner pipeline pre-pass, OTP email authentication system, GDPR deletion lifecycle, dual-layer rate limiting, active window detection, zoom indicator, and production API hardening — completing the full picture of all systems in the Prmpt codebase.*
