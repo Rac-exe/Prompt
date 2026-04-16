@@ -2,15 +2,15 @@
 
 mod buffer;
 mod hook;
-mod keymap;
 #[cfg(target_os = "windows")]
+mod keymap;
 mod replacement;
 
 use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Windows-only helpers (getActiveWindowTitle stays from Phase 0)
+// Windows-only: active window title via GetWindowTextW
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "windows")]
@@ -32,131 +32,88 @@ mod win32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// macOS-only: active window title via osascript
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+mod macos_util {
+    use std::process::Command;
+
+    pub fn get_active_window_title() -> String {
+        let output = Command::new("osascript")
+            .args([
+                "-e",
+                "tell application \"System Events\" to get name of first window of (first process whose frontmost is true)",
+            ])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout).trim().to_string()
+            }
+            _ => {
+                get_frontmost_app_name()
+            }
+        }
+    }
+
+    fn get_frontmost_app_name() -> String {
+        let output = Command::new("osascript")
+            .args([
+                "-e",
+                "tell application \"System Events\" to get name of first process whose frontmost is true",
+            ])
+            .output();
+        match output {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            Err(_) => String::new(),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Exported N-API functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Returns the title bar text of the currently focused window.
-/// Returns "" on failure or non-Windows platforms.
 #[napi]
 pub fn get_active_window_title() -> String {
     #[cfg(target_os = "windows")]
     { win32::get_active_window_title() }
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    { macos_util::get_active_window_title() }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     { String::new() }
 }
 
-/// Install the global WH_KEYBOARD_LL keyboard hook.
-///
-/// `callback` is called on the Node.js event loop (non-blocking) whenever
-/// `@prompt` is detected anywhere in the system.
-///
-/// Callback signature: `(anchor: TriggerAnchor) => void`
-/// where TriggerAnchor = `{ hwnd: number, triggerLen: number }`
-///
-/// Idempotent — calling twice has no effect.
 #[napi]
 pub fn start_hook(callback: ThreadsafeFunction<hook::TriggerData>) -> napi::Result<()> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        eprintln!("[NativeHook] start_hook: Windows only. No-op.");
-        return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        hook::start(callback)
-    }
+    hook::start(callback)
 }
 
-/// Remove the global keyboard hook and shut down the hook thread cleanly.
-/// Blocks until the hook thread exits. Safe to call when not running.
 #[napi]
 pub fn stop_hook() -> napi::Result<()> {
-    #[cfg(not(target_os = "windows"))]
-    { return Ok(()); }
-
-    #[cfg(target_os = "windows")]
-    { hook::stop() }
+    hook::stop()
 }
 
-/// Select the @prompt trigger text and replace it with `text` in the original window.
-///
-/// Must be called AFTER the overlay closes and AI text is ready.
-/// The anchor (HWND + trigger_len) was captured the moment @prompt was typed.
-///
-/// Returns true on success, false if:
-///   - No anchor is stored (startHook was not called yet)
-///   - The target window no longer exists
-///   - SendInput is blocked by UIPI (elevated target process)
-///
-/// NOTE: blocks the caller thread for ~30ms (OS focus transfer delay).
-/// Electron main thread blocking briefly is acceptable — the renderer is unaffected.
 #[napi]
 pub fn replace_at_last_anchor(text: String) -> bool {
-    #[cfg(not(target_os = "windows"))]
-    { return false; }
-
-    #[cfg(target_os = "windows")]
-    { replacement::replace_at_last_anchor(&text) }
+    replacement::replace_at_last_anchor(&text)
 }
 
-/// Paste text into a specific window via clipboard (Ctrl+V).
-///
-/// Does NOT consume any stored anchor or delete trigger text.
-/// Focuses the target window, writes text to clipboard, sends Ctrl+V,
-/// then restores the original clipboard contents.
-///
-/// Designed for multi-section insert where the overlay pastes sections
-/// one at a time into the same target window.
-///
-/// Returns true on success, false if the window no longer exists or
-/// SendInput is blocked by UIPI.
 #[napi]
 pub fn paste_text_to_window(hwnd: i64, text: String) -> bool {
-    #[cfg(not(target_os = "windows"))]
-    { let _ = (hwnd, text); return false; }
-
-    #[cfg(target_os = "windows")]
-    { replacement::paste_text_to_window(hwnd as isize, &text) }
+    replacement::paste_text_to_window(hwnd as isize, &text)
 }
 
-/// Send Enter key (VK_RETURN) to a specific window.
-///
-/// Used by auto-pilot chat mode to submit a pasted section.
-/// Focuses the target window if needed, then sends VK_RETURN down/up.
-///
-/// Returns true on success, false if the window is gone or SendInput fails.
 #[napi]
 pub fn send_enter_to_window(hwnd: i64) -> bool {
-    #[cfg(not(target_os = "windows"))]
-    { let _ = hwnd; return false; }
-
-    #[cfg(target_os = "windows")]
-    { replacement::send_enter_to_window(hwnd as isize) }
+    replacement::send_enter_to_window(hwnd as isize)
 }
 
-/// Force-focus an Electron window by its native HWND.
-///
-/// Electron's BrowserWindow.focus() is asynchronous and works through the
-/// Chromium message pump — it may be ignored if another app currently holds
-/// foreground, because Windows only allows the foreground process to grant
-/// foreground status (SetForegroundWindow from a non-foreground process fails).
-///
-/// This function runs the canonical Win32 foreground-steal sequence:
-///   1. AllowSetForegroundWindow(ASFW_ANY)   — relax the foreground lock
-///   2. AttachThreadInput(foreground→ours)   — bridge input queues
-///   3. SetForegroundWindow(target)          — claim foreground
-///   4. BringWindowToTop(target)             — ensure Z-order
-///   5. ShowWindow(target, SW_SHOW)          — make visible
-///   6. DetachThreadInput                    — clean up bridge
-///
-/// Returns true if SetForegroundWindow reported success; false otherwise.
-/// Call this immediately before or after Electron's window.show() for best results.
+/// Force-focus an Electron window by its native handle.
+/// On Windows: HWND-based foreground steal sequence.
+/// On macOS: NSRunningApplication.activate via osascript.
 #[napi]
 pub fn force_focus_window(hwnd: i64) -> bool {
-    #[cfg(not(target_os = "windows"))]
-    { let _ = hwnd; return false; }
-
     #[cfg(target_os = "windows")]
     unsafe {
         use windows::Win32::Foundation::HWND;
@@ -173,17 +130,11 @@ pub fn force_focus_window(hwnd: i64) -> bool {
             return false;
         }
 
-        // Relax the foreground lock so any process can call SetForegroundWindow.
         let _ = AllowSetForegroundWindow(ASFW_ANY);
-
-        // Get the thread that currently owns the foreground window.
         let fg_hwnd = GetForegroundWindow();
         let fg_thread = GetWindowThreadProcessId(fg_hwnd, None);
         let our_thread = GetCurrentThreadId();
 
-        // Attach our input queue to the foreground thread's queue.
-        // This is necessary because SetForegroundWindow only works when
-        // the calling thread is attached to the foreground thread's input.
         let attached = fg_thread != 0
             && fg_thread != our_thread
             && AttachThreadInput(fg_thread, our_thread, true).as_bool();
@@ -192,11 +143,54 @@ pub fn force_focus_window(hwnd: i64) -> bool {
         let _ = BringWindowToTop(target);
         let _ = ShowWindow(target, SW_SHOW);
 
-        // Always detach — leaving threads attached causes input routing bugs.
         if attached {
             let _ = AttachThreadInput(fg_thread, our_thread, false);
         }
 
         ok
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        let pid = hwnd as i32;
+        let script = format!(
+            "tell application \"System Events\" to set frontmost of (first process whose unix id is {}) to true",
+            pid
+        );
+        std::process::Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    { let _ = hwnd; false }
+}
+
+/// Check if the app has Accessibility permission (macOS).
+/// Always returns true on Windows and other platforms.
+#[napi]
+pub fn check_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        // Use osascript to check AXIsProcessTrusted equivalent
+        let output = Command::new("osascript")
+            .args([
+                "-e",
+                "tell application \"System Events\" to get UI elements enabled",
+            ])
+            .output();
+        match output {
+            Ok(o) => {
+                let s = String::from_utf8_lossy(&o.stdout).trim().to_lowercase();
+                s == "true"
+            }
+            Err(_) => false,
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    { true }
 }
