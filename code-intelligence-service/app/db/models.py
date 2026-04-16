@@ -112,6 +112,23 @@ class RetrieveResponse(BaseModel):
     query_concepts: list[str] = Field(default_factory=list)
 
 
+class ContextRequest(BaseModel):
+    project_id: str
+    query: str = Field(..., min_length=1, max_length=10_000)
+    branch: Optional[str] = None
+    limit: int = Field(default=10, ge=1, le=50)
+
+
+class ContextResponse(BaseModel):
+    context_text: str
+    analysis_block: str
+    intent: str = "general"
+    concepts: list[str] = Field(default_factory=list)
+    ranked_count: int = 0
+    related_count: int = 0
+    project_summary: Optional[str] = None
+
+
 class SyncRequest(BaseModel):
     project_id: Optional[str] = None
 

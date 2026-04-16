@@ -6,7 +6,11 @@ SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/openai/gpt-4o-mini")
+
+# ── LLM Models ──────────────────────────────────────────────────────────────
+SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/openai/gpt-4.1-nano")
+ANALYZER_MODEL = os.environ.get("ANALYZER_MODEL", "openrouter/google/gemini-2.5-flash")
+QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/openai/gpt-4o-mini")
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 512
@@ -26,5 +30,9 @@ RETRIEVAL_MAX_LIMIT = 50
 
 MAX_CODE_BODY_LEN = 3000
 SUMMARIZER_CONCURRENCY = 15
+SUMMARIZER_BATCH_SIZE = 5
+UPSERT_BATCH_SIZE = 50
 GRAPH_MAX_DEPTH = 2
 GRAPH_MAX_RELATED = 20
+SIMPLE_QUERY_WORD_THRESHOLD = 20
+GRAPH_SIMILARITY_THRESHOLD = 0.25

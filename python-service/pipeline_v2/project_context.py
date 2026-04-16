@@ -1,8 +1,10 @@
 """
 Project context retrieval — calls the Code Intelligence Service
 to fetch relevant code chunks (with code bodies) before prompt
-optimization.  Formats the result so the downstream LLM receives
-actual source code, not just metadata pointers.
+optimization.
+
+Prefers the combined /api/context endpoint which returns pre-formatted
+tiered context + analysis. Falls back to /api/retrieve + local formatting.
 """
 
 import os
@@ -26,6 +28,7 @@ class ProjectContext:
     text: str
     intent: str = "general"
     concepts: list[str] = field(default_factory=list)
+    analysis_block: str = ""
 
 
 def fetch_project_context(
@@ -36,10 +39,9 @@ def fetch_project_context(
     limit: int = 10,
 ) -> ProjectContext | None:
     """
-    Call the Code Intelligence Service /api/retrieve endpoint to get
-    relevant code context for a user's prompt. Returns a ProjectContext
-    with formatted text, query intent, and detected concepts, or None
-    on failure.
+    Call the Code Intelligence Service to get relevant code context.
+    Tries /api/context first (combined retrieval+analysis), falls back to
+    /api/retrieve + local formatting.
     """
     if not CODE_INTEL_URL:
         logger.debug("CODE_INTELLIGENCE_SERVICE_URL not set — skipping project context")
@@ -49,13 +51,118 @@ def fetch_project_context(
         return None
 
     logger.info(
-        f"Fetching project context: project={project_id}, "
-        f"query={user_query[:80]!r}, branch={branch}, limit={limit}"
+        f"[PROJECT CTX] Fetching context: project={project_id}, "
+        f"query={user_query[:80]!r}, branch={branch}, limit={limit}, "
+        f"service_url={CODE_INTEL_URL or '(not set)'}"
     )
 
     headers = {"Content-Type": "application/json"}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
+
+    logger.info("[PROJECT CTX] Trying /api/context endpoint first...")
+    result = _try_context_endpoint(project_id, user_query, branch, limit, headers)
+    if result is not None:
+        logger.info(
+            f"[PROJECT CTX] SUCCESS via /api/context: "
+            f"context={len(result.text)} chars, "
+            f"analysis={'present (' + str(len(result.analysis_block)) + ' chars)' if result.analysis_block else 'absent'}, "
+            f"intent={result.intent}, concepts={result.concepts}"
+        )
+        return result
+
+    logger.info("[PROJECT CTX] /api/context failed, falling back to /api/retrieve...")
+    fallback = _fallback_retrieve_endpoint(project_id, user_query, branch, limit, headers)
+    if fallback:
+        logger.info(
+            f"[PROJECT CTX] SUCCESS via /api/retrieve (fallback): "
+            f"context={len(fallback.text)} chars, no server-side analysis"
+        )
+    else:
+        logger.warning("[PROJECT CTX] Both endpoints failed — no project context available")
+    return fallback
+
+
+def _try_context_endpoint(
+    project_id: str,
+    user_query: str,
+    branch: str | None,
+    limit: int,
+    headers: dict,
+) -> ProjectContext | None:
+    """Call POST /api/context for combined retrieval + analysis."""
+    body = {
+        "project_id": project_id,
+        "query": user_query[:5000],
+        "limit": limit,
+    }
+    if branch:
+        body["branch"] = branch
+
+    try:
+        t0 = time.perf_counter()
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{CODE_INTEL_URL}/api/context",
+                json=body,
+                headers=headers,
+            )
+        elapsed = time.perf_counter() - t0
+
+        if resp.status_code != 200:
+            logger.warning(
+                f"/api/context returned {resp.status_code} in {elapsed:.2f}s: "
+                f"{resp.text[:200]} — falling back to /api/retrieve"
+            )
+            return None
+
+        data = resp.json()
+        context_text = data.get("context_text", "")
+        analysis_block = data.get("analysis_block", "")
+        intent = data.get("intent", "general")
+        concepts = data.get("concepts", [])
+        ranked_count = data.get("ranked_count", 0)
+        related_count = data.get("related_count", 0)
+
+        if not context_text:
+            logger.info("/api/context returned empty context — falling back")
+            return None
+
+        logger.info(
+            f"/api/context responded in {elapsed:.2f}s: "
+            f"{ranked_count} ranked + {related_count} related, "
+            f"analysis={'yes' if analysis_block else 'no'}, "
+            f"intent={intent}, concepts={concepts}, "
+            f"context={len(context_text)} chars"
+        )
+
+        return ProjectContext(
+            text=context_text,
+            intent=intent,
+            concepts=concepts,
+            analysis_block=analysis_block,
+        )
+
+    except httpx.TimeoutException:
+        logger.warning("/api/context timed out (30s) — falling back to /api/retrieve")
+        return None
+    except Exception as e:
+        logger.warning(f"/api/context failed ({e}) — falling back to /api/retrieve")
+        return None
+
+
+def _fallback_retrieve_endpoint(
+    project_id: str,
+    user_query: str,
+    branch: str | None,
+    limit: int,
+    headers: dict,
+) -> ProjectContext | None:
+    """Fallback: call GET /api/retrieve + local formatting."""
+    logger.info(
+        f"Fetching project context via /api/retrieve: project={project_id}, "
+        f"query={user_query[:80]!r}, branch={branch}, limit={limit}"
+    )
 
     params = {
         "project_id": project_id,
@@ -86,13 +193,10 @@ def fetch_project_context(
         query_concepts = data.get("query_concepts", [])
 
         bodies_count = sum(1 for c in ranked_chunks if c.get("code_body"))
-        concepts_count = sum(1 for c in ranked_chunks if c.get("concepts"))
         logger.info(
             f"Code Intel responded in {elapsed:.2f}s: "
-            f"{len(ranked_chunks)} ranked ({bodies_count} with code, "
-            f"{concepts_count} with concepts), "
+            f"{len(ranked_chunks)} ranked ({bodies_count} with code), "
             f"{len(related_chunks)} related, "
-            f"branch_ctx={'yes' if branch_context else 'no'}, "
             f"intent={query_intent}, concepts={query_concepts}"
         )
 

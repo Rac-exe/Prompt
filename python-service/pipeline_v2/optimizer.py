@@ -337,25 +337,42 @@ def optimize(
         except Exception as e:
             logger.error(f"Project context fetch failed: {e}", exc_info=True)
 
-    # Run code analyzer if we have project context
+    # Use analysis from /api/context if available, otherwise run local analyzer
     code_analysis_block = ""
     if project_context_text and project_ctx:
-        logger.info("Starting code analysis...")
-        try:
-            findings = analyze_code(
-                user_query=user_input,
-                project_context_text=project_context_text,
-                intent=project_ctx.intent,
-                concepts=project_ctx.concepts,
+        if project_ctx.analysis_block:
+            code_analysis_block = project_ctx.analysis_block
+            logger.info(
+                f"[OPTIMIZER] Using SERVER-SIDE analysis block from /api/context "
+                f"({len(code_analysis_block)} chars) — skipping local analyze_code()"
             )
-            if findings:
-                code_analysis_block = format_analysis_block(findings)
-                logger.info(f"Code analysis complete ({len(code_analysis_block)} chars), "
-                            f"root_cause={findings.get('root_cause', 'N/A')[:80]}")
-            else:
-                logger.info("Code analyzer returned no findings")
-        except Exception as e:
-            logger.error(f"Code analysis failed: {e}", exc_info=True)
+        else:
+            logger.info(
+                "[OPTIMIZER] No server-side analysis — running LOCAL code analysis (fallback)"
+            )
+            try:
+                findings = analyze_code(
+                    user_query=user_input,
+                    project_context_text=project_context_text,
+                    intent=project_ctx.intent,
+                    concepts=project_ctx.concepts,
+                )
+                if findings:
+                    code_analysis_block = format_analysis_block(findings)
+                    logger.info(
+                        f"[OPTIMIZER] Local code analysis complete ({len(code_analysis_block)} chars), "
+                        f"root_cause={findings.get('root_cause', 'N/A')[:80]}"
+                    )
+                else:
+                    logger.info("[OPTIMIZER] Local code analyzer returned no findings")
+            except Exception as e:
+                logger.error(f"[OPTIMIZER] Local code analysis failed: {e}", exc_info=True)
+    else:
+        logger.info(
+            f"[OPTIMIZER] Skipping code analysis: "
+            f"project_context={'yes' if project_context_text else 'no'}, "
+            f"project_ctx={'yes' if project_ctx else 'no'}"
+        )
 
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied

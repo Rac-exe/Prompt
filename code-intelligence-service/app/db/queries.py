@@ -7,7 +7,7 @@ for vector/text search and standard table operations for CRUD.
 import logging
 from typing import Optional
 from app.db.supabase_client import get_client
-from app.config import GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED
+from app.config import GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, UPSERT_BATCH_SIZE
 
 logger = logging.getLogger("code-intel.queries")
 
@@ -145,9 +145,74 @@ def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str], dict]:
     return lookup
 
 
-def cleanup_stale_chunks(project_id: str, valid_keys: set[tuple[str, str, str]]) -> int:
-    """Delete chunks not in the latest ingest batch. valid_keys = {(file_path, name, chunk_type)}."""
+def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_SIZE) -> int:
+    """Bulk upsert chunks in batches instead of one-at-a-time."""
+    if not chunks_data:
+        return 0
     client = get_client()
+    total_batches = (len(chunks_data) + batch_size - 1) // batch_size
+    logger.info(
+        f"[BATCH UPSERT] Starting: {len(chunks_data)} rows in {total_batches} "
+        f"batches (batch_size={batch_size})"
+    )
+    processed = 0
+    for i in range(0, len(chunks_data), batch_size):
+        batch = chunks_data[i:i + batch_size]
+        batch_num = (i // batch_size) + 1
+        try:
+            client.table("code_chunks").upsert(
+                batch, on_conflict="project_id,file_path,name,chunk_type"
+            ).execute()
+            processed += len(batch)
+            logger.info(
+                f"[BATCH UPSERT] Batch {batch_num}/{total_batches}: "
+                f"{len(batch)} rows OK (total processed={processed})"
+            )
+        except Exception as e:
+            logger.error(
+                f"[BATCH UPSERT] Batch {batch_num}/{total_batches} failed ({e}), "
+                f"falling back to individual upserts for {len(batch)} rows"
+            )
+            for row in batch:
+                try:
+                    client.table("code_chunks").upsert(
+                        row, on_conflict="project_id,file_path,name,chunk_type"
+                    ).execute()
+                    processed += 1
+                except Exception as inner_e:
+                    logger.error(f"[BATCH UPSERT] Single fallback failed for {row.get('name')}: {inner_e}")
+    logger.info(f"[BATCH UPSERT] Complete: {processed}/{len(chunks_data)} rows processed")
+    return processed
+
+
+def cleanup_stale_chunks(project_id: str, valid_keys: set[tuple[str, str, str]]) -> int:
+    """Delete chunks not in the latest ingest batch using server-side SQL when available."""
+    client = get_client()
+
+    valid_keys_list = [
+        {"f": fp, "n": name, "t": ct} for fp, name, ct in valid_keys
+    ]
+    logger.info(
+        f"[STALE CLEANUP] Calling SQL function for project {project_id} "
+        f"with {len(valid_keys)} valid keys"
+    )
+    try:
+        result = client.rpc("cleanup_stale_chunks", {
+            "p_project_id": project_id,
+            "p_valid_keys": valid_keys_list,
+        }).execute()
+        count = result.data if isinstance(result.data, int) else 0
+        logger.info(
+            f"[STALE CLEANUP] SQL function returned: {count} stale chunks deleted "
+            f"for project {project_id}"
+        )
+        return count
+    except Exception as e:
+        logger.warning(
+            f"[STALE CLEANUP] SQL function failed ({e}), "
+            f"falling back to Python-side cleanup"
+        )
+
     result = (
         client.table("code_chunks")
         .select("id,file_path,name,chunk_type")
@@ -461,3 +526,75 @@ def get_all_github_projects() -> list[dict]:
         .execute()
     )
     return result.data or []
+
+
+# ── File-path search ─────────────────────────────────────────────────────────
+
+def file_path_search(
+    project_id: str,
+    user_id: str,
+    file_patterns: list[str],
+    limit: int = 20,
+) -> list[dict]:
+    """Search chunks by file path patterns using the search_chunks_by_file_paths RPC."""
+    if not file_patterns:
+        return []
+    client = get_client()
+    try:
+        result = client.rpc("search_chunks_by_file_paths", {
+            "p_project_id": project_id,
+            "p_user_id": user_id,
+            "p_file_patterns": file_patterns,
+            "p_limit": limit,
+        }).execute()
+        rows = result.data or []
+        logger.debug(f"file_path_search: {len(rows)} results for patterns={file_patterns}")
+        return rows
+    except Exception as e:
+        logger.warning(f"file_path_search RPC failed ({e}), using fallback ILIKE query")
+        try:
+            query = (
+                client.table("code_chunks")
+                .select(_CHUNK_SELECT_FIELDS)
+                .eq("project_id", project_id)
+                .eq("user_id", user_id)
+                .limit(limit)
+            )
+            for pattern in file_patterns[:3]:
+                query = query.ilike("file_path", pattern)
+            result = query.execute()
+            return result.data or []
+        except Exception:
+            return []
+
+
+# ── Project summary ──────────────────────────────────────────────────────────
+
+def update_project_summary(project_id: str, summary: str, tech_stack: dict | None = None):
+    """Store the auto-generated project summary."""
+    client = get_client()
+    data: dict = {"project_summary": summary}
+    if tech_stack is not None:
+        data["tech_stack"] = tech_stack
+    try:
+        client.table("projects").update(data).eq("id", project_id).execute()
+    except Exception as e:
+        logger.warning(f"Failed to update project summary: {e}")
+
+
+def get_project_summary(project_id: str) -> Optional[str]:
+    """Retrieve the stored project summary."""
+    client = get_client()
+    try:
+        result = (
+            client.table("projects")
+            .select("project_summary")
+            .eq("id", project_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0].get("project_summary")
+    except Exception as e:
+        logger.warning(f"Failed to get project summary: {e}")
+    return None

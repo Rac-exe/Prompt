@@ -272,11 +272,13 @@ export async function restoreActiveProject(): Promise<void> {
   const { projectId, branch } = loadPersistedProject();
   if (!projectId || !_client) return;
 
+  activeProjectId = projectId;
+  activeProjectBranch = branch;
+  console.log(`[ProjectHandlers] Active project set from persisted state: ${projectId} (branch=${branch})`);
+
   try {
     const project = await _client.getProject(projectId);
     if (project) {
-      activeProjectId = project.id;
-      activeProjectBranch = branch;
       if (project.local_path) {
         startWatching(project.id, project.local_path, _client!, branch || undefined);
       }
@@ -286,10 +288,12 @@ export async function restoreActiveProject(): Promise<void> {
         name: project.name,
         branch,
       });
-      console.log(`[ProjectHandlers] Restored active project: ${project.name}`);
+      console.log(`[ProjectHandlers] Validated active project with service: ${project.name}`);
+    } else {
+      console.warn(`[ProjectHandlers] Project ${projectId} not found on service — keeping persisted ID for retry`);
     }
   } catch (e) {
-    console.warn('[ProjectHandlers] Could not restore active project:', e);
+    console.warn('[ProjectHandlers] Service unavailable during restore — persisted project ID retained:', e);
   }
 }
 

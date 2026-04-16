@@ -30,6 +30,7 @@ from starlette.responses import Response as StarletteResponse
 from app.config import (
     APP_ENV, APP_VERSION, SENTRY_DSN,
     EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
+    ANALYZER_MODEL, QUERY_DECOMPOSE_MODEL,
     SUMMARIZER_CONCURRENCY, GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED,
     RETRIEVAL_DEFAULT_LIMIT,
 )
@@ -68,12 +69,12 @@ app.add_middleware(RequestIDMiddleware)
 
 logger.info(
     "Code Intelligence Service starting — env=%s, version=%s, "
-    "embed_model=%s (dim=%s), summarizer=%s (concurrency=%d), "
-    "graph_depth=%d, graph_max_related=%d, retrieval_limit=%d, log_level=%s",
+    "embed_model=%s (dim=%s), summarizer=%s, analyzer=%s, decomposer=%s, "
+    "concurrency=%d, graph_depth=%d, graph_max_related=%d, retrieval_limit=%d",
     APP_ENV, APP_VERSION,
-    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL, SUMMARIZER_CONCURRENCY,
+    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
+    ANALYZER_MODEL, QUERY_DECOMPOSE_MODEL, SUMMARIZER_CONCURRENCY,
     GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, RETRIEVAL_DEFAULT_LIMIT,
-    logging.getLevelName(log_level),
 )
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
@@ -98,12 +99,14 @@ app.add_middleware(
 from app.routes.projects import router as projects_router
 from app.routes.ingest import router as ingest_router
 from app.routes.retrieve import router as retrieve_router
+from app.routes.context import router as context_router
 from app.routes.sync import router as sync_router
 from app.routes.webhooks import router as webhooks_router
 
 app.include_router(projects_router, prefix="/api")
 app.include_router(ingest_router, prefix="/api")
 app.include_router(retrieve_router, prefix="/api")
+app.include_router(context_router, prefix="/api")
 app.include_router(sync_router, prefix="/api")
 app.include_router(webhooks_router, prefix="/api")
 
@@ -137,6 +140,7 @@ async def root():
             "projects": "POST/GET /api/projects",
             "ingest": "POST /api/index/ingest",
             "retrieve": "GET /api/retrieve",
+            "context": "POST /api/context",
             "sync": "POST /api/sync",
             "webhooks": "POST /api/webhooks/github",
         },
