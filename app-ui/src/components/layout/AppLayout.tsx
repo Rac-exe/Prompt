@@ -9,6 +9,7 @@ interface AppLayoutProps {
 }
 
 export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
+  const isMac = window.electronAPI?.platform === 'darwin';
   const minimize = () => window.electronAPI?.windowControls?.minimize();
   const maximize = () => window.electronAPI?.windowControls?.maximize();
   const close = () => window.electronAPI?.windowControls?.close();
@@ -89,44 +90,45 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
             Height h-9 (36px).
         ──────────────────────────────────────────────────────────── */}
         <div
-          className="h-9 flex-shrink-0 flex items-center justify-end select-none
-                     bg-background"
+          className={`h-9 flex-shrink-0 flex items-center select-none bg-background ${isMac ? 'justify-start pl-[80px]' : 'justify-end'}`}
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
-          <div
-            className="flex items-center h-full"
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          >
-            <button
-              onClick={minimize}
-              aria-label="Minimise"
-              className="h-full w-11 flex items-center justify-center
-                         text-muted-foreground/50 hover:text-foreground
-                         hover:bg-white/5 transition-colors duration-150"
+          {!isMac && (
+            <div
+              className="flex items-center h-full"
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             >
-              <Minus size={14} weight="light" />
-            </button>
+              <button
+                onClick={minimize}
+                aria-label="Minimise"
+                className="h-full w-11 flex items-center justify-center
+                           text-muted-foreground/50 hover:text-foreground
+                           hover:bg-white/5 transition-colors duration-150"
+              >
+                <Minus size={14} weight="light" />
+              </button>
 
-            <button
-              onClick={maximize}
-              aria-label="Maximise"
-              className="h-full w-11 flex items-center justify-center
-                         text-muted-foreground/50 hover:text-foreground
-                         hover:bg-white/5 transition-colors duration-150"
-            >
-              <Square size={12} weight="light" />
-            </button>
+              <button
+                onClick={maximize}
+                aria-label="Maximise"
+                className="h-full w-11 flex items-center justify-center
+                           text-muted-foreground/50 hover:text-foreground
+                           hover:bg-white/5 transition-colors duration-150"
+              >
+                <Square size={12} weight="light" />
+              </button>
 
-            <button
-              onClick={close}
-              aria-label="Close"
-              className="h-full w-11 flex items-center justify-center
-                         text-muted-foreground/50 hover:text-white
-                         hover:bg-red-500/80 transition-colors duration-150"
-            >
-              <X size={14} weight="light" />
-            </button>
-          </div>
+              <button
+                onClick={close}
+                aria-label="Close"
+                className="h-full w-11 flex items-center justify-center
+                           text-muted-foreground/50 hover:text-white
+                           hover:bg-red-500/80 transition-colors duration-150"
+              >
+                <X size={14} weight="light" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── Offline banner ── */}

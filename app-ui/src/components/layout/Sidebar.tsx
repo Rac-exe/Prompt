@@ -228,6 +228,8 @@ export const Sidebar = ({
   };
 
   /* ── Shell ────────────────────────────────────────────────── */
+  const isMac = window.electronAPI?.platform === 'darwin';
+
   return (
     <>
       <div
@@ -240,7 +242,8 @@ export const Sidebar = ({
         <div
           className={cn(
             "flex items-center h-14 px-3 border-b border-sidebar-border flex-shrink-0",
-            collapsed ? "justify-center" : "justify-between"
+            collapsed ? "justify-center" : "justify-between",
+            isMac && "mt-[38px]"
           )}
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
