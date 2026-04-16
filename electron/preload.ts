@@ -333,6 +333,8 @@ declare global {
 
 // Expose protected methods to the renderer process
 const electronAPI = {
+  platform: process.platform as 'darwin' | 'win32' | 'linux',
+
   // ============================================
   // OVERLAY API (clean IPC contract)
   // ============================================
