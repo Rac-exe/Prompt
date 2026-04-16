@@ -934,8 +934,12 @@ export function registerOverlayHandlers(
         await new Promise(r => setTimeout(r, 200));
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.setOpacity(1);
-          const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-          forceFocusWindow(Number(hwnd));
+          if (process.platform === 'darwin') {
+            overlayWin.focus();
+          } else {
+            const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+            forceFocusWindow(Number(hwnd));
+          }
         }
 
         span.setStatus({ code: success ? 1 : 2, message: success ? undefined : 'paste_failed' });
@@ -946,8 +950,12 @@ export function registerOverlayHandlers(
       } catch (err) {
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.setOpacity(1);
-          const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-          forceFocusWindow(Number(hwnd));
+          if (process.platform === 'darwin') {
+            overlayWin.focus();
+          } else {
+            const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+            forceFocusWindow(Number(hwnd));
+          }
         }
         Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'insert-section' }, extra: { sourceHwnd, firstSectionDone, isChat, windowTitle: sourceWindowTitle } });
         span.setStatus({ code: 2, message: 'exception' });
