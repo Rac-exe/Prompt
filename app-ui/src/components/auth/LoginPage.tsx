@@ -319,16 +319,19 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
     }
   };
 
+  const isMac = (window.electronAPI as any)?.platform === 'darwin';
   const windowTitleBar = (
     <div
       className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
-      <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-        <button onClick={() => (window.electronAPI as any)?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
-        <button onClick={() => (window.electronAPI as any)?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
-        <button onClick={() => (window.electronAPI as any)?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
-      </div>
+      {!isMac && (
+        <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button onClick={() => (window.electronAPI as any)?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+          <button onClick={() => (window.electronAPI as any)?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+          <button onClick={() => (window.electronAPI as any)?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
+        </div>
+      )}
     </div>
   );
 

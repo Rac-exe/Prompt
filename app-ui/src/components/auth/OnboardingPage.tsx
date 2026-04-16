@@ -296,14 +296,17 @@ const OVERLAY_PREFS = {
 const OVERLAY_USER_PROMPT = 'make me a prompt optimizer app';
 const OVERLAY_AI_RESPONSE = `TASK:\nBuild a desktop application that automates prompt optimization for developers, accepting raw prompt ideas and outputting refined, structured prompts with formatting options and tool integrations.\n\nCORE FEATURES:\n- Input interface: Text area accepting raw/rough prompt ideas\n- Optimization engine: Applies prompt engineering best practices\n- Output formatting: Plain text, Markdown, HTML/JSON options\n- Tool integrations: API connections to at least 2 AI providers\n\nCONSTRAINTS:\n- Must work offline with local optimization fallback\n- API keys stored securely, never in plain text\n- Support both light and dark themes\n- Keyboard shortcuts for power users (Cmd+Enter to optimize)`;
 const CURSOR_PASTED = `CONTEXT: Building a desktop application for prompt optimization and structure...\n\nTASK:\nBuild a desktop application that automates prompt optimization for developers, accepting raw prompt ideas and outputting refined, structured prompts with formatting options and tool integrations.\n\nCORE FEATURES:\n- Input interface: Text area accepting raw/rough prompt ideas\n- Optimization engine: Applies prompt engineering best practices\n- Output formatting options:\n  - Plain text\n  - Markdown with sections...`;
-const CURSOR_SHORTCUTS_LIST = [
-  { label: 'New Agent', keys: 'Ctrl + Shift + L' },
-  { label: 'Show Terminal', keys: 'Ctrl + J' },
-  { label: 'Search Files', keys: 'Ctrl + P' },
-  { label: 'Open Browser', keys: 'Ctrl + Shift + B' },
-  { label: 'Maximize Chat', keys: 'Ctrl + Alt + E' },
-  { label: 'Add Folder', keys: 'Ctrl + Alt + A' },
-];
+function getCursorShortcutsList() {
+  const mod = (window.electronAPI as any)?.platform === 'darwin' ? 'Cmd' : 'Ctrl';
+  return [
+    { label: 'New Agent', keys: `${mod} + Shift + L` },
+    { label: 'Show Terminal', keys: `${mod} + J` },
+    { label: 'Search Files', keys: `${mod} + P` },
+    { label: 'Open Browser', keys: `${mod} + Shift + B` },
+    { label: 'Maximize Chat', keys: `${mod} + Alt + E` },
+    { label: 'Add Folder', keys: `${mod} + Alt + A` },
+  ];
+}
 
 function AtPromptDemo({ onDone }: { onDone?: () => void }) {
   type Phase = 'idle' | 'cursor-typing' | 'cursor-dropdown' | 'overlay-in' | 'overlay-typing' | 'overlay-sent' | 'overlay-loading' | 'overlay-questions' | 'overlay-optimize' | 'overlay-prefs-loading' | 'overlay-prefs' | 'overlay-loading2' | 'overlay-streaming' | 'overlay-done' | 'replace-click' | 'replacing' | 'replaced' | 'reset';
@@ -429,7 +432,7 @@ function AtPromptDemo({ onDone }: { onDone?: () => void }) {
             <div style={{ width: 32, height: 32, borderRadius: 6, background: '#313244', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6c7086" strokeWidth="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" /></svg>
             </div>
-            {CURSOR_SHORTCUTS_LIST.map((sc, i) => (
+            {getCursorShortcutsList().map((sc, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 8, color: '#6c7086' }}>
                 <span style={{ width: 70, textAlign: 'right' }}>{sc.label}</span>
                 <span style={{ fontSize: 7, color: '#45475a' }}>{sc.keys}</span>
@@ -1662,6 +1665,7 @@ interface OnboardingPageProps {
 }
 
 export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
+  const isMac = (window.electronAPI as any)?.platform === 'darwin';
   const [phase, setPhase] = useState<'theme-picker' | 'features'>('theme-picker');
   const [selectedTheme, setSelectedTheme] = useState<'light' | 'dark'>(() => {
     return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
@@ -1777,32 +1781,34 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
           className="absolute top-0 left-0 right-0 h-9 z-30 flex items-center justify-end select-none"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <div
-            className="flex items-center h-full"
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            <button
-              onClick={() => (window.electronAPI as any)?.windowControls?.minimize()}
-              aria-label="Minimise"
-              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+          {!isMac && (
+            <div
+              className="flex items-center h-full"
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
-              <Minus size={14} weight="light" />
-            </button>
-            <button
-              onClick={() => (window.electronAPI as any)?.windowControls?.maximize()}
-              aria-label="Maximise"
-              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
-            >
-              <Square size={12} weight="light" />
-            </button>
-            <button
-              onClick={() => (window.electronAPI as any)?.windowControls?.close()}
-              aria-label="Close"
-              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
-            >
-              <X size={14} weight="light" />
-            </button>
-          </div>
+              <button
+                onClick={() => (window.electronAPI as any)?.windowControls?.minimize()}
+                aria-label="Minimise"
+                className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+              >
+                <Minus size={14} weight="light" />
+              </button>
+              <button
+                onClick={() => (window.electronAPI as any)?.windowControls?.maximize()}
+                aria-label="Maximise"
+                className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+              >
+                <Square size={12} weight="light" />
+              </button>
+              <button
+                onClick={() => (window.electronAPI as any)?.windowControls?.close()}
+                aria-label="Close"
+                className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
+              >
+                <X size={14} weight="light" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── Centered content ── */}
@@ -1943,32 +1949,34 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
         className="absolute top-0 left-0 right-0 h-9 z-30 flex items-center justify-end select-none"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <div
-          className="flex items-center h-full"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <button
-            onClick={() => (window.electronAPI as any)?.windowControls?.minimize()}
-            aria-label="Minimise"
-            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+        {!isMac && (
+          <div
+            className="flex items-center h-full"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
-            <Minus size={14} weight="light" />
-          </button>
-          <button
-            onClick={() => (window.electronAPI as any)?.windowControls?.maximize()}
-            aria-label="Maximise"
-            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
-          >
-            <Square size={12} weight="light" />
-          </button>
-          <button
-            onClick={() => (window.electronAPI as any)?.windowControls?.close()}
-            aria-label="Close"
-            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
-          >
-            <X size={14} weight="light" />
-          </button>
-        </div>
+            <button
+              onClick={() => (window.electronAPI as any)?.windowControls?.minimize()}
+              aria-label="Minimise"
+              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+            >
+              <Minus size={14} weight="light" />
+            </button>
+            <button
+              onClick={() => (window.electronAPI as any)?.windowControls?.maximize()}
+              aria-label="Maximise"
+              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+            >
+              <Square size={12} weight="light" />
+            </button>
+            <button
+              onClick={() => (window.electronAPI as any)?.windowControls?.close()}
+              aria-label="Close"
+              className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
+            >
+              <X size={14} weight="light" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Top progress bar ── */}
