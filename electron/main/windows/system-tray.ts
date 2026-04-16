@@ -28,12 +28,13 @@ export class SystemTray {
    */
   create() {
     try {
-      // In packaged mode the tray icon lives in extraResources.
-      // In dev mode it lives in build/ at the project root (app.getAppPath()).
+      const isMac = process.platform === 'darwin';
+      const iconName = isMac ? 'tray-iconTemplate.png' : 'tray-icon.png';
+      const iconSize = isMac ? { width: 18, height: 18 } : { width: 32, height: 32 };
       const iconPath = app.isPackaged
-        ? path.join(process.resourcesPath, 'tray-icon.png')
-        : path.join(app.getAppPath(), 'build', 'tray-icon.png');
-      const icon = nativeImage.createFromPath(iconPath).resize({ width: 32, height: 32 });
+        ? path.join(process.resourcesPath, iconName)
+        : path.join(app.getAppPath(), 'build', iconName);
+      const icon = nativeImage.createFromPath(iconPath).resize(iconSize);
 
       this.tray = new Tray(icon);
       this.tray.setToolTip('Prmpt');
@@ -65,7 +66,7 @@ export class SystemTray {
         click: () => this.onOpenApp(),
       },
       {
-        label: 'Toggle Overlay (Ctrl+5)',
+        label: `Toggle Overlay (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+5)`,
         click: () => this.onToggleOverlay(),
       },
       {
