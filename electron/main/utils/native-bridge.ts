@@ -21,13 +21,13 @@ export interface TriggerAnchor {
 
 interface NativeBridge {
     getActiveWindowTitle(): string;
-    // napi v3 ThreadsafeFunction uses error-first callbacks: (err, value)
     startHook(callback: (err: Error | null, anchor: TriggerAnchor) => void): void;
     stopHook(): void;
     replaceAtLastAnchor(text: string): boolean;
     forceFocusWindow(hwnd: number): boolean;
     pasteTextToWindow(hwnd: number, text: string): boolean;
     sendEnterToWindow(hwnd: number): boolean;
+    checkAccessibilityPermission(): boolean;
 }
 
 // ─── Stub (used when .node binary is absent) ─────────────────────────────────
@@ -51,6 +51,9 @@ const STUB: NativeBridge = {
     sendEnterToWindow: () => {
         console.warn('[NativeBridge] sendEnterToWindow called but native module not loaded');
         return false;
+    },
+    checkAccessibilityPermission: () => {
+        return process.platform !== 'darwin';
     },
 };
 
@@ -173,6 +176,19 @@ export function pasteTextToWindow(hwnd: number, text: string): boolean {
             return false;
         }
     });
+}
+
+/**
+ * Check if the app has Accessibility permission (macOS only).
+ * Returns true on Windows and other platforms.
+ */
+export function checkAccessibilityPermission(): boolean {
+    try {
+        return loadBridge().checkAccessibilityPermission();
+    } catch (err) {
+        Sentry.captureException(err, { tags: { component: 'native-bridge', op: 'checkAccessibilityPermission' } });
+        return process.platform !== 'darwin';
+    }
 }
 
 /**
