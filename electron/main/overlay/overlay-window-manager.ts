@@ -96,6 +96,7 @@ export class OverlayWindowManager {
       show: false,
       focusable: true,
       hasShadow: false,
+      ...(process.platform === 'darwin' ? { visibleOnAllWorkspaces: true } : {}),
       backgroundColor: '#00000000',
       webPreferences: {
         nodeIntegration: false,
@@ -112,6 +113,10 @@ export class OverlayWindowManager {
     // Keep overlay above screenshot tools and screen-capture UIs.
     // 'screen-saver' is the highest z-order level available on Windows/macOS.
     this.window.setAlwaysOnTop(true, 'screen-saver');
+
+    if (process.platform === 'darwin') {
+      this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
 
     // ── Disable zoom completely ────────────────────────────────────────────
     // Clamp Chromium's pinch/gesture zoom to 1x so it cannot drift.
@@ -295,7 +300,8 @@ export class OverlayWindowManager {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
     if (process.platform === 'darwin') {
-      this.window.show();
+      this.window.showInactive();
+      this.window.moveTop();
     }
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     analyticsService.logEvent('overlay_open');
@@ -312,7 +318,8 @@ export class OverlayWindowManager {
   private focusWindow() {
     if (!this.window || this.window.isDestroyed()) return;
     if (process.platform === 'darwin') {
-      this.window.focus();
+      this.window.showInactive();
+      this.window.moveTop();
     } else {
       const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
       const focused = forceFocusWindow(Number(overlayHwnd));
