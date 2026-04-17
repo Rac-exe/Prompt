@@ -16,7 +16,7 @@ export class SystemTray {
   constructor(
     onOpenApp: () => void,
     onToggleOverlay: () => void,
-    onQuit: () => void
+    onQuit: () => void,
   ) {
     this.onOpenApp = onOpenApp;
     this.onToggleOverlay = onToggleOverlay;
@@ -60,9 +60,9 @@ export class SystemTray {
   }
 
   /**
-   * Update the tray menu
+   * Update the tray menu — call after any state change to refresh checkmarks.
    */
-  private updateMenu() {
+  updateMenu() {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate([
@@ -73,6 +73,30 @@ export class SystemTray {
       {
         label: `Toggle Overlay (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+5)`,
         click: () => this.onToggleOverlay(),
+      },
+      {
+        type: 'separator',
+      },
+      {
+        label: 'Start at Login',
+        type: 'checkbox',
+        checked: app.getLoginItemSettings().openAtLogin,
+        click: (item) => {
+          app.setLoginItemSettings({
+            openAtLogin: item.checked,
+            openAsHidden: true,
+            ...(process.platform === 'win32' ? {
+              path: process.execPath,
+              args: ['--hidden'],
+            } : {}),
+          });
+          Sentry.addBreadcrumb({
+            category: 'auto-launch',
+            message: `Start at login ${item.checked ? 'enabled' : 'disabled'}`,
+            level: 'info',
+          });
+          console.log(`[SystemTray] Start at login: ${item.checked}`);
+        },
       },
       {
         type: 'separator',

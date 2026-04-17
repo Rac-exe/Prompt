@@ -361,6 +361,13 @@ function installCSP() {
   });
 }
 
+function isSilentLaunch(): boolean {
+  if (process.platform === 'darwin') {
+    return app.getLoginItemSettings().wasOpenedAsHidden;
+  }
+  return process.argv.includes('--hidden');
+}
+
 async function initialize() {
   installCSP();
   console.log('[Main] Initializing Prompt Optimizer...');
@@ -654,9 +661,14 @@ async function initialize() {
   );
   systemTray.create();
 
-  // Show the main window immediately — auth resolves in the background
-  // so the user sees the loading spinner within ~2s instead of ~10s.
-  appWindowManager.show();
+  // Show the main window immediately unless this is a silent auto-launch at login.
+  // On silent launch (boot auto-start), stay hidden in tray — user opens manually.
+  if (!isSilentLaunch()) {
+    appWindowManager.show();
+  } else {
+    console.log('[Main] Silent launch — starting in tray only');
+    Sentry.addBreadcrumb({ category: 'startup', message: 'Silent launch — window hidden', level: 'info' });
+  }
 
   console.log('[Main] ========================================');
   console.log('[Main] Prompt Optimizer ready!');
