@@ -46,7 +46,12 @@ export class SystemTray {
         this.onOpenApp();
       });
 
-      Sentry.addBreadcrumb({ category: 'system-tray', message: 'System tray created', level: 'info' });
+      Sentry.addBreadcrumb({
+        category: 'system-tray',
+        message: 'System tray created',
+        level: 'info',
+        data: { iconType: isMac ? 'template-image' : 'full-color', iconName },
+      });
       console.log('[SystemTray] System tray created');
     } catch (err) {
       Sentry.captureException(err, { tags: { component: 'system-tray', op: 'create' } });

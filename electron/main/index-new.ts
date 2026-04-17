@@ -121,33 +121,48 @@ function toWsBaseUrl(httpBaseUrl: string): string {
 // ============================================
 async function ensureAccessibilityPermission(): Promise<boolean> {
   if (process.platform !== 'darwin') return true;
-  if (checkAccessibilityPermission()) return true;
 
-  const { dialog, shell } = require('electron');
-  await dialog.showMessageBox({
-    type: 'warning',
-    title: 'Accessibility Permission Required',
-    message: 'Prmpt needs Accessibility access to detect @prompt anywhere on your Mac.',
-    detail: 'Click "Open System Settings" to grant Accessibility access to Prmpt, then return here.',
-    buttons: ['Open System Settings', 'Later'],
-    defaultId: 0,
-  }).then((result: { response: number }) => {
-    if (result.response === 0) {
-      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-    }
-  });
-
-  // Poll every 2 seconds for up to 60 seconds
-  for (let i = 0; i < 30; i++) {
-    await new Promise(r => setTimeout(r, 2000));
+  return Sentry.startSpan({ name: 'ensureAccessibilityPermission', op: 'accessibility.check' }, async (span) => {
     if (checkAccessibilityPermission()) {
-      console.log('[Main] Accessibility permission granted');
+      Sentry.setTag('accessibility_permission', 'granted');
+      span.setAttribute('result', 'already_granted');
       return true;
     }
-  }
 
-  console.warn('[Main] Accessibility permission not granted after timeout');
-  return false;
+    Sentry.addBreadcrumb({ category: 'accessibility', message: 'Permission not yet granted, showing dialog', level: 'info' });
+
+    const { dialog, shell } = require('electron');
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Accessibility Permission Required',
+      message: 'Prmpt needs Accessibility access to detect @prompt anywhere on your Mac.',
+      detail: 'Click "Open System Settings" to grant Accessibility access to Prmpt, then return here.',
+      buttons: ['Open System Settings', 'Later'],
+      defaultId: 0,
+    }).then((result: { response: number }) => {
+      if (result.response === 0) {
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+      }
+    });
+
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      Sentry.addBreadcrumb({ category: 'accessibility', message: `Poll attempt ${i + 1}/30`, level: 'debug', data: { elapsedMs: (i + 1) * 2000 } });
+      if (checkAccessibilityPermission()) {
+        console.log('[Main] Accessibility permission granted');
+        Sentry.setTag('accessibility_permission', 'granted');
+        span.setAttribute('result', 'granted_after_poll');
+        span.setAttribute('poll_attempts', i + 1);
+        return true;
+      }
+    }
+
+    console.warn('[Main] Accessibility permission not granted after timeout');
+    Sentry.setTag('accessibility_permission', 'denied');
+    Sentry.captureMessage('macOS Accessibility permission denied after 60s timeout', 'warning');
+    span.setAttribute('result', 'timeout');
+    return false;
+  });
 }
 
 function startKeystrokeDetection() {

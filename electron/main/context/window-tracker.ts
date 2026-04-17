@@ -3,6 +3,7 @@ import { promisify } from "util";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import * as Sentry from '@sentry/electron/main';
 
 const execAsync = promisify(exec);
 
@@ -161,6 +162,9 @@ Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom)|$($title
         processName: parts[3] || "unknown"
       };
     } catch (error) {
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { component: 'window-tracker', op: 'getMacOSActiveWindow', platform: 'darwin' },
+      });
       throw new Error(`Failed to get window context: ${error}`);
     }
   }
@@ -383,6 +387,7 @@ if ($null -ne $script:foundWindow) {
 
   private async restoreFocusMacOS(context: WindowContext): Promise<void> {
     console.log(`[WindowTracker] Restoring focus to: ${context.processName}`);
+    Sentry.addBreadcrumb({ category: 'window-tracker', message: 'macOS focus restore attempt', level: 'info', data: { processName: context.processName } });
 
     const script = `
       tell application "${context.processName}"
@@ -393,10 +398,13 @@ if ($null -ne $script:foundWindow) {
     try {
       await execAsync(`osascript -e '${script}'`);
       console.log("[WindowTracker] Focus restored successfully");
-      // Give window time to receive focus
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
       console.error("[WindowTracker] Failed to restore focus:", error);
+      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+        tags: { component: 'window-tracker', op: 'restoreFocusMacOS', platform: 'darwin' },
+        extra: { processName: context.processName },
+      });
     }
   }
 }

@@ -60,9 +60,18 @@ export class AppWindowManager {
       },
     });
 
+    if (isMac) {
+      Sentry.addBreadcrumb({ category: 'window', message: 'macOS titleBarStyle: hiddenInset applied', level: 'info' });
+    }
+
     if (icon && !icon.isEmpty()) {
       if (isMac) {
-        app.dock?.setIcon(icon);
+        try {
+          app.dock?.setIcon(icon);
+          Sentry.addBreadcrumb({ category: 'window', message: 'macOS dock icon set', level: 'info' });
+        } catch (err) {
+          Sentry.captureException(err, { tags: { component: 'app-window', op: 'dock-set-icon', platform: 'darwin' } });
+        }
       } else {
         this.window.setIcon(icon);
       }

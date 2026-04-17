@@ -77,10 +77,16 @@ function loadBridge(): NativeBridge {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         _bridge = require(nativeIndexPath) as NativeBridge;
         console.log('[NativeBridge] Loaded from:', nativeIndexPath);
+        Sentry.setTag('native_module_loaded', 'true');
+        Sentry.setTag('native_module_platform', process.platform);
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('[NativeBridge] Not loaded — stub mode.\n  Fix: npm run native:build\n  Reason:', msg);
-        Sentry.addBreadcrumb({ category: 'native-bridge', message: 'Native module load failed', level: 'warning', data: { reason: msg } });
+        Sentry.captureException(err instanceof Error ? err : new Error(msg), {
+            tags: { component: 'native-bridge', platform: process.platform },
+            extra: { reason: msg },
+        });
+        Sentry.setTag('native_module_loaded', 'false');
     }
 
     return _bridge;
@@ -104,6 +110,7 @@ export function startHook(callback: (anchor: TriggerAnchor) => void): void {
     loadBridge().startHook((err: Error | null, anchor: TriggerAnchor) => {
         if (err) {
             console.error('[NativeBridge] startHook callback error:', err);
+            Sentry.captureException(err, { tags: { component: 'native-hook', platform: process.platform } });
             return;
         }
         callback(anchor);

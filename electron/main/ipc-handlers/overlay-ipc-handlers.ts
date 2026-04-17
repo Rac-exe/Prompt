@@ -935,7 +935,12 @@ export function registerOverlayHandlers(
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.setOpacity(1);
           if (process.platform === 'darwin') {
-            overlayWin.focus();
+            try {
+              overlayWin.focus();
+              Sentry.addBreadcrumb({ category: 'overlay-ipc', message: 'macOS overlay focus restored after insert', level: 'info' });
+            } catch (focusErr) {
+              Sentry.captureException(focusErr, { tags: { component: 'overlay-ipc', op: 'focus-restore-macos' } });
+            }
           } else {
             const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
             forceFocusWindow(Number(hwnd));
@@ -951,7 +956,12 @@ export function registerOverlayHandlers(
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.setOpacity(1);
           if (process.platform === 'darwin') {
-            overlayWin.focus();
+            try {
+              overlayWin.focus();
+              Sentry.addBreadcrumb({ category: 'overlay-ipc', message: 'macOS overlay focus restored in catch', level: 'info' });
+            } catch (focusErr) {
+              Sentry.captureException(focusErr, { tags: { component: 'overlay-ipc', op: 'focus-restore-macos-catch' } });
+            }
           } else {
             const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
             forceFocusWindow(Number(hwnd));

@@ -116,6 +116,7 @@ export class OverlayWindowManager {
 
     if (process.platform === 'darwin') {
       this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      Sentry.setTag('overlay.visible_all_workspaces', 'true');
     }
 
     // ── Disable zoom completely ────────────────────────────────────────────
@@ -302,6 +303,7 @@ export class OverlayWindowManager {
     if (process.platform === 'darwin') {
       this.window.showInactive();
       this.window.moveTop();
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS showInactive + moveTop', level: 'info' });
     }
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     analyticsService.logEvent('overlay_open');
@@ -320,6 +322,7 @@ export class OverlayWindowManager {
     if (process.platform === 'darwin') {
       this.window.showInactive();
       this.window.moveTop();
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS focus via showInactive', level: 'info' });
     } else {
       const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
       const focused = forceFocusWindow(Number(overlayHwnd));
@@ -380,6 +383,7 @@ export class OverlayWindowManager {
       Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay closed', level: 'info' });
       if (process.platform === 'darwin') {
         this.window.hide();
+        Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS overlay hidden', level: 'info' });
       } else {
         this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
         this.window.blur();
