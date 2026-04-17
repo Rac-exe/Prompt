@@ -131,11 +131,15 @@ export class AppWindowManager {
 
     this.registerZoomIpc();
 
-    // CRITICAL: Don't quit app when window closes
-    this.window.on('close', () => {
-      console.log('[AppWindowManager] Window closing - hiding instead of quitting');
+    // CRITICAL: Don't quit app when window closes — hide instead, stay alive in tray
+    this.window.on('close', (e) => {
+      e.preventDefault();
+      console.log('[AppWindowManager] Window close intercepted — hiding to tray');
       if (this.window) {
         this.window.hide();
+      }
+      if (process.platform === 'darwin') {
+        app.dock?.hide();
       }
     });
 
@@ -153,6 +157,10 @@ export class AppWindowManager {
    * If already preloaded, shows instantly. Otherwise creates and waits for ready-to-show.
    */
   create() {
+    if (process.platform === 'darwin') {
+      app.dock?.show();
+    }
+
     if (this.window && !this.window.isDestroyed()) {
       this.window.show();
       this.window.focus();
@@ -175,6 +183,10 @@ export class AppWindowManager {
    * If preloaded and loaded, shows instantly.
    */
   show() {
+    if (process.platform === 'darwin') {
+      app.dock?.show();
+    }
+
     if (!this.window || this.window.isDestroyed()) {
       this.create();
     } else if (this.isLoaded) {
@@ -209,6 +221,9 @@ export class AppWindowManager {
   hide() {
     if (this.window && !this.window.isDestroyed()) {
       this.window.hide();
+    }
+    if (process.platform === 'darwin') {
+      app.dock?.hide();
     }
   }
 
