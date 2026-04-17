@@ -6,6 +6,7 @@ and function names for targeted retrieval.
 
 import re
 import logging
+import sentry_sdk
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("code-intel.query_preprocessor")

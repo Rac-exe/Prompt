@@ -1,4 +1,5 @@
 import logging
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from app.auth import require_auth
 from app.db.models import SyncRequest
@@ -29,9 +30,17 @@ async def sync_projects(body: SyncRequest = SyncRequest(), auth: dict = Depends(
                 detail="Project is not connected to a GitHub repository",
             )
 
-        await poll_project(project)
+        try:
+            await poll_project(project)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            raise
         logger.info(f"Synced project {body.project_id}")
         return {"status": "synced", "project_id": body.project_id}
 
-    await poll_all_projects()
+    try:
+        await poll_all_projects()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        raise
     return {"status": "synced", "scope": "all"}

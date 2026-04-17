@@ -6,6 +6,7 @@
 
 import * as path from 'path';
 import { app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 
 let Database: any;
 let db: any = null;
@@ -15,8 +16,9 @@ function getDb(): any {
 
   try {
     Database = require('better-sqlite3');
-  } catch {
+  } catch (err) {
     console.warn('[ProjectCache] better-sqlite3 not available — cache disabled');
+    Sentry.captureException(err, { level: 'warning', tags: { component: 'project-cache', op: 'load-sqlite' } });
     return null;
   }
 

@@ -178,7 +178,7 @@ const Index = () => {
             setSavedPrompts(mapPrompts(rawPrompts, mappedCollections));
           });
         })
-        .catch((error) => console.error('[Index] Error loading library:', error));
+        .catch((err) => { console.error('[Index] Error loading library:', err); Sentry.captureException(err, { tags: { component: 'index-page' } }); });
     }
   }, [isElectron]);
 

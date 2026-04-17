@@ -5,6 +5,7 @@
 
 import { execFile } from 'child_process';
 import * as path from 'path';
+import * as Sentry from '@sentry/electron/main';
 
 export interface GitBranchInfo {
   currentBranch: string;
@@ -123,6 +124,7 @@ export function parseGitHubUrl(remoteUrl: string): { owner: string; repo: string
 }
 
 export async function getBranchInfo(projectPath: string): Promise<GitBranchInfo> {
+  Sentry.addBreadcrumb({ category: 'git-service', message: 'Getting branch info', level: 'info', data: { projectPath } });
   const currentBranch = await getCurrentBranch(projectPath);
   const defaultBranch = await getDefaultBranch(projectPath);
   const { ahead, behind } = await getAheadBehind(projectPath, currentBranch, defaultBranch);

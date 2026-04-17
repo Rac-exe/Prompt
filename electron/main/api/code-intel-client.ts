@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import * as Sentry from '@sentry/electron/main';
 import { authState } from '../utils/auth-state';
 
 export interface IngestPayload {
@@ -95,8 +96,12 @@ export class CodeIntelClient {
   async healthCheck(): Promise<boolean> {
     try {
       const resp = await this.client.get('/health');
-      return resp.data?.status === 'ok';
-    } catch {
+      const healthy = resp.data?.status === 'ok';
+      Sentry.setTag('code_intel.healthy', String(healthy));
+      return healthy;
+    } catch (err) {
+      Sentry.setTag('code_intel.healthy', 'false');
+      Sentry.captureException(err, { level: 'warning', tags: { component: 'code-intel-client', op: 'healthCheck' } });
       return false;
     }
   }
@@ -134,10 +139,12 @@ export class CodeIntelClient {
   }
 
   async ingestSkeleton(payload: IngestPayload): Promise<{ status: string; chunks_queued: number }> {
-    const resp = await this.client.post('/api/index/ingest', payload, {
-      timeout: 300_000,
+    return Sentry.startSpan({ name: 'codeIntel.ingestSkeleton', op: 'code-intel.ingest' }, async (span) => {
+      span.setAttribute('project_id', payload.project_id);
+      span.setAttribute('chunks_count', payload.chunks.length);
+      const resp = await this.client.post('/api/index/ingest', payload, { timeout: 300_000 });
+      return resp.data;
     });
-    return resp.data;
   }
 
   async retrieve(params: {
@@ -146,8 +153,12 @@ export class CodeIntelClient {
     branch?: string;
     limit?: number;
   }): Promise<RetrieveResult> {
-    const resp = await this.client.get('/api/retrieve', { params });
-    return resp.data;
+    return Sentry.startSpan({ name: 'codeIntel.retrieve', op: 'code-intel.search' }, async (span) => {
+      span.setAttribute('project_id', params.project_id);
+      const resp = await this.client.get('/api/retrieve', { params });
+      Sentry.addBreadcrumb({ category: 'code-intel', message: 'Context retrieved', level: 'info', data: { project_id: params.project_id, chunks: resp.data?.ranked_chunks?.length ?? 0 } });
+      return resp.data;
+    });
   }
 
   async syncProject(projectId?: string): Promise<void> {

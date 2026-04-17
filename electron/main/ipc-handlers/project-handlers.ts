@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ipcMain, dialog, app } from 'electron';
+import * as Sentry from '@sentry/electron/main';
 import type { CodeIntelClient, ProjectInfo } from '../api/code-intel-client';
 import type { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import type { AppWindowManager } from '../windows/app-window-manager';
@@ -30,6 +31,7 @@ function persistActiveProject(): void {
     }));
   } catch (e) {
     console.warn('[ProjectHandlers] Failed to persist active project:', e);
+    Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'persist-state' } });
   }
 }
 
@@ -40,6 +42,7 @@ function loadPersistedProject(): { projectId: string | null; branch: string | nu
     }
   } catch (e) {
     console.warn('[ProjectHandlers] Failed to load persisted project:', e);
+    Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'load-state' } });
   }
   return { projectId: null, branch: null };
 }
@@ -93,9 +96,11 @@ export function registerProjectHandlers(
         }
       } catch (e) {
         console.warn('[ProjectHandlers] Failed to read git info:', e);
+        Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'git-metadata' } });
       }
     }
 
+    Sentry.addBreadcrumb({ category: 'project', message: 'Creating project', level: 'info', data: { name: projectName } });
     const project = await _client.createProject({
       name: projectName,
       local_path: projectPath,
@@ -113,6 +118,7 @@ export function registerProjectHandlers(
       broadcastProjectStatus({ projectId: project.id, status: 'ready' });
     }).catch((e) => {
       console.error('[ProjectHandlers] Initial index failed:', e);
+      Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'initial-index' }, extra: { projectId: project.id } });
       broadcastProjectStatus({ projectId: project.id, status: 'stale' });
     });
 
@@ -188,6 +194,7 @@ export function registerProjectHandlers(
       return result;
     } catch (e) {
       console.error('[ProjectHandlers] Reindex failed:', e);
+      Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'reindex' }, extra: { projectId } });
       broadcastProjectStatus({ projectId, status: 'stale' });
       throw e;
     }
@@ -227,6 +234,7 @@ async function setActiveProject(projectId: string, localPath?: string): Promise<
   if (!_client) return;
 
   activeProjectId = projectId;
+  Sentry.setTag('active_project', projectId);
 
   if (localPath) {
     const isGit = await isGitRepo(localPath);
@@ -294,6 +302,7 @@ export async function restoreActiveProject(): Promise<void> {
     }
   } catch (e) {
     console.warn('[ProjectHandlers] Service unavailable during restore — persisted project ID retained:', e);
+    Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'restore-project' } });
   }
 }
 

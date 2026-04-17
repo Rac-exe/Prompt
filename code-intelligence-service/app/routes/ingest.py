@@ -1,4 +1,5 @@
 import logging
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.auth import require_auth
 from app.db.models import IngestRequest
@@ -52,6 +53,7 @@ async def ingest_skeleton(
             ).eq("id", body.project_id).execute()
             logger.info(f"Updated current_branch to {body.branch} for project {body.project_id}")
         except Exception as e:
+            sentry_sdk.capture_exception(e)
             logger.warning(f"Failed to update current_branch: {e}")
 
     use_arq = bool(REDIS_URL and REDIS_URL != "redis://localhost:6379")
@@ -63,6 +65,7 @@ async def ingest_skeleton(
             job_id = await enqueue_ingest(body.project_id, user_id, chunks_data, graph_data, body.branch)
             logger.info(f"Ingest enqueued via arq: job_id={job_id}")
         except Exception as e:
+            sentry_sdk.capture_exception(e)
             logger.warning(f"arq enqueue failed, falling back to background task: {e}")
             use_arq = False
 
@@ -101,5 +104,6 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
         logger.info(f"Background ingest task complete for project {project_id}")
 
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"Ingest background task failed for project {project_id}: {e}", exc_info=True)
         queries.update_project_status(project_id, "stale")

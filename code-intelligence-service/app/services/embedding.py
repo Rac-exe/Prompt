@@ -11,6 +11,7 @@ import asyncio
 import time
 import logging
 import litellm
+import sentry_sdk
 from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 
 logger = logging.getLogger("code-intel.embedding")
@@ -64,6 +65,7 @@ async def _embed_with_retry(texts: list[str]) -> list[list[float]]:
                 "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
                 attempt + 1, MAX_RETRIES, str(e)[:120], delay,
             )
+            sentry_sdk.capture_exception(e)
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(delay)
 

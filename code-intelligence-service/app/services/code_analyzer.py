@@ -14,6 +14,7 @@ import time
 from typing import Optional
 
 import litellm
+import sentry_sdk
 
 from app.config import OPENROUTER_API_KEY, ANALYZER_MODEL
 
@@ -135,7 +136,9 @@ def analyze_code(
 
     except json.JSONDecodeError as e:
         logger.warning(f"Code analyzer returned invalid JSON: {e}")
+        sentry_sdk.capture_exception(e)
         return None
     except Exception as e:
         logger.error(f"Code analysis failed: {e}", exc_info=True)
+        sentry_sdk.capture_exception(e)
         return None

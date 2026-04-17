@@ -1,4 +1,5 @@
 import logging
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import require_auth
 from app.db.models import RetrieveResponse
@@ -66,5 +67,6 @@ async def retrieve(
         return result
 
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"Retrieval failed for project {project_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Retrieval failed")

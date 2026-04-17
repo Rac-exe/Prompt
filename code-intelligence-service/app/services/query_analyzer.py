@@ -11,6 +11,7 @@ import json
 import re
 import logging
 import litellm
+import sentry_sdk
 from dataclasses import dataclass, field
 
 from app.config import QUERY_DECOMPOSE_MODEL, OPENROUTER_API_KEY, SIMPLE_QUERY_WORD_THRESHOLD
@@ -180,6 +181,7 @@ async def decompose_query(query: str) -> QueryAnalysis:
 
     except Exception as e:
         logger.warning(f"Query decomposition failed ({e}), using original query")
+        sentry_sdk.capture_exception(e)
         return QueryAnalysis(
             intent=_detect_intent_keyword(query),
             sub_queries=[query],

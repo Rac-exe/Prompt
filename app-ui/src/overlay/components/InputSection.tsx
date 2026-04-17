@@ -313,9 +313,9 @@ const InputSection: React.FC<InputSectionProps> = ({
         try {
           const info = await api.status(active.projectId);
           setActiveProjectName(info?.name || null);
-        } catch { setActiveProjectName(null); }
+        } catch (err) { Sentry.captureException(err, { tags: { component: 'input-section' } }); setActiveProjectName(null); }
       }
-    }).catch(() => {});
+    }).catch((err) => { Sentry.captureException(err, { tags: { component: 'input-section' } }); });
 
     const unsub = api.onOverlayStatus?.((data: any) => {
       if (data?.name) setActiveProjectName(data.name);

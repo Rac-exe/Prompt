@@ -7,6 +7,7 @@ retrieve + local analyze.
 import asyncio
 import logging
 import time
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import require_auth
@@ -248,6 +249,7 @@ async def get_context(
                             f"found {len(extra.ranked_chunks)}, added {added} new"
                         )
                     except Exception as e:
+                        sentry_sdk.capture_exception(e)
                         logger.warning(f"Iterative retrieval failed for '{missing_query}': {e}")
 
         # 7. Format final tiered context with already_correct filtering
@@ -283,5 +285,6 @@ async def get_context(
     except HTTPException:
         raise
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"Context generation failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Context generation failed")

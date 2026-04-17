@@ -9,6 +9,7 @@ import math
 import re
 import time
 import logging
+import sentry_sdk
 from typing import Optional
 from app.services.embedding import embed_text, embed_texts
 from app.services.query_analyzer import decompose_query

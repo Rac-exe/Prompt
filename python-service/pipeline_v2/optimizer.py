@@ -335,6 +335,7 @@ def optimize(
             else:
                 logger.info("Project context returned None")
         except Exception as e:
+            sentry_sdk.capture_exception(e)
             logger.error(f"Project context fetch failed: {e}", exc_info=True)
 
     # Use analysis from /api/context if available, otherwise run local analyzer
@@ -366,6 +367,7 @@ def optimize(
                 else:
                     logger.info("[OPTIMIZER] Local code analyzer returned no findings")
             except Exception as e:
+                sentry_sdk.capture_exception(e)
                 logger.error(f"[OPTIMIZER] Local code analysis failed: {e}", exc_info=True)
     else:
         logger.info(

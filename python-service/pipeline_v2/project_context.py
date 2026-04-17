@@ -10,6 +10,7 @@ tiered context + analysis. Falls back to /api/retrieve + local formatting.
 import os
 import time
 import logging
+import sentry_sdk
 from dataclasses import dataclass, field
 from collections import OrderedDict
 import httpx
@@ -143,10 +144,12 @@ def _try_context_endpoint(
             analysis_block=analysis_block,
         )
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as e:
+        sentry_sdk.capture_exception(e)
         logger.warning("/api/context timed out (30s) — falling back to /api/retrieve")
         return None
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.warning(f"/api/context failed ({e}) — falling back to /api/retrieve")
         return None
 
@@ -215,10 +218,12 @@ def _fallback_retrieve_endpoint(
             concepts=query_concepts or [],
         )
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as e:
+        sentry_sdk.capture_exception(e)
         logger.warning(f"Code Intelligence Service timed out (15s) for project {project_id}")
         return None
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"Failed to fetch project context: {e}", exc_info=True)
         return None
 

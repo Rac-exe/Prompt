@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import * as Sentry from '@sentry/react';
 import {
   PaperPlaneRight, CircleNotch,
   Sparkle, ArrowsClockwise, GitBranch,
@@ -93,7 +94,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
     for (const proj of space.projects) {
       if (!proj.localPath || watchStartedRef.current.has(proj.projectId)) continue;
       watchStartedRef.current.add(proj.projectId);
-      api.toggleWatching(proj.projectId, proj.localPath, true).catch(() => {});
+      api.toggleWatching(proj.projectId, proj.localPath, true).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); });
     }
   }, [api, space.projects]);
 
@@ -102,12 +103,12 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
     const load = async () => {
       const statuses: Record<string, ProjectInfo> = {};
       for (const p of space.projects) {
-        try { const s = await api.status(p.projectId); if (s) statuses[p.projectId] = s; } catch {}
+        try { const s = await api.status(p.projectId); if (s) statuses[p.projectId] = s; } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
       }
       setProjectStatuses(statuses);
       for (const p of space.projects) {
         const s = statuses[p.projectId];
-        if (s?.index_status === "stale" && p.localPath) try { api.reindex(p.projectId, p.localPath).catch(() => {}); } catch {}
+        if (s?.index_status === "stale" && p.localPath) try { api.reindex(p.projectId, p.localPath).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); }); } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
       }
     };
     load();
@@ -145,10 +146,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
   const handleToggleProjectMode = useCallback((enabled: boolean) => {
     onUpdateSpace({ ...space, projectMode: enabled });
     if (enabled) {
-      for (const proj of space.projects) { if (!proj.localPath) continue; const s = projectStatuses[proj.projectId]; if (!s || s.index_status === "stale") api?.reindex?.(proj.projectId, proj.localPath).then((r: any) => toast({ title: `Re-indexed ${proj.name}`, description: `${r.totalFiles} files` })).catch(() => {}); api?.toggleWatching?.(proj.projectId, proj.localPath, true).catch(() => {}); }
+      for (const proj of space.projects) { if (!proj.localPath) continue; const s = projectStatuses[proj.projectId]; if (!s || s.index_status === "stale") api?.reindex?.(proj.projectId, proj.localPath).then((r: any) => toast({ title: `Re-indexed ${proj.name}`, description: `${r.totalFiles} files` })).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); }); api?.toggleWatching?.(proj.projectId, proj.localPath, true).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); }); }
       toast({ title: "Project Mode enabled", description: "Code context will be injected into prompts" });
     } else {
-      for (const proj of space.projects) { if (proj.localPath) api?.toggleWatching?.(proj.projectId, proj.localPath, false).catch(() => {}); }
+      for (const proj of space.projects) { if (proj.localPath) api?.toggleWatching?.(proj.projectId, proj.localPath, false).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); }); }
       toast({ title: "Project Mode disabled" });
     }
   }, [space, onUpdateSpace, api, projectStatuses]);
@@ -163,7 +164,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
       let tailoredPrompt = query;
       if (space.projectMode) {
         let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
-        for (const proj of space.projects) { try { const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query, branch: proj.branch || undefined, limit: 10 }); if (d.ranked_chunks) allRanked.push(...d.ranked_chunks); if (d.related_chunks) allRelated.push(...d.related_chunks); } catch { fails++; } }
+        for (const proj of space.projects) { try { const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query, branch: proj.branch || undefined, limit: 10 }); if (d.ranked_chunks) allRanked.push(...d.ranked_chunks); if (d.related_chunks) allRelated.push(...d.related_chunks); } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); fails++; } }
         if (fails === space.projects.length) toast({ title: "Code intelligence unavailable", description: "Sending prompt without project context.", variant: "destructive" });
         else if (allRanked.length === 0 && fails === 0) toast({ title: "No relevant code found", description: "Try reindexing your projects." });
         allRanked.sort((a, b) => b.similarity_score - a.similarity_score); allRanked = allRanked.slice(0, 10); allRelated = allRelated.slice(0, 5);
@@ -171,7 +172,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
       }
       isStreamingRef.current = true; startStreaming();
       electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
-    } catch (e: any) { setIsGenerating(false); isStreamingRef.current = false; toast({ title: "Failed to process", description: e.message, variant: "destructive" }); }
+    } catch (e: any) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); setIsGenerating(false); isStreamingRef.current = false; toast({ title: "Failed to process", description: e.message, variant: "destructive" }); }
   }, [input, isGenerating, space, api, electronAPI, onUpdateSpace, startStreaming]);
 
   const handleStopGeneration = useCallback(() => { stopStreaming(); electronAPI?.stopGeneration?.(); }, [stopStreaming, electronAPI]);
@@ -180,14 +181,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
     if (!api || addingFolder) return; setAddingFolder(true);
     try {
       const r = await api.add();
-      if (r) { onUpdateSpace({ ...space, projects: [...space.projects, { projectId: r.id, name: r.name, localPath: r.local_path || "", branch: r.current_branch, indexStatus: r.index_status }], lastUsedAt: Date.now() }); if (r.local_path) { api.toggleWatching?.(r.id, r.local_path, true).catch(() => {}); watchStartedRef.current.add(r.id); } toast({ title: "Folder added", description: r.name }); }
+      if (r) { onUpdateSpace({ ...space, projects: [...space.projects, { projectId: r.id, name: r.name, localPath: r.local_path || "", branch: r.current_branch, indexStatus: r.index_status }], lastUsedAt: Date.now() }); if (r.local_path) { api.toggleWatching?.(r.id, r.local_path, true).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); }); watchStartedRef.current.add(r.id); } toast({ title: "Folder added", description: r.name }); }
     } catch (e: any) { toast({ title: "Failed to add folder", description: e.message, variant: "destructive" }); }
     finally { setAddingFolder(false); }
   };
 
   const handleRemoveProject = (projectId: string) => {
     const proj = space.projects.find(p => p.projectId === projectId);
-    if (proj?.localPath) api?.toggleWatching?.(projectId, proj.localPath, false).catch(() => {});
+    if (proj?.localPath) api?.toggleWatching?.(projectId, proj.localPath, false).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); });
     watchStartedRef.current.delete(projectId);
     onUpdateSpace({ ...space, projects: space.projects.filter((p) => p.projectId !== projectId) });
     toast({ title: "Folder removed" });
@@ -216,7 +217,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
           let tailoredPrompt = userMsg.content;
           if (space.projectMode) {
             let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
-            for (const proj of space.projects) { try { const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query: userMsg.content, branch: proj.branch || undefined, limit: 10 }); if (d.ranked_chunks) allRanked.push(...d.ranked_chunks); if (d.related_chunks) allRelated.push(...d.related_chunks); } catch { fails++; } }
+            for (const proj of space.projects) { try { const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query: userMsg.content, branch: proj.branch || undefined, limit: 10 }); if (d.ranked_chunks) allRanked.push(...d.ranked_chunks); if (d.related_chunks) allRelated.push(...d.related_chunks); } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); fails++; } }
             if (fails === space.projects.length) toast({ title: "Code intelligence unavailable", variant: "destructive" });
             allRanked.sort((a, b) => b.similarity_score - a.similarity_score); allRanked = allRanked.slice(0, 10); allRelated = allRelated.slice(0, 5);
             tailoredPrompt = buildTailoredPrompt(userMsg.content, allRanked, allRelated);

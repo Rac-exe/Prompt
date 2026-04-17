@@ -6,6 +6,7 @@ Pipeline: filter unchanged → batch summarize → batch embed → batch upsert
 import asyncio
 import time
 import logging
+import sentry_sdk
 from datetime import datetime, timezone
 from app.db.models import ChunkInput
 from app.db.queries import (
@@ -165,6 +166,7 @@ async def process_ingest_batch(
             f"{len(embeddings)} vectors in {time.perf_counter() - t_embed:.1f}s"
         )
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(
             f"[project={project_id}] Batch embedding failed: {e}",
             exc_info=True,

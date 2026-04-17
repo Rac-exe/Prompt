@@ -1,4 +1,5 @@
 import logging
+import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from app.auth import require_auth
 from app.db.models import ProjectCreate, ProjectResponse
@@ -24,6 +25,7 @@ async def create_project(body: ProjectCreate, auth: dict = Depends(require_auth)
         logger.info(f"Created project '{body.name}' for user {user_id}")
         return result
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"Failed to create project: {e}")
         raise HTTPException(status_code=500, detail="Failed to create project")
 

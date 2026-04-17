@@ -6,6 +6,9 @@ Run with: arq app.workers.arq_worker.WorkerSettings
 """
 
 import logging
+import os
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
 from arq import create_pool
 from arq.connections import RedisSettings
 from app.config import REDIS_URL
@@ -14,6 +17,14 @@ from app.workers.index_worker import process_ingest_batch
 from app.services.graph import process_call_graph
 from app.db.queries import update_project_status
 from datetime import datetime, timezone
+
+sentry_sdk.init(
+    dsn=os.environ.get("SENTRY_DSN", ""),
+    release=f"prmpt-code-intel-worker@{os.environ.get('APP_VERSION', '0.0.0')}",
+    environment=os.environ.get("APP_ENV", "development"),
+    traces_sample_rate=0.2,
+    integrations=[LoggingIntegration()],
+)
 
 logger = logging.getLogger("code-intel.arq")
 

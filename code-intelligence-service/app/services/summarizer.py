@@ -9,6 +9,7 @@ Supports both single-chunk and batch summarization (5-10 per LLM call).
 import json
 import logging
 import litellm
+import sentry_sdk
 from dataclasses import dataclass, field
 from app.config import (
     SUMMARIZER_MODEL, OPENROUTER_API_KEY, SUMMARY_MAX_TOKENS,
@@ -129,6 +130,7 @@ def summarize_chunk(
         return _parse_summary_response(raw, name, signature, docstring)
     except Exception as e:
         logger.error(f"Summarization LLM call failed for {name}: {e}", exc_info=True)
+        sentry_sdk.capture_exception(e)
         return _build_fallback(name, signature, docstring)
 
 
@@ -182,6 +184,7 @@ def summarize_chunk_batch(chunks: list[ChunkSummaryInput]) -> list[SummaryResult
         logger.warning("[BATCH SUMMARIZE] Parse returned None, falling back to individual calls")
     except Exception as e:
         logger.warning(f"[BATCH SUMMARIZE] Failed ({e}), falling back to individual calls")
+        sentry_sdk.capture_exception(e)
 
     return [
         summarize_chunk(c.name, c.signature, c.callees, c.docstring, c.language, c.code_body)

@@ -17,6 +17,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.fastapi import FastApiIntegration
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -51,6 +52,7 @@ sentry_sdk.init(
     send_default_pii=False,
     integrations=[
         LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+        FastApiIntegration(),
     ],
 )
 
@@ -123,8 +125,9 @@ async def health_ready():
     try:
         client = get_client()
         checks["supabase"] = client is not None
-    except Exception:
+    except Exception as e:
         checks["supabase"] = False
+        sentry_sdk.capture_exception(e)
     from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY
     checks["embedding_key"] = bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
     all_ok = checks.get("supabase") and checks.get("embedding_key")

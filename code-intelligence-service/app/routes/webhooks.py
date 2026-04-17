@@ -4,6 +4,7 @@ Processes push events to trigger delta re-indexing.
 """
 
 import logging
+import sentry_sdk
 from fastapi import APIRouter, Request, HTTPException
 from app.services.github_sync import verify_webhook_signature, extract_branch_from_ref
 from app.workers.sync_worker import process_push_webhook
@@ -64,6 +65,7 @@ async def github_webhook(request: Request):
                 await enqueue_sync(project["id"], payload)
                 continue
             except Exception as e:
+                sentry_sdk.capture_exception(e)
                 logger.warning(f"arq enqueue failed for project {project['id']}: {e}")
         await process_push_webhook(project["id"], payload)
 

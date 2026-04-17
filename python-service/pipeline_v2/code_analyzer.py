@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import sentry_sdk
 from typing import Optional
 
 import litellm
@@ -120,9 +121,11 @@ def analyze_code(
         return findings
 
     except json.JSONDecodeError as e:
+        sentry_sdk.capture_exception(e)
         logger.warning(f"Code analyzer returned invalid JSON: {e}")
         return None
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f"Code analysis failed: {e}", exc_info=True)
         return None
 
