@@ -31,7 +31,7 @@ from starlette.responses import Response as StarletteResponse
 from app.config import (
     APP_ENV, APP_VERSION, SENTRY_DSN,
     EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
-    ANALYZER_MODEL, QUERY_DECOMPOSE_MODEL,
+    QUERY_DECOMPOSE_MODEL,
     SUMMARIZER_CONCURRENCY, GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED,
     RETRIEVAL_DEFAULT_LIMIT,
 )
@@ -71,11 +71,11 @@ app.add_middleware(RequestIDMiddleware)
 
 logger.info(
     "Code Intelligence Service starting — env=%s, version=%s, "
-    "embed_model=%s (dim=%s), summarizer=%s, analyzer=%s, decomposer=%s, "
+    "embed_model=%s (dim=%s), summarizer=%s, decomposer=%s, "
     "concurrency=%d, graph_depth=%d, graph_max_related=%d, retrieval_limit=%d",
     APP_ENV, APP_VERSION,
     EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
-    ANALYZER_MODEL, QUERY_DECOMPOSE_MODEL, SUMMARIZER_CONCURRENCY,
+    QUERY_DECOMPOSE_MODEL, SUMMARIZER_CONCURRENCY,
     GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, RETRIEVAL_DEFAULT_LIMIT,
 )
 

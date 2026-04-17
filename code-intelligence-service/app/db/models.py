@@ -119,14 +119,30 @@ class ContextRequest(BaseModel):
     limit: int = Field(default=10, ge=1, le=50)
 
 
+class ProbableLocation(BaseModel):
+    file_path: str
+    start_line: int
+    end_line: int
+    chunk_type: str
+    name: str
+    signature: Optional[str] = None
+    language: str
+    semantic_summary: Optional[str] = None
+    code_body: Optional[str] = None
+    concepts: list[str] = Field(default_factory=list)
+    confidence_score: float
+    is_exported: bool = False
+    branch: Optional[str] = None
+    branch_diverged: bool = False
+
+
 class ContextResponse(BaseModel):
-    context_text: str
-    analysis_block: str
+    probable_locations: list[ProbableLocation] = Field(default_factory=list)
+    related_locations: list[ProbableLocation] = Field(default_factory=list)
     intent: str = "general"
     concepts: list[str] = Field(default_factory=list)
-    ranked_count: int = 0
-    related_count: int = 0
     project_summary: Optional[str] = None
+    branch_context: Optional[dict] = None
 
 
 class SyncRequest(BaseModel):

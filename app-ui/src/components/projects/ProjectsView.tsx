@@ -5,18 +5,31 @@ import { Sparkle, Folder, Lightning, Eye, Database } from "@phosphor-icons/react
 import { Button } from "@/components/ui/button";
 import type { Space } from "./types";
 import { loadSpaces, saveSpaces } from "./types";
+import { useAuth } from "@/context/AuthContext";
 
 interface ProjectsViewProps {
   onSendToChat?: (prompt: string) => void;
 }
 
 export const ProjectsView = ({ onSendToChat }: ProjectsViewProps = {}) => {
-  const [spaces, setSpaces] = useState<Space[]>(() => loadSpaces());
+  const { user } = useAuth();
+  const userId = user?.profile?.id ?? null;
+
+  const [spaces, setSpaces] = useState<Space[]>(() => loadSpaces(userId));
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
 
+  // Reload spaces whenever the signed-in user changes (login, logout,
+  // account switch). Without this, React state from the previous account
+  // would leak into the next one.
   useEffect(() => {
-    saveSpaces(spaces);
-  }, [spaces]);
+    setSpaces(loadSpaces(userId));
+    setActiveSpaceId(null);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId) return;
+    saveSpaces(spaces, userId);
+  }, [spaces, userId]);
 
   const handleCreateSpace = useCallback((name: string) => {
     const newSpace: Space = {

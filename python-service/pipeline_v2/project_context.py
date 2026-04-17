@@ -1,10 +1,14 @@
 """
 Project context retrieval — calls the Code Intelligence Service
-to fetch relevant code chunks (with code bodies) before prompt
+to fetch probable code locations (with code bodies) before prompt
 optimization.
 
-Prefers the combined /api/context endpoint which returns pre-formatted
-tiered context + analysis. Falls back to /api/retrieve + local formatting.
+Prefers the /api/context endpoint which returns structured
+probable_locations. Falls back to /api/retrieve if that fails.
+Formats everything locally into a plain-text "[PROBABLE LOCATIONS]"
+block that is prepended to the final prompt — no diagnosis, no
+hedged prose. The downstream LLM reads the code and decides what
+is broken.
 """
 
 import os
@@ -20,7 +24,7 @@ logger = logging.getLogger("prmpt.project_context")
 CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
 
 MAX_BODY_PER_CHUNK = 2000
-MAX_RANKED_IN_CONTEXT = 8
+MAX_PROBABLE_IN_CONTEXT = 8
 MAX_RELATED_IN_CONTEXT = 8
 
 
@@ -29,7 +33,6 @@ class ProjectContext:
     text: str
     intent: str = "general"
     concepts: list[str] = field(default_factory=list)
-    analysis_block: str = ""
 
 
 def fetch_project_context(
@@ -40,9 +43,9 @@ def fetch_project_context(
     limit: int = 10,
 ) -> ProjectContext | None:
     """
-    Call the Code Intelligence Service to get relevant code context.
-    Tries /api/context first (combined retrieval+analysis), falls back to
-    /api/retrieve + local formatting.
+    Call the Code Intelligence Service to get probable locations.
+    Tries /api/context first (structured probable_locations), falls back
+    to /api/retrieve if that fails.
     """
     if not CODE_INTEL_URL:
         logger.debug("CODE_INTELLIGENCE_SERVICE_URL not set — skipping project context")
@@ -67,7 +70,6 @@ def fetch_project_context(
         logger.info(
             f"[PROJECT CTX] SUCCESS via /api/context: "
             f"context={len(result.text)} chars, "
-            f"analysis={'present (' + str(len(result.analysis_block)) + ' chars)' if result.analysis_block else 'absent'}, "
             f"intent={result.intent}, concepts={result.concepts}"
         )
         return result
@@ -77,7 +79,7 @@ def fetch_project_context(
     if fallback:
         logger.info(
             f"[PROJECT CTX] SUCCESS via /api/retrieve (fallback): "
-            f"context={len(fallback.text)} chars, no server-side analysis"
+            f"context={len(fallback.text)} chars"
         )
     else:
         logger.warning("[PROJECT CTX] Both endpoints failed — no project context available")
@@ -91,7 +93,7 @@ def _try_context_endpoint(
     limit: int,
     headers: dict,
 ) -> ProjectContext | None:
-    """Call POST /api/context for combined retrieval + analysis."""
+    """Call POST /api/context for structured probable-location retrieval."""
     body = {
         "project_id": project_id,
         "query": user_query[:5000],
@@ -118,30 +120,35 @@ def _try_context_endpoint(
             return None
 
         data = resp.json()
-        context_text = data.get("context_text", "")
-        analysis_block = data.get("analysis_block", "")
+        probable_locations = data.get("probable_locations", [])
+        related_locations = data.get("related_locations", [])
         intent = data.get("intent", "general")
         concepts = data.get("concepts", [])
-        ranked_count = data.get("ranked_count", 0)
-        related_count = data.get("related_count", 0)
+        project_summary = data.get("project_summary") or None
+        branch_context = data.get("branch_context") or None
 
-        if not context_text:
-            logger.info("/api/context returned empty context — falling back")
+        if not probable_locations:
+            logger.info("/api/context returned no probable_locations — falling back")
             return None
 
         logger.info(
             f"/api/context responded in {elapsed:.2f}s: "
-            f"{ranked_count} ranked + {related_count} related, "
-            f"analysis={'yes' if analysis_block else 'no'}, "
+            f"{len(probable_locations)} probable + {len(related_locations)} related, "
             f"intent={intent}, concepts={concepts}, "
-            f"context={len(context_text)} chars"
+            f"summary={'yes' if project_summary else 'no'}"
+        )
+
+        formatted = _format_probable_locations(
+            probable_locations,
+            related_locations,
+            project_summary=project_summary,
+            branch_context=branch_context,
         )
 
         return ProjectContext(
-            text=context_text,
+            text=formatted,
             intent=intent,
             concepts=concepts,
-            analysis_block=analysis_block,
         )
 
     except httpx.TimeoutException as e:
@@ -161,7 +168,7 @@ def _fallback_retrieve_endpoint(
     limit: int,
     headers: dict,
 ) -> ProjectContext | None:
-    """Fallback: call GET /api/retrieve + local formatting."""
+    """Fallback: call GET /api/retrieve and format locally."""
     logger.info(
         f"Fetching project context via /api/retrieve: project={project_id}, "
         f"query={user_query[:80]!r}, branch={branch}, limit={limit}"
@@ -207,7 +214,15 @@ def _fallback_retrieve_endpoint(
             logger.info("No ranked chunks returned — skipping project context")
             return None
 
-        formatted = _format_context(ranked_chunks, related_chunks, branch_context)
+        probable = [_chunk_to_location_dict(c) for c in ranked_chunks]
+        related = [_chunk_to_location_dict(c) for c in related_chunks]
+
+        formatted = _format_probable_locations(
+            probable,
+            related,
+            project_summary=None,
+            branch_context=branch_context,
+        )
         logger.info(
             f"Project context formatted: {len(formatted)} chars, "
             f"~{len(formatted.split())} words"
@@ -228,79 +243,112 @@ def _fallback_retrieve_endpoint(
         return None
 
 
-def _format_context(
-    ranked_chunks: list[dict],
-    related_chunks: list[dict],
-    branch_context: dict | None,
-) -> str:
-    lines = ["[CODEBASE CONTEXT — auto-retrieved from project index]", ""]
+def _chunk_to_location_dict(chunk: dict) -> dict:
+    """Adapt a raw /api/retrieve chunk dict to the probable_location shape."""
+    return {
+        "file_path": chunk.get("file_path", ""),
+        "start_line": chunk.get("start_line", 0),
+        "end_line": chunk.get("end_line", 0),
+        "chunk_type": chunk.get("chunk_type", ""),
+        "name": chunk.get("name", ""),
+        "signature": chunk.get("signature"),
+        "language": chunk.get("language", ""),
+        "semantic_summary": chunk.get("semantic_summary"),
+        "code_body": chunk.get("code_body"),
+        "concepts": chunk.get("concepts") or [],
+        "confidence_score": chunk.get("similarity_score", 0.0),
+        "branch_diverged": chunk.get("branch_diverged", False),
+    }
 
-    selected = ranked_chunks[:MAX_RANKED_IN_CONTEXT]
+
+def _format_probable_locations(
+    probable_locations: list[dict],
+    related_locations: list[dict],
+    project_summary: str | None = None,
+    branch_context: dict | None = None,
+) -> str:
+    """
+    Render probable locations as a plain-text block to prepend to the
+    final user prompt. No diagnosis, no "already correct" claims —
+    just "here are the files most likely relevant, with code."
+    """
+    lines: list[str] = [
+        "[PROBABLE LOCATIONS - auto-retrieved from project index]",
+        "These files/lines MAY be relevant to the user's request. "
+        "Treat them as hints, not authoritative. Read the code and decide yourself.",
+        "",
+    ]
+
+    selected = probable_locations[:MAX_PROBABLE_IN_CONTEXT]
 
     file_groups: OrderedDict[str, list[tuple[int, dict]]] = OrderedDict()
-    for i, chunk in enumerate(selected):
-        fp = chunk["file_path"]
-        if fp not in file_groups:
-            file_groups[fp] = []
-        file_groups[fp].append((i, chunk))
+    for i, loc in enumerate(selected):
+        fp = loc["file_path"]
+        file_groups.setdefault(fp, []).append((i, loc))
 
-    for file_path, chunks_in_file in file_groups.items():
-        lang = chunks_in_file[0][1].get("language", "")
+    for file_path, locs_in_file in file_groups.items():
         lines.append(f"[FILE: {file_path}]")
-
-        for idx, chunk in chunks_in_file:
-            label = "PRIMARY" if idx == 0 else f"RELEVANT #{idx+1}"
+        for rank_idx, loc in locs_in_file:
+            conf = loc.get("confidence_score", 0.0) or 0.0
+            chunk_type = (loc.get("chunk_type") or "").title() or "Chunk"
+            lang = loc.get("language", "") or ""
             lines.append(
-                f"  [{label}] {chunk['chunk_type'].title()}: {chunk['name']} "
-                f"(lines {chunk['start_line']}–{chunk['end_line']})"
+                f"  [PROBABLE #{rank_idx + 1}] {chunk_type}: {loc.get('name', '?')} "
+                f"(lines {loc.get('start_line', 0)}-{loc.get('end_line', 0)}) "
+                f"| confidence {conf:.2f}"
             )
 
-            concepts = chunk.get("concepts") or []
+            concepts = loc.get("concepts") or []
             if concepts:
                 lines.append(f"  Concepts: {', '.join(concepts)}")
 
-            if chunk.get("semantic_summary"):
-                lines.append(f"  Summary: {chunk['semantic_summary']}")
+            summary = loc.get("semantic_summary")
+            if summary:
+                lines.append(f"  Summary: {summary}")
 
-            if chunk.get("branch_diverged"):
-                lines.append("  ⚠ Modified in current branch")
+            if loc.get("branch_diverged"):
+                lines.append("  Note: modified in current branch")
 
-            code_body = chunk.get("code_body")
+            code_body = loc.get("code_body")
             if code_body:
                 lines.append(f"  ```{lang}")
                 for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
                     lines.append(f"  {code_line}")
                 lines.append("  ```")
-            elif chunk.get("signature"):
-                lines.append(f"  Signature: {chunk['signature']}")
+            elif loc.get("signature"):
+                lines.append(f"  Signature: {loc['signature']}")
 
             lines.append("")
 
-    if related_chunks:
+    if related_locations:
         rel_groups: OrderedDict[str, list[dict]] = OrderedDict()
-        for chunk in related_chunks[:MAX_RELATED_IN_CONTEXT]:
-            fp = chunk["file_path"]
-            if fp not in rel_groups:
-                rel_groups[fp] = []
-            rel_groups[fp].append(chunk)
+        for loc in related_locations[:MAX_RELATED_IN_CONTEXT]:
+            fp = loc["file_path"]
+            rel_groups.setdefault(fp, []).append(loc)
 
-        lines.append("[RELATED CODE — connected via call graph]")
-        for file_path, chunks_in_file in rel_groups.items():
+        lines.append("[RELATED - connected via call graph]")
+        for file_path, locs_in_file in rel_groups.items():
             lines.append(f"  {file_path}:")
-            for chunk in chunks_in_file:
+            for loc in locs_in_file:
                 lines.append(
-                    f"    {chunk['name']} "
-                    f"(lines {chunk['start_line']}–{chunk['end_line']})"
+                    f"    {loc.get('name', '?')} "
+                    f"(lines {loc.get('start_line', 0)}-{loc.get('end_line', 0)})"
                 )
-                if chunk.get("semantic_summary"):
-                    lines.append(f"      {chunk['semantic_summary']}")
-                code_body = chunk.get("code_body")
+                summary = loc.get("semantic_summary")
+                if summary:
+                    lines.append(f"      {summary[:160]}")
+                code_body = loc.get("code_body")
                 if code_body:
-                    lang = chunk.get("language", "")
+                    lang = loc.get("language", "")
                     lines.append(f"      ```{lang}")
                     for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
                         lines.append(f"      {code_line}")
                     lines.append("      ```")
+        lines.append("")
+
+    if project_summary:
+        lines.append("[PROJECT OVERVIEW]")
+        lines.append(project_summary)
         lines.append("")
 
     if branch_context:
@@ -322,5 +370,5 @@ def _format_context(
                 lines.append(f"  ... and {len(diverged) - 10} more")
         lines.append("")
 
-    lines.append("[END CODEBASE CONTEXT]")
+    lines.append("[END PROBABLE LOCATIONS]")
     return "\n".join(lines)

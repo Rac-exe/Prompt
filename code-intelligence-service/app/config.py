@@ -9,7 +9,6 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
 # ── LLM Models ──────────────────────────────────────────────────────────────
 SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/openai/gpt-4.1-nano")
-ANALYZER_MODEL = os.environ.get("ANALYZER_MODEL", "openrouter/google/gemini-2.5-flash")
 QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/openai/gpt-4o-mini")
 
 EMBEDDING_MODEL = "text-embedding-3-small"

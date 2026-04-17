@@ -31,7 +31,6 @@ from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PRO
 from .document_parser import parse_files
 from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
 from .project_context import fetch_project_context, ProjectContext
-from .code_analyzer import analyze_code, format_analysis_block
 
 litellm.set_verbose = False
 
@@ -338,44 +337,6 @@ def optimize(
             sentry_sdk.capture_exception(e)
             logger.error(f"Project context fetch failed: {e}", exc_info=True)
 
-    # Use analysis from /api/context if available, otherwise run local analyzer
-    code_analysis_block = ""
-    if project_context_text and project_ctx:
-        if project_ctx.analysis_block:
-            code_analysis_block = project_ctx.analysis_block
-            logger.info(
-                f"[OPTIMIZER] Using SERVER-SIDE analysis block from /api/context "
-                f"({len(code_analysis_block)} chars) — skipping local analyze_code()"
-            )
-        else:
-            logger.info(
-                "[OPTIMIZER] No server-side analysis — running LOCAL code analysis (fallback)"
-            )
-            try:
-                findings = analyze_code(
-                    user_query=user_input,
-                    project_context_text=project_context_text,
-                    intent=project_ctx.intent,
-                    concepts=project_ctx.concepts,
-                )
-                if findings:
-                    code_analysis_block = format_analysis_block(findings)
-                    logger.info(
-                        f"[OPTIMIZER] Local code analysis complete ({len(code_analysis_block)} chars), "
-                        f"root_cause={findings.get('root_cause', 'N/A')[:80]}"
-                    )
-                else:
-                    logger.info("[OPTIMIZER] Local code analyzer returned no findings")
-            except Exception as e:
-                sentry_sdk.capture_exception(e)
-                logger.error(f"[OPTIMIZER] Local code analysis failed: {e}", exc_info=True)
-    else:
-        logger.info(
-            f"[OPTIMIZER] Skipping code analysis: "
-            f"project_context={'yes' if project_context_text else 'no'}, "
-            f"project_ctx={'yes' if project_ctx else 'no'}"
-        )
-
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
     temperature = 0.95 if is_regeneration else 0.7
@@ -443,8 +404,6 @@ def optimize(
         final_user_input = user_input
         if project_context_text:
             final_user_input = f"{project_context_text}\n\n{final_user_input}"
-        if code_analysis_block:
-            final_user_input = f"{final_user_input}\n\n{code_analysis_block}"
         if file_text_context:
             final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{final_user_input}"
 
@@ -502,8 +461,6 @@ def optimize(
         final_user_input = user_input
         if project_context_text:
             final_user_input = f"{project_context_text}\n\n{final_user_input}"
-        if code_analysis_block:
-            final_user_input = f"{final_user_input}\n\n{code_analysis_block}"
         if file_text_context:
             final_user_input = f"[ATTACHED CONTEXT]\n\n{file_text_context}\n\n[END ATTACHED CONTEXT]\n\n{final_user_input}"
     
