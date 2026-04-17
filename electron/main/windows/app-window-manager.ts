@@ -39,6 +39,12 @@ export class AppWindowManager {
       : path.join(app.getAppPath(), 'build', iconExt);
     const icon = nativeImage.createFromPath(iconPath);
 
+    // In dev, Electron may not render .icns correctly — use PNG for dock
+    const dockIconPath = app.isPackaged
+      ? path.join(process.resourcesPath, iconExt)
+      : path.join(app.getAppPath(), 'build', 'dock-icon.png');
+    const dockIcon = nativeImage.createFromPath(dockIconPath);
+
     this.window = new BrowserWindow({
       width: 1400,
       height: 900,
@@ -64,17 +70,18 @@ export class AppWindowManager {
       Sentry.addBreadcrumb({ category: 'window', message: 'macOS titleBarStyle: hiddenInset applied', level: 'info' });
     }
 
-    if (icon && !icon.isEmpty()) {
-      if (isMac) {
+    if (isMac) {
+      const iconForDock = dockIcon.isEmpty() ? icon : dockIcon;
+      if (!iconForDock.isEmpty()) {
         try {
-          app.dock?.setIcon(icon);
+          app.dock?.setIcon(iconForDock);
           Sentry.addBreadcrumb({ category: 'window', message: 'macOS dock icon set', level: 'info' });
         } catch (err) {
           Sentry.captureException(err, { tags: { component: 'app-window', op: 'dock-set-icon', platform: 'darwin' } });
         }
-      } else {
-        this.window.setIcon(icon);
       }
+    } else if (icon && !icon.isEmpty()) {
+      this.window.setIcon(icon);
     }
 
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'index.html');

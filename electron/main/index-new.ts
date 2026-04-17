@@ -914,6 +914,25 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(async () => {
+    // Set dock icon as early as possible on macOS
+    if (process.platform === 'darwin') {
+      try {
+        const { nativeImage } = await import('electron');
+        const dockIconPath = app.isPackaged
+          ? path.join(process.resourcesPath, 'icon.icns')
+          : path.join(app.getAppPath(), 'build', 'dock-icon.png');
+        const dockIcon = nativeImage.createFromPath(dockIconPath);
+        if (!dockIcon.isEmpty()) {
+          app.dock?.setIcon(dockIcon);
+          console.log('[Main] Dock icon set from:', dockIconPath);
+        } else {
+          console.warn('[Main] Dock icon empty, path:', dockIconPath);
+        }
+      } catch (err) {
+        console.warn('[Main] Failed to set dock icon:', err);
+      }
+    }
+
     // Handle protocol URL passed on startup (Windows/Linux first-launch)
     const startUrl = process.argv.find((arg) => arg.startsWith('prmpt://'));
     if (startUrl) {
