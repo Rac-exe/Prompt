@@ -1,9 +1,11 @@
 [package]
-name = "windows-core"
+name = "platform-core"
 version = "0.1.0"
 edition = "2021"
 
-# cdylib produces the .node/.dll shared library for Node.js N-API
+# cdylib produces the .node/.dylib/.so/.dll shared library for Node.js N-API.
+# Single cross-platform crate: Windows and macOS backends are selected
+# internally via #[cfg(target_os = "…")] in src/.
 [lib]
 crate-type = ["cdylib"]
 

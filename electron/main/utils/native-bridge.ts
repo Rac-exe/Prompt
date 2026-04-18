@@ -72,7 +72,7 @@ function loadBridge(): NativeBridge {
         const nativeRoot = app.isPackaged
             ? process.resourcesPath
             : path.resolve(__dirname, '..', '..', '..');
-        const nativeIndexPath = path.join(nativeRoot, 'native', 'windows-core', 'index.js');
+        const nativeIndexPath = path.join(nativeRoot, 'native', 'platform-core', 'index.js');
 
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         _bridge = require(nativeIndexPath) as NativeBridge;

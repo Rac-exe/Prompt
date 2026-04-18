@@ -1,18 +1,19 @@
 {
-    "name": "windows-core",
+    "name": "platform-core",
     "version": "0.1.0",
-    "description": "Win32 native bridge for the Prompt Optimizer Electron app",
+    "description": "Cross-platform (Windows + macOS) native bridge for the Prmpt Electron app — keyboard hook, text injection, window focus, and accessibility",
     "main": "index.js",
     "scripts": {
         "build": "napi build --platform --release",
         "build:debug": "napi build --platform"
     },
     "napi": {
-        "name": "windows-core",
+        "name": "platform-core",
         "triples": {
             "defaults": false,
             "additional": [
-                "x86_64-pc-windows-msvc"
+                "x86_64-pc-windows-msvc",
+                "aarch64-apple-darwin"
             ]
         }
     },

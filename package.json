@@ -4,9 +4,9 @@
   "description": "Global desktop app for AI prompt optimization with Supabase",
   "main": "dist/main/index-new.js",
   "scripts": {
-    "native:build": "cd native/windows-core && npm install && npm run build",
-    "native:build:mac": "cd native/windows-core && npm install && npm run build",
-    "native:build:debug": "cd native/windows-core && npm install && npm run build:debug",
+    "native:build": "cd native/platform-core && npm install && npm run build",
+    "native:build:mac": "cd native/platform-core && npm install && npm run build",
+    "native:build:debug": "cd native/platform-core && npm install && npm run build:debug",
     "install:ui": "cd app-ui && npm install",
     "build:ui": "cd app-ui && npm run build",
     "build:electron": "tsc",
@@ -41,15 +41,15 @@
     ],
     "extraResources": [
       {
-        "from": "native/windows-core",
-        "to": "native/windows-core",
+        "from": "native/platform-core",
+        "to": "native/platform-core",
         "filter": [
           "index.js",
           "index.d.ts",
-          "windows-core.win32-x64-msvc.node",
-          "windows-core.darwin-x64.node",
-          "windows-core.darwin-arm64.node",
-          "windows-core.darwin-universal.node"
+          "platform-core.win32-x64-msvc.node",
+          "platform-core.darwin-x64.node",
+          "platform-core.darwin-arm64.node",
+          "platform-core.darwin-universal.node"
         ]
       },
       {

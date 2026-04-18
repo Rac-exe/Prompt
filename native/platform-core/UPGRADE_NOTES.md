@@ -1,7 +1,7 @@
 # Native Windows Core — Dependency Upgrade Notes
 
 **Date:** 2026-03-29  
-**Scope:** `native/windows-core` only
+**Scope:** `native/platform-core` only
 
 ---
 
@@ -51,7 +51,7 @@
 git pull
 
 # 2. Install updated npm dev dependency (@napi-rs/cli v3)
-cd native/windows-core
+cd native/platform-core
 npm install
 
 # 3. Rebuild the native .node binary
