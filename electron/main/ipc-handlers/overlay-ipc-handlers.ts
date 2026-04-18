@@ -9,7 +9,7 @@ import { PromptLibraryService } from '../database/services/prompt-library-servic
 import { OptimizationService } from '../database/services/optimization-service';
 import { ChatService } from '../database/services/chat-service';
 import { authState } from '../utils/auth-state';
-import { replaceAtLastAnchor, isNativeBridgeAvailable, pasteTextToWindow, sendEnterToWindow, forceFocusWindow, getActiveWindowTitle } from '../utils/native-bridge';
+import { replaceAtLastAnchor, isNativeBridgeAvailable, pasteTextToWindow, forceFocusWindow, getActiveWindowTitle } from '../utils/native-bridge';
 import { detectWindowMode } from '../utils/window-detector';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
@@ -878,7 +878,12 @@ export function registerOverlayHandlers(
   //
   // First insert: replaceAtLastAnchor (removes @prompt, pastes at exact position)
   // Subsequent:   pasteTextToWindow   (pastes at current cursor in source window)
-  // Chat windows: sendEnterToWindow after every paste to submit the message
+  //
+  // We deliberately do NOT auto-press Enter after the paste, even when the
+  // detected window is a chat app. Sending Enter automatically submits the
+  // message before the user can review or edit the inserted prompt — which
+  // is unwanted for task-style prompts where the user typically wants to
+  // tweak the result before sending. Same behavior on Windows and macOS.
   // ============================================
   ipcMain.handle('overlay:insert-section', async (_event, data: { text: string }) => {
     return Sentry.startSpan({ name: 'overlay.insert_section', op: 'ui.section_paste' }, async (span) => {
@@ -923,13 +928,6 @@ export function registerOverlayHandlers(
         }
 
         span.setAttribute('paste.method', method);
-
-        if (success && isChat) {
-          await new Promise(r => setTimeout(r, 150));
-          const enterOk = sendEnterToWindow(sourceHwnd);
-          Sentry.addBreadcrumb({ category: 'overlay.section', message: 'Enter sent to chat window', level: 'info', data: { success: enterOk } });
-          span.setAttribute('enter.sent', enterOk);
-        }
 
         await new Promise(r => setTimeout(r, 200));
         if (overlayWin && !overlayWin.isDestroyed()) {
