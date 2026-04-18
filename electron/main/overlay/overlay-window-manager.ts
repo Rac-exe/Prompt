@@ -301,9 +301,19 @@ export class OverlayWindowManager {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
     if (process.platform === 'darwin') {
-      this.window.showInactive();
+      // macOS: when @prompt is typed, the source app (Cursor, browser, etc.)
+      // is the frontmost app and owns keyboard focus. To redirect keystrokes
+      // into the overlay's input we must:
+      //   1. Make Electron the frontmost app  -> app.focus({ steal: true })
+      //   2. Show + activate the overlay window itself -> show() (NOT showInactive)
+      //   3. Move it above any other Prmpt windows -> moveTop()
+      // showInactive() + moveTop() alone bring the window on top visually
+      // but leave keyboard focus on the source app, so typing keeps going
+      // there instead of the overlay input.
+      app.focus({ steal: true });
+      this.window.show();
       this.window.moveTop();
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS showInactive + moveTop', level: 'info' });
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS app.focus + show + moveTop', level: 'info' });
     }
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     analyticsService.logEvent('overlay_open');
@@ -320,9 +330,15 @@ export class OverlayWindowManager {
   private focusWindow() {
     if (!this.window || this.window.isDestroyed()) return;
     if (process.platform === 'darwin') {
-      this.window.showInactive();
+      // Re-focus path (e.g. when @prompt is typed while overlay is already
+      // open). Same reasoning as in showAndFocus(): we have to make Electron
+      // the frontmost app and then activate this BrowserWindow, otherwise
+      // keyboard focus stays on whatever the user just typed into.
+      app.focus({ steal: true });
+      this.window.show();
+      this.window.focus();
       this.window.moveTop();
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS focus via showInactive', level: 'info' });
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS app.focus + show + focus + moveTop', level: 'info' });
     } else {
       const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
       const focused = forceFocusWindow(Number(overlayHwnd));
