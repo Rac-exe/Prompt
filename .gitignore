@@ -74,3 +74,9 @@ python-service/*.pb
 
 # Usage Logs
 python-service/pipeline_v2/storage/usage/*.jsonl
+
+# Native Rust crates — build artifacts and per-crate node_modules
+# (each crate also has its own .gitignore but cover them at the repo level
+# so a fresh clone or a deleted/abandoned crate folder never spams git status)
+native/**/target/
+native/**/node_modules/
