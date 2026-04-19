@@ -26,7 +26,8 @@
     "package:win": "npm run build && electron-builder --win --x64",
     "package:mac": "npm run build && electron-builder --mac",
     "supabase:migrate": "supabase db push",
-    "clean": "rm -rf electron/renderer/app-ui/* dist/"
+    "clean": "rm -rf electron/renderer/app-ui/* dist/",
+    "postinstall": "node scripts/patch-dev-electron-name.js"
   },
   "build": {
     "appId": "com.prmpt.desktop",

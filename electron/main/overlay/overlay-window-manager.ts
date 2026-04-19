@@ -119,18 +119,32 @@ export class OverlayWindowManager {
       Sentry.setTag('overlay.visible_all_workspaces', 'true');
     }
 
-    // ── Disable zoom completely ────────────────────────────────────────────
+    // ── Disable zoom + reload completely ───────────────────────────────────
     // Clamp Chromium's pinch/gesture zoom to 1x so it cannot drift.
     this.window.webContents.setVisualZoomLevelLimits(1, 1);
 
-    // Block Ctrl+=/+, Ctrl+-, Ctrl+0 — Chromium handles these natively and
-    // they fire even without any JS handler, so we must swallow them here.
+    // Swallow zoom (Ctrl/Cmd + = / + / - / _ / 0) and reload (Ctrl/Cmd + R,
+    // Ctrl/Cmd + Shift + R, F5) shortcuts on both platforms. macOS uses the
+    // Command modifier (input.meta); Windows/Linux uses Control. Without this
+    // Chromium would handle these natively even though our custom menu has no
+    // such accelerators registered.
     this.window.webContents.on('before-input-event', (_event, input) => {
-      if (input.type !== 'keyDown' || !input.control) return;
+      if (input.type !== 'keyDown') return;
+
+      if (input.key === 'F5') {
+        _event.preventDefault();
+        return;
+      }
+
+      const isAccel = input.control || input.meta;
+      if (!isAccel) return;
+
+      const k = input.key.toLowerCase();
       if (
-        input.key === '=' || input.key === '+' ||
-        input.key === '-' || input.key === '_' ||
-        input.key === '0'
+        k === '=' || k === '+' ||
+        k === '-' || k === '_' ||
+        k === '0' ||
+        k === 'r'
       ) {
         _event.preventDefault();
       }

@@ -52,6 +52,7 @@ Sentry.init({
 
 import { app, globalShortcut, ipcMain, session, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { installApplicationMenu } from './menu/application-menu';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
@@ -926,6 +927,11 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(async () => {
+    // Install our custom application menu BEFORE creating any window so that
+    // the default Electron accelerators (Cmd+R reload, Cmd+= zoom, Cmd+Q
+    // quit, Cmd+Alt+I devtools, etc.) never get registered.
+    installApplicationMenu();
+
     // Set dock icon as early as possible on macOS
     if (process.platform === 'darwin') {
       try {
