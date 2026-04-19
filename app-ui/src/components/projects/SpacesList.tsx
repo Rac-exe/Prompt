@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Plus, DotsThree, Trash, PencilSimple,
-  Check, Clock, MagnifyingGlass, Folder,
-  Sparkle, ChatCircleText,
+  Clock, MagnifyingGlass, Folder,
+  Sparkle, ChatCircleText, X,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,16 +15,44 @@ import {
   AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { Space } from "./types";
 
 interface SpacesListProps {
   spaces: Space[];
   activeSpaceId: string | null;
+  /** projectId → live index_status, kept in sync with the workspace via
+   *  the global project:status-update broadcast. The card status dot reads
+   *  from this so it never drifts from what you'd see inside the space. */
+  projectStatusMap: Record<string, string>;
   onSelectSpace: (id: string) => void;
   onCreateSpace: (name: string) => void;
   onRenameSpace: (id: string, name: string) => void;
   onDeleteSpace: (id: string) => void;
+}
+
+// Visual treatment for the space's "summary" status. Green = ready,
+// amber pulse = indexing, red = stale/error, neutral = no folder yet.
+const STATUS_DOT: Record<string, { dot: string; ring: string; label: string }> = {
+  ready:    { dot: "bg-emerald-400",    ring: "ring-emerald-400/20", label: "Ready" },
+  indexing: { dot: "bg-amber-400",      ring: "ring-amber-400/20",   label: "Indexing" },
+  stale:    { dot: "bg-red-400",        ring: "ring-red-400/20",     label: "Stale" },
+  error:    { dot: "bg-red-400",        ring: "ring-red-400/20",     label: "Error" },
+  empty:    { dot: "bg-muted-foreground/30", ring: "ring-muted-foreground/10", label: "No folder" },
+};
+
+/** Resolve the visible status of a space — uses the live map first, then
+ *  the persisted indexStatus on the project entry as a fallback. */
+function spaceStatus(space: Space, statusMap: Record<string, string>): keyof typeof STATUS_DOT {
+  const proj = space.projects[0];
+  if (!proj) return "empty";
+  const live = statusMap[proj.projectId];
+  const raw = (live || proj.indexStatus || "stale").toLowerCase();
+  if (raw === "ready" || raw === "indexing" || raw === "error") return raw;
+  return "stale";
 }
 
 function relativeTime(ts: number): string {
@@ -39,24 +67,6 @@ function relativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-// Stable per-name color so each space has its own visual identity at a glance.
-const GRADIENTS = [
-  "from-emerald-500/80 to-teal-500/60",
-  "from-violet-500/80 to-fuchsia-500/60",
-  "from-amber-500/80 to-orange-500/60",
-  "from-sky-500/80 to-cyan-500/60",
-  "from-rose-500/80 to-pink-500/60",
-  "from-indigo-500/80 to-blue-500/60",
-  "from-lime-500/80 to-green-500/60",
-  "from-purple-500/80 to-violet-500/60",
-];
-
-function gradientFor(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
-  return GRADIENTS[Math.abs(h) % GRADIENTS.length];
-}
-
 function initials(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return "·";
@@ -66,9 +76,12 @@ function initials(name: string): string {
 
 // ── Memoized space card ────────────────────────────────────────────────────
 // Without memoization every keystroke in the search box re-renders all cards,
-// which became visibly laggy past ~20 spaces.
+// which became visibly laggy past ~20 spaces. Status is passed as a resolved
+// string (rather than the whole map) so a status change for *one* project
+// doesn't bust the memo of every other card.
 interface SpaceCardProps {
   space: Space;
+  status: keyof typeof STATUS_DOT;
   isRenaming: boolean;
   renameValue: string;
   onSelect: (id: string) => void;
@@ -82,6 +95,7 @@ interface SpaceCardProps {
 
 const SpaceCard = memo(function SpaceCard({
   space,
+  status,
   isRenaming,
   renameValue,
   onSelect,
@@ -92,36 +106,27 @@ const SpaceCard = memo(function SpaceCard({
   onRequestDelete,
   renameInputRef,
 }: SpaceCardProps) {
-  const gradient = useMemo(() => gradientFor(space.id || space.name), [space.id, space.name]);
   const letters = useMemo(() => initials(space.name), [space.name]);
   const projectCount = space.projects.length;
   const messageCount = space.messages.length;
+  const statusMeta = STATUS_DOT[status];
 
   return (
     <div
       onClick={() => !isRenaming && onSelect(space.id)}
       className={cn(
-        "group relative rounded-2xl border border-border/30 bg-card/40",
-        "hover:border-border/60 hover:bg-card/60 hover:shadow-card-hover",
-        "p-5 cursor-pointer transition-all duration-200 will-change-transform",
-        "hover:-translate-y-0.5 overflow-hidden",
+        "group relative rounded-xl border border-border/40 bg-card/30",
+        "hover:border-border/70 hover:bg-card/55",
+        "p-3.5 cursor-pointer transition-all duration-150",
       )}
     >
-      {/* Subtle ambient glow on hover */}
-      <div
-        className={cn(
-          "pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300",
-          "bg-gradient-to-br", gradient,
-        )}
-        style={{ maskImage: "radial-gradient(circle at top right, black, transparent 70%)" }}
-      />
-
-      <div className="relative flex items-start gap-3 mb-4">
+      <div className="flex items-start gap-2.5">
+        {/* Tight monogram tile — no gradient, just a subtle tinted square */}
         <div
           className={cn(
-            "w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0",
-            "bg-gradient-to-br shadow-sm text-white text-[13px] font-bold tracking-tight",
-            gradient,
+            "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
+            "bg-muted/40 text-foreground/80 text-[11px] font-bold tracking-tight",
+            "border border-border/30",
           )}
         >
           {letters}
@@ -139,91 +144,201 @@ const SpaceCard = memo(function SpaceCard({
                   if (e.key === "Escape") onCancelRename();
                 }}
                 onBlur={onCommitRename}
-                className="h-8 text-[14px] font-semibold bg-background/70 border-border/50 rounded-lg"
+                className="h-7 text-[13px] font-semibold bg-background/70 border-border/50 rounded-md"
                 maxLength={40}
               />
             </div>
           ) : (
-            <h3 className="text-[14px] font-semibold text-foreground truncate leading-tight">
-              {space.name}
-            </h3>
+            <div className="flex items-center gap-1.5" title={statusMeta.label}>
+              <span
+                className={cn(
+                  "w-1.5 h-1.5 rounded-full flex-shrink-0 ring-2 ring-offset-0",
+                  statusMeta.dot,
+                  statusMeta.ring,
+                  status === "indexing" && "animate-pulse",
+                )}
+              />
+              <h3 className="text-[13px] font-semibold text-foreground truncate leading-tight">
+                {space.name}
+              </h3>
+            </div>
           )}
-          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 mt-1">
-            <Clock size={10} weight="bold" />
+          <div className="flex items-center gap-1 text-[10.5px] text-muted-foreground/55 mt-0.5">
+            <Clock size={9} weight="bold" />
             <span>{relativeTime(space.lastUsedAt)}</span>
           </div>
         </div>
+
+        {/* Context menu — visible on card focus/hover */}
+        <div
+          className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150 -mr-1 -mt-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="h-6 w-6 rounded-md flex items-center justify-center text-muted-foreground/55 hover:text-foreground hover:bg-muted/40 transition-colors"
+                aria-label="Space options"
+              >
+                <DotsThree size={14} weight="bold" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-36 rounded-lg shadow-elevated border-border/40">
+              <DropdownMenuItem
+                className="text-xs gap-2 cursor-pointer rounded-md"
+                onClick={() => onStartRename(space.id, space.name)}
+              >
+                <PencilSimple size={12} />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-xs gap-2 cursor-pointer text-destructive focus:text-destructive rounded-md"
+                onClick={() => onRequestDelete(space)}
+              >
+                <Trash size={12} />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
-      {/* Stats footer */}
-      <div className="relative flex items-center gap-3 text-[11px] text-muted-foreground/70 font-medium">
-        <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-          <Folder size={11} weight="duotone" />
-          {projectCount} {projectCount === 1 ? "project" : "projects"}
+      {/* Stats row — compact, no chunky pills */}
+      <div className="flex items-center gap-3 text-[10.5px] text-muted-foreground/55 font-medium mt-2.5 ml-[42px]">
+        <span className="flex items-center gap-1">
+          <Folder size={10} weight="duotone" />
+          {projectCount === 0 ? "No folder" : projectCount === 1 ? "1 folder" : `${projectCount} folders`}
         </span>
         {messageCount > 0 && (
-          <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30">
-            <ChatCircleText size={11} weight="duotone" />
+          <span className="flex items-center gap-1">
+            <ChatCircleText size={10} weight="duotone" />
             {messageCount}
           </span>
         )}
-      </div>
-
-      {/* Context menu */}
-      <div
-        className="absolute top-3.5 right-3.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              className="h-7 w-7 rounded-lg flex items-center justify-center text-muted-foreground/60 hover:text-foreground hover:bg-background/80 backdrop-blur transition-colors"
-              aria-label="Space options"
-            >
-              <DotsThree size={16} weight="bold" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40 rounded-xl shadow-elevated border-border/40">
-            <DropdownMenuItem
-              className="text-xs gap-2 cursor-pointer rounded-lg"
-              onClick={() => onStartRename(space.id, space.name)}
-            >
-              <PencilSimple size={13} />
-              Rename
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-xs gap-2 cursor-pointer text-destructive focus:text-destructive rounded-lg"
-              onClick={() => onRequestDelete(space)}
-            >
-              <Trash size={13} />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     </div>
   );
 });
 
+// ── Create-Space modal ─────────────────────────────────────────────────────
+interface CreateSpaceModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreate: (name: string) => void;
+}
+
+const SUGGESTED_NAMES = ["Work project", "Side hustle", "Research", "Learning"];
+
+const CreateSpaceModal = ({ open, onOpenChange, onCreate }: CreateSpaceModalProps) => {
+  const [name, setName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setName("");
+      const id = setTimeout(() => inputRef.current?.focus(), 60);
+      return () => clearTimeout(id);
+    }
+  }, [open]);
+
+  const trimmed = name.trim();
+  const submit = () => {
+    if (!trimmed) return;
+    onCreate(trimmed);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="bg-card border-border/40 rounded-2xl shadow-elevated max-w-md p-0 overflow-hidden gap-0"
+      >
+        {/* Ambient header strip */}
+        <div className="relative px-6 pt-6 pb-4 border-b border-border/15">
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_60%)]" />
+          <div className="relative flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald/12 border border-emerald/20 flex items-center justify-center flex-shrink-0">
+              <Sparkle size={16} weight="duotone" className="text-emerald" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <DialogTitle className="text-[15px] font-semibold text-foreground tracking-tight">
+                Create a new space
+              </DialogTitle>
+              <DialogDescription className="text-[12px] text-muted-foreground/65 mt-0.5 leading-relaxed">
+                Group prompts and a project folder into one focused workspace.
+              </DialogDescription>
+            </div>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5 space-y-4">
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wide">
+              Name
+            </label>
+            <Input
+              ref={inputRef}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); submit(); }
+                if (e.key === "Escape") onOpenChange(false);
+              }}
+              placeholder="e.g. Healthcare API rewrite"
+              className="mt-1.5 h-10 text-[13px] bg-background/60 border-border/50 rounded-lg focus-visible:ring-1 focus-visible:ring-emerald/40"
+              maxLength={40}
+            />
+            <div className="flex items-center justify-between mt-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {SUGGESTED_NAMES.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setName(s)}
+                    className="text-[10.5px] px-2 py-0.5 rounded-md bg-muted/40 text-muted-foreground/70 hover:text-foreground hover:bg-muted/70 transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-muted-foreground/40 tabular-nums">{name.length}/40</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border/15 bg-muted/15">
+          <Button
+            variant="ghost"
+            className="h-9 px-4 text-[12.5px] font-medium text-muted-foreground hover:text-foreground rounded-lg"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            className="h-9 px-4 text-[12.5px] font-semibold bg-emerald hover:bg-emerald/90 text-white rounded-lg shadow-glow-sm disabled:opacity-40 disabled:shadow-none"
+            onClick={submit}
+            disabled={!trimmed}
+          >
+            Create space
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export const SpacesList = ({
-  spaces, onSelectSpace,
+  spaces, projectStatusMap, onSelectSpace,
   onCreateSpace, onRenameSpace, onDeleteSpace,
 }: SpacesListProps) => {
   const [isCreating, setIsCreating] = useState(false);
-  const [newName, setNewName] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Space | null>(null);
   const [search, setSearch] = useState("");
-  const createInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isCreating) {
-      const id = setTimeout(() => createInputRef.current?.focus(), 50);
-      return () => clearTimeout(id);
-    }
-  }, [isCreating]);
 
   useEffect(() => {
     if (renamingId) {
@@ -231,14 +346,6 @@ export const SpacesList = ({
       return () => clearTimeout(id);
     }
   }, [renamingId]);
-
-  const handleCreate = useCallback(() => {
-    const name = newName.trim();
-    if (!name) return;
-    onCreateSpace(name);
-    setNewName("");
-    setIsCreating(false);
-  }, [newName, onCreateSpace]);
 
   const handleCommitRename = useCallback(() => {
     if (!renamingId) return;
@@ -279,114 +386,78 @@ export const SpacesList = ({
     <>
       <div className="flex-1 flex flex-col h-full overflow-y-auto" style={{ contain: "layout paint" }}>
         {/* ── Hero header ─────────────────────────────── */}
-        <div className="relative px-10 pt-10 pb-6">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.06),transparent_60%)]" />
-          <div className="relative flex items-end justify-between gap-6 flex-wrap">
+        <div className="relative px-10 pt-9 pb-5">
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.05),transparent_55%)]" />
+          <div className="relative flex items-start justify-between gap-6 flex-wrap">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald to-emerald/60 flex items-center justify-center shadow-glow-sm">
-                  <Sparkle size={13} weight="fill" className="text-white" />
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="w-6 h-6 rounded-md bg-emerald/12 border border-emerald/20 flex items-center justify-center">
+                  <Sparkle size={11} weight="duotone" className="text-emerald" />
                 </div>
-                <h1 className="text-[22px] font-semibold text-foreground tracking-tight">Spaces</h1>
+                <h1 className="text-[19px] font-semibold text-foreground tracking-tight">Spaces</h1>
+                <span className="text-[10.5px] text-muted-foreground/40 font-medium ml-1">
+                  {spaces.length} {spaces.length === 1 ? "space" : "spaces"} · {totalProjects} {totalProjects === 1 ? "folder" : "folders"}
+                </span>
               </div>
-              <p className="text-[13px] text-muted-foreground/70 leading-relaxed max-w-md">
-                Codebase-aware workspaces. Attach folders, ask questions, and get
+              <p className="text-[12.5px] text-muted-foreground/60 leading-relaxed max-w-md">
+                Codebase-aware workspaces. Attach a folder, ask anything, and get
                 prompts tuned to your code.
               </p>
             </div>
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2">
               <div className="relative flex items-center">
                 <MagnifyingGlass
-                  size={13}
+                  size={12}
                   weight="bold"
-                  className="absolute left-3 text-muted-foreground/40 pointer-events-none"
+                  className="absolute left-2.5 text-muted-foreground/40 pointer-events-none"
                 />
                 <input
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search spaces"
-                  className="h-9 w-56 pl-8 pr-3 text-[12px] bg-card/40 border border-border/30 rounded-xl outline-none focus:border-border/60 focus:bg-card/60 transition-colors text-foreground placeholder:text-muted-foreground/40"
+                  className="h-8 w-52 pl-7 pr-3 text-[12px] bg-card/40 border border-border/30 rounded-lg outline-none focus:border-border/60 focus:bg-card/60 transition-colors text-foreground placeholder:text-muted-foreground/40"
                 />
+                {search && (
+                  <button
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 text-muted-foreground/40 hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    <X size={10} weight="bold" />
+                  </button>
+                )}
               </div>
               <Button
                 size="sm"
-                className="h-9 px-4 text-[12px] font-semibold gap-1.5 bg-emerald hover:bg-emerald/90 text-white rounded-xl shadow-glow-sm"
+                className="h-8 px-3 text-[12px] font-semibold gap-1.5 bg-foreground hover:bg-foreground/90 text-background rounded-lg"
                 onClick={() => setIsCreating(true)}
               >
-                <Plus size={13} weight="bold" />
-                New Space
+                <Plus size={12} weight="bold" />
+                New space
               </Button>
             </div>
-          </div>
-
-          {/* Stat pills */}
-          <div className="relative flex items-center gap-2 mt-5 text-[11px] text-muted-foreground/60 font-medium">
-            <span className="px-2.5 py-1 rounded-full bg-card/40 border border-border/20">
-              {spaces.length} {spaces.length === 1 ? "space" : "spaces"}
-            </span>
-            <span className="px-2.5 py-1 rounded-full bg-card/40 border border-border/20">
-              {totalProjects} {totalProjects === 1 ? "project" : "projects"}
-            </span>
           </div>
         </div>
 
         {/* ── Grid ──────────────────────────────────── */}
         <div className="px-10 pb-10">
-          {filteredAndSorted.length === 0 && !isCreating && search.trim() ? (
+          {filteredAndSorted.length === 0 && search.trim() ? (
             <div className="rounded-2xl border border-dashed border-border/30 bg-card/20 py-14 text-center">
               <p className="text-[13px] text-muted-foreground/60">
                 No spaces match <span className="text-foreground font-medium">&ldquo;{search}&rdquo;</span>
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {/* Inline create card */}
-              {isCreating && (
-                <div className="rounded-2xl border-2 border-dashed border-emerald/40 bg-emerald/[0.04] p-5 flex flex-col">
-                  <div className="w-11 h-11 rounded-xl bg-emerald/15 flex items-center justify-center mb-4">
-                    <Plus size={18} weight="bold" className="text-emerald" />
-                  </div>
-                  <Input
-                    ref={createInputRef}
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleCreate();
-                      if (e.key === "Escape") { setIsCreating(false); setNewName(""); }
-                    }}
-                    placeholder="Space name..."
-                    className="h-9 text-[13px] bg-background/60 border-border/40 rounded-lg mb-3"
-                    maxLength={40}
-                  />
-                  <div className="flex items-center gap-2 mt-auto">
-                    <Button
-                      size="sm"
-                      className="h-7 px-3 text-[11px] font-semibold bg-emerald hover:bg-emerald/90 text-white rounded-lg gap-1"
-                      onClick={handleCreate}
-                      disabled={!newName.trim()}
-                    >
-                      <Check size={10} weight="bold" />
-                      Create
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2.5 text-[11px] text-muted-foreground"
-                      onClick={() => { setIsCreating(false); setNewName(""); }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Space cards */}
+            // Tighter, denser grid. Cards are now ~half the previous footprint
+            // so a typical user can see 6–10 spaces at a glance instead of 3.
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
               {filteredAndSorted.map((space) => (
                 <SpaceCard
                   key={space.id}
                   space={space}
+                  status={spaceStatus(space, projectStatusMap)}
                   isRenaming={renamingId === space.id}
                   renameValue={renameValue}
                   onSelect={onSelectSpace}
@@ -398,10 +469,40 @@ export const SpacesList = ({
                   renameInputRef={renameInputRef}
                 />
               ))}
+
+              {/* "Add space" tile — discoverable affordance at the end of the grid. */}
+              <button
+                onClick={() => setIsCreating(true)}
+                className={cn(
+                  "rounded-xl border border-dashed border-border/35 bg-transparent",
+                  "hover:border-emerald/45 hover:bg-emerald/[0.03]",
+                  "p-3.5 cursor-pointer transition-all duration-150 group",
+                  "flex items-center gap-2.5 text-left",
+                )}
+              >
+                <div className="w-8 h-8 rounded-lg bg-muted/30 group-hover:bg-emerald/12 border border-border/30 group-hover:border-emerald/30 flex items-center justify-center flex-shrink-0 transition-colors">
+                  <Plus size={14} weight="bold" className="text-muted-foreground/55 group-hover:text-emerald transition-colors" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-semibold text-foreground/70 group-hover:text-foreground transition-colors">
+                    New space
+                  </div>
+                  <div className="text-[10.5px] text-muted-foreground/45 mt-0.5">
+                    Attach a folder & start prompting
+                  </div>
+                </div>
+              </button>
             </div>
           )}
         </div>
       </div>
+
+      {/* Create modal */}
+      <CreateSpaceModal
+        open={isCreating}
+        onOpenChange={setIsCreating}
+        onCreate={onCreateSpace}
+      />
 
       {/* Delete dialog */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>

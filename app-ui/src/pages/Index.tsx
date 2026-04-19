@@ -1460,11 +1460,21 @@ Your prompt was: "${content}"`;
         );
       case "projects":
         return (
-          <ProjectsView onSendToChat={(prompt: string) => {
-            handleNewChat();
-            setCurrentView("chat");
-            setInput(prompt);
-          }} />
+          <ProjectsView
+            onSaveMessage={(content: string) => {
+              // Save from inside a Space → open the same library save modal
+              // the chat view uses. Previously this redirected to a brand-new
+              // chat, which was a bug — Save means "save to my library" everywhere.
+              const synthetic: Message = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content,
+                timestamp: new Date(),
+              };
+              setPromptToSave(synthetic);
+              setSaveModalOpen(true);
+            }}
+          />
         );
       case "chat":
       default:

@@ -24,6 +24,14 @@ export interface Space {
   lastUsedAt: number;
 }
 
+// Spaces are intentionally restricted to a single project folder. The
+// codebase-context retrieval fans out across every project in a space, but
+// in practice mixing two unrelated codebases produces noisy, low-signal
+// chunks that hurt the optimized prompt more than they help. This cap is
+// enforced both in the UI (the "Add Folder" button hides) and respected
+// by handlers (rejecting additional adds with a toast).
+export const MAX_PROJECTS_PER_SPACE = 1;
+
 export interface RetrievedChunk {
   id: string;
   file_path: string;

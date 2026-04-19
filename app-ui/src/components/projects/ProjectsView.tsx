@@ -9,15 +9,25 @@ import { loadSpaces, saveSpacesDebounced, flushSpacesSaves } from "./types";
 import { useAuth } from "@/context/AuthContext";
 
 interface ProjectsViewProps {
-  onSendToChat?: (prompt: string) => void;
+  /** Open the prompt-library Save modal with a given content string.
+   *  Replaces the legacy `onSendToChat` which silently navigated the user
+   *  to a brand-new chat — that was filed as a bug since users expect Save
+   *  to mean "save to my prompt library" (the same as in the chat view). */
+  onSaveMessage?: (content: string) => void;
 }
 
-export const ProjectsView = ({ onSendToChat }: ProjectsViewProps = {}) => {
+export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
   const { user } = useAuth();
   const userId = user?.profile?.id ?? null;
 
   const [spaces, setSpaces] = useState<Space[]>(() => loadSpaces(userId));
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
+  // Map of projectId → live index status. Lives at this level (not in
+  // SpacesList) so that a single live broadcast updates both the card grid
+  // AND the workspace simultaneously. Without this, the card kept showing
+  // its persisted (often stale) status while the open workspace showed the
+  // real one — confusing the user into thinking the dot was random.
+  const [projectStatusMap, setProjectStatusMap] = useState<Record<string, string>>({});
 
   const api = (window as any).electronAPI?.project;
 
@@ -77,6 +87,76 @@ export const ProjectsView = ({ onSendToChat }: ProjectsViewProps = {}) => {
         Sentry.captureException(err, { tags: { component: "projects-view", op: "ensure-fresh" } });
       });
   }, [api, userId]);
+
+  // ── Live status map for every project across every space ─────────────
+  // Powers the per-card status dot in SpacesList. We fetch once on mount
+  // (and whenever the set of projectIds changes) and then rely on the
+  // global `project:status-update` broadcast to keep things fresh — the
+  // exact same broadcast SpaceWorkspace listens to.
+  const projectIdsKey = useMemo(
+    () => spaces.flatMap((s) => s.projects.map((p) => p.projectId)).sort().join(","),
+    [spaces],
+  );
+  useEffect(() => {
+    if (!api) return;
+    let cancelled = false;
+    const ids = projectIdsKey ? projectIdsKey.split(",") : [];
+    if (ids.length === 0) {
+      setProjectStatusMap({});
+      return;
+    }
+    (async () => {
+      const next: Record<string, string> = {};
+      for (const id of ids) {
+        try {
+          const s = await api.status(id);
+          if (s?.index_status) next[id] = s.index_status;
+        } catch {
+          // missing project (e.g. removed from Supabase) — leave unset so
+          // the card falls back to the persisted indexStatus or "unknown".
+        }
+      }
+      if (cancelled) return;
+      // ── Merge guard ─────────────────────────────────────────────────
+      // CRITICAL: never overwrite an `indexing` status with a `stale`/
+      // `error` status from a fetch. When the user just attached a folder
+      // we optimistically set `indexing` AND the main process emits an
+      // `indexing` broadcast — but the backend DB row is created with
+      // `stale` and stays that way until the worker picks up the queued
+      // scan (seconds later). A naïve `{ ...prev, ...next }` would happily
+      // clobber the optimistic value with the DB's stale one, flipping
+      // the dot from amber → red even though indexing is still in flight.
+      // Broadcasts (which are the source of truth for transitions) will
+      // later flip us back to `ready`.
+      setProjectStatusMap((prev) => {
+        const merged = { ...prev };
+        for (const [id, fresh] of Object.entries(next)) {
+          const existing = prev[id];
+          if (!existing) {
+            merged[id] = fresh;
+          } else if (existing === "indexing" && (fresh === "stale" || fresh === "error")) {
+            // Preserve in-flight indexing; trust upcoming broadcast.
+            continue;
+          } else {
+            merged[id] = fresh;
+          }
+        }
+        return merged;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [api, projectIdsKey]);
+
+  useEffect(() => {
+    if (!api?.onStatusUpdate) return;
+    const unsub = api.onStatusUpdate((data: any) => {
+      if (!data?.projectId || !data?.status) return;
+      setProjectStatusMap((prev) =>
+        prev[data.projectId] === data.status ? prev : { ...prev, [data.projectId]: data.status },
+      );
+    });
+    return () => unsub?.();
+  }, [api]);
 
   const handleCreateSpace = useCallback((name: string) => {
     const newSpace: Space = {
@@ -152,7 +232,7 @@ export const ProjectsView = ({ onSendToChat }: ProjectsViewProps = {}) => {
           key={activeSpace.id}
           space={activeSpace}
           onUpdateSpace={handleUpdateSpace}
-          onSendToChat={onSendToChat}
+          onSaveMessage={onSaveMessage}
           onBack={handleBack}
         />
       </div>
@@ -206,6 +286,7 @@ export const ProjectsView = ({ onSendToChat }: ProjectsViewProps = {}) => {
       <SpacesList
         spaces={spaces}
         activeSpaceId={activeSpaceId}
+        projectStatusMap={projectStatusMap}
         onSelectSpace={handleSelectSpace}
         onCreateSpace={handleCreateSpace}
         onRenameSpace={handleRenameSpace}
