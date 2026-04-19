@@ -6,110 +6,62 @@ export interface DeletionRequest {
   id: string;
   user_id: string;
   requested_at: string;
-  scheduled_deletion_at: string;   // requested_at + 30 days
+  scheduled_deletion_at: string;
   status: DeletionStatus;
   reason?: string | null;
 }
 
-const DELETION_DELAY_DAYS = 30;
-
 /**
  * DeletionService — handles GDPR Article 17 "Right to Erasure" requests.
  *
- * When a user requests account deletion:
- *   1. A row is inserted into `deletion_requests` with status='pending'.
- *   2. `scheduled_deletion_at` is set to NOW + 30 days — not one day before.
- *   3. A Supabase cron job / Edge Function is responsible for processing rows
- *      where status='pending' AND scheduled_deletion_at <= NOW().
- *   4. Users can cancel a pending request before the 30-day window closes.
+ * Flow (Option C — hard lockout):
+ *   1. requestDeletion() invokes the SECURITY DEFINER RPC `request_account_deletion`.
+ *      The RPC atomically inserts a pending deletion_request AND sets
+ *      auth.users.banned_until = NOW() + 30 days. After this call the user
+ *      can no longer sign in via any provider (password / Google / GitHub).
+ *   2. The Edge Function `process-deletions` runs daily and physically wipes
+ *      Cloudinary assets, Storage objects, and the auth.users row (CASCADE).
+ *   3. Restoration is OUT OF BAND: the renderer never holds the privileges to
+ *      cancel a deletion. The Python service `/account/confirm-restore` flow
+ *      does it via service-role RPC after OTP verification.
  *
- * The actual data wipe (chats, messages, memory, feedback, uploads, auth user)
- * is performed server-side by a Supabase Edge Function named `process-deletions`
- * so that no client-side code ever holds service-role credentials.
+ * No `cancelDeletion()` exists on this service by design — once requested,
+ * the only way back is via OTP-verified restore from the login screen.
  */
 export class DeletionService {
   private client = SupabaseClientManager.getClient();
 
   /**
    * Submit a deletion request for the currently authenticated user.
-   * Returns the created DeletionRequest, or throws if one is already pending.
+   * Throws if a request is already pending or the RPC fails.
    */
   async requestDeletion(reason?: string): Promise<DeletionRequest> {
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) throw new Error('Not authenticated');
-    const userId = userData.user.id;
-
-    // Check for an existing pending request
-    const existing = await this.getPendingRequest();
-    if (existing) {
-      throw new Error('A deletion request is already pending. It will be processed on ' +
-        new Date(existing.scheduled_deletion_at).toLocaleDateString());
-    }
-
-    const requestedAt = new Date();
-    const scheduledAt = new Date(requestedAt);
-    scheduledAt.setUTCDate(scheduledAt.getUTCDate() + DELETION_DELAY_DAYS);
-
-    const { data, error } = await this.client
-      .from('deletion_requests')
-      .insert({
-        user_id: userId,
-        requested_at: requestedAt.toISOString(),
-        scheduled_deletion_at: scheduledAt.toISOString(),
-        status: 'pending' as DeletionStatus,
-        reason: reason ?? null,
-      })
-      .select()
-      .single();
+    const { data, error } = await this.client.rpc('request_account_deletion', {
+      p_reason: reason ?? null,
+    });
 
     if (error) {
-      console.error('[DeletionService] Failed to create deletion request:', error);
-      throw error;
+      console.error('[DeletionService] RPC request_account_deletion failed:', error);
+      throw new Error(error.message || 'Failed to request account deletion');
+    }
+    if (!data) {
+      throw new Error('Failed to request account deletion');
     }
 
-    console.log(`[DeletionService] Deletion request created for user ${userId}. ` +
-      `Scheduled: ${scheduledAt.toISOString()}`);
-
-    return data as DeletionRequest;
-  }
-
-  /**
-   * Cancel an existing pending deletion request.
-   * Returns the cancelled request, or throws if none found.
-   */
-  async cancelDeletion(): Promise<DeletionRequest> {
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) throw new Error('Not authenticated');
-    const userId = userData.user.id;
-
-    const { data, error } = await this.client
-      .from('deletion_requests')
-      .update({ status: 'cancelled' as DeletionStatus })
-      .eq('user_id', userId)
-      .eq('status', 'pending')
-      .select()
-      .single();
-
-    if (error || !data) {
-      throw new Error('No pending deletion request found to cancel.');
-    }
-
-    console.log(`[DeletionService] Deletion request cancelled for user ${userId}`);
-    return data as DeletionRequest;
+    const req = data as DeletionRequest;
+    console.log(`[DeletionService] Deletion requested for user ${req.user_id}. ` +
+      `Scheduled: ${req.scheduled_deletion_at}`);
+    return req;
   }
 
   /**
    * Get the current pending deletion request for the authenticated user, or null.
+   * Reads via the user-scoped `my_pending_deletion` view.
    */
   async getPendingRequest(): Promise<DeletionRequest | null> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) return null;
-
     const { data, error } = await this.client
-      .from('deletion_requests')
+      .from('my_pending_deletion')
       .select('*')
-      .eq('user_id', userData.user.id)
-      .eq('status', 'pending')
       .order('requested_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -118,7 +70,6 @@ export class DeletionService {
       console.error('[DeletionService] Failed to fetch pending request:', error);
       return null;
     }
-
     return data as DeletionRequest | null;
   }
 }

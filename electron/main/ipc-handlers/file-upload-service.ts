@@ -156,8 +156,9 @@ export interface StoredFileRef {
   name: string;
   mimeType: string;
   sizeBytes: number;
-  cloudinaryUrl?: string; // images only
-  storagePath?: string;   // PDFs only
+  cloudinaryUrl?: string;       // images only
+  cloudinaryPublicId?: string;  // images only — used for asset cleanup
+  storagePath?: string;         // PDFs only
 }
 
 /**
@@ -174,15 +175,21 @@ export async function uploadAttachment(
   userId: string,
   chatId: string,
   messageId: string,
-  pythonClient: { uploadImage: (base64: string, filename: string, mimeType: string) => Promise<string> }
+  pythonClient: { uploadImage: (base64: string, filename: string, mimeType: string) => Promise<{ url: string; publicId: string }> }
 ): Promise<StoredFileRef> {
   const buf = Buffer.from(file.base64, 'base64');
 
   if (file.mimeType.startsWith('image/')) {
-    const cloudinaryUrl = await withRetry(() =>
+    const upload = await withRetry(() =>
       pythonClient.uploadImage(file.base64, file.name, file.mimeType)
     );
-    return { name: file.name, mimeType: file.mimeType, sizeBytes: file.sizeBytes, cloudinaryUrl };
+    return {
+      name: file.name,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      cloudinaryUrl: upload.url,
+      cloudinaryPublicId: upload.publicId || undefined,
+    };
   } else {
     // PDF
     const storagePath = await uploadPdfToStorage(buf, userId, chatId, messageId, file.name);

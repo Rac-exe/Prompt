@@ -51,8 +51,16 @@ class PendingReset:
     attempts: int = 0
 
 
+@dataclass
+class PendingRestore:
+    otp: str
+    expires_at: float
+    attempts: int = 0
+
+
 _pending_signups: dict[str, PendingSignup] = {}
 _pending_resets: dict[str, PendingReset] = {}
+_pending_restores: dict[str, PendingRestore] = {}
 
 
 def _generate_otp() -> str:
@@ -60,12 +68,15 @@ def _generate_otp() -> str:
 
 
 def _build_otp_html(otp: str, purpose: str) -> str:
-    title = "Verify Your Email" if purpose == "signup" else "Reset Your Password"
-    subtitle = (
-        "Enter this code to complete your sign-up"
-        if purpose == "signup"
-        else "Enter this code to reset your password"
-    )
+    if purpose == "signup":
+        title = "Verify Your Email"
+        subtitle = "Enter this code to complete your sign-up"
+    elif purpose == "reset":
+        title = "Reset Your Password"
+        subtitle = "Enter this code to reset your password"
+    else:  # restore
+        title = "Restore Your Account"
+        subtitle = "Enter this code to cancel your scheduled deletion"
     return f"""\
 <!DOCTYPE html>
 <html>
@@ -102,11 +113,12 @@ def _build_otp_html(otp: str, purpose: str) -> str:
 
 
 async def _send_email(to: str, otp: str, purpose: str) -> None:
-    subject = (
-        "Prmpt \u2013 Verify your email"
-        if purpose == "signup"
-        else "Prmpt \u2013 Password reset code"
-    )
+    if purpose == "signup":
+        subject = "Prmpt \u2013 Verify your email"
+    elif purpose == "reset":
+        subject = "Prmpt \u2013 Password reset code"
+    else:  # restore
+        subject = "Prmpt \u2013 Restore your account"
     html = _build_otp_html(otp, purpose)
 
     if not RESEND_API_KEY:
@@ -330,6 +342,66 @@ async def reset_password(email: str, otp: str, new_password: str) -> dict:
         return {"valid": False, "error": "Password reset failed. Please try again."}
 
 
+# ── Account Restore OTP ────────────────────────────────────────────────────
+
+
+async def send_restore_otp(email: str) -> dict:
+    """Send a 6-digit OTP for account restoration after deletion request."""
+    key = email.lower().strip()
+    otp = _generate_otp()
+    _pending_restores[key] = PendingRestore(otp=otp, expires_at=time.time() + OTP_EXPIRY_S)
+    with sentry_sdk.start_span(op="otp.send", description="send_restore_otp") as span:
+        try:
+            await _send_email(key, otp, "restore")
+            span.set_tag("result", "sent")
+            sentry_sdk.add_breadcrumb(
+                category="auth", message="Restore OTP stored and sent", level="info",
+            )
+            return {"success": True}
+        except Exception as exc:
+            _pending_restores.pop(key, None)
+            span.set_tag("result", "error")
+            sentry_sdk.capture_exception(exc)
+            logger.error(f"[EmailOTP] send_restore_otp failed: {exc}")
+            return {"success": False, "error": "Failed to send restore email. Please try again."}
+
+
+def verify_restore_otp(email: str, otp: str) -> dict:
+    """Verify OTP for account restore. Caller is responsible for invoking the
+    Supabase restore_account RPC after a valid result."""
+    key = email.lower().strip()
+    pending = _pending_restores.get(key)
+
+    with sentry_sdk.start_span(op="otp.verify", description="verify_restore_otp") as span:
+        if not pending:
+            span.set_tag("result", "not_found")
+            return {"valid": False, "error": "No restore pending for this email. Please request a new code."}
+
+        if time.time() > pending.expires_at:
+            _pending_restores.pop(key, None)
+            span.set_tag("result", "expired")
+            return {"valid": False, "error": "Code has expired. Please request a new one."}
+
+        pending.attempts += 1
+        if pending.attempts > MAX_ATTEMPTS:
+            _pending_restores.pop(key, None)
+            span.set_tag("result", "max_attempts")
+            sentry_sdk.capture_message(f"Restore OTP max attempts exceeded for {email}", level="warning")
+            return {"valid": False, "error": "Too many failed attempts. Please request a new code."}
+
+        if pending.otp != otp.strip():
+            remaining = MAX_ATTEMPTS - pending.attempts
+            span.set_tag("result", "wrong_code")
+            return {"valid": False, "error": f"Invalid code. {remaining} attempts remaining."}
+
+        _pending_restores.pop(key, None)
+        span.set_tag("result", "success")
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="Restore OTP verified", level="info",
+        )
+        return {"valid": True, "email": key}
+
+
 # ── Cleanup ─────────────────────────────────────────────────────────────────
 
 
@@ -338,9 +410,15 @@ def cleanup_expired() -> None:
     now = time.time()
     expired_s = [k for k, v in _pending_signups.items() if now > v.expires_at]
     expired_r = [k for k, v in _pending_resets.items() if now > v.expires_at]
+    expired_restore = [k for k, v in _pending_restores.items() if now > v.expires_at]
     for k in expired_s:
         _pending_signups.pop(k, None)
     for k in expired_r:
         _pending_resets.pop(k, None)
-    if expired_s or expired_r:
-        logger.info(f"[EmailOTP] Cleaned {len(expired_s)} signups, {len(expired_r)} resets")
+    for k in expired_restore:
+        _pending_restores.pop(k, None)
+    if expired_s or expired_r or expired_restore:
+        logger.info(
+            f"[EmailOTP] Cleaned {len(expired_s)} signups, "
+            f"{len(expired_r)} resets, {len(expired_restore)} restores"
+        )

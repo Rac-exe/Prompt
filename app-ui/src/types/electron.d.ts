@@ -223,6 +223,17 @@ export interface ElectronAPI {
     list: () => Promise<SkillInfo[]>;
   };
 
+  // GDPR Account Deletion (Option C — hard lockout)
+  deletion: {
+    request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
+    status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
+    restore: {
+      request: (email: string) => Promise<{ success: boolean; error?: string }>;
+      confirm: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+    };
+    onRequested: (callback: (data: { scheduledAt: string }) => void) => () => void;
+  };
+
   // Stop generation
   stopGeneration: () => void;
 

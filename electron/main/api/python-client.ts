@@ -504,7 +504,18 @@ export class PythonClient extends EventEmitter {
     }
   }
 
-  async uploadImage(base64: string, filename: string, mimeType: string = 'image/jpeg'): Promise<string> {
+  /**
+   * Upload an image to Cloudinary via the Python service.
+   *
+   * Returns the secure CDN URL and the Cloudinary public_id. The public_id
+   * is the canonical handle used for direct asset deletion (account-deletion
+   * cron, manual cleanup, etc).
+   */
+  async uploadImage(
+    base64: string,
+    filename: string,
+    mimeType: string = 'image/jpeg',
+  ): Promise<{ url: string; publicId: string }> {
     try {
       const response = await this.client.post('/upload/image', {
         base64,
@@ -516,7 +527,10 @@ export class PythonClient extends EventEmitter {
         message: `Image uploaded via Python proxy: ${filename}`,
         level: 'info',
       });
-      return response.data.url;
+      return {
+        url: response.data.url,
+        publicId: response.data.public_id ?? '',
+      };
     } catch (error) {
       Sentry.captureException(error, {
         tags: { component: 'image-upload' },

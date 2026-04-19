@@ -35,6 +35,8 @@ export interface UserProfile {
   dob: string | null;
   email: string;
   avatar_url: string | null;
+  /** Cloudinary public_id for the avatar — used for direct cleanup on deletion. */
+  avatar_public_id: string | null;
   created_at: string;
   updated_at: string;
   role: 'user' | 'dev' | 'admin';

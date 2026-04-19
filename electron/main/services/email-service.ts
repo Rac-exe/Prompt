@@ -110,6 +110,66 @@ export class EmailService {
     );
   }
 
+  // ── Account Restore (cancel deletion via OTP) ──────────────────────────
+
+  async sendRestoreOtp(email: string): Promise<{ success: boolean; error?: string }> {
+    return Sentry.startSpan(
+      { name: 'account.send-restore-otp', op: 'http.client', attributes: { email } },
+      async (span) => {
+        try {
+          const res = await fetch(`${getBaseUrl()}/account/request-restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+          });
+          if (!res.ok) {
+            const body: any = await res.json().catch(() => ({ detail: res.statusText }));
+            span.setAttribute('success', false);
+            return { success: false, error: body.detail || 'Failed to send restore email.' };
+          }
+          span.setAttribute('success', true);
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Restore OTP sent via Python', level: 'info', data: { email } });
+          logger.info(logger.fmt`account.restore_otp_sent email=${email}`);
+          return { success: true };
+        } catch (err: any) {
+          span.setAttribute('success', false);
+          Sentry.captureException(err, { tags: { component: 'email-service', op: 'sendRestoreOtp' } });
+          console.error('[EmailService] sendRestoreOtp failed:', err);
+          return { success: false, error: 'Failed to send restore email. Please try again.' };
+        }
+      },
+    );
+  }
+
+  async confirmRestore(email: string, otp: string): Promise<{ success: boolean; error?: string }> {
+    return Sentry.startSpan(
+      { name: 'account.confirm-restore', op: 'http.client', attributes: { email } },
+      async (span) => {
+        try {
+          const res = await fetch(`${getBaseUrl()}/account/confirm-restore`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, otp }),
+          });
+          const body: any = await res.json().catch(() => ({ detail: res.statusText }));
+          if (!res.ok) {
+            span.setAttribute('result', 'failed');
+            return { success: false, error: body.detail || 'Could not restore account.' };
+          }
+          span.setAttribute('result', 'success');
+          Sentry.addBreadcrumb({ category: 'auth', message: 'Account restored via Python', level: 'info', data: { email } });
+          logger.info(logger.fmt`account.restored email=${email}`);
+          return { success: true };
+        } catch (err: any) {
+          span.setAttribute('result', 'error');
+          Sentry.captureException(err, { tags: { component: 'email-service', op: 'confirmRestore' } });
+          console.error('[EmailService] confirmRestore failed:', err);
+          return { success: false, error: 'Restore failed. Please try again.' };
+        }
+      },
+    );
+  }
+
   async verifyResetOtpAndResetPassword(email: string, otp: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
     return Sentry.startSpan(
       { name: 'email.reset-password', op: 'http.client', attributes: { email } },

@@ -5,8 +5,9 @@ import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Lightning, ArrowRight, ArrowLeft, CircleNotch, Minus, Square, X, GithubLogo, Key } from '@phosphor-icons/react';
+import { Lightning, ArrowRight, ArrowLeft, CircleNotch, Minus, Square, X, GithubLogo, Key, ShieldCheck } from '@phosphor-icons/react';
 import { OtpVerification } from './OtpVerification';
+import { RestoreAccountModal } from './RestoreAccountModal';
 import { motion } from 'motion/react';
 
 /* ─────────────────────────────────────────────────────────────
@@ -159,6 +160,8 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
   const [resetPasswordError, setResetPasswordError] = useState('');
   const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
   const resetOtpRef = useRef<string | null>(null);
+  const [bannedEmail, setBannedEmail] = useState<string | null>(null);
+  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const { toast } = useToast();
 
   const handleForgotPassword = async () => {
@@ -284,21 +287,30 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
     if (isLoading) return;
 
     setIsLoading(true);
+    setBannedEmail(null);
     Sentry.addBreadcrumb({ category: 'auth', message: 'Password sign-in attempted', level: 'info' });
     try {
       if (window.electronAPI) {
         const result = await window.electronAPI.signIn({ email, password });
         if (result?.error) {
-          const isInvalidCreds = result.error.toLowerCase().includes('invalid login credentials');
-          toast({
-            variant: "destructive",
-            title: "Login Failed",
-            description: isInvalidCreds
-              ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
-              : result.error,
-            duration: 5000,
-          });
-          setPassword('');
+          const lowerError = result.error.toLowerCase();
+          const isInvalidCreds = lowerError.includes('invalid login credentials');
+          const isBanned = lowerError.includes('user is banned') || lowerError.includes('banned');
+          if (isBanned) {
+            setBannedEmail(email.trim());
+            setPassword('');
+            // No toast — the inline panel below the form is the affordance.
+          } else {
+            toast({
+              variant: "destructive",
+              title: "Login Failed",
+              description: isInvalidCreds
+                ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
+                : result.error,
+              duration: 5000,
+            });
+            setPassword('');
+          }
         }
       } else {
         toast({
@@ -526,6 +538,31 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
             </div>
           </div>
 
+          {/* Banned-account inline panel */}
+          {bannedEmail && (
+            <div className="flex items-start gap-3 p-3.5 rounded-lg bg-amber-500/8 border border-amber-500/25 animate-slide-up">
+              <div className="w-8 h-8 rounded-full bg-amber-500/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <ShieldCheck size={16} weight="fill" className="text-amber-500" />
+              </div>
+              <div className="flex-1 min-w-0 space-y-2">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Account scheduled for deletion</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                    This account is locked because deletion was requested. You can cancel the deletion within the 30-day grace period.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setRestoreModalOpen(true)}
+                  className="h-8 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30"
+                >
+                  Restore now
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-1.5">
@@ -608,9 +645,35 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
           >
             Create an account
           </Button>
+
+          {/* Restore deleted account */}
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={() => setRestoreModalOpen(true)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Deleted your account by mistake? <span className="text-emerald font-medium">Restore deleted account</span>
+            </button>
+          </div>
         </div>
       </div>
       </div>
+
+      <RestoreAccountModal
+        open={restoreModalOpen}
+        onOpenChange={setRestoreModalOpen}
+        initialEmail={bannedEmail ?? email}
+        onRestored={(restoredEmail) => {
+          setBannedEmail(null);
+          setEmail(restoredEmail);
+          setPassword('');
+          toast({
+            title: 'You can sign in now',
+            description: 'Enter your password to continue.',
+          });
+        }}
+      />
     </div>
   );
 }

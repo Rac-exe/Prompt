@@ -30,6 +30,7 @@ from app.auth import require_auth, require_ws_auth
 from app.email_otp import (
     send_signup_otp, verify_signup_otp,
     send_reset_otp, reset_password as otp_reset_password,
+    send_restore_otp, verify_restore_otp,
     cleanup_expired as otp_cleanup,
 )
 import logging
@@ -1743,8 +1744,25 @@ class ImageUploadRequest(BaseModel):
 class ImageUploadResponse(BaseModel):
     url: str
 
-def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -> str:
-    """Synchronous Cloudinary multipart upload — run in a thread executor."""
+class ImageUploadResult(BaseModel):
+    url: str
+    public_id: str
+
+
+def _sync_cloudinary_upload(
+    image_bytes: bytes,
+    filename: str,
+    mime_type: str,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Synchronous Cloudinary multipart upload — run in a thread executor.
+
+    When user_id is provided, the asset is tagged user_<userId> AND placed
+    under folder users/<userId>/. The Edge Function `process-deletions` uses
+    this tag for bulk cleanup at the 30-day mark.
+
+    Returns: {"secure_url": str, "public_id": str}
+    """
     import hashlib
     import urllib.request
     import json as json_lib
@@ -1759,10 +1777,26 @@ def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -
 
     boundary  = f"----UploadBoundary{int(time_lib.time() * 1000)}"
     timestamp = str(int(time_lib.time()))
-    signature = hashlib.sha1(f"timestamp={timestamp}{api_secret}".encode()).hexdigest()
+
+    # Per Cloudinary signature spec: every non-file param except api_key,
+    # signature, file & resource_type goes into the signing payload, sorted
+    # alphabetically. We attach folder + tags when a user is known.
+    sign_params: dict[str, str] = {"timestamp": timestamp}
+    if user_id:
+        sign_params["folder"] = f"users/{user_id}"
+        sign_params["tags"]   = f"user_{user_id}"
+
+    sign_payload = "&".join(f"{k}={sign_params[k]}" for k in sorted(sign_params))
+    signature = hashlib.sha1(f"{sign_payload}{api_secret}".encode()).hexdigest()
+
+    form_fields: list[tuple[str, str]] = [
+        *sign_params.items(),
+        ("api_key", api_key),
+        ("signature", signature),
+    ]
 
     parts: list[bytes] = []
-    for name, value in [("timestamp", timestamp), ("api_key", api_key), ("signature", signature)]:
+    for name, value in form_fields:
         parts.append(
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
         )
@@ -1784,18 +1818,24 @@ def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = json_lib.loads(resp.read().decode())
 
-    if "secure_url" not in result:
-        msg = result.get("error", {}).get("message", "Cloudinary upload failed — no secure_url")
+    if "secure_url" not in result or "public_id" not in result:
+        msg = result.get("error", {}).get("message", "Cloudinary upload failed — missing secure_url/public_id")
         raise ValueError(msg)
 
-    return result["secure_url"]
+    return {"secure_url": result["secure_url"], "public_id": result["public_id"]}
 
 
-@app.post("/upload/image", response_model=ImageUploadResponse)
-async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(require_auth)):
-    """Upload a base64-encoded image to Cloudinary. Returns the secure CDN URL."""
+@app.post("/upload/image", response_model=ImageUploadResult)
+async def upload_image(request: ImageUploadRequest, auth: dict = Depends(require_auth)):
+    """Upload a base64-encoded image to Cloudinary.
+
+    Tags & folder-prefixes the asset with the verified user_id from the JWT
+    so that account deletion can wipe all of a user's assets in a single API call.
+    """
     import asyncio
     import base64 as base64_lib
+
+    user_id = auth.get("sub")
 
     try:
         image_bytes = base64_lib.b64decode(request.base64)
@@ -1804,8 +1844,8 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
 
     try:
         loop = asyncio.get_event_loop()
-        url = await loop.run_in_executor(
-            None, _sync_cloudinary_upload, image_bytes, request.filename, request.mime_type
+        upload = await loop.run_in_executor(
+            None, _sync_cloudinary_upload, image_bytes, request.filename, request.mime_type, user_id
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -1813,13 +1853,14 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
         logger.error(f"[CloudinaryUpload] Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Image upload failed")
 
-    logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {url}")
+    logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {upload['public_id']}")
     sentry_sdk.add_breadcrumb(
         category="file-upload",
         message=f"Cloudinary upload success: {request.filename}",
         level="info",
+        data={"public_id": upload["public_id"], "user_id": user_id},
     )
-    return ImageUploadResponse(url=url)
+    return ImageUploadResult(url=upload["secure_url"], public_id=upload["public_id"])
 
 
 # ── Auth OTP Routes (unauthenticated, rate-limited) ──────────────────────────
@@ -1915,6 +1956,96 @@ async def route_reset_password(request: StarletteRequest, body: ResetPasswordReq
         category="auth", message="reset-password success", level="info",
     )
     return result
+
+
+# ── Account Restore Routes (unauthenticated, rate-limited) ──────────────────
+# When a user has requested account deletion, GoTrue refuses sign-in.
+# These endpoints let them prove ownership of the email via a one-time code
+# and cancel the pending deletion (clears auth.users.banned_until).
+
+
+class RequestRestoreRequest(BaseModel):
+    email: str
+
+
+class ConfirmRestoreRequest(BaseModel):
+    email: str
+    otp: str
+
+
+@app.post("/account/request-restore")
+@limiter.limit("5/minute")
+async def route_request_restore(request: StarletteRequest, body: RequestRestoreRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /account/request-restore invoked", level="info",
+    )
+    result = await send_restore_otp(body.email)
+    if not result.get("success"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="request-restore failed", level="warning",
+            data={"error": result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send restore code"))
+    return result
+
+
+@app.post("/account/confirm-restore")
+@limiter.limit("10/minute")
+async def route_confirm_restore(request: StarletteRequest, body: ConfirmRestoreRequest):
+    """Verify OTP, then call the restore_account RPC with the service role
+    to clear the deletion request and lift the auth ban."""
+    import httpx as _httpx
+
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /account/confirm-restore invoked", level="info",
+    )
+
+    otp_result = verify_restore_otp(body.email, body.otp)
+    if not otp_result.get("valid"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="confirm-restore otp invalid", level="warning",
+            data={"error": otp_result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=otp_result.get("error", "Invalid code"))
+
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    service_role = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_role:
+        logger.error("[Restore] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not configured")
+        raise HTTPException(status_code=500, detail="Account restore is not configured. Contact support.")
+
+    try:
+        async with _httpx.AsyncClient(timeout=15) as client:
+            with sentry_sdk.start_span(op="http.client", description="Supabase RPC restore_account") as span:
+                resp = await client.post(
+                    f"{supabase_url}/rest/v1/rpc/restore_account",
+                    headers={
+                        "Authorization": f"Bearer {service_role}",
+                        "apikey": service_role,
+                        "Content-Type": "application/json",
+                    },
+                    json={"p_email": body.email.lower().strip()},
+                )
+                span.set_tag("http.status_code", resp.status_code)
+                if resp.status_code >= 400:
+                    body_text = resp.text
+                    logger.error(f"[Restore] RPC error {resp.status_code}: {body_text}")
+                    sentry_sdk.capture_message(f"restore_account RPC error: {resp.status_code}", level="error")
+                    if "No account found" in body_text:
+                        raise HTTPException(status_code=404, detail="No account found for this email.")
+                    raise HTTPException(status_code=502, detail="Could not restore account. Please try again.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.error(f"[Restore] Unexpected error: {exc}")
+        raise HTTPException(status_code=500, detail="Restore failed. Please try again.")
+
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="confirm-restore success", level="info",
+    )
+    logger.info(f"[Restore] Account restored for {body.email}")
+    return {"success": True}
 
 
 @app.on_event("shutdown")

@@ -280,11 +280,15 @@ declare global {
         submit: (data: { rating: 'positive' | 'negative'; comment?: string }) => Promise<{ success: boolean; error?: string }>;
       };
 
-      // GDPR Account Deletion API
+      // GDPR Account Deletion API (Option C — hard lockout)
       deletion: {
         request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
-        cancel: () => Promise<{ success: boolean; cancelledAt?: string; error?: string }>;
         status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
+        restore: {
+          request: (email: string) => Promise<{ success: boolean; error?: string }>;
+          confirm: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+        };
+        onRequested: (callback: (data: { scheduledAt: string }) => void) => () => void;
       };
 
       // Skills API
@@ -839,12 +843,20 @@ const electronAPI = {
   },
 
   // ============================================
-  // GDPR ACCOUNT DELETION API
+  // GDPR ACCOUNT DELETION API (Option C — hard lockout)
   // ============================================
   deletion: {
-    request: (reason?: string) => ipcRenderer.invoke('deletion:request', reason),
-    cancel: () => ipcRenderer.invoke('deletion:cancel'),
+    request: (reason?: string) => ipcRenderer.invoke('deletion:request', { reason }),
     status: () => ipcRenderer.invoke('deletion:status'),
+    restore: {
+      request: (email: string) => ipcRenderer.invoke('deletion:restore-request', { email }),
+      confirm: (email: string, otp: string) => ipcRenderer.invoke('deletion:restore-confirm', { email, otp }),
+    },
+    onRequested: (callback: (data: { scheduledAt: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('deletion:requested', handler);
+      return () => ipcRenderer.removeListener('deletion:requested', handler);
+    },
   },
 
   // ============================================

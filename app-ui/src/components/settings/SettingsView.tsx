@@ -18,6 +18,7 @@ import { useAuth } from "@/context/AuthContext";
 import { AvatarUploadModal } from "@/components/profile/AvatarUploadModal";
 import { MemoryView } from "@/components/settings/MemoryView";
 import { OtpVerification } from "@/components/auth/OtpVerification";
+import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
 import { cn } from "@/lib/utils";
 
 /* ── Reusable section wrapper ─────────────────────────────── */
@@ -64,6 +65,7 @@ export const SettingsView = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [localInstructions, setLocalInstructions] = useState("");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
 
   const [nameSaving, setNameSaving] = useState(false);
 
@@ -605,13 +607,24 @@ export const SettingsView = () => {
                     <p className="text-sm font-medium text-destructive">Delete Account</p>
                     <p className="text-xs text-muted-foreground mt-0.5">Permanently remove your account and all data</p>
                   </div>
-                  <Button variant="destructive" size="sm" className="h-8 text-xs flex-shrink-0">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-8 text-xs flex-shrink-0"
+                    onClick={() => setDeleteAccountOpen(true)}
+                  >
                     Delete Account
                   </Button>
                 </Row>
               </Section>
             </div>
           </ScrollArea>
+
+          <DeleteAccountModal
+            open={deleteAccountOpen}
+            onOpenChange={setDeleteAccountOpen}
+            userEmail={userEmail}
+          />
         </TabsContent>
 
         {/* ── Customize tab ── */}

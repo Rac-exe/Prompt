@@ -8,6 +8,8 @@ export interface UserProfile {
   dob: string | null;
   email: string;
   avatar_url: string | null;
+  /** Cloudinary public_id for the avatar — used for direct cleanup on deletion. */
+  avatar_public_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -220,6 +222,7 @@ export class UserService {
       dob: data.dob,
       email: data.email,
       avatar_url: data.avatar_url,
+      avatar_public_id: data.avatar_public_id ?? null,
       created_at: data.created_at,
       updated_at: data.updated_at,
     };
