@@ -64,7 +64,7 @@ export function RestoreAccountModal({
         const msg = result?.error ?? 'Could not send restore code.';
         setSendError(msg);
         if (mode === 'resend') {
-          toast({ variant: 'destructive', title: 'Failed to resend', description: msg });
+          toast({ variant: 'destructive', title: "Couldn't resend code", description: msg });
         }
       }
     } catch (err) {

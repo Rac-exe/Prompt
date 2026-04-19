@@ -4,7 +4,6 @@ import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
 import { OnboardingPage } from './OnboardingPage';
 import { AuthContext, CompleteUserData } from '@/context/AuthContext';
-import { useToast } from "@/hooks/use-toast";
 import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 interface AuthWrapperProps {
@@ -22,7 +21,6 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [authView, setAuthView] = useState<AuthView>('loading');
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
-  const { toast } = useToast();
   const [loadingSlow, setLoadingSlow] = useState(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>();
   const giveupTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -32,12 +30,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       window.electronAPI.signOut();
       setUser(null);
       setAuthView('login');
-      toast({
-        title: "Signed out",
-        description: "You have been signed out successfully.",
-      });
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     console.log('[AuthWrapper] Initializing');

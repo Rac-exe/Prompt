@@ -44,11 +44,11 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
       }
       const result = await window.electronAPI.signInWithOAuth(provider);
       if (result?.error) {
-        toast({ variant: 'destructive', title: 'Sign-up Failed', description: result.error, duration: 4000 });
+        toast({ variant: 'destructive', title: "Couldn't sign you up", description: result.error, duration: 4000 });
       }
       // On success, browser opens. Auth state updates via deep-link callback.
     } catch {
-      toast({ variant: 'destructive', title: 'Error', description: 'An unexpected error occurred' });
+      toast({ variant: 'destructive', title: "Couldn't sign you up", description: 'Something went wrong. Please try again.' });
     } finally {
       setOauthLoading(null);
     }
@@ -98,7 +98,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
       } else {
         setStep('otp');
         setOtpError('');
-        toast({ title: 'Code sent', description: 'Check your inbox for the verification code.' });
+        toast({ title: 'Code sent', description: `We sent a 6-digit code to ${formData.email}.` });
       }
     } catch {
       setError('An unexpected error occurred');
@@ -134,7 +134,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
       if (result?.error) {
         setOtpError(result.error);
       } else {
-        toast({ title: 'Code resent', description: 'A new verification code has been sent.' });
+        toast({ title: 'Code resent', description: 'A new code is on the way.' });
       }
     } catch {
       setOtpError('Failed to resend code.');

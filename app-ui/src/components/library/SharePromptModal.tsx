@@ -30,10 +30,7 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({
-      title: "Copied!",
-      description: `${label} copied to clipboard.`,
-    });
+    toast({ title: `${label} copied` });
   };
 
   const handleExport = () => {
@@ -47,8 +44,8 @@ export const SharePromptModal = ({ open, onOpenChange, prompt }: SharePromptModa
     a.click();
     URL.revokeObjectURL(url);
     toast({
-      title: "Exported!",
-      description: "Prompt exported as Markdown file.",
+      title: "Prompt exported",
+      description: "Saved as Markdown to your downloads.",
     });
   };
 

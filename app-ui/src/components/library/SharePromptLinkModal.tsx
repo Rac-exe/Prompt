@@ -64,8 +64,8 @@ export const SharePromptLinkModal = ({
           extra: { promptId: prompt.id },
         });
         toast({
-          title: "Error",
-          description: err?.message || "Failed to generate share link.",
+          title: "Couldn't create share link",
+          description: err?.message || "Something went wrong. Please try again.",
           variant: "destructive",
         });
         onOpenChange(false);
@@ -84,7 +84,7 @@ export const SharePromptLinkModal = ({
     });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({ title: "Copied!", description: "Share link copied to clipboard." });
+    toast({ title: "Link copied" });
   };
 
   return (

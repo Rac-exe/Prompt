@@ -29,10 +29,7 @@ export const PromptPreviewModal = ({ open, onOpenChange, prompt }: PromptPreview
     navigator.clipboard.writeText(prompt.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({
-      title: "Copied!",
-      description: "Prompt copied to clipboard.",
-    });
+    toast({ title: "Prompt copied" });
   };
 
   return (

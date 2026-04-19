@@ -69,7 +69,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
     });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({ title: "Copied!", description: "Prompt copied to clipboard." });
+    toast({ title: "Prompt copied" });
   };
 
   // ── Loading ───────────────────────────────────────────────────────────────

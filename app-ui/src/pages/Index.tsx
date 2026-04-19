@@ -252,8 +252,8 @@ const Index = () => {
       const handleRenameError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat rename error:', data);
         toast({
-          title: "Rename failed",
-          description: data.error || "Failed to rename chat. Please try again.",
+          title: "Couldn't rename chat",
+          description: data.error || "Something went wrong. Please try again.",
           variant: "destructive",
         });
       };
@@ -278,7 +278,7 @@ const Index = () => {
         }
         toast({
           title: "Chat deleted",
-          description: "Chat has been permanently removed.",
+          description: "It's been permanently removed.",
         });
       };
       const cleanup = window.electronAPI.onChatDeleted(handleChatDeleted);
@@ -292,8 +292,8 @@ const Index = () => {
       const handleDeleteError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat delete error:', data);
         toast({
-          title: "Delete failed",
-          description: data.error || "Failed to delete chat. Please try again.",
+          title: "Couldn't delete chat",
+          description: data.error || "Something went wrong. Please try again.",
           variant: "destructive",
         });
       };
@@ -832,7 +832,7 @@ const Index = () => {
       }
       toast({
         title: "Chat renamed",
-        description: `Chat renamed to "${newTitle}".`,
+        description: `Renamed to "${newTitle}".`,
       });
     }
   }, [selectedChatId]);
@@ -843,7 +843,8 @@ const Index = () => {
     if (isElectron && window.electronAPI?.deleteChat) {
       window.electronAPI.deleteChat(chatId);
     } else {
-      // Fallback for web mode
+      // Fallback for web mode — IPC `onChatDeleted` listener owns the toast
+      // in Electron mode, so we don't fire one here to avoid double toasts.
       setRecentChats(prev => prev.filter(c => c.id !== chatId));
       if (selectedChatId === chatId) {
         setSelectedChatId(null);
@@ -851,10 +852,6 @@ const Index = () => {
         messageTree.init([]);
         setCurrentChatTitle('');
       }
-      toast({
-        title: "Chat deleted",
-        description: "Chat has been permanently removed.",
-      });
     }
   }, [selectedChatId, deleteChatState]);
 
@@ -988,10 +985,7 @@ Your prompt was: "${content}"`;
   }, [selectedChatId]);
 
   const handleCopyPrompt = (id: string) => {
-    toast({
-      title: "Copied!",
-      description: "Prompt copied to clipboard.",
-    });
+    toast({ title: "Prompt copied" });
   };
 
   // Edit a user message: create a new branch in the version tree instead of
@@ -1170,10 +1164,7 @@ Your prompt was: "${content}"`;
         prev.map((m) => m.id === messageId ? { ...m, feedback: { rating } } : m)
     );
 
-    toast({
-      title: "Thank you!",
-      description: "Your feedback helps us improve.",
-    });
+    toast({ title: "Thanks for the feedback" });
   };
 
   const handleSavePrompt = async (collectionId: string, title: string, newCollectionName?: string) => {
@@ -1217,8 +1208,8 @@ Your prompt was: "${content}"`;
         setSavedPromptIds((prev) => [...prev, promptToSave.id]);
 
         toast({
-          title: "Saved!",
-          description: "Prompt saved to your library.",
+          title: "Prompt saved",
+          description: "Find it in your library.",
         });
       }
 
@@ -1227,8 +1218,8 @@ Your prompt was: "${content}"`;
     } catch (error: any) {
       console.error('[Index] Error saving prompt:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to save prompt",
+        title: "Couldn't save prompt",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1249,13 +1240,13 @@ Your prompt was: "${content}"`;
       }
       toast({
         title: "Collection created",
-        description: `"${name}" has been created.`,
+        description: `"${name}" is ready.`,
       });
     } catch (error: any) {
       console.error('[Index] Error creating collection:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to create collection",
+        title: "Couldn't create collection",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1271,13 +1262,13 @@ Your prompt was: "${content}"`;
       );
       toast({
         title: "Collection renamed",
-        description: `Collection renamed to "${name}".`,
+        description: `Renamed to "${name}".`,
       });
     } catch (error: any) {
       console.error('[Index] Error renaming collection:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to rename collection",
+        title: "Couldn't rename collection",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1294,13 +1285,13 @@ Your prompt was: "${content}"`;
       );
       toast({
         title: "Collection deleted",
-        description: "Collection and its prompts have been removed.",
+        description: "It and its prompts have been removed.",
       });
     } catch (error: any) {
       console.error('[Index] Error deleting collection:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete collection",
+        title: "Couldn't delete collection",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1310,10 +1301,7 @@ Your prompt was: "${content}"`;
     const prompt = savedPrompts.find((p) => p.id === id);
     if (prompt) {
       navigator.clipboard.writeText(prompt.content);
-      toast({
-        title: "Copied!",
-        description: "Prompt copied to clipboard.",
-      });
+      toast({ title: "Prompt copied" });
     }
   };
 
@@ -1329,15 +1317,12 @@ Your prompt was: "${content}"`;
             : p
         )
       );
-      toast({
-        title: "Saved",
-        description: "Prompt updated successfully.",
-      });
+      toast({ title: "Prompt updated" });
     } catch (error: any) {
       console.error('[Index] Error updating prompt:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to update prompt",
+        title: "Couldn't update prompt",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
       throw error; // re-throw so the modal stays open on failure
@@ -1350,15 +1335,12 @@ Your prompt was: "${content}"`;
         await window.electronAPI.promptLibrary.deletePrompt(id);
       }
       setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
-      toast({
-        title: "Deleted",
-        description: "Prompt has been removed.",
-      });
+      toast({ title: "Prompt deleted" });
     } catch (error: any) {
       console.error('[Index] Error deleting prompt:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete prompt",
+        title: "Couldn't delete prompt",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1376,7 +1358,7 @@ Your prompt was: "${content}"`;
       setCurrentView("chat");
       toast({
         title: "Chat restored",
-        description: `Loaded "${session.title}"`,
+        description: `Loaded "${session.title}".`,
       });
     }
   };

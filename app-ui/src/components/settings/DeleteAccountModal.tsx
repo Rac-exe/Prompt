@@ -82,8 +82,8 @@ export function DeleteAccountModal({
       Sentry.captureException(err, { tags: { component: 'delete-account-modal' } });
       toast({
         variant: "destructive",
-        title: "Unexpected error",
-        description: "Could not schedule deletion. Please try again.",
+        title: "Couldn't schedule deletion",
+        description: "Something went wrong. Please try again.",
       });
     } finally {
       setSubmitting(false);

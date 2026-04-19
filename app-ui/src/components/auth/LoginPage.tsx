@@ -165,25 +165,26 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
   const { toast } = useToast();
 
   const handleForgotPassword = async () => {
-    if (!email.trim()) {
-      toast({ variant: 'destructive', title: 'Enter your email', description: 'Type your email address above first.' });
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast({ variant: 'destructive', title: 'Enter your email first' });
       return;
     }
     setResetLoading(true);
     Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset OTP requested', level: 'info' });
     try {
-      const result = await window.electronAPI?.sendResetOtp(email.trim());
+      const result = await window.electronAPI?.sendResetOtp(trimmedEmail);
       if (result?.error) {
-        toast({ variant: 'destructive', title: 'Failed', description: result.error });
+        toast({ variant: 'destructive', title: "Couldn't send reset code", description: result.error });
       } else {
-        setResetEmail(email.trim());
+        setResetEmail(trimmedEmail);
         setView('reset-otp');
         setOtpError('');
-        toast({ title: 'Code sent', description: 'Check your inbox for the reset code.' });
+        toast({ title: 'Code sent', description: `We sent a 6-digit code to ${trimmedEmail}.` });
       }
     } catch (error) {
       Sentry.captureException(error, { tags: { component: 'login-page', op: 'auth:send-reset-otp' } });
-      toast({ variant: 'destructive', title: 'Error', description: 'Could not send reset code.' });
+      toast({ variant: 'destructive', title: "Couldn't send reset code", description: 'Something went wrong. Please try again.' });
     } finally {
       setResetLoading(false);
     }
@@ -246,7 +247,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
       if (result?.error) {
         setOtpError(result.error);
       } else {
-        toast({ title: 'Code resent', description: 'A new reset code has been sent.' });
+        toast({ title: 'Code resent', description: 'A new code is on the way.' });
       }
     } catch (error) {
       Sentry.captureException(error, { tags: { component: 'login-page', op: 'auth:resend-reset-otp' } });
@@ -266,17 +267,17 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
     Sentry.addBreadcrumb({ category: 'auth', message: `OAuth sign-in started: ${provider}`, level: 'info' });
     try {
       if (!window.electronAPI?.signInWithOAuth) {
-        toast({ variant: 'destructive', title: 'System Error', description: 'This app requires Electron to run' });
+        toast({ variant: 'destructive', title: 'This feature needs the desktop app', description: 'Open Prmpt on your computer to continue.' });
         return;
       }
       const result = await window.electronAPI.signInWithOAuth(provider);
       if (result?.error) {
-        toast({ variant: 'destructive', title: 'Sign-in Failed', description: result.error, duration: 4000 });
+        toast({ variant: 'destructive', title: "Couldn't sign you in", description: result.error, duration: 4000 });
       }
       // On success, the browser opens. Auth state will update via deep-link callback.
     } catch (error) {
       Sentry.captureException(error, { tags: { component: 'login-page', op: `auth:oauth-${provider}` } });
-      toast({ variant: 'destructive', title: 'Error', description: 'An unexpected error occurred' });
+      toast({ variant: 'destructive', title: "Couldn't sign you in", description: 'Something went wrong. Please try again.' });
     } finally {
       setOauthLoading(null);
     }
@@ -303,9 +304,9 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
           } else {
             toast({
               variant: "destructive",
-              title: "Login Failed",
+              title: isInvalidCreds ? "Wrong email or password" : "Couldn't sign you in",
               description: isInvalidCreds
-                ? 'Wrong password, or you may have signed up with Google/GitHub. Try those or reset your password.'
+                ? 'If you signed up with Google or GitHub, use that instead — or reset your password.'
                 : result.error,
               duration: 5000,
             });
@@ -315,16 +316,16 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
       } else {
         toast({
           variant: "destructive",
-          title: "System Error",
-          description: 'This app requires Electron to run',
+          title: "This feature needs the desktop app",
+          description: 'Open Prmpt on your computer to continue.',
         });
       }
     } catch (err) {
       Sentry.captureException(err, { tags: { component: 'login-page', op: 'auth:sign-in' } });
       toast({
         variant: "destructive",
-        title: "Error",
-        description: 'An unexpected error occurred',
+        title: "Couldn't sign you in",
+        description: 'Something went wrong. Please try again.',
       });
     } finally {
       setIsLoading(false);
@@ -657,10 +658,6 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
           setBannedEmail(null);
           setEmail(restoredEmail);
           setPassword('');
-          toast({
-            title: 'You can sign in now',
-            description: 'Enter your password to continue.',
-          });
         }}
       />
     </div>
