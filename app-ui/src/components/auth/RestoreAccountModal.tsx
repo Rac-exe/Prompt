@@ -1,83 +1,97 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import * as Sentry from '@sentry/react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { ArrowRight, CircleNotch, ShieldCheck } from "@phosphor-icons/react";
+import { CircleNotch, ShieldCheck } from "@phosphor-icons/react";
 import { OtpVerification } from "@/components/auth/OtpVerification";
 import { toast } from "@/hooks/use-toast";
 
 interface RestoreAccountModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Pre-fill the email field (e.g. from a "User is banned" sign-in attempt). */
-  initialEmail?: string;
+  /** Email of the locked-out account — taken from the failed sign-in attempt. */
+  email: string;
   /** Called after a successful restore — caller should reset the login form. */
   onRestored?: (email: string) => void;
 }
 
-type Step = 'email' | 'otp';
-
 /**
- * Two-step account restoration:
- *   1. User enters the email of the account that's pending deletion.
- *      → POST /account/request-restore (Python) → emails a 6-digit OTP.
+ * One-step account restoration, opened from the locked-account banner on the
+ * login screen:
+ *   1. The login email is already known. We auto-send a restore OTP to it.
  *   2. User enters the OTP.
  *      → POST /account/confirm-restore (Python) → verifies OTP → calls the
  *        SECURITY DEFINER `restore_account` RPC which clears the deletion
  *        request and lifts the auth ban. The user can now sign in normally.
+ *
+ * Cancel from the modal returns the user to the sign-in form unchanged.
  */
 export function RestoreAccountModal({
   open,
   onOpenChange,
-  initialEmail,
+  email,
   onRestored,
 }: RestoreAccountModalProps) {
-  const [step, setStep] = useState<Step>('email');
-  const [email, setEmail] = useState(initialEmail ?? '');
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [sendError, setSendError] = useState<string | undefined>();
   const [otpError, setOtpError] = useState<string | undefined>();
+  // Tracks whether we've fired the initial send for this open() lifecycle so
+  // a re-render or React-Strict double-mount can't double-fire the OTP email.
+  const sentForRef = useRef<string | null>(null);
 
-  const reset = () => {
-    setStep('email');
-    setEmail(initialEmail ?? '');
-    setSending(false);
-    setVerifying(false);
-    setOtpError(undefined);
-  };
+  const trimmed = email.trim();
 
-  const handleClose = (next: boolean) => {
-    if (sending || verifying) return;
-    if (!next) reset();
-    onOpenChange(next);
-  };
-
-  const handleSendOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (sending) return;
-    const trimmed = email.trim();
+  const sendOtp = async (mode: 'initial' | 'resend') => {
     if (!trimmed) return;
     setSending(true);
+    setSendError(undefined);
     setOtpError(undefined);
-    Sentry.addBreadcrumb({ category: 'auth', message: 'Restore OTP requested', level: 'info' });
+    Sentry.addBreadcrumb({
+      category: 'auth',
+      message: `Restore OTP ${mode}`,
+      level: 'info',
+      data: { email: trimmed },
+    });
     try {
       const result = await window.electronAPI?.deletion?.restore?.request(trimmed);
       if (result?.success) {
-        toast({ title: 'Code sent', description: 'Check your inbox for the restore code.' });
-        setStep('otp');
+        if (mode === 'resend') {
+          toast({ title: 'Code resent', description: 'A new restore code is on the way.' });
+        }
       } else {
-        toast({ variant: 'destructive', title: 'Failed', description: result?.error ?? 'Could not send code.' });
+        const msg = result?.error ?? 'Could not send restore code.';
+        setSendError(msg);
+        if (mode === 'resend') {
+          toast({ variant: 'destructive', title: 'Failed to resend', description: msg });
+        }
       }
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'restore-account-modal', op: 'request' } });
-      toast({ variant: 'destructive', title: 'Error', description: 'Could not send restore code.' });
+      Sentry.captureException(err, { tags: { component: 'restore-account-modal', op: mode } });
+      setSendError('Could not send restore code. Please try again.');
     } finally {
       setSending(false);
     }
+  };
+
+  // Auto-send the OTP exactly once per (open, email) pair.
+  useEffect(() => {
+    if (!open || !trimmed) return;
+    if (sentForRef.current === trimmed) return;
+    sentForRef.current = trimmed;
+    void sendOtp('initial');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, trimmed]);
+
+  const handleClose = (next: boolean) => {
+    if (sending || verifying) return;
+    if (!next) {
+      sentForRef.current = null;
+      setSendError(undefined);
+      setOtpError(undefined);
+    }
+    onOpenChange(next);
   };
 
   const handleVerify = async (otp: string) => {
@@ -86,7 +100,6 @@ export function RestoreAccountModal({
     setOtpError(undefined);
     Sentry.addBreadcrumb({ category: 'auth', message: 'Restore OTP submitted', level: 'info' });
     try {
-      const trimmed = email.trim();
       const result = await window.electronAPI?.deletion?.restore?.confirm(trimmed, otp);
       if (result?.success) {
         toast({
@@ -94,33 +107,17 @@ export function RestoreAccountModal({
           description: 'Welcome back! You can now sign in normally.',
           duration: 6000,
         });
+        sentForRef.current = null;
         onOpenChange(false);
         onRestored?.(trimmed);
-        reset();
       } else {
-        const msg = result?.error ?? 'Invalid code. Please try again.';
-        setOtpError(msg);
+        setOtpError(result?.error ?? 'Invalid code. Please try again.');
       }
     } catch (err) {
       Sentry.captureException(err, { tags: { component: 'restore-account-modal', op: 'confirm' } });
       setOtpError('Restore failed. Please try again.');
     } finally {
       setVerifying(false);
-    }
-  };
-
-  const handleResend = async () => {
-    setOtpError(undefined);
-    try {
-      const result = await window.electronAPI?.deletion?.restore?.request(email.trim());
-      if (result?.success) {
-        toast({ title: 'Code resent', description: 'A new restore code is on the way.' });
-      } else {
-        setOtpError(result?.error ?? 'Could not resend code.');
-      }
-    } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'restore-account-modal', op: 'resend' } });
-      setOtpError('Could not resend code.');
     }
   };
 
@@ -136,67 +133,42 @@ export function RestoreAccountModal({
               <DialogTitle className="text-lg font-bold text-foreground tracking-tight">Restore your account</DialogTitle>
             </div>
             <DialogDescription className="text-sm text-muted-foreground leading-relaxed">
-              {step === 'email'
-                ? "Enter the email of the account you want to restore. We'll send you a 6-digit code."
-                : "We sent a 6-digit code to your inbox. Enter it below to cancel the scheduled deletion."}
+              We sent a 6-digit code to <span className="font-mono text-foreground">{trimmed}</span>. Enter it below to cancel the scheduled deletion and unlock sign-in.
             </DialogDescription>
           </DialogHeader>
         </div>
 
         <div className="px-6 py-5">
-          {step === 'email' ? (
-            <form onSubmit={handleSendOtp} className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="restore-email" className="text-sm font-medium text-foreground">
-                  Email address
-                </Label>
-                <Input
-                  id="restore-email"
-                  type="email"
-                  required
-                  autoComplete="email"
-                  autoFocus
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  disabled={sending}
-                  className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20"
-                />
+          {sending && !sentForRef.current ? null : null}
+          {sendError ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3.5 text-sm text-destructive">
+                {sendError}
               </div>
-
-              <div className="flex items-center justify-end gap-2.5 pt-2">
-                <Button
-                  type="button" variant="outline" size="sm"
-                  onClick={() => handleClose(false)}
-                  disabled={sending}
-                  className="h-9 text-sm border-border"
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="submit" size="sm"
-                  disabled={sending || !email.trim()}
-                  className="h-9 text-sm min-w-[120px] border border-input text-foreground hover:bg-muted"
-                >
-                  {sending ? (
-                    <CircleNotch size={14} weight="light" className="animate-spin" />
-                  ) : (
-                    <span className="flex items-center gap-1.5">
-                      Send code <ArrowRight size={14} weight="light" />
-                    </span>
-                  )}
-                </Button>
-              </div>
-            </form>
+              <button
+                type="button"
+                onClick={() => sendOtp('resend')}
+                disabled={sending}
+                className="text-xs text-emerald hover:text-emerald/80 font-medium transition-colors disabled:opacity-50"
+              >
+                {sending ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <CircleNotch size={12} weight="light" className="animate-spin" /> Retrying…
+                  </span>
+                ) : (
+                  'Try again'
+                )}
+              </button>
+            </div>
           ) : (
             <OtpVerification
-              email={email}
+              email={trimmed}
               purpose="reset"
-              isLoading={verifying}
+              isLoading={verifying || sending}
               error={otpError}
               onVerify={handleVerify}
-              onResend={handleResend}
-              onBack={() => { setStep('email'); setOtpError(undefined); }}
+              onResend={() => sendOtp('resend')}
+              onBack={() => handleClose(false)}
             />
           )}
         </div>

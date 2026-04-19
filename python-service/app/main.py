@@ -2031,8 +2031,15 @@ async def route_confirm_restore(request: StarletteRequest, body: ConfirmRestoreR
                     body_text = resp.text
                     logger.error(f"[Restore] RPC error {resp.status_code}: {body_text}")
                     sentry_sdk.capture_message(f"restore_account RPC error: {resp.status_code}", level="error")
+                    # Map the RPC's RAISE EXCEPTION strings to clean user-facing
+                    # messages. The RPC raises with SQLSTATE P0002 in both cases.
                     if "No account found" in body_text:
                         raise HTTPException(status_code=404, detail="No account found for this email.")
+                    if "No pending deletion to restore" in body_text:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="This account isn't queued for deletion — nothing to restore.",
+                        )
                     raise HTTPException(status_code=502, detail="Could not restore account. Please try again.")
     except HTTPException:
         raise

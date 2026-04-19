@@ -645,17 +645,6 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
           >
             Create an account
           </Button>
-
-          {/* Restore deleted account */}
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => setRestoreModalOpen(true)}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Deleted your account by mistake? <span className="text-emerald font-medium">Restore deleted account</span>
-            </button>
-          </div>
         </div>
       </div>
       </div>
@@ -663,7 +652,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
       <RestoreAccountModal
         open={restoreModalOpen}
         onOpenChange={setRestoreModalOpen}
-        initialEmail={bannedEmail ?? email}
+        email={bannedEmail ?? ''}
         onRestored={(restoredEmail) => {
           setBannedEmail(null);
           setEmail(restoredEmail);
