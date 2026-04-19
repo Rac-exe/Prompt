@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import * as Sentry from "@sentry/react";
-import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown, CaretRight, TreeStructure } from "@phosphor-icons/react";
+import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown, CaretRight } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
 import { Button } from "@/components/ui/button";
@@ -77,7 +77,6 @@ export const ChatView = ({
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
   const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
-  const [activeProject, setActiveProject] = useState<{ name: string; branch: string | null } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const plusButtonRef = useRef<HTMLButtonElement>(null);
@@ -102,33 +101,11 @@ export const ChatView = ({
     },
   );
 
-  // ── Active project context ─────────────────────────────────
-  useEffect(() => {
-    const api = (window as any).electronAPI?.project;
-    if (!api) return;
-
-    const loadActive = async () => {
-      try {
-        const active = await api.getActive();
-        if (active?.projectId) {
-          const status = await api.status(active.projectId);
-          setActiveProject({ name: status?.name || 'Project', branch: active.branch });
-        } else {
-          setActiveProject(null);
-        }
-      } catch { setActiveProject(null); }
-    };
-
-    loadActive();
-
-    const unsub = api.onStatusUpdate?.((data: any) => {
-      if (data?.name) {
-        setActiveProject({ name: data.name, branch: data.branch || null });
-      }
-    });
-
-    return () => unsub?.();
-  }, []);
+  // The "active project" concept lives in the Spaces section only — the new
+  // chat screen is intentionally project-agnostic. Folder add/remove inside
+  // a Space updates its own SpaceWorkspace UI; this view should never react
+  // to project:status-update broadcasts. (Previously a chip with the active
+  // project name leaked in here whenever a folder was added in Spaces.)
 
   // ── Transcription IPC listeners ─────────────────────────────
   useEffect(() => {
@@ -451,17 +428,6 @@ export const ChatView = ({
                 </div>
               );
             })()}
-
-            {/* Active project context pill */}
-            {activeProject && (
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-500/10 text-[11px] text-sky-400 border border-sky-500/15 ml-1">
-                <TreeStructure size={12} weight="duotone" />
-                <span className="max-w-[120px] truncate">{activeProject.name}</span>
-                {activeProject.branch && (
-                  <span className="opacity-50 text-[10px]">/{activeProject.branch}</span>
-                )}
-              </div>
-            )}
 
             {/* Voice state indicators */}
             {voiceState === "listening" && (

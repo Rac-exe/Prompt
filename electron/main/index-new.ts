@@ -715,6 +715,17 @@ async function initialize() {
       Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_OUT', level: 'info' });
       if (appWindowManager) appWindowManager.send('sentry:set-user', null);
 
+      // Tear down every active file watcher and pending status poll. Without
+      // this, the previous user's chokidar handles continued running and
+      // attempted ingest with the next user's bearer token (resulting in
+      // 404s server-side, but more importantly leaking which folders the
+      // previous user had attached). cleanupProjectHandlers() handles both.
+      try {
+        cleanupProjectHandlers();
+      } catch (e) {
+        Sentry.captureException(e, { level: 'warning', tags: { component: 'auth-cleanup' } });
+      }
+
       if (appWindowManager) {
         appWindowManager.send('auth:state-changed', {
           isAuthenticated: false,

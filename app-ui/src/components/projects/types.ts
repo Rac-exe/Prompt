@@ -115,6 +115,49 @@ export function saveSpaces(spaces: Space[], userId: string | null | undefined): 
   localStorage.setItem(spacesKeyFor(userId), JSON.stringify(spaces));
 }
 
+/**
+ * Debounced wrapper around `saveSpaces`. Stringifying every space (including
+ * full chat history) on every keystroke caused noticeable input lag. Coalescing
+ * writes inside a short window keeps the UI responsive without risking data
+ * loss (storage flushes well within a tab close).
+ */
+const SAVE_DEBOUNCE_MS = 250;
+const pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingPayload = new Map<string, Space[]>();
+
+export function saveSpacesDebounced(spaces: Space[], userId: string | null | undefined): void {
+  if (!userId) return;
+  pendingPayload.set(userId, spaces);
+
+  const existing = pendingSaves.get(userId);
+  if (existing) clearTimeout(existing);
+
+  pendingSaves.set(
+    userId,
+    setTimeout(() => {
+      pendingSaves.delete(userId);
+      const payload = pendingPayload.get(userId);
+      pendingPayload.delete(userId);
+      if (payload) saveSpaces(payload, userId);
+    }, SAVE_DEBOUNCE_MS),
+  );
+}
+
+export function flushSpacesSaves(): void {
+  for (const [userId, timer] of pendingSaves.entries()) {
+    clearTimeout(timer);
+    const payload = pendingPayload.get(userId);
+    if (payload) saveSpaces(payload, userId);
+  }
+  pendingSaves.clear();
+  pendingPayload.clear();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => flushSpacesSaves());
+  window.addEventListener("pagehide", () => flushSpacesSaves());
+}
+
 export function shortenPath(path: string): string {
   const parts = path.replace(/\\/g, "/").split("/");
   if (parts.length <= 3) return parts.join("/");

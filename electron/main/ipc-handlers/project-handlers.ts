@@ -23,6 +23,104 @@ let activeProjectBranch: string | null = null;
 
 const STATE_FILE = path.join(app.getPath('userData'), 'active-project.json');
 
+/**
+ * Per-project status poll loop. The backend processes ingest async — the HTTP
+ * `ingestSkeleton` call returns 202 immediately and the actual indexing
+ * (summarize → embed → upsert) can take many seconds. We must poll the
+ * service until it reports a terminal status (`ready` / `partial` / `error`)
+ * before telling the renderer the project is ready, otherwise the UI shows
+ * "Ready" while the worker is still processing.
+ */
+const activePolls = new Map<string, NodeJS.Timeout>();
+const POLL_INTERVAL_MS = 2_500;
+const POLL_MAX_DURATION_MS = 15 * 60_000; // 15 min hard cap
+
+function clearStatusPoll(projectId: string): void {
+  const timer = activePolls.get(projectId);
+  if (timer) {
+    clearTimeout(timer);
+    activePolls.delete(projectId);
+  }
+}
+
+function isTerminalStatus(status: string | undefined): boolean {
+  return status === 'ready' || status === 'partial' || status === 'error' || status === 'stale';
+}
+
+/**
+ * Begin polling backend status for a project. Broadcasts every change.
+ * Returns a promise that resolves with the final terminal status.
+ */
+function startStatusPoll(projectId: string): Promise<string> {
+  clearStatusPoll(projectId);
+
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    let lastStatus: string | null = null;
+
+    const tick = async () => {
+      if (!_client) {
+        resolve('stale');
+        return;
+      }
+      try {
+        const project = await _client.getProject(projectId);
+        const status = project?.index_status || 'stale';
+
+        if (status !== lastStatus) {
+          lastStatus = status;
+          broadcastProjectStatus({
+            projectId,
+            status,
+            name: project?.name,
+            last_indexed_at: project?.last_indexed_at,
+          });
+        }
+
+        if (isTerminalStatus(status)) {
+          activePolls.delete(projectId);
+          resolve(status);
+          return;
+        }
+      } catch (e) {
+        // Service might be transiently down — keep polling
+        Sentry.addBreadcrumb({ category: 'project-handlers', message: 'Status poll failed (transient)', level: 'warning' });
+      }
+
+      if (Date.now() - startedAt > POLL_MAX_DURATION_MS) {
+        activePolls.delete(projectId);
+        broadcastProjectStatus({ projectId, status: 'stale' });
+        resolve('stale');
+        return;
+      }
+
+      activePolls.set(projectId, setTimeout(tick, POLL_INTERVAL_MS));
+    };
+
+    activePolls.set(projectId, setTimeout(tick, POLL_INTERVAL_MS));
+  });
+}
+
+/**
+ * Called by the file watcher every time a user edit results in a successful
+ * `ingestSkeleton` (or a `delete-chunks`). The backend flips its own
+ * `index_status` to `indexing` while the worker drains the queue, so we
+ * mirror that on the renderer immediately and start a poll until the worker
+ * settles back to `ready`. Without this the UI would stay on "Ready" while
+ * the index is silently catching up — exactly the bug reported.
+ */
+function onWatcherIngest(projectId: string): void {
+  console.log(`[ProjectHandlers] onWatcherIngest(${projectId}) → broadcasting indexing + starting poll`);
+  broadcastProjectStatus({ projectId, status: 'indexing' });
+  // If a poll is already in flight (e.g. user saved twice in <2.5s) we just
+  // restart it; startStatusPoll cancels any prior timer for the same id.
+  startStatusPoll(projectId)
+    .then((finalStatus) => {
+      console.log(`[ProjectHandlers] post-edit poll settled for ${projectId}: ${finalStatus}`);
+    })
+    .catch(() => {});
+}
+
 function persistActiveProject(): void {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify({
@@ -112,15 +210,22 @@ export function registerProjectHandlers(
 
     await setActiveProject(project.id, projectPath);
 
-    // Trigger initial full scan so the index isn't empty until the first file edit
-    performFullScan(project.id, projectPath, _client!, defaultBranch).then((result) => {
-      console.log(`[ProjectHandlers] Initial index complete: ${result.totalFiles} files, ${result.totalChunks} chunks`);
-      broadcastProjectStatus({ projectId: project.id, status: 'ready' });
-    }).catch((e) => {
-      console.error('[ProjectHandlers] Initial index failed:', e);
-      Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'initial-index' }, extra: { projectId: project.id } });
-      broadcastProjectStatus({ projectId: project.id, status: 'stale' });
-    });
+    // Trigger initial full scan so the index isn't empty until the first file edit.
+    // performFullScan only QUEUES chunks on the backend (HTTP 202). Actual indexing
+    // happens async in the Python worker, so we must poll the service until it
+    // reports a terminal status before telling the renderer the project is ready.
+    broadcastProjectStatus({ projectId: project.id, status: 'indexing' });
+    performFullScan(project.id, projectPath, _client!, defaultBranch)
+      .then(async (result) => {
+        console.log(`[ProjectHandlers] Initial scan queued: ${result.totalFiles} files, ${result.totalChunks} chunks`);
+        const finalStatus = await startStatusPoll(project.id);
+        console.log(`[ProjectHandlers] Initial index settled: ${finalStatus}`);
+      })
+      .catch((e) => {
+        console.error('[ProjectHandlers] Initial index failed:', e);
+        Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'initial-index' }, extra: { projectId: project.id } });
+        broadcastProjectStatus({ projectId: project.id, status: 'stale' });
+      });
 
     console.log(`[ProjectHandlers] Project added: ${projectName} (${project.id})`);
     return project;
@@ -130,7 +235,19 @@ export function registerProjectHandlers(
     if (!_client) throw new Error('Code intelligence client not initialized');
 
     stopWatching(projectId);
-    await _client.deleteProject(projectId);
+    clearStatusPoll(projectId);
+    try {
+      await _client.deleteProject(projectId);
+    } catch (e: any) {
+      // 404 = already gone (different machine, race); treat as success so the
+      // user can still purge stale references from their space.
+      const status = e?.response?.status;
+      if (status !== 404) {
+        Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'remove' }, extra: { projectId } });
+        throw e;
+      }
+      console.warn(`[ProjectHandlers] Project ${projectId} already removed on backend (404) — purging local state`);
+    }
     clearProjectCache(projectId);
 
     if (activeProjectId === projectId) {
@@ -165,6 +282,7 @@ export function registerProjectHandlers(
     if (!_client) throw new Error('Code intelligence client not initialized');
 
     clearProjectCache(projectId);
+    clearStatusPoll(projectId);
     broadcastProjectStatus({ projectId, status: 'indexing' });
 
     try {
@@ -189,9 +307,14 @@ export function registerProjectHandlers(
         },
       );
 
-      console.log(`[ProjectHandlers] Reindex complete: ${result.totalFiles} files, ${result.totalChunks} chunks`);
-      broadcastProjectStatus({ projectId, status: 'ready' });
-      return result;
+      console.log(`[ProjectHandlers] Reindex queued: ${result.totalFiles} files, ${result.totalChunks} chunks`);
+
+      // Wait for the backend worker to actually finish the queued batches —
+      // performFullScan only enqueues (HTTP 202). Without this, the renderer
+      // would flip to "Ready" while embeddings are still being computed.
+      const finalStatus = await startStatusPoll(projectId);
+      console.log(`[ProjectHandlers] Reindex settled: ${finalStatus}`);
+      return { ...result, finalStatus };
     } catch (e) {
       console.error('[ProjectHandlers] Reindex failed:', e);
       Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'reindex' }, extra: { projectId } });
@@ -213,7 +336,7 @@ export function registerProjectHandlers(
         const branchInfo = await getBranchInfo(localPath);
         branch = branchInfo.currentBranch;
       }
-      startWatching(projectId, localPath, _client!, branch);
+      startWatching(projectId, localPath, _client!, branch, onWatcherIngest);
     } else {
       stopWatching(projectId);
     }
@@ -227,6 +350,108 @@ export function registerProjectHandlers(
   ipcMain.handle('project:retrieve', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number }) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
     return await _client.retrieve(params);
+  });
+
+  /**
+   * Renderer calls this on app launch with every project that lives in a
+   * Space. We do TWO things per project:
+   *
+   *   1. Restart the chokidar watcher (handles are process-bound and were
+   *      torn down when the user quit from the tray).
+   *   2. Run a hash-diff scan via `performFullScan`. The scan walks every
+   *      parseable file, hashes its contents, and compares against the
+   *      local SHA cache (`getCachedHash`). Files whose hashes match are
+   *      skipped at zero cost; only files that were edited / added while
+   *      the app was off get re-parsed and ingested.
+   *
+   * This guarantees the index reflects the on-disk state regardless of the
+   * project's last-known backend status — even a "ready" project gets
+   * verified, so external edits (git pull, IDE rename, etc.) are caught.
+   *
+   * Returns immediately — actual work happens in the background and the
+   * status-update IPC channel reflects progress.
+   */
+  ipcMain.handle('project:ensure-fresh', async (_event, projects: Array<{ projectId: string; localPath: string }>) => {
+    if (!_client || !Array.isArray(projects) || projects.length === 0) return { triggered: 0 };
+
+    let triggered = 0;
+    for (const { projectId, localPath } of projects) {
+      if (!projectId || !localPath) continue;
+      try {
+        const project = await _client.getProject(projectId);
+        const status = project?.index_status || 'stale';
+
+        let branch: string | undefined;
+        try {
+          if (await isGitRepo(localPath)) {
+            const branchInfo = await getBranchInfo(localPath);
+            branch = branchInfo.currentBranch;
+          }
+        } catch {}
+
+        if (!isWatching(projectId)) {
+          startWatching(projectId, localPath, _client, branch, onWatcherIngest);
+        }
+
+        // Decide whether the renderer should see an "Indexing" pill while
+        // the diff scan runs.
+        //   - If the backend is in a non-terminal/zombie state we MUST
+        //     surface "Indexing" — we don't trust the cached SHAs and the
+        //     local cache is purged so the scan re-uploads everything.
+        //   - For a healthy "ready" project we kick off a quiet hash-diff
+        //     scan; only flip the pill if the scan actually finds drift
+        //     (handled inside the .then() below).
+        const isUnhealthy = status === 'stale' || status === 'indexing' || status === 'error';
+
+        if (isUnhealthy) {
+          clearProjectCache(projectId);
+          broadcastProjectStatus({ projectId, status: 'indexing' });
+        }
+
+        const tStart = Date.now();
+        console.log(
+          `[ProjectHandlers] ensure-fresh: scanning ${projectId} ` +
+            `(backend=${status}, mode=${isUnhealthy ? 'force-full' : 'hash-diff'})`,
+        );
+
+        performFullScan(projectId, localPath, _client, branch)
+          .then(async (result) => {
+            const elapsed = Date.now() - tStart;
+            console.log(
+              `[ProjectHandlers] ensure-fresh: ${projectId} scan done in ${elapsed}ms — ` +
+                `${result.totalFiles} changed file(s), ${result.totalChunks} chunk(s)`,
+            );
+
+            // For a "ready" project, only show "Indexing" + start poll if
+            // the diff actually produced uploads. Otherwise the user sees
+            // a useless flash of "Indexing → Ready" on every launch.
+            if (!isUnhealthy && result.totalChunks === 0) {
+              return;
+            }
+
+            broadcastProjectStatus({ projectId, status: 'indexing' });
+            const finalStatus = await startStatusPoll(projectId);
+            console.log(`[ProjectHandlers] ensure-fresh: ${projectId} settled to ${finalStatus}`);
+          })
+          .catch((err) => {
+            console.error(`[ProjectHandlers] ensure-fresh scan failed for ${projectId}:`, err);
+            Sentry.captureException(err, { level: 'warning', tags: { component: 'project-handlers', op: 'ensure-fresh' }, extra: { projectId } });
+            if (isUnhealthy) broadcastProjectStatus({ projectId, status: 'stale' });
+          });
+
+        triggered++;
+      } catch (e: any) {
+        // 404 means the project was deleted somewhere else; the renderer will
+        // notice via its next status() call and prune from the space.
+        const httpStatus = e?.response?.status;
+        if (httpStatus !== 404) {
+          Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'ensure-fresh' }, extra: { projectId } });
+        }
+      }
+    }
+
+    console.log(`[ProjectHandlers] ensure-fresh: scheduled ${triggered}/${projects.length} hash-diff scans`);
+    return { triggered, total: projects.length };
   });
 }
 
@@ -245,7 +470,7 @@ async function setActiveProject(projectId: string, localPath?: string): Promise<
       activeProjectBranch = null;
     }
 
-    startWatching(projectId, localPath, _client, activeProjectBranch || undefined);
+    startWatching(projectId, localPath, _client, activeProjectBranch || undefined, onWatcherIngest);
   }
 
   const project = await _client.getProject(projectId);
@@ -288,7 +513,7 @@ export async function restoreActiveProject(): Promise<void> {
     const project = await _client.getProject(projectId);
     if (project) {
       if (project.local_path) {
-        startWatching(project.id, project.local_path, _client!, branch || undefined);
+        startWatching(project.id, project.local_path, _client!, branch || undefined, onWatcherIngest);
       }
       broadcastProjectStatus({
         projectId: project.id,
@@ -307,5 +532,8 @@ export async function restoreActiveProject(): Promise<void> {
 }
 
 export function cleanupProjectHandlers(): void {
+  for (const id of Array.from(activePolls.keys())) {
+    clearStatusPoll(id);
+  }
   stopAllWatchers();
 }
