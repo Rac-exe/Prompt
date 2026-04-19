@@ -301,6 +301,14 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
             setBannedEmail(email.trim());
             setPassword('');
             // No toast — the inline panel below the form is the affordance.
+            // Breadcrumb so we can correlate this with the deletion-request event
+            // that put the account into the banned state.
+            Sentry.addBreadcrumb({
+              category: 'auth',
+              message: 'Sign-in blocked: account scheduled for deletion',
+              level: 'warning',
+              data: { method: 'password', email: email.trim() },
+            });
           } else {
             toast({
               variant: "destructive",
@@ -555,7 +563,15 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() => setRestoreModalOpen(true)}
+                  onClick={() => {
+                    Sentry.addBreadcrumb({
+                      category: 'gdpr',
+                      message: 'Restore modal opened from banned-account banner',
+                      level: 'info',
+                      data: { email: bannedEmail },
+                    });
+                    setRestoreModalOpen(true);
+                  }}
                   className="h-8 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border border-amber-500/30"
                 >
                   Restore now
