@@ -332,6 +332,56 @@ declare global {
         onStatusUpdate: (callback: (data: any) => void) => () => void;
         onOverlayStatus: (callback: (data: any) => void) => () => void;
       };
+
+      // Spaces bridge API — see electron/main/ipc-handlers/spaces-bridge-handlers.ts
+      // for the full architectural rationale. The gist: the app window owns
+      // the canonical Spaces state (localStorage + React state); the overlay
+      // window cannot read its sibling's localStorage so we relay through
+      // main as a lightweight pub/sub.
+      spaces: {
+        /** App window: push the current spaces list to main's cache. */
+        publishSnapshot: (
+          spaces: Array<{
+            id: string;
+            name: string;
+            projects: Array<{ projectId: string; name: string; localPath: string; branch?: string }>;
+            lastUsedAt: number;
+          }>,
+        ) => void;
+        /** Overlay (or any renderer): read the cached snapshot. */
+        list: () => Promise<Array<{
+          id: string;
+          name: string;
+          projects: Array<{ projectId: string; name: string; localPath: string; branch?: string }>;
+          lastUsedAt: number;
+        }>>;
+        /** Overlay: append messages to a specific space (relayed to app window). */
+        appendMessages: (payload: {
+          spaceId: string;
+          messages: Array<{
+            id: string;
+            role: 'user' | 'assistant';
+            content: string;
+            timestamp: number;
+            groupId?: string;
+            versionIndex?: number;
+          }>;
+        }) => void;
+        /** App window: subscribe to overlay-originated appends. */
+        onApplyAppend: (
+          callback: (payload: {
+            spaceId: string;
+            messages: Array<{
+              id: string;
+              role: 'user' | 'assistant';
+              content: string;
+              timestamp: number;
+              groupId?: string;
+              versionIndex?: number;
+            }>;
+          }) => void,
+        ) => () => void;
+      };
     };
   }
 }
@@ -344,7 +394,7 @@ const electronAPI = {
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string }; chatId?: string; spaceMode?: boolean; spaceId?: string }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -945,6 +995,28 @@ const electronAPI = {
       const handler = (_event: any, data: any) => callback(data);
       ipcRenderer.on('overlay:project-status', handler);
       return () => ipcRenderer.removeListener('overlay:project-status', handler);
+    },
+  },
+
+  // ============================================
+  // SPACES BRIDGE API
+  // ============================================
+  // Cross-window relay for the Spaces feature. The app window publishes
+  // its current spaces snapshot to main; overlay reads that snapshot for
+  // the picker and appends finalized turns back through the same bridge.
+  // Full design notes live in spaces-bridge-handlers.ts.
+  spaces: {
+    publishSnapshot: (spaces: any[]) => {
+      ipcRenderer.send('spaces:publish-snapshot', spaces);
+    },
+    list: () => ipcRenderer.invoke('spaces:list'),
+    appendMessages: (payload: { spaceId: string; messages: any[] }) => {
+      ipcRenderer.send('spaces:append-messages', payload);
+    },
+    onApplyAppend: (callback: (payload: { spaceId: string; messages: any[] }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('spaces:apply-append', handler);
+      return () => ipcRenderer.removeListener('spaces:apply-append', handler);
     },
   },
 };

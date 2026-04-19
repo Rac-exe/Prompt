@@ -4,8 +4,8 @@ import { SpacesList } from "./SpacesList";
 import { SpaceWorkspace } from "./SpaceWorkspace";
 import { Sparkle, Folder, Lightning, Eye, Database } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
-import type { Space } from "./types";
-import { loadSpaces, saveSpacesDebounced, flushSpacesSaves } from "./types";
+import type { Space, SpaceMessage } from "./types";
+import { loadSpaces, saveSpacesDebounced, flushSpacesSaves, toSpaceSummary } from "./types";
 import { useAuth } from "@/context/AuthContext";
 
 interface ProjectsViewProps {
@@ -47,6 +47,62 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
     if (!userId) return;
     saveSpacesDebounced(spaces, userId);
   }, [spaces, userId]);
+
+  // ── Cross-window snapshot publish ───────────────────────────────────
+  // The overlay window cannot read this window's localStorage so it has
+  // no native way to know what Spaces exist. We push a lightweight
+  // projection (id/name/projects + lastUsedAt — never message history)
+  // into the main process on every state change; the overlay then
+  // requests that cached snapshot when its picker opens. See
+  // electron/main/ipc-handlers/spaces-bridge-handlers.ts for the full
+  // flow rationale. Safe to call when the bridge is unavailable (older
+  // builds) — the optional chain short-circuits.
+  useEffect(() => {
+    const api = (window as any).electronAPI?.spaces;
+    if (!api?.publishSnapshot) return;
+    try {
+      api.publishSnapshot(spaces.map(toSpaceSummary));
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: "projects-view", op: "publish-spaces-snapshot" } });
+    }
+  }, [spaces]);
+
+  // ── Overlay → app: apply incoming message appends ────────────────────
+  // When the user holds a conversation in the overlay with a Space
+  // attached, each completed turn (user prompt + assistant reply, or an
+  // edit/regen branch) is shipped through the spaces bridge. We append
+  // those messages into the matching `space.messages` array so they
+  // show up in the Spaces UI exactly as if the user had typed them
+  // here, and so the existing 250ms debounced localStorage save handles
+  // persistence — no separate write path needed.
+  useEffect(() => {
+    const api = (window as any).electronAPI?.spaces;
+    if (!api?.onApplyAppend) return;
+    const unsub = api.onApplyAppend((payload: { spaceId: string; messages: SpaceMessage[] }) => {
+      if (!payload?.spaceId || !Array.isArray(payload.messages) || payload.messages.length === 0) return;
+      setSpaces((prev) => {
+        const idx = prev.findIndex((s) => s.id === payload.spaceId);
+        if (idx === -1) return prev;
+        const target = prev[idx];
+
+        // De-dupe by id — the overlay may resend on reconnect/retry and
+        // we don't want the same turn to appear twice in the Spaces UI.
+        const existingIds = new Set(target.messages.map((m) => m.id));
+        const fresh = payload.messages.filter((m) => !existingIds.has(m.id));
+        if (fresh.length === 0) return prev;
+
+        const updated: Space = {
+          ...target,
+          messages: [...target.messages, ...fresh],
+          lastUsedAt: Date.now(),
+        };
+        const next = prev.slice();
+        next[idx] = updated;
+        return next;
+      });
+    });
+    return () => { unsub?.(); };
+  }, []);
 
   // ── Auto-reindex on app open ────────────────────────────
   // When the user explicitly quits from the system tray and relaunches the

@@ -80,6 +80,7 @@ import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
 import { analyticsService } from './analytics/analytics-service';
 import { CodeIntelClient } from './api/code-intel-client';
 import { registerProjectHandlers, cleanupProjectHandlers, restoreActiveProject } from './ipc-handlers/project-handlers';
+import { registerSpacesBridgeHandlers } from './ipc-handlers/spaces-bridge-handlers';
 import { initializeParser } from './services/code-parser';
 import { setKnownProjects, startDetection, stopDetection } from './services/active-window-detector';
 
@@ -419,6 +420,7 @@ async function initialize() {
   registerFeedbackHandlers();
   registerDeletionHandlers();
   registerProjectHandlers(codeIntelClient, overlayManager, appWindowManager);
+  registerSpacesBridgeHandlers(overlayManager, appWindowManager);
 
   // Initialize tree-sitter parser in background
   initializeParser().catch(e => console.warn('[Main] Tree-sitter init deferred:', e));

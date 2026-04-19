@@ -816,6 +816,16 @@ textarea { min-height: 40px; }
   background: hsl(var(--accent) / 0.05);
 }
 
+/* Pulsing dot used inside the Space context pill while the attached
+   folder is mid-indexing. The amber glow expands and fades on a 1.4s
+   loop so the user sees that the folder is actively being processed
+   and the answer they get next will be based on the freshest state. */
+@keyframes overlay-status-pulse {
+  0%   { box-shadow: 0 0 0 2px hsl(38 92% 50% / 0.35); }
+  50%  { box-shadow: 0 0 0 6px hsl(38 92% 50% / 0); }
+  100% { box-shadow: 0 0 0 2px hsl(38 92% 50% / 0.35); }
+}
+
 /* ======== PLUS MENU POPUP ======== */
 .plus-menu {
   display: none;

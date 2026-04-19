@@ -44,6 +44,42 @@ export interface Space {
 // by handlers (rejecting additional adds with a toast).
 export const MAX_PROJECTS_PER_SPACE = 1;
 
+/**
+ * Lightweight projection of a `Space` shipped from the app window over the
+ * IPC bridge to the overlay window. We deliberately *do not* include the
+ * full message history here — the overlay's space-attach picker only needs
+ * to render a name and surface the attached folder's status, and shipping
+ * thousands of accumulated turns over the structured-clone bridge on every
+ * keystroke would needlessly slow things down. Messages flow back the
+ * other way (overlay → main → app window) one turn at a time via the
+ * append channel.
+ */
+export interface SpaceSummary {
+  id: string;
+  name: string;
+  projects: Array<{
+    projectId: string;
+    name: string;
+    localPath: string;
+    branch?: string;
+  }>;
+  lastUsedAt: number;
+}
+
+export function toSpaceSummary(space: Space): SpaceSummary {
+  return {
+    id: space.id,
+    name: space.name,
+    projects: space.projects.map((p) => ({
+      projectId: p.projectId,
+      name: p.name,
+      localPath: p.localPath,
+      branch: p.branch,
+    })),
+    lastUsedAt: space.lastUsedAt,
+  };
+}
+
 export interface RetrievedChunk {
   id: string;
   file_path: string;

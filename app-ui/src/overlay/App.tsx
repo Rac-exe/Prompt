@@ -6,11 +6,28 @@ import OfflineBanner from './components/OfflineBanner';
 import ChatArea from './components/ChatArea';
 import InputSection from './components/InputSection';
 import ChatPicker from './components/ChatPicker';
+import SpacePicker from './components/SpacePicker';
 import CollectionPicker from './components/CollectionPicker';
 import { useTurns } from './hooks/useTurns';
 import type { AttachedFile, SkillInfo, OverlaySettings } from './lib/types';
 import type { ClarifyQuestion } from '@/components/chat/ClarificationCard';
 import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
+import { buildTailoredPrompt, type RetrieveResult } from '@/components/projects/types';
+
+// ── Space attach: minimal shape we need from the bridge ──
+// Mirrors `SpaceSummary` published by ProjectsView. Kept inline to avoid
+// dragging the projects components module into the overlay bundle.
+interface AttachedSpaceProject {
+  projectId: string;
+  name: string;
+  localPath: string;
+  branch?: string;
+}
+interface AttachedSpace {
+  id: string;
+  name: string;
+  projects: AttachedSpaceProject[];
+}
 
 // ── Settings helpers ─────────────────────────────────────────────────────────
 
@@ -84,6 +101,50 @@ const OverlayApp: React.FC = () => {
   const [selectedChatName, setSelectedChatName] = useState('');
   const selectedChatIdRef = useRef<string | null>(null);
   const [chatPickerOpen, setChatPickerOpen] = useState(false);
+
+  // ── Space context state ─────────────────────────────────────────────────
+  // The user can attach one Space at a time. When attached, the overlay:
+  //   1. Routes optimization through the same retrieval + tailored-prompt
+  //      pipeline that SpaceWorkspace uses (so the LLM sees the user's
+  //      codebase instead of just raw chat history).
+  //   2. Skips the auto-created "overlay session chat" persistence path
+  //      and instead syncs each completed turn back to `space.messages`
+  //      via the spaces bridge — so what the user types here shows up in
+  //      the Spaces UI as if they had typed it there.
+  //   3. Subscribes to the project-status broadcast so the chip's dot
+  //      reflects stale → indexing → ready in real time.
+  const [selectedSpace, setSelectedSpace] = useState<AttachedSpace | null>(null);
+  const [selectedSpaceStatus, setSelectedSpaceStatus] = useState<string | null>(null);
+  const [spacePickerOpen, setSpacePickerOpen] = useState(false);
+  // Mirror state into refs so the long-lived IPC listeners (registered
+  // once with [] deps) can read the freshest values without re-subscribing.
+  const selectedSpaceRef = useRef<AttachedSpace | null>(null);
+
+  // ── Pending space-sync metadata ─────────────────────────────────────
+  // Populated at submit / edit / regenerate time, consumed when the
+  // assistant message completes. We sync the *final* user + assistant pair
+  // (or just the assistant on regen) to `space.messages` once we have the
+  // optimized text — syncing on every chunk would either spam the bridge
+  // or require a separate "replace" channel.
+  interface PendingSpaceSync {
+    spaceId: string;
+    userGroupId: string;
+    userVersionIndex: number;
+    assistantGroupId: string;
+    assistantVersionIndex: number;
+    /** When true, only the assistant message is appended (regeneration —
+     *  the user message of this turn is already in the space). */
+    skipUser: boolean;
+    /** Stable user-message id we generate in the renderer so the synced
+     *  payload uses the same id as the in-overlay message. Allows the
+     *  Spaces UI's `useMessageTree` to reconstruct the branch correctly. */
+    userMsgId: string;
+    userContent: string;
+    /** Stable assistant id so the Spaces UI's tree can reference it later
+     *  for further regenerations. */
+    assistantMsgId: string;
+  }
+  const pendingSpaceSyncRef = useRef<PendingSpaceSync | null>(null);
 
   // ── Collection picker state ──────────────────────────────────────────────
   const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
@@ -185,10 +246,50 @@ const OverlayApp: React.FC = () => {
       setIsOptimizing(false);
       setIsLoading(false);
       const optimized = data.optimized || '';
-      const autoSaved = !!selectedChatIdRef.current;
+      // Treat space-attached turns as "auto-saved" too — the assistant
+      // message lives in the Space, not in chat history, but the UI
+      // affordance for "this turn is persisted" still applies.
+      const autoSaved = !!selectedChatIdRef.current || !!selectedSpaceRef.current;
       registerAssistantMessage(optimized, autoSaved);
       setStreamingContent('');
       streamingTurnIdxRef.current = -1;
+
+      // ── Space sync ────────────────────────────────────────────────
+      // If this turn was issued with a Space attached, append the final
+      // user + assistant pair (or just the assistant for a regen) into
+      // `space.messages` via the bridge. The app window applies this to
+      // its in-memory state and the existing 250ms debounced save
+      // persists to localStorage — making the Spaces UI show the turn
+      // as if it were typed there directly.
+      const pending = pendingSpaceSyncRef.current;
+      if (pending && optimized) {
+        try {
+          const messages: Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: number; groupId?: string; versionIndex?: number }> = [];
+          if (!pending.skipUser) {
+            messages.push({
+              id: pending.userMsgId,
+              role: 'user',
+              content: pending.userContent,
+              timestamp: Date.now(),
+              groupId: pending.userGroupId,
+              versionIndex: pending.userVersionIndex,
+            });
+          }
+          messages.push({
+            id: pending.assistantMsgId,
+            role: 'assistant',
+            content: optimized,
+            timestamp: Date.now(),
+            groupId: pending.assistantGroupId,
+            versionIndex: pending.assistantVersionIndex,
+          });
+          window.electronAPI?.spaces?.appendMessages?.({ spaceId: pending.spaceId, messages });
+        } catch (err) {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-sync-on-complete' } });
+        } finally {
+          pendingSpaceSyncRef.current = null;
+        }
+      }
     });
 
     // ── Optimization error ──
@@ -199,6 +300,11 @@ const OverlayApp: React.FC = () => {
       streamingTurnIdxRef.current = -1;
       setErrorMessage(data.error || 'Optimization failed. Please try again.');
       setTimeout(() => setErrorMessage(null), 5000);
+      // Drop any pending space-sync for this turn — the assistant message
+      // never arrived so there's nothing meaningful to ship across the
+      // bridge, and leaving the ref populated would risk syncing the
+      // wrong turn the next time something completes.
+      pendingSpaceSyncRef.current = null;
     });
 
     // ── File upload partial failure ──
@@ -240,6 +346,47 @@ const OverlayApp: React.FC = () => {
 
   // Keep ref in sync with state for IPC callbacks
   useEffect(() => { selectedChatIdRef.current = selectedChatId; }, [selectedChatId]);
+  useEffect(() => { selectedSpaceRef.current = selectedSpace; }, [selectedSpace]);
+
+  // ── Live status for the attached Space's project ───────────────────
+  // The overlay BrowserWindow receives `overlay:project-status` (NOT the
+  // app-window-only `project:status-update`). When a space is attached we:
+  //   1. Pull the current status once via project.status() so the chip is
+  //      not stuck on "Unknown" while we wait for the first broadcast.
+  //   2. Subscribe to the overlay status channel and filter to the
+  //      attached project — other projects in the user's account also
+  //      broadcast on this channel and we don't want their state churn
+  //      flipping our dot.
+  // Detaching the space tears down both — the dependency array on
+  // selectedSpace?.projects[0]?.projectId triggers the cleanup.
+  useEffect(() => {
+    const project = selectedSpace?.projects[0];
+    if (!project) {
+      setSelectedSpaceStatus(null);
+      return;
+    }
+    const projectApi = window.electronAPI?.project;
+    if (!projectApi) return;
+
+    let cancelled = false;
+    projectApi.status?.(project.projectId)
+      .then((s: any) => {
+        if (cancelled) return;
+        if (s?.index_status) setSelectedSpaceStatus(s.index_status);
+      })
+      .catch(() => {});
+
+    const unsub = projectApi.onOverlayStatus?.((data: any) => {
+      // Defensive: the auto-detect side of the broadcast occasionally
+      // sends a null payload to clear stale state. Ignore those — we
+      // only care about updates that name a projectId.
+      if (!data?.projectId) return;
+      if (data.projectId !== project.projectId) return;
+      const next = data.status as string | undefined;
+      if (next) setSelectedSpaceStatus(next);
+    });
+    return () => { cancelled = true; unsub?.(); };
+  }, [selectedSpace?.projects[0]?.projectId]);
 
   // Clear error timeout on unmount
   useEffect(() => {
@@ -265,13 +412,13 @@ const OverlayApp: React.FC = () => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         // Don't close if a modal is open
-        if (chatPickerOpen || collectionPickerOpen) return;
+        if (chatPickerOpen || collectionPickerOpen || spacePickerOpen) return;
         window.electronAPI?.overlay?.close?.();
       }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [chatPickerOpen, collectionPickerOpen]);
+  }, [chatPickerOpen, collectionPickerOpen, spacePickerOpen]);
 
   // ── New session ──
   const handleNewSession = useCallback(() => {
@@ -281,6 +428,12 @@ const OverlayApp: React.FC = () => {
     setSelectedSkillLabel(null);
     setSelectedChatId(null);
     setSelectedChatName('');
+    // Detach any space — a "new session" should mean a clean slate; the
+    // user can re-attach via the button if they want the next turn to
+    // route through the same Space.
+    setSelectedSpace(null);
+    setSelectedSpaceStatus(null);
+    pendingSpaceSyncRef.current = null;
     setIsOptimizing(false);
     setIsLoading(false);
     setStreamingContent('');
@@ -383,6 +536,50 @@ const OverlayApp: React.FC = () => {
     });
   }, [isOptimizing, turns, clarificationAnswersByTurn, prepareRegenerate, currentMode, selectedChatId]);
 
+  // ── Build the actual text we send to overlay:optimize ──────────────
+  // When a Space is attached we replicate exactly what SpaceWorkspace
+  // does: fan retrieval out across each project in the space, sort the
+  // ranked chunks globally, then call `buildTailoredPrompt` to embed
+  // that context into the prompt. The main process knows to skip chat
+  // history on the strength of the `spaceMode` flag we pass alongside.
+  //
+  // Failure modes:
+  //   * Every retrieval fails → fall through with the raw query rather
+  //     than blocking the user (matches SpaceWorkspace behaviour).
+  //   * The space has no projects → just use the raw query.
+  // Returns `null` only when the space-attach path is hit but the
+  // electron API for retrieval is unexpectedly absent (extremely
+  // unlikely outside of broken test harnesses).
+  const buildSpacePrompt = useCallback(async (rawQuery: string, space: AttachedSpace): Promise<string> => {
+    const projectApi = window.electronAPI?.project;
+    if (!projectApi?.retrieve || space.projects.length === 0) return rawQuery;
+
+    let ranked: any[] = [];
+    let related: any[] = [];
+    let fails = 0;
+    for (const proj of space.projects) {
+      try {
+        const d: RetrieveResult = await projectApi.retrieve({
+          project_id: proj.projectId,
+          query: rawQuery,
+          branch: proj.branch || undefined,
+          limit: 10,
+        });
+        if (d?.ranked_chunks) ranked.push(...d.ranked_chunks);
+        if (d?.related_chunks) related.push(...d.related_chunks);
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-retrieve' }, extra: { projectId: proj.projectId } });
+        fails++;
+      }
+    }
+    if (fails === space.projects.length) return rawQuery;
+
+    ranked.sort((a, b) => (b.similarity_score ?? 0) - (a.similarity_score ?? 0));
+    ranked = ranked.slice(0, 10);
+    related = related.slice(0, 5);
+    return buildTailoredPrompt(rawQuery, ranked, related);
+  }, []);
+
   // ── Send message ──
   const handleSend = useCallback((text: string) => {
     if (!text.trim() || isOptimizing) return;
@@ -397,25 +594,86 @@ const OverlayApp: React.FC = () => {
     const filesToSend = attachedFiles.length > 0 ? [...attachedFiles] : undefined;
     const skillToSend = selectedSkill || undefined;
 
-    const { turnIdx, userGroupId, assistantGroupId } = addUserMessage(text, filesToSend, skillToSend, selectedSkillLabel);
+    const { msg: userMsg, turnIdx, userGroupId, assistantGroupId } = addUserMessage(text, filesToSend, skillToSend, selectedSkillLabel);
     streamingTurnIdxRef.current = turnIdx;
 
-    window.electronAPI?.overlay?.optimize?.({
-      text,
-      isRegenerate: false,
-      mode: currentMode,
-      chatId: selectedChatId || undefined,
-      attachedFiles: filesToSend,
-      forcedSkill: skillToSend,
-      userGroupId,
-      userVersionIndex: 0,
-      assistantGroupId,
-      assistantVersionIndex: 0,
-    });
+    const space = selectedSpace;
+
+    // Pre-stage the assistant id we'll use for the cross-window sync so
+    // the Spaces UI can later re-target a regeneration at the right node.
+    const assistantMsgId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (space) {
+      pendingSpaceSyncRef.current = {
+        spaceId: space.id,
+        userGroupId,
+        userVersionIndex: 0,
+        assistantGroupId,
+        assistantVersionIndex: 0,
+        skipUser: false,
+        userMsgId: userMsg.id,
+        userContent: text,
+        assistantMsgId,
+      };
+
+      // Retrieval can take a few hundred ms — fire it in the background
+      // and dispatch the optimize call once the tailored prompt is ready.
+      // We deliberately do NOT add the unresolved promise to React state:
+      // the existing `isOptimizing` flag covers UI-side debouncing.
+      buildSpacePrompt(text, space)
+        .then((tailored) => {
+          window.electronAPI?.overlay?.optimize?.({
+            text: tailored,
+            isRegenerate: false,
+            mode: currentMode,
+            // No chatId in spaceMode — see overlay-ipc-handlers comment.
+            attachedFiles: filesToSend,
+            forcedSkill: skillToSend,
+            userGroupId,
+            userVersionIndex: 0,
+            assistantGroupId,
+            assistantVersionIndex: 0,
+            spaceMode: true,
+            spaceId: space.id,
+          });
+        })
+        .catch((err) => {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt' } });
+          // Fall back to raw text so the user isn't left hanging.
+          window.electronAPI?.overlay?.optimize?.({
+            text,
+            isRegenerate: false,
+            mode: currentMode,
+            attachedFiles: filesToSend,
+            forcedSkill: skillToSend,
+            userGroupId,
+            userVersionIndex: 0,
+            assistantGroupId,
+            assistantVersionIndex: 0,
+            spaceMode: true,
+            spaceId: space.id,
+          });
+        });
+    } else {
+      window.electronAPI?.overlay?.optimize?.({
+        text,
+        isRegenerate: false,
+        mode: currentMode,
+        chatId: selectedChatId || undefined,
+        attachedFiles: filesToSend,
+        forcedSkill: skillToSend,
+        userGroupId,
+        userVersionIndex: 0,
+        assistantGroupId,
+        assistantVersionIndex: 0,
+      });
+    }
 
     // Clear attached files after sending
     setAttachedFiles([]);
-  }, [isOptimizing, attachedFiles, selectedSkill, selectedSkillLabel, addUserMessage, currentMode, selectedChatId]);
+  }, [isOptimizing, attachedFiles, selectedSkill, selectedSkillLabel, addUserMessage, currentMode, selectedChatId, selectedSpace, buildSpacePrompt]);
 
   // ── Stop generation ──
   const handleStop = useCallback(() => {
@@ -436,6 +694,15 @@ const OverlayApp: React.FC = () => {
   }, [isOptimizing, streamingContent, selectedChatId, registerAssistantMessage]);
 
   // ── Edit commit ──
+  // Editing a user message produces a new user version (sibling branch
+  // in tree terms). When a Space is attached we need to:
+  //   1. Re-do retrieval with the *new* prompt text (the edit may have
+  //      shifted intent enough that the previously-retrieved chunks are
+  //      no longer the most relevant).
+  //   2. Sync the new user version + the upcoming assistant message
+  //      back to `space.messages` with fresh group/version metadata so
+  //      the Spaces UI's `useMessageTree` reconstructs the same branch
+  //      structure the overlay just displayed.
   const handleEditCommit = useCallback((turnIdx: number, newContent: string) => {
     const result = commitEdit(turnIdx, newContent);
     if (!result) return;
@@ -446,21 +713,76 @@ const OverlayApp: React.FC = () => {
     setStreamingContent('');
     streamingTurnIdxRef.current = turnIdx;
 
-    window.electronAPI?.overlay?.optimize?.({
-      text: newContent,
-      isRegenerate: false,
-      mode: currentMode,
-      chatId: selectedChatId || undefined,
-      attachedFiles: result.newMsg.attachedFiles && result.newMsg.attachedFiles.length > 0 ? result.newMsg.attachedFiles : undefined,
-      forcedSkill: result.newMsg.skill || undefined,
-      userGroupId: result.turn.userGroupId,
-      userVersionIndex: result.newUserVerIdx,
-      assistantGroupId: result.turn.assistantGroupIds[result.newUserVerIdx],
-      assistantVersionIndex: 0,
-    });
-  }, [commitEdit, currentMode, selectedChatId]);
+    const space = selectedSpace;
+    const assistantMsgId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (space) {
+      pendingSpaceSyncRef.current = {
+        spaceId: space.id,
+        userGroupId: result.turn.userGroupId,
+        userVersionIndex: result.newUserVerIdx,
+        assistantGroupId: result.turn.assistantGroupIds[result.newUserVerIdx],
+        assistantVersionIndex: 0,
+        skipUser: false,
+        userMsgId: result.newMsg.id,
+        userContent: newContent,
+        assistantMsgId,
+      };
+      buildSpacePrompt(newContent, space)
+        .then((tailored) => {
+          window.electronAPI?.overlay?.optimize?.({
+            text: tailored,
+            isRegenerate: false,
+            mode: currentMode,
+            attachedFiles: result.newMsg.attachedFiles && result.newMsg.attachedFiles.length > 0 ? result.newMsg.attachedFiles : undefined,
+            forcedSkill: result.newMsg.skill || undefined,
+            userGroupId: result.turn.userGroupId,
+            userVersionIndex: result.newUserVerIdx,
+            assistantGroupId: result.turn.assistantGroupIds[result.newUserVerIdx],
+            assistantVersionIndex: 0,
+            spaceMode: true,
+            spaceId: space.id,
+          });
+        })
+        .catch(() => {
+          window.electronAPI?.overlay?.optimize?.({
+            text: newContent,
+            isRegenerate: false,
+            mode: currentMode,
+            attachedFiles: result.newMsg.attachedFiles && result.newMsg.attachedFiles.length > 0 ? result.newMsg.attachedFiles : undefined,
+            forcedSkill: result.newMsg.skill || undefined,
+            userGroupId: result.turn.userGroupId,
+            userVersionIndex: result.newUserVerIdx,
+            assistantGroupId: result.turn.assistantGroupIds[result.newUserVerIdx],
+            assistantVersionIndex: 0,
+            spaceMode: true,
+            spaceId: space.id,
+          });
+        });
+    } else {
+      window.electronAPI?.overlay?.optimize?.({
+        text: newContent,
+        isRegenerate: false,
+        mode: currentMode,
+        chatId: selectedChatId || undefined,
+        attachedFiles: result.newMsg.attachedFiles && result.newMsg.attachedFiles.length > 0 ? result.newMsg.attachedFiles : undefined,
+        forcedSkill: result.newMsg.skill || undefined,
+        userGroupId: result.turn.userGroupId,
+        userVersionIndex: result.newUserVerIdx,
+        assistantGroupId: result.turn.assistantGroupIds[result.newUserVerIdx],
+        assistantVersionIndex: 0,
+      });
+    }
+  }, [commitEdit, currentMode, selectedChatId, selectedSpace, buildSpacePrompt]);
 
   // ── Regenerate ──
+  // Regeneration only produces a new ASSISTANT version — the user message
+  // is unchanged, so the bridge sync sets `skipUser: true`. We still need
+  // to know the user message's groupId to compute the right sibling
+  // versionIndex on the Spaces side, which the SpaceWorkspace tree
+  // derives by counting existing assistant messages in the same group.
   const handleRegenerate = useCallback((turnIdx: number) => {
     if (isOptimizing) return;
     Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Regenerate requested', data: { turnIdx } });
@@ -473,18 +795,68 @@ const OverlayApp: React.FC = () => {
     setStreamingContent('');
     streamingTurnIdxRef.current = turnIdx;
 
-    window.electronAPI?.overlay?.optimize?.({
-      text: result.userVer.content,
-      isRegenerate: true,
-      mode: currentMode,
-      chatId: selectedChatId || undefined,
-      attachedFiles: result.userVer.attachedFiles && result.userVer.attachedFiles.length > 0 ? result.userVer.attachedFiles : undefined,
-      forcedSkill: result.userVer.skill || undefined,
-      assistantGroupId: result.assistGroupId,
-      assistantVersionIndex: result.assistVerIdx,
-      previousOutput: result.previousAssistantContent || undefined,
-    });
-  }, [isOptimizing, prepareRegenerate, currentMode, selectedChatId]);
+    const space = selectedSpace;
+    const assistantMsgId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (space) {
+      pendingSpaceSyncRef.current = {
+        spaceId: space.id,
+        // User-side metadata is unused when skipUser=true but we still
+        // populate it so the type stays well-formed.
+        userGroupId: result.userVer.id,
+        userVersionIndex: 0,
+        assistantGroupId: result.assistGroupId,
+        assistantVersionIndex: result.assistVerIdx,
+        skipUser: true,
+        userMsgId: result.userVer.id,
+        userContent: result.userVer.content,
+        assistantMsgId,
+      };
+      buildSpacePrompt(result.userVer.content, space)
+        .then((tailored) => {
+          window.electronAPI?.overlay?.optimize?.({
+            text: tailored,
+            isRegenerate: true,
+            mode: currentMode,
+            attachedFiles: result.userVer.attachedFiles && result.userVer.attachedFiles.length > 0 ? result.userVer.attachedFiles : undefined,
+            forcedSkill: result.userVer.skill || undefined,
+            assistantGroupId: result.assistGroupId,
+            assistantVersionIndex: result.assistVerIdx,
+            previousOutput: result.previousAssistantContent || undefined,
+            spaceMode: true,
+            spaceId: space.id,
+          });
+        })
+        .catch(() => {
+          window.electronAPI?.overlay?.optimize?.({
+            text: result.userVer.content,
+            isRegenerate: true,
+            mode: currentMode,
+            attachedFiles: result.userVer.attachedFiles && result.userVer.attachedFiles.length > 0 ? result.userVer.attachedFiles : undefined,
+            forcedSkill: result.userVer.skill || undefined,
+            assistantGroupId: result.assistGroupId,
+            assistantVersionIndex: result.assistVerIdx,
+            previousOutput: result.previousAssistantContent || undefined,
+            spaceMode: true,
+            spaceId: space.id,
+          });
+        });
+    } else {
+      window.electronAPI?.overlay?.optimize?.({
+        text: result.userVer.content,
+        isRegenerate: true,
+        mode: currentMode,
+        chatId: selectedChatId || undefined,
+        attachedFiles: result.userVer.attachedFiles && result.userVer.attachedFiles.length > 0 ? result.userVer.attachedFiles : undefined,
+        forcedSkill: result.userVer.skill || undefined,
+        assistantGroupId: result.assistGroupId,
+        assistantVersionIndex: result.assistVerIdx,
+        previousOutput: result.previousAssistantContent || undefined,
+      });
+    }
+  }, [isOptimizing, prepareRegenerate, currentMode, selectedChatId, selectedSpace, buildSpacePrompt]);
 
   // ── Copy message ──
   const handleCopy = useCallback((msgId: string) => {
@@ -562,6 +934,63 @@ const OverlayApp: React.FC = () => {
     setChatPickerOpen(false);
   }, []);
 
+  // ── Space context handlers ──
+  const handleAttachSpace = useCallback(() => {
+    setSpacePickerOpen(true);
+  }, []);
+
+  const handleRemoveSpace = useCallback(() => {
+    setSelectedSpace(null);
+    setSelectedSpaceStatus(null);
+    pendingSpaceSyncRef.current = null;
+  }, []);
+
+  const handleSpacePickerConfirm = useCallback((spaceId: string, spaceName: string) => {
+    // We need the full space record (including the project list) to do
+    // retrieval, so re-query the bridge for the current snapshot rather
+    // than asking the picker to thread that data through.
+    const api = window.electronAPI?.spaces;
+    if (!api?.list) {
+      setSpacePickerOpen(false);
+      return;
+    }
+    api.list()
+      .then((spaces) => {
+        const target = spaces.find((s: any) => s.id === spaceId);
+        if (!target) {
+          // Race: the user deleted the space in the main app between
+          // opening the picker and confirming. Bail silently.
+          setSpacePickerOpen(false);
+          return;
+        }
+        setSelectedSpace({
+          id: target.id,
+          name: target.name || spaceName,
+          projects: (target.projects || []).map((p: any) => ({
+            projectId: p.projectId,
+            name: p.name,
+            localPath: p.localPath,
+            branch: p.branch,
+          })),
+        });
+        setSpacePickerOpen(false);
+      })
+      .catch((err) => {
+        Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-picker-confirm' } });
+        setSpacePickerOpen(false);
+      });
+  }, []);
+
+  // ── Self-heal: drop the attached space if the user deletes it from
+  // the main app while the overlay is open. We listen to publishSnapshot
+  // implicitly by re-listing after each update; the simpler approach is
+  // to verify on every snapshot tick that the attached id still exists.
+  // Achieved indirectly: the next time the user opens the picker, the
+  // missing id falls through harmlessly. No proactive listener needed
+  // because deleting a space the user is actively typing into is a rare
+  // edge case and a stale chip just produces a "space not found" no-op
+  // on the bridge side.
+
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
@@ -618,6 +1047,9 @@ const OverlayApp: React.FC = () => {
                 selectedSkillLabel={selectedSkillLabel}
                 selectedChatId={selectedChatId}
                 selectedChatName={selectedChatName}
+                selectedSpaceId={selectedSpace?.id ?? null}
+                selectedSpaceName={selectedSpace?.name ?? ''}
+                selectedSpaceStatus={selectedSpaceStatus}
                 skills={skills}
                 onSend={handleSend}
                 onStop={handleStop}
@@ -627,6 +1059,8 @@ const OverlayApp: React.FC = () => {
                 onRemoveSkill={handleRemoveSkill}
                 onAttachContext={handleAttachContext}
                 onRemoveContext={handleRemoveContext}
+                onAttachSpace={handleAttachSpace}
+                onRemoveSpace={handleRemoveSpace}
                 inputRef={inputRef}
               />
             </div>
@@ -639,6 +1073,17 @@ const OverlayApp: React.FC = () => {
           onClose={() => setChatPickerOpen(false)}
           onConfirm={handleChatPickerConfirm}
           initialChatId={selectedChatId}
+        />
+
+        {/* Space picker modal — opens when the user clicks "Attach Space".
+            Lists Spaces published to main by ProjectsView and routes
+            optimization through the same retrieval pipeline as the
+            in-app Spaces UI when one is selected. */}
+        <SpacePicker
+          open={spacePickerOpen}
+          onClose={() => setSpacePickerOpen(false)}
+          onConfirm={handleSpacePickerConfirm}
+          initialSpaceId={selectedSpace?.id ?? null}
         />
 
         {/* Collection picker modal */}
