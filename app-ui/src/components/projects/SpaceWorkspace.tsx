@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import * as Sentry from '@sentry/react';
 import {
   PaperPlaneRight, CircleNotch,
@@ -77,7 +77,11 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
 
   const api = (window as any).electronAPI?.project;
   const electronAPI = (window as any).electronAPI;
-  const messages: Message[] = space.messages.map(spaceMessageToMessage);
+  // Mapping every message on every keystroke (caused by the input's setState
+  // bubbling to the parent space) made the chat thread feel laggy in long
+  // sessions. Memoize against the raw messages reference so we only rebuild
+  // when actual chat history changes.
+  const messages: Message[] = useMemo(() => space.messages.map(spaceMessageToMessage), [space.messages]);
 
   const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
     onStreamingComplete: (finalMessage: Message) => {
@@ -178,27 +182,80 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSendToChat, onBack }: S
   const handleStopGeneration = useCallback(() => { stopStreaming(); electronAPI?.stopGeneration?.(); }, [stopStreaming, electronAPI]);
 
   const handleAddFolder = async () => {
-    if (!api || addingFolder) return; setAddingFolder(true);
+    if (!api || addingFolder) return;
+    setAddingFolder(true);
     try {
       const r = await api.add();
-      if (r) { onUpdateSpace({ ...space, projects: [...space.projects, { projectId: r.id, name: r.name, localPath: r.local_path || "", branch: r.current_branch, indexStatus: r.index_status }], lastUsedAt: Date.now() }); if (r.local_path) { api.toggleWatching?.(r.id, r.local_path, true).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); }); watchStartedRef.current.add(r.id); } toast({ title: "Folder added", description: r.name }); }
-    } catch (e: any) { toast({ title: "Failed to add folder", description: e.message, variant: "destructive" }); }
-    finally { setAddingFolder(false); }
+      if (r) {
+        onUpdateSpace({
+          ...space,
+          projects: [
+            ...space.projects,
+            { projectId: r.id, name: r.name, localPath: r.local_path || "", branch: r.current_branch, indexStatus: r.index_status },
+          ],
+          lastUsedAt: Date.now(),
+        });
+        // Seed the indexing badge immediately so the user sees "Indexing"
+        // before any status broadcast arrives — the project was *just*
+        // queued for a full scan in the main process. We FORCE 'indexing'
+        // here even though the freshly-created DB row's `index_status`
+        // defaults to 'stale' — otherwise the user sees a "Stale" pill for
+        // ~10s until the first poll lands.
+        setProjectStatuses((prev) => ({
+          ...prev,
+          [r.id]: { ...prev[r.id], ...r, index_status: "indexing" } as ProjectInfo,
+        }));
+        if (r.local_path) {
+          api.toggleWatching?.(r.id, r.local_path, true).catch((err) => {
+            Sentry.captureException(err, { tags: { component: "space-workspace" } });
+          });
+          watchStartedRef.current.add(r.id);
+        }
+        toast({ title: "Folder added", description: `${r.name} \u2014 indexing in background` });
+      }
+    } catch (e: any) {
+      toast({ title: "Failed to add folder", description: e.message, variant: "destructive" });
+    } finally {
+      setAddingFolder(false);
+    }
   };
 
   const handleRemoveProject = (projectId: string) => {
     const proj = space.projects.find(p => p.projectId === projectId);
     if (proj?.localPath) api?.toggleWatching?.(projectId, proj.localPath, false).catch((err) => { Sentry.captureException(err, { tags: { component: 'space-workspace' } }); });
     watchStartedRef.current.delete(projectId);
+    // Cascade-delete on the backend reclaims projects/code_chunks/code_relationships
+    // rows in Supabase (FK ON DELETE CASCADE). Without this call the project row
+    // would orphan in the user's account.
+    api?.remove?.(projectId).catch((err: unknown) => { Sentry.captureException(err, { tags: { component: 'space-workspace', op: 'remove-project' }, extra: { projectId } }); });
+    setProjectStatuses((prev) => { const next = { ...prev }; delete next[projectId]; return next; });
     onUpdateSpace({ ...space, projects: space.projects.filter((p) => p.projectId !== projectId) });
     toast({ title: "Folder removed" });
   };
 
   const handleReindex = async (proj: SpaceProject) => {
-    if (!api || !proj.localPath || reindexingId) return; setReindexingId(proj.projectId);
-    try { const r = await api.reindex(proj.projectId, proj.localPath); toast({ title: "Re-index complete", description: `${r.totalFiles} files, ${r.totalChunks} chunks` }); const s = await api.status(proj.projectId); if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s })); }
-    catch (e: any) { toast({ title: "Re-index failed", description: e.message, variant: "destructive" }); }
-    finally { setReindexingId(null); }
+    if (!api || !proj.localPath || reindexingId) return;
+    setReindexingId(proj.projectId);
+    // The main process now blocks until the backend worker reports a terminal
+    // status, so this resolves only after embeddings/upserts are done — never
+    // before. The toast message reflects the final backend status, not an
+    // optimistic "ready".
+    try {
+      const r = await api.reindex(proj.projectId, proj.localPath);
+      const finalStatus = (r as any)?.finalStatus || "ready";
+      const isOk = finalStatus === "ready" || finalStatus === "partial";
+      toast({
+        title: isOk ? "Re-index complete" : "Re-index finished with issues",
+        description: `${r.totalFiles} files, ${r.totalChunks} chunks · status: ${finalStatus}`,
+        variant: isOk ? "default" : "destructive",
+      });
+      const s = await api.status(proj.projectId);
+      if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s }));
+    } catch (e: any) {
+      toast({ title: "Re-index failed", description: e.message, variant: "destructive" });
+    } finally {
+      setReindexingId(null);
+    }
   };
 
   const handleCopyMessage = (id: string) => { const m = space.messages.find((m) => m.id === id); if (m) { navigator.clipboard.writeText(m.content); toast({ title: "Copied to clipboard" }); } };
