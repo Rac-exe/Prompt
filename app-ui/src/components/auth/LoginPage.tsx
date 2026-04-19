@@ -549,7 +549,7 @@ export function LoginPage({ onSwitchToSignup, onLoginSuccess, error: externalErr
                 <div>
                   <p className="text-sm font-medium text-foreground">Account scheduled for deletion</p>
                   <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                    This account is locked because deletion was requested. You can cancel the deletion within the 30-day grace period.
+                    Deletion was requested for this account. You can restore it within 30 days — after that the account and all its data are gone for good.
                   </p>
                 </div>
                 <Button

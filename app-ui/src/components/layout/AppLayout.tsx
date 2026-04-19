@@ -137,7 +137,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-amber-500/10 border-b border-amber-500/20 text-amber-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <WifiSlash size={12} weight="light" className="flex-shrink-0" />
-            <span>You're offline — Prompt optimization unavailable.</span>
+            <span>You're offline — prompt optimization is paused.</span>
           </div>
         )}
 
@@ -147,7 +147,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-red-500/10 border-b border-red-500/20 text-red-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <Warning size={12} weight="light" className="flex-shrink-0" />
-            <span>AI service unavailable — please restart the application.</span>
+            <span>AI service stopped — restart Prmpt to recover.</span>
           </div>
         )}
 
@@ -184,7 +184,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
               }}
               className="underline underline-offset-2 hover:text-emerald-300 transition-colors"
             >
-              Restart &amp; update
+              Restart now
             </button>
           </div>
         )}
