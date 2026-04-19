@@ -12,6 +12,18 @@ export interface SpaceMessage {
   content: string;
   timestamp: number;
   feedback?: { rating: "positive" | "negative" };
+  /**
+   * Version-tree metadata. Mirrors the schema used by `Index.tsx` for normal
+   * chats so `useMessageTree` can reconstruct edit/regenerate branches from a
+   * flat `messages[]` array on load. Optional for backwards-compatibility:
+   * legacy spaces persisted before the versioning rollout simply fall through
+   * the linear-chain code path inside `useMessageTree.init`.
+   *
+   *  - `groupId`      stable id shared by every version of the same logical turn
+   *  - `versionIndex` 0-based position within that group (0 = original)
+   */
+  groupId?: string;
+  versionIndex?: number;
 }
 
 export interface Space {

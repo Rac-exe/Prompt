@@ -22,7 +22,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { MessageBubble, type Message } from "@/components/chat/MessageBubble";
+import { VersionNavigator } from "@/components/chat/VersionNavigator";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
+import { useMessageTree, type VersionInfo } from "@/hooks/useMessageTree";
 import type { Space, SpaceProject, SpaceMessage, RetrieveResult } from "./types";
 import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE } from "./types";
 
@@ -64,7 +66,17 @@ function shortPath(p?: string): string {
 }
 
 function spaceMessageToMessage(sm: SpaceMessage): Message {
-  return { id: sm.id, role: sm.role, content: sm.content, timestamp: new Date(sm.timestamp), feedback: sm.feedback };
+  // Forward version metadata so the bubble can render the version-arrows and
+  // useMessageTree.init() can rebuild edit/regen branches from a fresh load.
+  return {
+    id: sm.id,
+    role: sm.role,
+    content: sm.content,
+    timestamp: new Date(sm.timestamp),
+    feedback: sm.feedback,
+    groupId: sm.groupId,
+    versionIndex: sm.versionIndex,
+  };
 }
 
 // Quick-start prompt suggestions shown on the empty conversation state.
@@ -108,6 +120,24 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   spaceRef.current = space;
   onUpdateSpaceRef.current = onUpdateSpace;
 
+  // ── Message-tree refs (versioning) ─────────────────────────────────
+  // The chat surface uses `useMessageTree` to model edit / regenerate
+  // branches as siblings under a shared parent. Spaces now mirrors that
+  // model exactly so its UX (version arrows, edit-as-branch, regen-as-
+  // branch) is identical. Implementation notes:
+  //
+  //  • IDs are generated client-side (no async resolution like the chat
+  //    has with the backend), so we only need placeholders for the *next*
+  //    assistant turn — never for user messages.
+  //  • While a turn is in flight we hold its tree-coordinates in refs so
+  //    `onStreamingComplete` (a stable callback captured by useSmoothStreaming)
+  //    can wire the response into the tree at the correct branch point.
+  const messageTree = useMessageTree();
+  const pendingPlaceholderRef = useRef<string | null>(null);
+  const pendingAssistantParentRef = useRef<string | null>(null);
+  const pendingAssistantGroupIdRef = useRef<string | null>(null);
+  const pendingAssistantVersionIdxRef = useRef<number>(0);
+
   const api = (window as any).electronAPI?.project;
   const electronAPI = (window as any).electronAPI;
 
@@ -115,15 +145,120 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // bubbling to the parent space) made the chat thread feel laggy in long
   // sessions. Memoize against the raw messages reference.
   const messages: Message[] = useMemo(() => space.messages.map(spaceMessageToMessage), [space.messages]);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
+  // ── Tree (re)initialisation ──────────────────────────────────────
+  // Rebuilt only on space switch (the parent uses `key={space.id}` so the
+  // component remounts; the ref-guard is belt-and-braces). All subsequent
+  // structural mutations go through addChild / addBranch / replaceId.
+  //
+  // CRITICAL: init runs SYNCHRONOUSLY during the first render, NOT in a
+  // useEffect. Otherwise the very first paint would show an empty active
+  // path → forcing `displayMessages` into a fallback path that previously
+  // returned every persisted message including stale assistant versions
+  // (this was the cause of the "regenerate doesn't hide the old version"
+  // bug — init was deferred so the tree was momentarily empty after each
+  // re-render, and the fallback rendered both old and new bubbles).
+  const initRanForSpaceRef = useRef<string | null>(null);
+  if (initRanForSpaceRef.current !== space.id) {
+    initRanForSpaceRef.current = space.id;
+    messageTree.init(messages);
+    pendingPlaceholderRef.current = null;
+    pendingAssistantParentRef.current = null;
+    pendingAssistantGroupIdRef.current = null;
+    pendingAssistantVersionIdxRef.current = 0;
+  }
+
+  // The hook returns a new `messageTree` object literal every render (the
+  // underlying tree state lives in refs inside the hook), so we need the
+  // ref pattern to keep the streaming-complete callback truly stable.
+  const messageTreeRef = useRef(messageTree);
+  messageTreeRef.current = messageTree;
+
+  const handleStreamingComplete = useCallback((finalMessage: Message) => {
+    const finalId = finalMessage.id || crypto.randomUUID();
+    const placeholder = pendingPlaceholderRef.current;
+    const groupId = pendingAssistantGroupIdRef.current || crypto.randomUUID();
+    const versionIndex = pendingAssistantVersionIdxRef.current;
+    const parentUserId = pendingAssistantParentRef.current;
+
+    // Wipe the in-flight markers FIRST so any synchronous re-render that
+    // observes the next state won't think there's still a turn pending.
+    pendingPlaceholderRef.current = null;
+    pendingAssistantParentRef.current = null;
+    pendingAssistantGroupIdRef.current = null;
+    pendingAssistantVersionIdxRef.current = 0;
+
+    // Patch the tree FIRST. Doing this before persisting to space.messages
+    // means the very next render sees the new branch as the active path,
+    // and the assistant lookup against the just-updated messages succeeds
+    // in the same render — no flash where the old version reappears
+    // because the path momentarily resolved to a stale leaf.
+    const tree = messageTreeRef.current;
+    if (placeholder) {
+      tree.replaceId(placeholder, finalId);
+    } else if (parentUserId) {
+      tree.addChild(parentUserId, finalId);
+    }
+
+    const assistantMsg: SpaceMessage = {
+      id: finalId,
+      role: "assistant",
+      content: finalMessage.content,
+      timestamp: Date.now(),
+      groupId,
+      versionIndex,
+    };
+    onUpdateSpaceRef.current({
+      ...spaceRef.current,
+      messages: [...spaceRef.current.messages, assistantMsg],
+      lastUsedAt: Date.now(),
+    });
+
+    setIsGenerating(false);
+    isStreamingRef.current = false;
+  }, []);
 
   const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
-    onStreamingComplete: (finalMessage: Message) => {
-      const assistantMsg: SpaceMessage = { id: finalMessage.id || crypto.randomUUID(), role: "assistant", content: finalMessage.content, timestamp: Date.now() };
-      onUpdateSpace({ ...space, messages: [...space.messages, assistantMsg], lastUsedAt: Date.now() });
-      setIsGenerating(false);
-      isStreamingRef.current = false;
-    },
+    onStreamingComplete: handleStreamingComplete,
   });
+
+  // ── Active-path projection (versioning) ──────────────────────────
+  // The display thread is the leaf-most active branch of the message tree.
+  // Placeholder ids (used while a turn is streaming) are tracked in the tree
+  // but absent from `messages`; the lookup-then-filter pattern silently drops
+  // them so the streaming bubble below renders in their slot instead.
+  //
+  // No "if path empty fall back to messages" escape hatch — that would
+  // silently bypass version filtering and re-render every persisted
+  // sibling (the very bug we're trying to avoid). Init is synchronous
+  // (above) so an empty path here means the space genuinely has no
+  // messages yet.
+  const displayMessages = useMemo<Message[]>(() => {
+    const path = messageTree.getActivePath();
+    const lookup = new Map(messages.map((m) => [m.id, m]));
+    const out: Message[] = [];
+    for (const id of path) {
+      const m = lookup.get(id);
+      if (m) out.push(m);
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, messageTree.version]);
+
+  const displayMessagesRef = useRef(displayMessages);
+  displayMessagesRef.current = displayMessages;
+
+  const versionInfoMap = useMemo(() => {
+    const map = new Map<string, VersionInfo>();
+    for (const m of displayMessages) {
+      const v = messageTree.getVersionInfo(m.id);
+      if (v) map.set(m.id, v);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayMessages, messageTree.version]);
 
   // ── Watch projects (start chokidar on enter) ─────────────────
   useEffect(() => {
@@ -300,17 +435,50 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     }
     setIsGenerating(true);
     setInput("");
-    const userMsg: SpaceMessage = { id: crypto.randomUUID(), role: "user", content: query, timestamp: Date.now() };
+
+    // Generate IDs / version metadata up-front so the user message and the
+    // (yet-to-arrive) assistant message can be wired into the tree atomically.
+    const userId = crypto.randomUUID();
+    const userGroupId = crypto.randomUUID();
+    const assistantGroupId = crypto.randomUUID();
+    const placeholderAssistantId = `placeholder-${crypto.randomUUID()}`;
+
+    const userMsg: SpaceMessage = {
+      id: userId,
+      role: "user",
+      content: query,
+      timestamp: Date.now(),
+      groupId: userGroupId,
+      versionIndex: 0,
+    };
     onUpdateSpace({ ...space, messages: [...space.messages, userMsg], lastUsedAt: Date.now() });
+
+    // Tree wiring: append user as the next leaf of the active path, then
+    // pre-seed a placeholder node for the assistant so the version arrows /
+    // active-path computation immediately reflect "we're on a fresh turn".
+    const path = messageTree.getActivePath();
+    const parentForUser = path.length > 0 ? path[path.length - 1] : messageTree.ROOT;
+    messageTree.addChild(parentForUser, userId);
+    messageTree.addChild(userId, placeholderAssistantId);
+
+    pendingPlaceholderRef.current = placeholderAssistantId;
+    pendingAssistantParentRef.current = userId;
+    pendingAssistantGroupIdRef.current = assistantGroupId;
+    pendingAssistantVersionIdxRef.current = 0;
+
     try {
       await runOptimization(query);
     } catch (e: any) {
       Sentry.captureException(e, { tags: { component: 'space-workspace' } });
       setIsGenerating(false);
       isStreamingRef.current = false;
+      pendingPlaceholderRef.current = null;
+      pendingAssistantParentRef.current = null;
+      pendingAssistantGroupIdRef.current = null;
+      pendingAssistantVersionIdxRef.current = 0;
       toast({ title: "Failed to process", description: e.message, variant: "destructive" });
     }
-  }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI]);
+  }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI, messageTree]);
 
   const handleStopGeneration = useCallback(() => { stopStreaming(); electronAPI?.stopGeneration?.(); }, [stopStreaming, electronAPI]);
 
@@ -430,19 +598,108 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
 
   const handleClearHistory = () => { onUpdateSpace({ ...space, messages: [] }); toast({ title: "History cleared" }); };
 
-  const handleRegenerate = (messageId: string) => {
-    const idx = space.messages.findIndex((m) => m.id === messageId); if (idx <= 0) return;
-    const userMsg = space.messages[idx - 1]; if (userMsg.role !== "user") return;
-    onUpdateSpace({ ...space, messages: space.messages.filter((m) => m.id !== messageId) });
-    setTimeout(async () => {
-      setIsGenerating(true);
-      try { await runOptimization(userMsg.content); }
-      catch (e: any) {
-        isStreamingRef.current = false; resetStreaming(); setIsGenerating(false);
-        toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
-      }
-    }, 50);
-  };
+  // ── Versioning: edit a user message (creates a sibling user branch) ──
+  // Mirrors `Index.tsx#handleEditMessage`. The new user message becomes a
+  // sibling of the original under the same parent, which automatically makes
+  // it the active branch. We then seed a placeholder for the assistant turn
+  // that's about to be optimized so the active path immediately stops
+  // showing the previous assistant reply.
+  const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    if (isGenerating || space.projects.length === 0) return;
+    const original = space.messages.find((m) => m.id === messageId);
+    if (!original || original.role !== "user") return;
+
+    const groupId = original.groupId || messageId;
+    const existingCount = space.messages.filter((m) => m.groupId === groupId).length;
+    const versionIndex = existingCount;
+
+    const newUserId = crypto.randomUUID();
+    const newAssistantGroupId = crypto.randomUUID();
+    const placeholderAssistantId = `placeholder-${crypto.randomUUID()}`;
+
+    // Tree first: branch the new user version, then seed assistant placeholder.
+    messageTree.addBranch(messageId, newUserId);
+    messageTree.addChild(newUserId, placeholderAssistantId);
+
+    const newUserMsg: SpaceMessage = {
+      id: newUserId,
+      role: "user",
+      content: newContent,
+      timestamp: Date.now(),
+      groupId,
+      versionIndex,
+    };
+    onUpdateSpace({ ...space, messages: [...space.messages, newUserMsg], lastUsedAt: Date.now() });
+
+    pendingPlaceholderRef.current = placeholderAssistantId;
+    pendingAssistantParentRef.current = newUserId;
+    pendingAssistantGroupIdRef.current = newAssistantGroupId;
+    pendingAssistantVersionIdxRef.current = 0;
+
+    setIsGenerating(true);
+    runOptimization(newContent).catch((e: any) => {
+      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'edit' } });
+      isStreamingRef.current = false;
+      resetStreaming();
+      setIsGenerating(false);
+      pendingPlaceholderRef.current = null;
+      pendingAssistantParentRef.current = null;
+      pendingAssistantGroupIdRef.current = null;
+      pendingAssistantVersionIdxRef.current = 0;
+      toast({ title: "Edit failed", description: e.message, variant: "destructive" });
+    });
+  }, [isGenerating, space, onUpdateSpace, runOptimization, resetStreaming, messageTree]);
+
+  // ── Versioning: regenerate an assistant message (sibling assistant branch) ──
+  // Crucially does NOT delete the previous version (the old behavior did);
+  // both versions are kept and the user can flip between them with the arrows.
+  const handleRegenerate = useCallback((assistantMessageId: string) => {
+    if (isGenerating || space.projects.length === 0) return;
+    const assistantMsg = space.messages.find((m) => m.id === assistantMessageId);
+    if (!assistantMsg) return;
+
+    // The user message that fed this assistant is whichever user message is
+    // immediately before it in the *active* path (which by construction
+    // contains the assistant we're regenerating). Read via ref so this
+    // callback's identity doesn't churn every time the active path mutates.
+    const dispMsgs = displayMessagesRef.current;
+    const idx = dispMsgs.findIndex((m) => m.id === assistantMessageId);
+    if (idx <= 0) return;
+    const userMsg = dispMsgs[idx - 1];
+    if (userMsg.role !== "user") return;
+
+    const groupId = assistantMsg.groupId || assistantMessageId;
+    const existingCount = space.messages.filter((m) => m.groupId === groupId).length;
+    const versionIndex = existingCount;
+    const placeholderAssistantId = `placeholder-${crypto.randomUUID()}`;
+
+    messageTree.addBranch(assistantMessageId, placeholderAssistantId);
+
+    pendingPlaceholderRef.current = placeholderAssistantId;
+    pendingAssistantParentRef.current = userMsg.id;
+    pendingAssistantGroupIdRef.current = groupId;
+    pendingAssistantVersionIdxRef.current = versionIndex;
+
+    setIsGenerating(true);
+    runOptimization(userMsg.content).catch((e: any) => {
+      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'regenerate' } });
+      isStreamingRef.current = false;
+      resetStreaming();
+      setIsGenerating(false);
+      pendingPlaceholderRef.current = null;
+      pendingAssistantParentRef.current = null;
+      pendingAssistantGroupIdRef.current = null;
+      pendingAssistantVersionIdxRef.current = 0;
+      toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
+    });
+  }, [isGenerating, space, runOptimization, resetStreaming, messageTree]);
+
+  const handleNavigateVersion = useCallback(
+    (parentId: string, direction: "prev" | "next") => {
+      messageTree.navigate(parentId, direction);
+    },
+    [messageTree],
+  );
 
   const project = space.projects[0];
   const projectStatus = project ? projectStatuses[project.projectId] : undefined;
@@ -914,20 +1171,40 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                 </div>
               )}
 
-              {/* Conversation thread */}
+              {/* Conversation thread (active path of the message tree).
+                  User-message version arrows are inline in the bubble (the
+                  pencil-edit triggers a sibling branch). Assistant version
+                  arrows render BELOW the bubble — exactly like the chat
+                  surface, so the two surfaces share muscle-memory. */}
               <div className="space-y-1">
-                {messages.map((msg) => (
-                  <MessageBubble
-                    key={msg.id}
-                    message={msg}
-                    onCopy={() => handleCopyMessage(msg.id)}
-                    onSave={() => handleSaveMessage(msg.id)}
-                    isSaved={false}
-                    onFeedback={msg.role === "assistant" ? handleFeedback : undefined}
-                    onRegenerate={msg.role === "assistant" ? handleRegenerate : undefined}
-                    isGenerating={isGenerating}
-                  />
-                ))}
+                {displayMessages.map((msg) => {
+                  const versionInfo = versionInfoMap.get(msg.id);
+                  return (
+                    <div key={msg.id} className="space-y-1">
+                      <MessageBubble
+                        message={msg}
+                        onCopy={() => handleCopyMessage(msg.id)}
+                        onSave={() => handleSaveMessage(msg.id)}
+                        isSaved={false}
+                        onFeedback={msg.role === "assistant" ? handleFeedback : undefined}
+                        onEdit={msg.role === "user" ? handleEditMessage : undefined}
+                        onRegenerate={msg.role === "assistant" ? handleRegenerate : undefined}
+                        isGenerating={isGenerating}
+                        versionInfo={msg.role === "user" && versionInfo ? versionInfo : undefined}
+                        onNavigateVersion={msg.role === "user" ? handleNavigateVersion : undefined}
+                      />
+                      {msg.role === "assistant" && versionInfo && (
+                        <VersionNavigator
+                          current={versionInfo.current}
+                          total={versionInfo.total}
+                          onPrev={() => handleNavigateVersion(versionInfo.parentId, "prev")}
+                          onNext={() => handleNavigateVersion(versionInfo.parentId, "next")}
+                          align="left"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
 
                 {/* Typing indicator — visible only between "user message
                     sent" and "first streaming chunk arrived". Mirrors the
