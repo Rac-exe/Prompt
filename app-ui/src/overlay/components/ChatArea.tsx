@@ -440,23 +440,18 @@ interface AssistantMessageProps {
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
   onSaveLibrary: (msgId: string) => void;
+  isSaved: boolean;
   onInsertSection?: (sectionIdx: number, text: string) => void;
   insertedSections?: Set<number>;
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
 }
 
 const AssistantMessage: React.FC<AssistantMessageProps> = ({
-  msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate, onSaveLibrary,
+  msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate, onSaveLibrary, isSaved,
   onInsertSection, insertedSections, sourceInfo,
 }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [replaceState, setReplaceState] = useState<'idle' | 'replacing' | 'replaced' | 'clipboard' | 'error'>('idle');
-  // Local "saved" latch — flips on click so the user gets immediate
-  // feedback. The CollectionPicker modal opened by the parent does the
-  // actual save; we just trust the click. If the user dismisses the
-  // modal without saving, the badge is harmless because they can click
-  // Save again to reopen the picker.
-  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
 
   const sections = useMemo(() => parseSections(msg.content), [msg.content]);
   const hasSections = sections !== null && sections.length >= 2;
@@ -478,7 +473,10 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const handleSaveLibrary = useCallback(() => {
     Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Save to library', level: 'info', data: { msgId: msg.id } });
     onSaveLibrary(msg.id);
-    setSaveState('saved');
+    // NOTE: We deliberately do NOT flip a local "saved" state here.
+    // The badge below is driven by `isSaved`, which the parent only
+    // sets after the save IPC actually succeeds. Otherwise dismissing
+    // the modal without saving would falsely show "Saved".
   }, [msg.id, onSaveLibrary]);
 
   return (
@@ -550,17 +548,17 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({
           <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
           {' '}Regenerate
         </button>
-        {/* Save to library — opens the CollectionPicker modal in the
-            parent. The local saveState latch only drives label/icon
-            feedback; the source of truth for "is this prompt saved" is
-            the collections database, but tracking that here would mean
-            a new IPC roundtrip per render. The optimistic latch is
-            consistent with how the legacy overlay.html behaved. */}
+        {/* Save to library — opens the SavePromptModal in the parent.
+            The "Saved" badge is driven by the parent-tracked
+            savedMsgIds set, which only flips after the save IPC
+            actually succeeds. Cancelling the modal leaves us in idle
+            so the user can re-open the picker without a misleading
+            "Saved" label. */}
         <button
-          className={`btn-msg-action${saveState === 'saved' ? ' action-success' : ''}`}
+          className={`btn-msg-action${isSaved ? ' action-success' : ''}`}
           onClick={handleSaveLibrary}
         >
-          {saveState === 'saved' ? (
+          {isSaved ? (
             <>
               <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
               {' '}Saved
@@ -606,6 +604,7 @@ interface TurnItemProps {
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
   onSaveLibrary: (msgId: string) => void;
+  savedMsgIds: Set<string>;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
   onInsertSection?: (sectionIdx: number, text: string) => void;
@@ -617,7 +616,7 @@ interface TurnItemProps {
 
 const TurnItem: React.FC<TurnItemProps> = ({
   turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
-  onEditCommit, onCopy, onReplace, onRegenerate, onSaveLibrary,
+  onEditCommit, onCopy, onReplace, onRegenerate, onSaveLibrary, savedMsgIds,
   onNavigateUser, onNavigateAssistant,
   onInsertSection, insertedSections, sourceInfo, clarificationInfo, onReoptimize,
 }) => {
@@ -668,6 +667,7 @@ const TurnItem: React.FC<TurnItemProps> = ({
             onReplace={onReplace}
             onRegenerate={onRegenerate}
             onSaveLibrary={onSaveLibrary}
+            isSaved={savedMsgIds.has(aMsg.id)}
             onInsertSection={onInsertSection}
             insertedSections={insertedSections}
             sourceInfo={sourceInfo}
@@ -703,6 +703,7 @@ interface ChatAreaProps {
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
   onSaveLibrary: (msgId: string) => void;
+  savedMsgIds: Set<string>;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
   clarificationData?: any;
@@ -717,7 +718,7 @@ interface ChatAreaProps {
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
-  onEditCommit, onCopy, onReplace, onRegenerate, onSaveLibrary,
+  onEditCommit, onCopy, onReplace, onRegenerate, onSaveLibrary, savedMsgIds,
   onNavigateUser, onNavigateAssistant,
   clarificationData, onSubmitClarification, onSkipClarification,
   onInsertSection, insertedSections, sourceInfo, clarificationAnswersByTurn, onReoptimize,
@@ -772,6 +773,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onReplace={onReplace}
           onRegenerate={onRegenerate}
           onSaveLibrary={onSaveLibrary}
+          savedMsgIds={savedMsgIds}
           onNavigateUser={onNavigateUser}
           onNavigateAssistant={onNavigateAssistant}
           onInsertSection={onInsertSection}

@@ -7,7 +7,7 @@ import ChatArea from './components/ChatArea';
 import InputSection from './components/InputSection';
 import ChatPicker from './components/ChatPicker';
 import SpacePicker from './components/SpacePicker';
-import CollectionPicker from './components/CollectionPicker';
+import { SavePromptModal } from '@/components/chat/SavePromptModal';
 import { useTurns } from './hooks/useTurns';
 import type { AttachedFile, SkillInfo, OverlaySettings } from './lib/types';
 import type { ClarifyQuestion } from '@/components/chat/ClarificationCard';
@@ -146,9 +146,21 @@ const OverlayApp: React.FC = () => {
   }
   const pendingSpaceSyncRef = useRef<PendingSpaceSync | null>(null);
 
-  // ── Collection picker state ──────────────────────────────────────────────
+  // ── Save-to-library modal state ──────────────────────────────────────────
+  // We mirror the same SavePromptModal the main app uses so the look,
+  // create-collection flow, and accessibility behaviour stay consistent
+  // across windows. Collections are pulled lazily right before opening
+  // the modal so the user always sees the freshest list (someone may
+  // have added/renamed a collection in the app between overlay opens).
   const [collectionPickerOpen, setCollectionPickerOpen] = useState(false);
   const [collectionPromptContent, setCollectionPromptContent] = useState('');
+  const [collectionPromptMsgId, setCollectionPromptMsgId] = useState<string | null>(null);
+  const [collections, setCollections] = useState<{ id: string; name: string; icon?: string }[]>([]);
+  // Tracks which assistant messages have actually been saved this session.
+  // Lives here (not inside ChatArea) because the modal that owns the
+  // success signal lives here too. Keeps the "Saved" badge honest:
+  // it only flips after the IPC save succeeds, never on mere modal open.
+  const [savedMsgIds, setSavedMsgIds] = useState<Set<string>>(new Set());
 
   // ── Streaming turn ref (for the ChatArea to know which turn is streaming)
   const streamingTurnIdxRef = useRef(-1);
@@ -450,6 +462,7 @@ const OverlayApp: React.FC = () => {
     setClarificationAnswersByTurn({});
     setInsertedSections(new Set());
     setSourceInfo(null);
+    setSavedMsgIds(new Set());
     streamingTurnIdxRef.current = -1;
     window.electronAPI?.overlay?.newSession?.();
     requestAnimationFrame(() => setTimeout(() => inputRef.current?.focus(), 80));
@@ -877,17 +890,73 @@ const OverlayApp: React.FC = () => {
   }, [getMessageContent]);
 
   // ── Save to prompt library ──
-  // Opens the CollectionPicker modal pre-loaded with this message's
-  // content. The modal handles collection selection / creation and the
-  // actual `electronAPI.overlay.save` call. We just stage the content
-  // and flip the modal open.
-  const handleSaveLibrary = useCallback((msgId: string) => {
+  // Stages the message content + msgId, eagerly fetches the user's
+  // collections (so the dropdown isn't empty on first paint), then
+  // opens the shared SavePromptModal. The actual save IPC happens in
+  // handleSavePrompt below — this just opens the picker.
+  const handleSaveLibrary = useCallback(async (msgId: string) => {
     const content = getMessageContent(msgId);
     if (!content) return;
     Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Open save-to-library picker', level: 'info', data: { msgId, contentLen: content.length } });
     setCollectionPromptContent(content);
+    setCollectionPromptMsgId(msgId);
+    try {
+      const result = await window.electronAPI?.overlay?.getCollections?.();
+      setCollections(Array.isArray(result) ? result : []);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'load-collections' } });
+      setCollections([]);
+    }
     setCollectionPickerOpen(true);
   }, [getMessageContent]);
+
+  // ── Persist a saved prompt ──
+  // Called by SavePromptModal when the user confirms. Mirrors the
+  // app-side handleSavePrompt: optionally creates a new collection
+  // first, then writes the prompt. Only marks the source assistant
+  // message as "Saved" after the IPC actually succeeds — dismissing
+  // the modal or hitting an error must NOT light up the badge,
+  // otherwise the icon lies to the user.
+  const handleSavePrompt = useCallback(async (collectionId: string, title: string, newCollectionName?: string) => {
+    const msgId = collectionPromptMsgId;
+    if (!msgId) return;
+    try {
+      let targetCollectionId = collectionId;
+      if (collectionId === 'new' && newCollectionName) {
+        const created = await window.electronAPI?.overlay?.createCollection?.(newCollectionName);
+        if (created?.id) {
+          targetCollectionId = created.id;
+          setCollections((prev) => [...prev, { id: created.id, name: created.name || newCollectionName, icon: created.icon }]);
+        } else {
+          throw new Error('Failed to create collection');
+        }
+      }
+      await window.electronAPI?.overlay?.save?.({
+        title,
+        content: collectionPromptContent,
+        collectionId: targetCollectionId,
+      });
+      setSavedMsgIds((prev) => {
+        const next = new Set(prev);
+        next.add(msgId);
+        return next;
+      });
+      Sentry.addBreadcrumb({
+        category: 'overlay.action',
+        message: 'Prompt saved to library',
+        level: 'info',
+        data: { msgId, collectionId: targetCollectionId, createdNewCollection: collectionId === 'new' },
+      });
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'save-prompt' }, extra: { msgId } });
+      // Surface the failure via the existing error banner — otherwise
+      // the modal closes silently and the user has no idea their save
+      // didn't land. We don't include err.message verbatim because it
+      // can be a raw Postgres error; a generic line keeps PII risk low.
+      setErrorMessage('Could not save prompt. Please try again.');
+      setTimeout(() => setErrorMessage(null), 5000);
+    }
+  }, [collectionPromptMsgId, collectionPromptContent]);
 
   // ── Replace (insert into original app) ──
   const handleReplace = useCallback(async (msgId: string) => {
@@ -1074,6 +1143,7 @@ const OverlayApp: React.FC = () => {
                 onReplace={handleReplace}
                 onRegenerate={handleRegenerate}
                 onSaveLibrary={handleSaveLibrary}
+                savedMsgIds={savedMsgIds}
                 onNavigateUser={navigateUserVersion}
                 onNavigateAssistant={navigateAssistantVersion}
                 clarificationData={clarificationData}
@@ -1134,12 +1204,20 @@ const OverlayApp: React.FC = () => {
           initialSpaceId={selectedSpace?.id ?? null}
         />
 
-        {/* Collection picker modal */}
-        <CollectionPicker
+        {/* Save-to-library modal — same component the main app uses
+            so styling, create-collection flow, and a11y stay aligned.
+            Closing the modal without saving leaves savedMsgIds untouched
+            so the source message's "Save" button stays in its idle state. */}
+        <SavePromptModal
           open={collectionPickerOpen}
-          promptContent={collectionPromptContent}
-          onClose={() => setCollectionPickerOpen(false)}
-          onSaved={() => {}}
+          onClose={() => {
+            setCollectionPickerOpen(false);
+            setCollectionPromptMsgId(null);
+          }}
+          collections={collections}
+          onSave={handleSavePrompt}
+          promptPreview={collectionPromptContent}
+          compact
         />
       </div>
 
