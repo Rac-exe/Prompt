@@ -11,7 +11,8 @@ import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { ProjectsView } from "@/components/projects/ProjectsView";
-import { loadSpaces, toSpaceSummary } from "@/components/projects/types";
+import { loadSpaces, saveSpaces, toSpaceSummary, flushSpacesSaves } from "@/components/projects/types";
+import type { SpaceMessage } from "@/components/projects/types";
 import { Message } from "@/components/chat/MessageBubble";
 import type { ClarifyQuestion } from "@/components/chat/ClarificationCard";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
@@ -110,6 +111,75 @@ const Index = () => {
       }
     }
   }, [user?.profile?.id]);
+
+  // ── Always-on overlay→app Spaces append sync ────────────────────────
+  // Persistence layer for `spaces:apply-append`. Previously this listener
+  // lived in ProjectsView, which is mounted lazily — only when the user
+  // navigates to the Spaces tab. That meant overlay chats against a Space
+  // the user had never opened in-app silently evaporated (the main process
+  // forwarded `spaces:apply-append`, but nothing in the app window was
+  // listening). Fresh Spaces with no prior history were the common-case
+  // victims; spaces with existing chats "worked" only because the user
+  // had previously visited the Spaces tab and kept the listener mounted.
+  //
+  // Hoisting the persistence write to Index.tsx (always mounted once auth
+  // resolves) guarantees the append lands in localStorage regardless of
+  // the current view. ProjectsView keeps its own listener for live React
+  // state updates while the Spaces tab is open — both listeners de-dupe
+  // by message id and converge on the same final state, so running them
+  // in parallel is safe.
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    userIdRef.current = user?.profile?.id ?? null;
+  }, [user?.profile?.id]);
+
+  useEffect(() => {
+    const spacesApi = (window as any).electronAPI?.spaces;
+    if (!spacesApi?.onApplyAppend) return;
+    const unsub = spacesApi.onApplyAppend((payload: { spaceId: string; messages: SpaceMessage[] }) => {
+      try {
+        if (!payload?.spaceId || !Array.isArray(payload.messages) || payload.messages.length === 0) return;
+        const uid = userIdRef.current;
+        if (!uid) return;
+
+        // Flush any pending debounced writes first so we're not racing
+        // ProjectsView's save timer against our synchronous write.
+        flushSpacesSaves();
+
+        const snapshot = loadSpaces(uid);
+        const idx = snapshot.findIndex((s) => s.id === payload.spaceId);
+        if (idx === -1) return;
+
+        const target = snapshot[idx];
+        const existingIds = new Set(target.messages.map((m) => m.id));
+        const fresh = payload.messages.filter((m) => !existingIds.has(m.id));
+        if (fresh.length === 0) return;
+
+        const next = snapshot.slice();
+        next[idx] = {
+          ...target,
+          messages: [...target.messages, ...fresh],
+          lastUsedAt: Date.now(),
+        };
+        saveSpaces(next, uid);
+
+        // Re-publish the snapshot so the main-process cache (and any
+        // other window that reads it) reflects the bumped lastUsedAt.
+        // Safe to call synchronously — payload is the lightweight
+        // projection, no messages leak across the bridge.
+        try {
+          if (spacesApi.publishSnapshot) {
+            spacesApi.publishSnapshot(next.map(toSpaceSummary));
+          }
+        } catch {
+          // ignore — main cache will catch up on next ProjectsView mount
+        }
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: "index", op: "spaces-apply-append" } });
+      }
+    });
+    return () => { unsub?.(); };
+  }, []);
 
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library" | "projects">("chat");

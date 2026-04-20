@@ -253,6 +253,14 @@ interface ContextPillRowProps {
   onRemoveChat: () => void;
   onAttachSpace: () => void;
   onRemoveSpace: () => void;
+  /** When false, the chat-attach pill/button is not rendered at all.
+   *  Used by the Spaces mode to keep the composer clean (in Spaces mode
+   *  the Space IS the context, so a second attach affordance is noise).*/
+  showChatAttach: boolean;
+  /** When false, the space-attach pill/button is not rendered at all.
+   *  Used by the Chat mode because attaching a Space is now handled by
+   *  switching into Spaces mode from the header, not by a button here. */
+  showSpaceAttach: boolean;
 }
 
 const ContextPillRow: React.FC<ContextPillRowProps> = ({
@@ -261,63 +269,70 @@ const ContextPillRow: React.FC<ContextPillRowProps> = ({
   spaceId, spaceName, spaceStatus,
   onAttachChat, onRemoveChat,
   onAttachSpace, onRemoveSpace,
+  showChatAttach, showSpaceAttach,
 }) => {
   if (!isAuthenticated) return null;
+  // When both affordances are hidden (e.g. spaces-mode with no extra
+  // context concept) we still return null rather than an empty row so the
+  // composer doesn't reserve vertical space for nothing.
+  if (!showChatAttach && !showSpaceAttach) return null;
   const statusMeta = getSpaceStatusMeta(spaceStatus);
   return (
     <div className="context-pill-row" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
       {/* Chat context pill / button */}
-      {chatId ? (
-        <span className="context-pill">
-          <svg style={{ width: 11, height: 11, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-          </svg>
-          <span className="context-pill-name">{chatName}</span>
-          <button className="context-pill-remove" title="Remove context" onClick={onRemoveChat}>✕</button>
-        </span>
-      ) : (
-        <button className="btn-attach-context" onClick={onAttachChat}>
-          <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-          </svg>
-          Attach Chat Context
-        </button>
+      {showChatAttach && (
+        chatId ? (
+          <span className="context-pill">
+            <svg style={{ width: 11, height: 11, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <span className="context-pill-name">{chatName}</span>
+            <button className="context-pill-remove" title="Remove context" onClick={onRemoveChat}>✕</button>
+          </span>
+        ) : (
+          <button className="btn-attach-context" onClick={onAttachChat}>
+            <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+            </svg>
+            Attach Chat Context
+          </button>
+        )
       )}
 
       {/* Space context pill / button — sibling of the chat affordance.
           When a space is attached we render a chip identical in shape to
           the chat pill so the user has a uniform visual model: chip ⇒
           context attached, button ⇒ tap to attach. */}
-      {spaceId ? (
-        <span className="context-pill" title={`${spaceName} — ${statusMeta.label}`}>
-          <svg style={{ width: 11, height: 11, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-          </svg>
-          <span className="context-pill-name">{spaceName}</span>
-          <span
-            aria-label={statusMeta.label}
-            title={statusMeta.label}
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              background: statusMeta.dot,
-              flexShrink: 0,
-              boxShadow: `0 0 0 2px ${statusMeta.dot}33`,
-              // Subtle pulse while indexing so the user can tell at a glance
-              // that the folder is actively being processed.
-              animation: spaceStatus === 'indexing' ? 'overlay-status-pulse 1.4s ease-in-out infinite' : undefined,
-            }}
-          />
-          <button className="context-pill-remove" title="Detach space" onClick={onRemoveSpace}>✕</button>
-        </span>
-      ) : (
-        <button className="btn-attach-context" onClick={onAttachSpace}>
-          <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-          </svg>
-          Attach Space
-        </button>
+      {showSpaceAttach && (
+        spaceId ? (
+          <span className="context-pill" title={`${spaceName} — ${statusMeta.label}`}>
+            <svg style={{ width: 11, height: 11, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+            <span className="context-pill-name">{spaceName}</span>
+            <span
+              aria-label={statusMeta.label}
+              title={statusMeta.label}
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: statusMeta.dot,
+                flexShrink: 0,
+                boxShadow: `0 0 0 2px ${statusMeta.dot}33`,
+                animation: spaceStatus === 'indexing' ? 'overlay-status-pulse 1.4s ease-in-out infinite' : undefined,
+              }}
+            />
+            <button className="context-pill-remove" title="Detach space" onClick={onRemoveSpace}>✕</button>
+          </span>
+        ) : (
+          <button className="btn-attach-context" onClick={onAttachSpace}>
+            <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+            Attach Space
+          </button>
+        )
       )}
     </div>
   );
@@ -350,6 +365,13 @@ interface InputSectionProps {
   onRemoveContext: () => void;
   onAttachSpace: () => void;
   onRemoveSpace: () => void;
+  /** Show the "Attach Chat Context" pill/button. Defaults to true for
+   *  backwards-compat; Spaces mode passes false. */
+  showChatAttach?: boolean;
+  /** Show the "Attach Space" pill/button. Defaults to true for
+   *  backwards-compat; Chat mode passes false because space-attach lives
+   *  in the header mode switcher now, not the composer. */
+  showSpaceAttach?: boolean;
   /** Ref so parent can set prefill text */
   inputRef?: React.RefObject<HTMLTextAreaElement>;
 }
@@ -363,6 +385,8 @@ const InputSection: React.FC<InputSectionProps> = ({
   onSend, onStop, onAttachFiles, onRemoveFile,
   onSelectSkill, onRemoveSkill, onAttachContext, onRemoveContext,
   onAttachSpace, onRemoveSpace,
+  showChatAttach = true,
+  showSpaceAttach = true,
   inputRef: externalInputRef,
 }) => {
   const internalInputRef = useRef<HTMLTextAreaElement>(null);
@@ -571,6 +595,8 @@ const InputSection: React.FC<InputSectionProps> = ({
         onRemoveChat={onRemoveContext}
         onAttachSpace={onAttachSpace}
         onRemoveSpace={onRemoveSpace}
+        showChatAttach={showChatAttach}
+        showSpaceAttach={showSpaceAttach}
       />
 
       <input
