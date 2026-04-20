@@ -441,6 +441,15 @@ const OverlayApp: React.FC = () => {
     setStreamingContent('');
     setErrorMessage(null);
     setClarificationData(null);
+    // Reset per-turn auxiliary state. These maps/sets are keyed by
+    // turnIdx, but `clearAll` resets the turns array — meaning the
+    // very next prompt becomes turnIdx 0 and would inherit whatever
+    // entries the previous session left behind at index 0. The most
+    // visible symptom is the "Your preferences" clarification summary
+    // card from the prior session reappearing above a brand-new turn.
+    setClarificationAnswersByTurn({});
+    setInsertedSections(new Set());
+    setSourceInfo(null);
     streamingTurnIdxRef.current = -1;
     window.electronAPI?.overlay?.newSession?.();
     requestAnimationFrame(() => setTimeout(() => inputRef.current?.focus(), 80));
