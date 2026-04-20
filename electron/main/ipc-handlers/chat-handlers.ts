@@ -288,8 +288,18 @@ export function registerChatHandlers(
                     null,
                     null,
                     false,
-                    getActiveProjectId(),
-                    getActiveProjectBranch(),
+                    // Space mode: the renderer (SpaceWorkspace) has already
+                    // run retrieval against the *correct* space-scoped
+                    // project_id(s) and embedded the resulting chunks into
+                    // `promptText` via buildTailoredPrompt. Passing the
+                    // global `getActiveProjectId()` here would trigger a
+                    // SECOND retrieval inside the Python optimizer against
+                    // whichever folder was last "active" globally — which
+                    // is often a different space's folder, leaking its
+                    // code into the prompt. Skip the server-side retrieval
+                    // entirely in space mode.
+                    source === 'space' ? null : getActiveProjectId(),
+                    source === 'space' ? null : getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
