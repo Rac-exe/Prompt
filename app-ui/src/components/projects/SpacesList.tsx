@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { Space } from "./types";
+import { IndexingProgressBar } from "./IndexingProgressBar";
 
 interface SpacesListProps {
   spaces: Space[];
@@ -216,6 +217,17 @@ const SpaceCard = memo(function SpaceCard({
           </span>
         )}
       </div>
+
+      {/* Bottom-anchored indeterminate bar — flush with the card's lower
+          edge so the motion reads as "this card is working" without
+          stealing attention from the title/stats above. Only rendered
+          while indexing; other states rely on the status dot beside the
+          title. */}
+      {status === "indexing" && (
+        <div className="absolute bottom-0 left-3 right-3 pb-1.5">
+          <IndexingProgressBar variant="block" />
+        </div>
+      )}
     </div>
   );
 });

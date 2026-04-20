@@ -27,6 +27,7 @@ import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
 import { useMessageTree, type VersionInfo } from "@/hooks/useMessageTree";
 import type { Space, SpaceProject, SpaceMessage, RetrieveResult } from "./types";
 import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE } from "./types";
+import { IndexingProgressBar } from "./IndexingProgressBar";
 
 interface ProjectInfo {
   id: string;
@@ -762,7 +763,11 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                   <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-muted/40 border border-border/30 text-[11px] font-medium text-muted-foreground/80 select-none">
                     <FolderOpen size={11} weight="duotone" className="text-emerald" />
                     <span className="max-w-[140px] truncate">{project!.name}</span>
-                    <span className={cn("w-1.5 h-1.5 rounded-full ml-0.5", meta.dot, indexStatus === "indexing" && "animate-pulse")} />
+                    {indexStatus === "indexing" ? (
+                      <IndexingProgressBar className="ml-0.5" />
+                    ) : (
+                      <span className={cn("w-1.5 h-1.5 rounded-full ml-0.5", meta.dot)} />
+                    )}
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="text-xs">
@@ -875,7 +880,11 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                 <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium text-muted-foreground/80 hover:bg-muted/30 transition-colors cursor-default">
                   <FolderOpen size={11} weight="duotone" className="text-emerald/80" />
                   <span className="max-w-[160px] truncate">{project!.name}</span>
-                  <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot, indexStatus === "indexing" && "animate-pulse")} />
+                  {indexStatus === "indexing" ? (
+                    <IndexingProgressBar />
+                  ) : (
+                    <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
+                  )}
                 </div>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">
@@ -943,10 +952,17 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                           </>
                         )}
                         <span className={cn("flex items-center gap-1", meta.color)}>
-                          <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot, indexStatus === "indexing" && "animate-pulse")} />
+                          {indexStatus === "indexing" ? (
+                            <IndexingProgressBar />
+                          ) : (
+                            <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
+                          )}
                           {meta.label}
                         </span>
                       </div>
+                      {indexStatus === "indexing" && (
+                        <IndexingProgressBar variant="block" className="mt-2" />
+                      )}
                     </div>
                   </div>
                 )}
@@ -1143,10 +1159,24 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                       "flex items-center gap-1.5 px-2 py-1 rounded-md ring-1",
                       meta.color, meta.ring,
                     )}>
-                      <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot, indexStatus === "indexing" && "animate-pulse")} />
+                      {indexStatus === "indexing" ? (
+                        <IndexingProgressBar />
+                      ) : (
+                        <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
+                      )}
                       {meta.label}
                     </span>
                   </div>
+
+                  {/* Prominent full-width indeterminate bar when indexing.
+                      Anchored under the status strip in the empty state so
+                      the user immediately sees motion on first load of a
+                      new folder — prevents the "did it freeze?" panic. */}
+                  {indexStatus === "indexing" && (
+                    <div className="mt-3 w-full max-w-sm mx-auto">
+                      <IndexingProgressBar variant="block" />
+                    </div>
+                  )}
 
                   {/* Quick prompt suggestions — wider 2-up grid on md, full
                       width on lg so the cards fill the conversation column
