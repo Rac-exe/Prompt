@@ -80,15 +80,6 @@ function spaceMessageToMessage(sm: SpaceMessage): Message {
   };
 }
 
-// Quick-start prompt suggestions shown on the empty conversation state.
-// They are only hints — clicking one drops the text into the composer.
-const QUICK_PROMPTS = [
-  "Explain how authentication works in this project",
-  "Find places where we handle file uploads",
-  "Add error handling to the API client",
-  "Refactor the data layer for testability",
-];
-
 interface SpaceWorkspaceProps {
   space: Space;
   onUpdateSpace: (space: Space) => void;
@@ -1178,26 +1169,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                     </div>
                   )}
 
-                  {/* Quick prompt suggestions — wider 2-up grid on md, full
-                      width on lg so the cards fill the conversation column
-                      instead of leaving a dead margin on the right. */}
-                  <div className="mt-9 w-full">
-                    <div className="text-[10.5px] uppercase tracking-wider text-muted-foreground/45 font-semibold mb-3">
-                      Try one of these
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                      {QUICK_PROMPTS.map((qp) => (
-                        <button
-                          key={qp}
-                          onClick={() => { setInput(qp); inputRef.current?.focus(); }}
-                          className="group text-left px-4 py-3.5 rounded-xl border border-border/30 bg-card/20 hover:border-emerald/40 hover:bg-card/55 transition-all text-[13px] text-foreground/85 hover:text-foreground leading-relaxed flex items-start gap-2.5"
-                        >
-                          <Sparkle size={12} weight="duotone" className="text-emerald/60 group-hover:text-emerald mt-0.5 flex-shrink-0 transition-colors" />
-                          <span>{qp}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               )}
 
