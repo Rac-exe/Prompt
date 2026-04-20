@@ -246,10 +246,12 @@ const OverlayApp: React.FC = () => {
       setIsOptimizing(false);
       setIsLoading(false);
       const optimized = data.optimized || '';
-      // Treat space-attached turns as "auto-saved" too — the assistant
-      // message lives in the Space, not in chat history, but the UI
-      // affordance for "this turn is persisted" still applies.
-      const autoSaved = !!selectedChatIdRef.current || !!selectedSpaceRef.current;
+      // The "Saved to chat" badge is strictly for chat-context turns —
+      // showing it for space-attached turns is misleading because those
+      // messages live in the Space, not in a chat. The space itself
+      // already exposes the conversation in its own UI, so an extra
+      // badge here adds nothing but visual noise.
+      const autoSaved = !!selectedChatIdRef.current;
       registerAssistantMessage(optimized, autoSaved);
       setStreamingContent('');
       streamingTurnIdxRef.current = -1;
@@ -865,6 +867,19 @@ const OverlayApp: React.FC = () => {
     if (content) window.electronAPI?.overlay?.copy?.(content);
   }, [getMessageContent]);
 
+  // ── Save to prompt library ──
+  // Opens the CollectionPicker modal pre-loaded with this message's
+  // content. The modal handles collection selection / creation and the
+  // actual `electronAPI.overlay.save` call. We just stage the content
+  // and flip the modal open.
+  const handleSaveLibrary = useCallback((msgId: string) => {
+    const content = getMessageContent(msgId);
+    if (!content) return;
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Open save-to-library picker', level: 'info', data: { msgId, contentLen: content.length } });
+    setCollectionPromptContent(content);
+    setCollectionPickerOpen(true);
+  }, [getMessageContent]);
+
   // ── Replace (insert into original app) ──
   const handleReplace = useCallback(async (msgId: string) => {
     const content = getMessageContent(msgId);
@@ -1026,6 +1041,7 @@ const OverlayApp: React.FC = () => {
                 onCopy={handleCopy}
                 onReplace={handleReplace}
                 onRegenerate={handleRegenerate}
+                onSaveLibrary={handleSaveLibrary}
                 onNavigateUser={navigateUserVersion}
                 onNavigateAssistant={navigateAssistantVersion}
                 clarificationData={clarificationData}

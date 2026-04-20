@@ -140,6 +140,11 @@ interface PendingOverlayOptimization {
     userVersionIndex?: number;
     assistantGroupId?: string;
     assistantVersionIndex?: number;
+    // Carried through the clarification round-trip so the resume
+    // path can apply the same project-isolation rule (skip the
+    // server-side retrieval) as the direct path.
+    spaceMode?: boolean;
+    spaceId?: string;
   };
   customInstructions: string;
   historyContext: Array<{ role: string; content: string }> | null;
@@ -382,8 +387,17 @@ export function registerOverlayHandlers(
         data.previousOutput || null,
         data.clarificationAnswers || null,
         data.wantsSections,
-        getActiveProjectId(),
-        getActiveProjectBranch(),
+        // Space mode: the overlay renderer (App.tsx → buildSpacePrompt)
+        // has already run retrieval against the *attached* space's
+        // project_id(s) and embedded the resulting chunks into
+        // `data.text` via buildTailoredPrompt. Passing the global
+        // `getActiveProjectId()` here would trigger a SECOND retrieval
+        // inside the Python optimizer against whichever folder was
+        // last "active" globally — which is often a different space's
+        // folder, leaking its code into the prompt. Skip the
+        // server-side retrieval entirely in space mode.
+        data.spaceMode ? null : getActiveProjectId(),
+        data.spaceMode ? null : getActiveProjectBranch(),
       );
 
       // Add the assistant's response to history (skip in spaceMode for
@@ -1125,8 +1139,10 @@ export function registerOverlayHandlers(
         pending.data.previousOutput || null,
         formattedAnswers || null,
         submitData.wantsSections,
-        getActiveProjectId(),
-        getActiveProjectBranch(),
+        // Same space-mode isolation as the non-clarification path —
+        // see comment at the primary optimizeStream call above.
+        pending.data.spaceMode ? null : getActiveProjectId(),
+        pending.data.spaceMode ? null : getActiveProjectBranch(),
       );
 
       inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });

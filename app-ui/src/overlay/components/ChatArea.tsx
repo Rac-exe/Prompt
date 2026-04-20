@@ -439,17 +439,24 @@ interface AssistantMessageProps {
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
+  onSaveLibrary: (msgId: string) => void;
   onInsertSection?: (sectionIdx: number, text: string) => void;
   insertedSections?: Set<number>;
   sourceInfo?: { appName: string; detectedMode: 'chat' | 'document'; confidence: 'high' | 'low' } | null;
 }
 
 const AssistantMessage: React.FC<AssistantMessageProps> = ({
-  msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate,
+  msg, turnIdx, isOptimizing, showReplace, onCopy, onReplace, onRegenerate, onSaveLibrary,
   onInsertSection, insertedSections, sourceInfo,
 }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [replaceState, setReplaceState] = useState<'idle' | 'replacing' | 'replaced' | 'clipboard' | 'error'>('idle');
+  // Local "saved" latch — flips on click so the user gets immediate
+  // feedback. The CollectionPicker modal opened by the parent does the
+  // actual save; we just trust the click. If the user dismisses the
+  // modal without saving, the badge is harmless because they can click
+  // Save again to reopen the picker.
+  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
 
   const sections = useMemo(() => parseSections(msg.content), [msg.content]);
   const hasSections = sections !== null && sections.length >= 2;
@@ -467,6 +474,12 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({
     onReplace(msg.id);
     setTimeout(() => setReplaceState('idle'), 3000);
   }, [msg.id, onReplace, hasSections, sections]);
+
+  const handleSaveLibrary = useCallback(() => {
+    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Save to library', level: 'info', data: { msgId: msg.id } });
+    onSaveLibrary(msg.id);
+    setSaveState('saved');
+  }, [msg.id, onSaveLibrary]);
 
   return (
     <div className="chat-message">
@@ -537,13 +550,28 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({
           <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
           {' '}Regenerate
         </button>
-        {/* Auto-saved badge */}
-        {msg.autoSavedToChat && (
-          <span className="btn-msg-action action-success" style={{ pointerEvents: 'none', cursor: 'default' }}>
-            <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-            {' '}Saved to chat
-          </span>
-        )}
+        {/* Save to library — opens the CollectionPicker modal in the
+            parent. The local saveState latch only drives label/icon
+            feedback; the source of truth for "is this prompt saved" is
+            the collections database, but tracking that here would mean
+            a new IPC roundtrip per render. The optimistic latch is
+            consistent with how the legacy overlay.html behaved. */}
+        <button
+          className={`btn-msg-action${saveState === 'saved' ? ' action-success' : ''}`}
+          onClick={handleSaveLibrary}
+        >
+          {saveState === 'saved' ? (
+            <>
+              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+              {' '}Saved
+            </>
+          ) : (
+            <>
+              <svg style={{ width: 12, height: 12 }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+              {' '}Save
+            </>
+          )}
+        </button>
       </div>
 
     </div>
@@ -577,6 +605,7 @@ interface TurnItemProps {
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
+  onSaveLibrary: (msgId: string) => void;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
   onInsertSection?: (sectionIdx: number, text: string) => void;
@@ -588,7 +617,8 @@ interface TurnItemProps {
 
 const TurnItem: React.FC<TurnItemProps> = ({
   turn, turnIdx, isOptimizing, isStreamingHere, streamingContent, showReplace,
-  onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
+  onEditCommit, onCopy, onReplace, onRegenerate, onSaveLibrary,
+  onNavigateUser, onNavigateAssistant,
   onInsertSection, insertedSections, sourceInfo, clarificationInfo, onReoptimize,
 }) => {
   const uIdx = turn.userActiveIdx;
@@ -637,6 +667,7 @@ const TurnItem: React.FC<TurnItemProps> = ({
             onCopy={onCopy}
             onReplace={onReplace}
             onRegenerate={onRegenerate}
+            onSaveLibrary={onSaveLibrary}
             onInsertSection={onInsertSection}
             insertedSections={insertedSections}
             sourceInfo={sourceInfo}
@@ -671,6 +702,7 @@ interface ChatAreaProps {
   onCopy: (msgId: string) => void;
   onReplace: (msgId: string) => void;
   onRegenerate: (turnIdx: number) => void;
+  onSaveLibrary: (msgId: string) => void;
   onNavigateUser: (turnIdx: number, dir: 1 | -1) => void;
   onNavigateAssistant: (turnIdx: number, dir: 1 | -1) => void;
   clarificationData?: any;
@@ -685,7 +717,8 @@ interface ChatAreaProps {
 
 const ChatArea: React.FC<ChatAreaProps> = ({
   turns, isOptimizing, isLoading, errorMessage, streamingTurnIdx, streamingContent, showReplace,
-  onEditCommit, onCopy, onReplace, onRegenerate, onNavigateUser, onNavigateAssistant,
+  onEditCommit, onCopy, onReplace, onRegenerate, onSaveLibrary,
+  onNavigateUser, onNavigateAssistant,
   clarificationData, onSubmitClarification, onSkipClarification,
   onInsertSection, insertedSections, sourceInfo, clarificationAnswersByTurn, onReoptimize,
 }) => {
@@ -738,6 +771,7 @@ const ChatArea: React.FC<ChatAreaProps> = ({
           onCopy={onCopy}
           onReplace={onReplace}
           onRegenerate={onRegenerate}
+          onSaveLibrary={onSaveLibrary}
           onNavigateUser={onNavigateUser}
           onNavigateAssistant={onNavigateAssistant}
           onInsertSection={onInsertSection}
