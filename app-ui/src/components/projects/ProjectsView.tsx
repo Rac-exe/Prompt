@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import * as Sentry from "@sentry/react";
 import { SpacesList } from "./SpacesList";
 import { SpaceWorkspace } from "./SpaceWorkspace";
@@ -33,14 +33,15 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
 
   // Reload spaces whenever the signed-in user changes (login, logout,
   // account switch). Without this, React state from the previous account
-  // would leak into the next one. Also flush any pending writes so we don't
-  // overwrite the new user's storage with the previous user's payload, and
-  // re-allow the per-session ensureFresh side effect to fire for the new user.
+  // would leak into the next one. Also flush any pending writes so we
+  // don't overwrite the new user's storage with the previous user's
+  // payload. (ensureFresh now lives in pages/Index.tsx and re-fires
+  // automatically on userId change there — no per-session guard needed
+  // here anymore.)
   useEffect(() => {
     flushSpacesSaves();
     setSpaces(loadSpaces(userId));
     setActiveSpaceId(null);
-    ensureFreshFiredRef.current = false;
   }, [userId]);
 
   useEffect(() => {
@@ -105,44 +106,13 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
   }, []);
 
   // ── Auto-reindex on app open ────────────────────────────
-  // When the user explicitly quits from the system tray and relaunches the
-  // app, the chokidar watchers were torn down with the process — meaning any
-  // file edits made while the app was closed are not in the index. We ask
-  // the main process to (a) restart watchers and (b) trigger a full reindex
-  // for every project whose backend status is `stale`/`indexing`/`error`.
-  //
-  // CRITICAL: this must fire ONLY for projects that existed BEFORE this
-  // session started — never for projects the user adds during the session.
-  // Otherwise newly-added folders get a redundant reindex queued on top of
-  // the initial scan, briefly flashing "stale" in the UI and wasting work.
-  //
-  // We read directly from `loadSpaces(userId)` (the persisted snapshot) so
-  // this effect doesn't depend on React's `spaces` state — adding a folder
-  // mutates `spaces` but doesn't re-trigger ensure-fresh.
-  const ensureFreshFiredRef = useRef<boolean>(false);
-  const ensureFreshUserRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!api?.ensureFresh || !userId) return;
-    if (ensureFreshFiredRef.current && ensureFreshUserRef.current === userId) return;
-
-    ensureFreshFiredRef.current = true;
-    ensureFreshUserRef.current = userId;
-
-    const persisted = loadSpaces(userId);
-    const projectsToCheck = persisted.flatMap((s) =>
-      s.projects
-        .filter((p) => p.projectId && p.localPath)
-        .map((p) => ({ projectId: p.projectId, localPath: p.localPath })),
-    );
-
-    if (projectsToCheck.length === 0) return;
-
-    api
-      .ensureFresh(projectsToCheck)
-      .catch((err: unknown) => {
-        Sentry.captureException(err, { tags: { component: "projects-view", op: "ensure-fresh" } });
-      });
-  }, [api, userId]);
+  // Lives in `pages/Index.tsx` now (see the bootstrap effect there).
+  // ProjectsView is mounted lazily — only when the user navigates to the
+  // Spaces tab — so an overlay-only flow never triggered ensure-fresh,
+  // leaving the user working against stale embeddings with no chokidar
+  // watcher running. Hoisting the bootstrap to the always-mounted root
+  // fixes that. ProjectsView no longer fires it (would double-scan the
+  // first time the user opens the Spaces tab).
 
   // ── Live status map for every project across every space ─────────────
   // Powers the per-card status dot in SpacesList. We fetch once on mount

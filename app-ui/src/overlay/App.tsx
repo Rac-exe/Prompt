@@ -987,17 +987,40 @@ const OverlayApp: React.FC = () => {
           setSpacePickerOpen(false);
           return;
         }
+        const projects = (target.projects || []).map((p: any) => ({
+          projectId: p.projectId,
+          name: p.name,
+          localPath: p.localPath,
+          branch: p.branch,
+        }));
         setSelectedSpace({
           id: target.id,
           name: target.name || spaceName,
-          projects: (target.projects || []).map((p: any) => ({
-            projectId: p.projectId,
-            name: p.name,
-            localPath: p.localPath,
-            branch: p.branch,
-          })),
+          projects,
         });
         setSpacePickerOpen(false);
+
+        // Defense-in-depth: a space the user *creates* during this session
+        // and then attaches in the overlay (without ever opening the
+        // Spaces tab afterwards) would otherwise skip the cold-start
+        // hash-diff scan and never get a chokidar watcher started for its
+        // projects. Kicking ensureFresh on attach is cheap — it
+        // short-circuits when nothing has drifted — and the existing
+        // onOverlayStatus subscription will surface any indexing/ready
+        // transitions on the chip.
+        try {
+          const projectApi = window.electronAPI?.project as any;
+          const toCheck = projects
+            .filter((p) => p.projectId && p.localPath)
+            .map((p) => ({ projectId: p.projectId, localPath: p.localPath }));
+          if (projectApi?.ensureFresh && toCheck.length > 0) {
+            projectApi.ensureFresh(toCheck).catch((err: unknown) => {
+              Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'attach-ensure-fresh' } });
+            });
+          }
+        } catch (err) {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'attach-ensure-fresh' } });
+        }
       })
       .catch((err) => {
         Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-picker-confirm' } });

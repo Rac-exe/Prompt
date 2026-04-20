@@ -11,6 +11,7 @@ import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { ProjectsView } from "@/components/projects/ProjectsView";
+import { loadSpaces, toSpaceSummary } from "@/components/projects/types";
 import { Message } from "@/components/chat/MessageBubble";
 import type { ClarifyQuestion } from "@/components/chat/ClarificationCard";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
@@ -48,6 +49,67 @@ const Index = () => {
 
   // Initialize settings after authentication, scoped to user
   useInitializeSettings(user?.profile?.id);
+
+  // ── Bootstrap Spaces for overlay + drift reconciliation ────────────
+  // Two things have to happen as soon as auth resolves, regardless of
+  // whether the user ever opens the Spaces tab:
+  //
+  //   1. publishSnapshot — warms the main-process cache the overlay's
+  //      SpacePicker reads from. Without it, opening the overlay before
+  //      visiting the Spaces tab shows "no spaces found".
+  //
+  //   2. ensureFresh — runs the hash-diff scan against each project's
+  //      localPath, re-uploads anything that drifted while the app was
+  //      closed, AND starts the chokidar watcher so further edits during
+  //      this session are picked up. Previously this lived in
+  //      ProjectsView's mount effect, which meant a user who only ever
+  //      used the overlay would silently work against stale embeddings
+  //      and never have a watcher running. The cost of running it here
+  //      is the same as before — short-circuits when nothing changed.
+  //
+  // ProjectsView no longer triggers ensureFresh itself (would cause a
+  // double-scan). Its publishSnapshot effect still handles subsequent
+  // live updates (add / remove / rename) while the user is on the
+  // Spaces tab.
+  useEffect(() => {
+    const userId = user?.profile?.id ?? null;
+    if (!userId) return;
+    const spacesApi = (window as any).electronAPI?.spaces;
+    const projectApi = (window as any).electronAPI?.project;
+
+    let spaces: ReturnType<typeof loadSpaces> = [];
+    try {
+      spaces = loadSpaces(userId);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-load-spaces" } });
+      return;
+    }
+
+    if (spacesApi?.publishSnapshot) {
+      try {
+        spacesApi.publishSnapshot(spaces.map(toSpaceSummary));
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-spaces-snapshot" } });
+      }
+    }
+
+    if (projectApi?.ensureFresh) {
+      try {
+        const projects = spaces.flatMap((s) =>
+          s.projects
+            .filter((p) => p.projectId && p.localPath)
+            .map((p) => ({ projectId: p.projectId, localPath: p.localPath })),
+        );
+        if (projects.length > 0) {
+          projectApi.ensureFresh(projects).catch((err: unknown) => {
+            Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-ensure-fresh" } });
+          });
+        }
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-ensure-fresh" } });
+      }
+    }
+  }, [user?.profile?.id]);
 
   // Navigation state
   const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library" | "projects">("chat");
