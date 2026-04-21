@@ -670,7 +670,7 @@ except Exception:
 | Attribute | Value |
 |---|---|
 | **Severity** | **INFO (Positive Finding)** |
-| **Component** | `native/windows-core/src/` |
+| **Component** | `native/platform-core/src/` |
 
 **Finding (Positive):**  
 The Rust native module uses `unsafe` blocks for Win32 FFI calls. All unsafe usage is:
@@ -692,7 +692,7 @@ The Rust native module uses `unsafe` blocks for Win32 FFI calls. All unsafe usag
 | Attribute | Value |
 |---|---|
 | **Severity** | **LOW** |
-| **Component** | `native/windows-core/src/replacement.rs` lines 585-608 |
+| **Component** | `native/platform-core/src/replacement.rs` lines 585-608 |
 
 **Finding:**  
 Clipboard restoration is done in a spawned thread after a 300ms delay. If the user copies something during this window, their clipboard content will be overwritten by the restoration.

@@ -122,7 +122,7 @@ export const EditPromptModal = ({
               Cancel
             </Button>
             <Button
-              className="flex-1 bg-emerald text-white hover:bg-emerald/90"
+              className="flex-1 border border-input text-foreground hover:bg-muted font-semibold"
               onClick={handleSave}
               disabled={saving || !title.trim()}
             >

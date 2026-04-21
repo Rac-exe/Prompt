@@ -30,6 +30,7 @@ from app.auth import require_auth, require_ws_auth
 from app.email_otp import (
     send_signup_otp, verify_signup_otp,
     send_reset_otp, reset_password as otp_reset_password,
+    send_restore_otp, verify_restore_otp,
     cleanup_expired as otp_cleanup,
 )
 import logging
@@ -781,6 +782,8 @@ async def optimize_stream(websocket: WebSocket):
             forced_skill = data.get("forced_skill", None)
             clarification_answers = data.get("clarification_answers", None)
             wants_sections = data.get("wants_sections", False)
+            project_id = data.get("project_id", None)
+            project_branch = data.get("project_branch", None)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
             # Use JWT-verified user id; fall back to request body only for legacy local mode
@@ -871,10 +874,27 @@ async def optimize_stream(websocket: WebSocket):
                         category="optimize", message="Task planning started",
                         level="info", data={"request_id": request_id},
                     )
+                    planner_input = prompt_text
+                    if project_id:
+                        try:
+                            from pipeline_v2.project_context import fetch_project_context
+                            planner_ctx = await loop.run_in_executor(
+                                None,
+                                lambda: fetch_project_context(
+                                    project_id=project_id,
+                                    user_query=prompt_text,
+                                    branch=project_branch,
+                                    auth_token=websocket.query_params.get("token", ""),
+                                ),
+                            )
+                            if planner_ctx:
+                                planner_input = f"{planner_ctx.text}\n\n{prompt_text}"
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch project context for task planner: {e}")
                     task_plan = await loop.run_in_executor(
                         None,
                         lambda: plan_tasks(
-                            user_input=prompt_text,
+                            user_input=planner_input,
                             model=SUMMARIZER_MODEL,
                             provider="auto",
                         ),
@@ -904,6 +924,9 @@ async def optimize_stream(websocket: WebSocket):
                             clarification_answers=clarification_answers,
                             wants_sections=wants_sections,
                             task_plan=task_plan,
+                            project_id=project_id,
+                            project_branch=project_branch,
+                            auth_token=websocket.query_params.get("token", ""),
                         )
                         for chunk in gen:
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
@@ -1721,8 +1744,25 @@ class ImageUploadRequest(BaseModel):
 class ImageUploadResponse(BaseModel):
     url: str
 
-def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -> str:
-    """Synchronous Cloudinary multipart upload — run in a thread executor."""
+class ImageUploadResult(BaseModel):
+    url: str
+    public_id: str
+
+
+def _sync_cloudinary_upload(
+    image_bytes: bytes,
+    filename: str,
+    mime_type: str,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Synchronous Cloudinary multipart upload — run in a thread executor.
+
+    When user_id is provided, the asset is tagged user_<userId> AND placed
+    under folder users/<userId>/. The Edge Function `process-deletions` uses
+    this tag for bulk cleanup at the 30-day mark.
+
+    Returns: {"secure_url": str, "public_id": str}
+    """
     import hashlib
     import urllib.request
     import json as json_lib
@@ -1737,10 +1777,26 @@ def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -
 
     boundary  = f"----UploadBoundary{int(time_lib.time() * 1000)}"
     timestamp = str(int(time_lib.time()))
-    signature = hashlib.sha1(f"timestamp={timestamp}{api_secret}".encode()).hexdigest()
+
+    # Per Cloudinary signature spec: every non-file param except api_key,
+    # signature, file & resource_type goes into the signing payload, sorted
+    # alphabetically. We attach folder + tags when a user is known.
+    sign_params: dict[str, str] = {"timestamp": timestamp}
+    if user_id:
+        sign_params["folder"] = f"users/{user_id}"
+        sign_params["tags"]   = f"user_{user_id}"
+
+    sign_payload = "&".join(f"{k}={sign_params[k]}" for k in sorted(sign_params))
+    signature = hashlib.sha1(f"{sign_payload}{api_secret}".encode()).hexdigest()
+
+    form_fields: list[tuple[str, str]] = [
+        *sign_params.items(),
+        ("api_key", api_key),
+        ("signature", signature),
+    ]
 
     parts: list[bytes] = []
-    for name, value in [("timestamp", timestamp), ("api_key", api_key), ("signature", signature)]:
+    for name, value in form_fields:
         parts.append(
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
         )
@@ -1762,18 +1818,24 @@ def _sync_cloudinary_upload(image_bytes: bytes, filename: str, mime_type: str) -
     with urllib.request.urlopen(req, timeout=30) as resp:
         result = json_lib.loads(resp.read().decode())
 
-    if "secure_url" not in result:
-        msg = result.get("error", {}).get("message", "Cloudinary upload failed — no secure_url")
+    if "secure_url" not in result or "public_id" not in result:
+        msg = result.get("error", {}).get("message", "Cloudinary upload failed — missing secure_url/public_id")
         raise ValueError(msg)
 
-    return result["secure_url"]
+    return {"secure_url": result["secure_url"], "public_id": result["public_id"]}
 
 
-@app.post("/upload/image", response_model=ImageUploadResponse)
-async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(require_auth)):
-    """Upload a base64-encoded image to Cloudinary. Returns the secure CDN URL."""
+@app.post("/upload/image", response_model=ImageUploadResult)
+async def upload_image(request: ImageUploadRequest, auth: dict = Depends(require_auth)):
+    """Upload a base64-encoded image to Cloudinary.
+
+    Tags & folder-prefixes the asset with the verified user_id from the JWT
+    so that account deletion can wipe all of a user's assets in a single API call.
+    """
     import asyncio
     import base64 as base64_lib
+
+    user_id = auth.get("sub")
 
     try:
         image_bytes = base64_lib.b64decode(request.base64)
@@ -1782,8 +1844,8 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
 
     try:
         loop = asyncio.get_event_loop()
-        url = await loop.run_in_executor(
-            None, _sync_cloudinary_upload, image_bytes, request.filename, request.mime_type
+        upload = await loop.run_in_executor(
+            None, _sync_cloudinary_upload, image_bytes, request.filename, request.mime_type, user_id
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -1791,13 +1853,14 @@ async def upload_image(request: ImageUploadRequest, _auth: dict = Depends(requir
         logger.error(f"[CloudinaryUpload] Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Image upload failed")
 
-    logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {url}")
+    logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {upload['public_id']}")
     sentry_sdk.add_breadcrumb(
         category="file-upload",
         message=f"Cloudinary upload success: {request.filename}",
         level="info",
+        data={"public_id": upload["public_id"], "user_id": user_id},
     )
-    return ImageUploadResponse(url=url)
+    return ImageUploadResult(url=upload["secure_url"], public_id=upload["public_id"])
 
 
 # ── Auth OTP Routes (unauthenticated, rate-limited) ──────────────────────────
@@ -1895,6 +1958,103 @@ async def route_reset_password(request: StarletteRequest, body: ResetPasswordReq
     return result
 
 
+# ── Account Restore Routes (unauthenticated, rate-limited) ──────────────────
+# When a user has requested account deletion, GoTrue refuses sign-in.
+# These endpoints let them prove ownership of the email via a one-time code
+# and cancel the pending deletion (clears auth.users.banned_until).
+
+
+class RequestRestoreRequest(BaseModel):
+    email: str
+
+
+class ConfirmRestoreRequest(BaseModel):
+    email: str
+    otp: str
+
+
+@app.post("/account/request-restore")
+@limiter.limit("5/minute")
+async def route_request_restore(request: StarletteRequest, body: RequestRestoreRequest):
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /account/request-restore invoked", level="info",
+    )
+    result = await send_restore_otp(body.email)
+    if not result.get("success"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="request-restore failed", level="warning",
+            data={"error": result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send restore code"))
+    return result
+
+
+@app.post("/account/confirm-restore")
+@limiter.limit("10/minute")
+async def route_confirm_restore(request: StarletteRequest, body: ConfirmRestoreRequest):
+    """Verify OTP, then call the restore_account RPC with the service role
+    to clear the deletion request and lift the auth ban."""
+    import httpx as _httpx
+
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="route /account/confirm-restore invoked", level="info",
+    )
+
+    otp_result = verify_restore_otp(body.email, body.otp)
+    if not otp_result.get("valid"):
+        sentry_sdk.add_breadcrumb(
+            category="auth", message="confirm-restore otp invalid", level="warning",
+            data={"error": otp_result.get("error")},
+        )
+        raise HTTPException(status_code=400, detail=otp_result.get("error", "Invalid code"))
+
+    supabase_url = os.environ.get("SUPABASE_URL", "")
+    service_role = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not supabase_url or not service_role:
+        logger.error("[Restore] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not configured")
+        raise HTTPException(status_code=500, detail="Account restore is not configured. Contact support.")
+
+    try:
+        async with _httpx.AsyncClient(timeout=15) as client:
+            with sentry_sdk.start_span(op="http.client", description="Supabase RPC restore_account") as span:
+                resp = await client.post(
+                    f"{supabase_url}/rest/v1/rpc/restore_account",
+                    headers={
+                        "Authorization": f"Bearer {service_role}",
+                        "apikey": service_role,
+                        "Content-Type": "application/json",
+                    },
+                    json={"p_email": body.email.lower().strip()},
+                )
+                span.set_tag("http.status_code", resp.status_code)
+                if resp.status_code >= 400:
+                    body_text = resp.text
+                    logger.error(f"[Restore] RPC error {resp.status_code}: {body_text}")
+                    sentry_sdk.capture_message(f"restore_account RPC error: {resp.status_code}", level="error")
+                    # Map the RPC's RAISE EXCEPTION strings to clean user-facing
+                    # messages. The RPC raises with SQLSTATE P0002 in both cases.
+                    if "No account found" in body_text:
+                        raise HTTPException(status_code=404, detail="No account found for this email.")
+                    if "No pending deletion to restore" in body_text:
+                        raise HTTPException(
+                            status_code=409,
+                            detail="This account isn't queued for deletion — nothing to restore.",
+                        )
+                    raise HTTPException(status_code=502, detail="Could not restore account. Please try again.")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.error(f"[Restore] Unexpected error: {exc}")
+        raise HTTPException(status_code=500, detail="Restore failed. Please try again.")
+
+    sentry_sdk.add_breadcrumb(
+        category="auth", message="confirm-restore success", level="info",
+    )
+    logger.info(f"[Restore] Account restored for {body.email}")
+    return {"success": True}
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up on SIGTERM/SIGINT."""
@@ -1909,7 +2069,7 @@ async def shutdown_event():
 async def root():
     return {
         "service": "Prompt Optimizer API",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "endpoints": {
             "optimize": "POST /optimize",
             "health": "GET /health",

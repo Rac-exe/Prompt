@@ -209,7 +209,7 @@ function MemorySection({
                 className="text-sm bg-secondary border border-border/50 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-primary/50"
               />
               <div className="flex gap-2">
-                <button onClick={handleAdd} className="flex-1 text-xs py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-smooth">Save</button>
+                <button onClick={handleAdd} className="flex-1 text-xs py-1 rounded border border-input text-foreground hover:bg-muted font-medium transition-smooth">Save</button>
                 <button onClick={() => setAdding(false)} className="flex-1 text-xs py-1 rounded bg-secondary hover:bg-secondary/80 transition-smooth">Cancel</button>
               </div>
             </div>
@@ -277,7 +277,7 @@ export function MemoryView() {
       setMemory(result);
       setMemoryEnabled(enabled);
     } catch {
-      toast({ title: 'Failed to load memory', variant: 'destructive' });
+      toast({ title: "Couldn't load memory", description: 'Try reopening this panel.', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -304,14 +304,14 @@ export function MemoryView() {
         toast({
           title: enabled ? 'Memory learning enabled' : 'Memory learning paused',
           description: enabled
-            ? 'The app will learn from your usage to personalize optimization.'
-            : 'Automatic learning paused. You can still add facts manually.',
+            ? 'Prmpt will learn from your usage to personalize prompts.'
+            : 'You can still add facts manually.',
         });
       } else {
-        toast({ title: 'Failed to update setting', description: result.error, variant: 'destructive' });
+        toast({ title: "Couldn't update setting", description: result.error, variant: 'destructive' });
       }
     } catch {
-      toast({ title: 'Failed to update setting', variant: 'destructive' });
+      toast({ title: "Couldn't update setting", description: 'Something went wrong. Please try again.', variant: 'destructive' });
     } finally {
       setTogglingMemory(false);
     }
@@ -328,7 +328,7 @@ export function MemoryView() {
       });
       toast({ title: 'Memory removed' });
     } else {
-      toast({ title: 'Failed to remove memory', description: result.error, variant: 'destructive' });
+      toast({ title: "Couldn't remove memory", description: result.error, variant: 'destructive' });
     }
   }, [isElectron]);
 
@@ -344,7 +344,7 @@ export function MemoryView() {
         },
       }));
     } else {
-      toast({ title: 'Failed to update memory', description: result.error, variant: 'destructive' });
+      toast({ title: "Couldn't update memory", description: result.error, variant: 'destructive' });
     }
   }, [isElectron]);
 
@@ -362,7 +362,7 @@ export function MemoryView() {
       }));
       toast({ title: 'Memory saved' });
     } else {
-      toast({ title: 'Failed to save memory', description: result.error, variant: 'destructive' });
+      toast({ title: "Couldn't save memory", description: result.error, variant: 'destructive' });
     }
   }, [isElectron]);
 

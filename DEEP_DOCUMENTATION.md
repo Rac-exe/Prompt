@@ -14,7 +14,7 @@
 5. [Chapter 5: The Preload Bridge -- How UI Talks to the OS](#chapter-5-the-preload-bridge----how-ui-talks-to-the-os)
 6. [Chapter 6: React App Window UI](#chapter-6-react-app-window-ui)
 7. [Chapter 7: The Overlay System -- Engineering a Flicker-Free Popup](#chapter-7-the-overlay-system----engineering-a-flicker-free-popup)
-8. [Chapter 8: The Native Rust Module -- Win32 Deep Dive](#chapter-8-the-native-rust-module----win32-deep-dive)
+8. [Chapter 8: The Native Rust Module -- Cross-Platform Deep Dive](#chapter-8-the-native-rust-module----cross-platform-deep-dive)
 9. [Chapter 9: Python AI Service -- The Optimization Engine](#chapter-9-python-ai-service----the-optimization-engine)
 10. [Chapter 10: Supabase Database -- Schema and Security](#chapter-10-supabase-database----schema-and-security)
 11. [Chapter 11: Voice Input -- From Sound Waves to Text](#chapter-11-voice-input----from-sound-waves-to-text)
@@ -22,6 +22,32 @@
 13. [Chapter 13: Sharing and Deep Links](#chapter-13-sharing-and-deep-links)
 14. [Chapter 14: Build System and Development Workflow](#chapter-14-build-system-and-development-workflow)
 15. [Chapter 15: Security Model](#chapter-15-security-model)
+16. [Chapter 16: Code Intelligence Service — The Codebase Indexing Brain](#chapter-16-code-intelligence-service--the-codebase-indexing-brain)
+17. [Chapter 17: The Spaces Feature — Project-Aware Prompt Workspaces](#chapter-17-the-spaces-feature--project-aware-prompt-workspaces)
+18. [Chapter 18: Code Parser — Tree-Sitter WASM Code Parsing](#chapter-18-code-parser--tree-sitter-wasm-code-parsing)
+19. [Chapter 19: File Watcher — Incremental Re-indexing on File Changes](#chapter-19-file-watcher--incremental-re-indexing-on-file-changes)
+20. [Chapter 20: Git Service — Local Repository Introspection](#chapter-20-git-service--local-repository-introspection)
+21. [Chapter 21: Local Project Cache — SQLite File Hash Store](#chapter-21-local-project-cache--sqlite-file-hash-store)
+22. [Chapter 22: Code Intelligence Client — Electron-Side HTTP Client](#chapter-22-code-intelligence-client--electron-side-http-client)
+23. [Chapter 23: Project IPC Handlers](#chapter-23-project-ipc-handlers)
+24. [Chapter 24: Analytics Service — Session Tracking and Usage Events](#chapter-24-analytics-service--session-tracking-and-usage-events)
+25. [Chapter 25: Clarification System — Pre-Optimization Questionnaire](#chapter-25-clarification-system--pre-optimization-questionnaire)
+26. [Chapter 26: Feedback System](#chapter-26-feedback-system)
+27. [Chapter 27: Skill System — Optimization Domain Skills](#chapter-27-skill-system--optimization-domain-skills)
+28. [Chapter 28: AI Guardrails — Request Deduplication and Rate Control](#chapter-28-ai-guardrails--request-deduplication-and-rate-control)
+29. [Chapter 29: New Overlay Components](#chapter-29-new-overlay-components)
+30. [Chapter 30: History View](#chapter-30-history-view)
+31. [Chapter 31: Updated File Map — All New Files Since Last Documentation](#chapter-31-updated-file-map--all-new-files-since-last-documentation)
+32. [Chapter 32: Task Planner — Structured Builds for Complex Prompts](#chapter-32-task-planner--structured-builds-for-complex-prompts)
+33. [Chapter 33: OTP-Based Email Authentication](#chapter-33-otp-based-email-authentication)
+34. [Chapter 34: GDPR Account Deletion — 30-Day Graceful Wipe](#chapter-34-gdpr-account-deletion--30-day-graceful-wipe)
+35. [Chapter 35: Rate Limiting and Daily Usage Caps](#chapter-35-rate-limiting-and-daily-usage-caps)
+36. [Chapter 36: Active Window Detector and Zoom Indicator](#chapter-36-active-window-detector-and-zoom-indicator)
+37. [Chapter 37: Request ID Middleware and Production API Hardening](#chapter-37-request-id-middleware-and-production-api-hardening)
+38. [Chapter 38: Cross-Platform Support — Windows and macOS](#chapter-38-cross-platform-support--windows-and-macos)
+39. [Chapter 39: Silent Auto-Launch at Login](#chapter-39-silent-auto-launch-at-login)
+40. [Chapter 40: Sentry Observability — Four-Surface Coverage](#chapter-40-sentry-observability--four-surface-coverage)
+41. [Chapter 41: Prmpt Branding and Cross-Platform Packaging](#chapter-41-prmpt-branding-and-cross-platform-packaging)
 - [Appendix A: Environment Variables Reference](#appendix-a-environment-variables-reference)
 - [Appendix B: File Map](#appendix-b-file-map)
 
@@ -33,7 +59,7 @@
 
 Prmpt (pronounced "prompt") is a desktop AI prompt optimizer. Its core premise is simple: users type rough, vague prompts and Prmpt transforms them into detailed, effective AI prompts using Large Language Models (LLMs). Think of it as a translator between what a human casually types and what an LLM needs to produce excellent output. The user writes "write an email to boss for vacation" and Prmpt produces a detailed, structured prompt specifying tone, format, content sections, audience considerations, and desired length — all optimized to elicit the best possible response from any AI model.
 
-The application is a native Windows desktop application built with Electron. It runs persistently in the system tray, always available. It is not a web app — it installs and runs locally, with a Python AI backend running on the user's machine and a Supabase cloud backend for user data persistence.
+The application is a native cross-platform desktop application built with Electron, shipping for **both Windows and macOS** (Apple Silicon). It runs persistently in the system tray (Windows) / menu bar (macOS), always available. It is not a web app — it installs and runs locally, with two Python services running on the user's machine (an AI optimization service and a Code Intelligence service) and a Supabase cloud backend for user data persistence. Both platforms share the same TypeScript / React / Rust codebase; platform differences are handled through `process.platform` branches in the Electron main process and `#[cfg(target_os = …)]` blocks inside the Rust crate.
 
 ### Three Ways to Use Prmpt
 
@@ -41,7 +67,7 @@ There are three distinct interaction modes, each designed for a different user c
 
 #### 1. The App Window — Full Interface
 
-The App Window is a full-featured ChatGPT-like interface. It opens as a standard desktop window (1400×900 pixels, frameless with a custom title bar). It contains:
+The App Window is a full-featured ChatGPT-like interface. It opens as a standard desktop window (1400×900 pixels). On Windows it is **frameless with a custom title bar**; on macOS it uses **`titleBarStyle: 'hiddenInset'`** so Electron's native traffic-light buttons remain in the upper-left corner with `trafficLightPosition: { x: 12, y: 12 }`. On macOS, the Dock icon appears only while the App Window is visible — closing the window via the red traffic light hides both the window and the Dock icon, but keeps the keyboard hook and tray running silently in the background. It contains:
 
 - **Sidebar**: Lists all chat sessions, searchable, with create/delete/rename functionality.
 - **Chat Area**: A scrollable message history showing user prompts and AI-optimized responses. Each message supports branching versions — the user can regenerate a response and navigate between versions (v1, v2, v3...) with arrow buttons.
@@ -67,22 +93,30 @@ The Overlay contains:
 - A "Save" button to save the result to the Prompt Library.
 
 The Overlay can be triggered in two ways:
-- **Ctrl+5 hotkey**: Press Ctrl+5 from anywhere on the system. The overlay appears centered on screen.
-- **@prompt trigger**: Type the literal text "@prompt" in any application. The overlay appears near the cursor. When the user clicks "Insert", the @prompt text is automatically replaced with the optimized result. This is the signature feature of Prmpt.
+- **`CommandOrControl+5` hotkey**: Press `Ctrl+5` (Windows) or `Cmd+5` (macOS) from anywhere on the system. The overlay appears centered on screen. Registered via `globalShortcut.register('CommandOrControl+5', …)` in `electron/main/index-new.ts`.
+- **`@prompt` trigger**: Type the literal text `@prompt` in any application. The overlay appears near the cursor. When the user clicks "Insert", the `@prompt` text is automatically replaced with the optimized result. This is the signature feature of Prmpt.
+
+On macOS, the overlay window sets `visibleOnAllWorkspaces: true` and `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`, so it appears on every Mission Control space (including spaces that are running another app full-screen). It uses `showInactive()` + `moveTop()` so it surfaces over the foreground app *without* stealing keyboard focus from the user's source application.
 
 #### 3. The @prompt Trigger — System-Wide Text Replacement
 
-This is the most distinctive feature. A low-level Windows keyboard hook (implemented in Rust) monitors every keystroke across the entire operating system. When the user types the seven characters `@prompt` (case-sensitive) in any application — VS Code, Notepad, a browser text field, Slack, Microsoft Word, literally any window that accepts text input — the following happens:
+This is the most distinctive feature. A low-level OS keyboard hook (implemented in Rust, with platform-dispatched backends) monitors every keystroke across the entire operating system. When the user types the seven characters `@prompt` (case-sensitive) in any application — VS Code, Notepad, a browser text field, Slack, Microsoft Word, literally any window that accepts text input — the following happens:
 
-1. The Rust hook detects the completed "@prompt" sequence.
-2. It captures the HWND (native window handle) of the currently focused window and the trigger length (7 characters).
+1. The Rust hook detects the completed `@prompt` sequence.
+   - **Windows**: `WH_KEYBOARD_LL` low-level hook installed via `SetWindowsHookExW` on a dedicated message-pump thread.
+   - **macOS**: `CGEventTap` (`kCGSessionEventTap`, listen-only) attached to `CFRunLoopGetMain`, requires the user to grant Accessibility permission once.
+2. It captures the **focused-window anchor** of the currently focused window and the trigger length (7 characters).
+   - **Windows**: anchor = HWND (`GetForegroundWindow`).
+   - **macOS**: anchor = PID (`NSWorkspace.frontmostApplication`). The JS layer treats this as an opaque integer.
 3. It calls a JavaScript callback via a ThreadsafeFunction bridge back into the Node.js event loop.
 4. The Electron main process opens the Overlay window near the cursor.
 5. The user types their rough prompt into the Overlay.
 6. The optimization streams from the Python service.
 7. The user clicks "Insert".
-8. The Rust native module focuses the original window (using the stored HWND), selects the "@prompt" text (using Shift+Left arrow key injection for `triggerLen` characters), and pastes the optimized text (using clipboard injection with Ctrl+V simulation).
-9. The original application now contains the fully optimized prompt where "@prompt" used to be.
+8. The Rust native module focuses the original window (using the stored anchor), removes the `@prompt` text, and inserts the optimized text:
+   - **Windows**: `SetForegroundWindow(hwnd)` + `Shift+Left × N` selection + `KEYEVENTF_UNICODE` injection of optimized text.
+   - **macOS**: `osascript activate` of the target PID + `CGEventPost` Backspace × N + clipboard-swap (save current pasteboard → set pasteboard to optimized text → post `Cmd+V` → sleep ~30 ms → restore previous pasteboard).
+9. The original application now contains the fully optimized prompt where `@prompt` used to be.
 
 ### User Journey Walkthrough
 
@@ -99,7 +133,7 @@ A new user's journey through Prmpt looks like this:
 
 4. **Using @prompt in VS Code**: The user is writing code in VS Code. They need a prompt to help them refactor a function. Instead of switching to the Prmpt app, they simply type `@prompt` right in their code editor. The Overlay pops up near their cursor. They type "refactor this function to use dependency injection". The AI streams the optimized prompt. They click "Insert" and the `@prompt` text in VS Code is replaced with the detailed, optimized prompt. They can then copy this prompt and send it to their AI coding assistant.
 
-5. **Using Ctrl+5**: The user is browsing the web and wants to quickly optimize a prompt. They press Ctrl+5. The Overlay appears. They type their rough prompt, get the optimized version, and click "Copy" to put it on the clipboard.
+5. **Using `Cmd/Ctrl+5`**: The user is browsing the web and wants to quickly optimize a prompt. They press `Ctrl+5` (Windows) or `Cmd+5` (macOS). The Overlay appears. They type their rough prompt, get the optimized version, and click "Copy" to put it on the clipboard.
 
 6. **Voice Input**: In either the App Window or the Overlay, the user clicks the microphone button. They speak their prompt out loud. The audio is captured by the browser's microphone API, converted to raw PCM in the preload script, sent via IPC to the main process, forwarded to the Python service via WebSocket, which proxies it to Deepgram's streaming speech-to-text API. The transcribed text appears in real-time in the input field. The user can then edit and send it for optimization.
 
@@ -592,7 +626,7 @@ napi-rs generates the N-API glue code that makes these functions callable from J
 #### How Compilation Works
 
 1. `cargo build --release` compiles the Rust code. Cargo is Rust's package manager and build system (analogous to npm for Node.js). The `--release` flag enables LLVM optimizations (inlining, loop unrolling, dead code elimination) that make the binary significantly faster.
-2. `napi build --platform` invokes Cargo and post-processes the output into a platform-specific `.node` file. The file is named with platform identifiers: e.g., `windows-core.win32-x64-msvc.node`.
+2. `napi build --platform` invokes Cargo and post-processes the output into a platform-specific `.node` file. The file is named with platform identifiers: e.g., `platform-core.win32-x64-msvc.node`.
 3. An `index.js` file in the native module's directory detects the current platform and `require()`s the appropriate `.node` binary.
 
 #### ThreadsafeFunction
@@ -613,7 +647,7 @@ Without ThreadsafeFunction, there would be no safe way for the Rust hook thread 
 
 #### In This App
 
-The Rust crate lives in `native/windows-core/`. It compiles to a `.node` binary. The `native-bridge.ts` module in Electron's main process loads it via `require()` and exposes typed wrapper functions:
+The Rust crate lives in `native/platform-core/`. It compiles to a `.node` binary. The `native-bridge.ts` module in Electron's main process loads it via `require()` and exposes typed wrapper functions:
 
 - `startHook(callback)`: Install the global keyboard hook.
 - `stopHook()`: Remove the keyboard hook.
@@ -1027,23 +1061,34 @@ If the model doesn't support vision, the image attachment is mentioned in text b
 
 ---
 
-## Chapter 3: Architecture — The Five Subsystems
+## Chapter 3: Architecture — The Six Subsystems
 
-Prmpt is composed of five distinct subsystems that communicate via well-defined interfaces. Understanding these subsystems and their boundaries is essential to navigating the codebase.
+Prmpt is composed of six distinct subsystems that communicate via well-defined interfaces. Understanding these subsystems and their boundaries is essential to navigating the codebase.
 
-### Subsystem 1: Rust Native Module (`native/windows-core/`)
+### Subsystem 1: Rust Native Module (`native/platform-core/`)
 
-The Rust native module is a compiled binary (`.node` file) that provides low-level Windows OS integration. It runs as a native addon within the Node.js main process.
+There is **one** Rust native crate in the project — `native/platform-core/`. It compiles to **two** `.node` binaries, both checked into the repo:
 
-**Responsibilities:**
-- **Global Keyboard Hook**: Installs a `WH_KEYBOARD_LL` low-level keyboard hook that intercepts all keystrokes across the entire operating system, even in other applications. The hook runs on a dedicated Windows message pump thread.
-- **@prompt Detection**: Maintains a buffer of recent keystrokes and detects when the user types the literal sequence "@prompt" (7 characters, case-sensitive).
-- **Anchor Storage**: When @prompt is detected, captures the HWND (window handle) of the currently focused window and the trigger length (7). This anchor information is stored for later use by the text replacement function.
-- **JavaScript Callback**: Uses napi-rs ThreadsafeFunction to safely call a JavaScript callback on the Node.js event loop thread when @prompt is detected, passing the anchor data.
-- **Text Replacement**: `replaceAtLastAnchor(text)` — focuses the original window (using `SetForegroundWindow` with the foreground steal sequence: `AttachThreadInput` + `AllowSetForegroundWindow`), selects the @prompt text (simulates Shift+Left arrow key presses for `triggerLen` characters), and pastes the replacement text (copies to clipboard, simulates Ctrl+V).
-- **Window Focus**: `forceFocusWindow(hwnd)` — force-focuses a window by HWND, bypassing Windows' focus-stealing prevention.
+- `platform-core.win32-x64-msvc.node` — Windows x64
+- `platform-core.darwin-arm64.node` — macOS Apple Silicon
 
-**Communication**: The Rust module communicates with JavaScript exclusively through the N-API interface. It exports functions that JavaScript can call, and uses ThreadsafeFunction to call JavaScript callbacks from Rust threads.
+A loader at `native/platform-core/index.js` selects the right binary at runtime based on `process.platform + process.arch`. `electron/main/utils/native-bridge.ts` lazy-`require()`s through this loader and provides stub fallbacks when neither binary is available.
+
+**Responsibilities (identical JS surface on both platforms, platform-dispatched internally via `#[cfg(target_os = …)]`):**
+- **Global Keyboard Hook**: Intercepts all keystrokes across the entire operating system. Windows: `SetWindowsHookExW(WH_KEYBOARD_LL, …)` on a dedicated message-pump thread. macOS: `CGEventTapCreate(kCGSessionEventTap, listenOnly)` attached to `CFRunLoopGetMain` (requires Accessibility permission).
+- **`@prompt` Detection**: Maintains a 64-character ring buffer in shared Rust code. Both platform backends call the same `on_char_keydown(char)` after translating the native key event.
+- **Anchor Storage**: When `@prompt` is detected, captures the focused-window anchor — HWND on Windows (`GetForegroundWindow`), PID on macOS (`NSWorkspace.frontmostApplication`). The JS layer treats it as an opaque integer.
+- **JavaScript Callback**: `napi-rs` `ThreadsafeFunction` delivers anchor data to the Node.js event loop.
+- **Text Replacement**: `replaceAtLastAnchor(text)`. Windows: `SetForegroundWindow` → `Shift+Left × N` selection → `KEYEVENTF_UNICODE` injection. macOS: save pasteboard → `CGEventPost` Backspace × N → set pasteboard to `text` → post `Cmd+V` → ~30 ms sleep → restore pasteboard (the "clipboard swap").
+- **Direct Paste**: `pasteTextToWindow(target, text)` — targets HWND on Windows, PID on macOS; used as fallback when the anchor has been consumed.
+- **Chat Enter**: `sendEnterToWindow(target)` — auto-submit in chat apps (Slack, Discord, Teams, ChatGPT web). `VK_RETURN` on Windows, `kVK_Return` via `CGEventPost` on macOS.
+- **Window Focus**: `forceFocusWindow(target)` — bypasses platform foreground-stealing protection. Windows: `AttachThreadInput` + `AllowSetForegroundWindow`. macOS: `osascript tell application process "X" to activate`.
+- **Active Window Title**: `getActiveWindowTitle()` — `GetWindowTextW` on Windows, `osascript`-against-System-Events fallback on macOS.
+- **Accessibility Check**: `checkAccessibilityPermission()` — returns `true` on Windows (no-op), wraps `AXIsProcessTrustedWithOptions` on macOS.
+
+**Communication**: The module communicates with JavaScript exclusively through the N-API interface. It exports functions that JavaScript can call, and uses `ThreadsafeFunction` to call JavaScript callbacks from Rust threads.
+
+> The crate was renamed from `windows-core` to `platform-core` once the macOS backend landed and the directory was no longer Windows-only. Active-window *polling* is a separate concern implemented in `electron/main/services/active-window-detector.ts` using the **`active-win` npm package** (not a custom Rust crate), wrapped with Sentry `captureException` on load failure.
 
 ### Subsystem 2: Electron Main Process (`electron/main/`)
 
@@ -1057,7 +1102,7 @@ The main process is the orchestrator — the brain of the application. It's a lo
 - **Auth State**: Maintains the global authentication state (user ID, email, JWT) and syncs it across all windows and API clients.
 - **Native Bridge**: Loads and communicates with the Rust native module for keyboard hook and text replacement.
 - **Network Monitoring**: Polls connectivity, detects online/offline transitions, triggers reconnection and offline queue draining.
-- **Global Hotkey**: Registers Ctrl+5 as a system-wide shortcut for toggling the overlay.
+- **Global Hotkey**: Registers `CommandOrControl+5` (`Ctrl+5` on Windows, `Cmd+5` on macOS) as a system-wide shortcut for toggling the overlay.
 - **Deep Link Handling**: Handles `prmpt://` protocol URLs for shared collection/prompt links.
 - **Error Tracking**: Initializes Sentry for error reporting with PII scrubbing.
 
@@ -1106,13 +1151,29 @@ A standalone FastAPI server running on `localhost:8001`. It handles all AI/ML wo
 
 **Communication**: The Python service communicates with the Electron main process via HTTP (Axios) and WebSocket (`ws` library). Authentication is via JWT — the Electron client includes the Supabase JWT in requests, and the Python service verifies it.
 
+### Subsystem 6: Code Intelligence Service (`code-intelligence-service/`)
+
+A second, independent FastAPI server running on `localhost:8002`. Added for the Spaces feature — it indexes user projects, embeds code chunks, and answers hybrid-retrieval queries. Chapter 16 describes this subsystem in full detail; the summary here is just to place it on the subsystem map.
+
+**Responsibilities:**
+- **Project registry**: `projects` / `project_branches` rows in Supabase keyed by `user_id`.
+- **Ingest**: accepts Tree-sitter-produced skeletons (which are parsed inside Electron — source code never leaves the device raw), summarizes each chunk with a cheap LLM, embeds the summary with `text-embedding-3-small` (`dimensions=512`), and upserts into the `code_chunks` table with a pgvector `vector(512)` HNSW index.
+- **Retrieve**: four-strategy hybrid pipeline (vector ANN, full-text, concept, file-path) fused via Reciprocal Rank Fusion, then expanded with the call graph from `code_relationships`.
+- **Background workers**: ARQ + Redis for durable indexing jobs (falls back to FastAPI `BackgroundTasks` when no Redis is configured).
+- **GitHub sync**: webhook-driven and polling-driven diverged-chunk flagging.
+- **Own Sentry project**: initialized with `FastApiIntegration` + `LoggingIntegration`.
+
+**Communication**: The Code Intelligence service communicates with the Electron main process via HTTP (axios through `CodeIntelClient`). Authentication is via the same Supabase JWT. Electron-side calls are wrapped in Sentry spans (`code-intel.ingest`, `code-intel.retrieve`, `code-intel.health`).
+
+**Why a separate process from Python optimization?** Different workloads (stateful indexer vs stateless optimizer), different failure domains (a crash in the indexer must not take down optimization), different deployment targets (Code Intelligence is always local because it touches the user's filesystem and holds a Supabase pool for their projects), different model usage (direct OpenAI embeddings here vs LiteLLM/OpenRouter routing in the optimizer).
+
 ### Data Flow: @prompt Trigger
 
 The most complex data flow in the application. Here's every step, from the user typing "@prompt" to the optimized text appearing in the original application:
 
 1. **User types "@prompt"** in any application (VS Code, Notepad, browser, etc.).
-2. **Rust keyboard hook** intercepts each keystroke. It maintains a 7-character ring buffer. After typing 't' (completing "@prompt"), the buffer matches.
-3. **Rust captures anchor data**: `{ hwnd: <foreground window handle>, triggerLen: 7 }`.
+2. **Rust keyboard hook** intercepts each keystroke — `WH_KEYBOARD_LL` on Windows, `CGEventTap` on macOS. It maintains a 64-character ring buffer; `ends_with("@prompt")` becomes true as the user types the last `t`.
+3. **Rust captures anchor data**: `{ hwnd: <focused window anchor>, triggerLen: 7 }`. `hwnd` is a real HWND on Windows and a PID on macOS — the JS layer treats it as opaque.
 4. **Rust calls ThreadsafeFunction**: The anchor data is marshaled and queued on Node.js's event loop via `uv_async_send`.
 5. **Node.js callback fires** in `index-new.ts`: `startHook((anchor) => { overlayManager.open(...) })`.
 6. **Main process opens overlay**: The OverlayWindowManager shows the pre-loaded hidden overlay window, positions it, and sends `overlay:opened` with auth state.
@@ -1164,7 +1225,7 @@ The App Window flow is similar but involves chat persistence:
 | `app-ui/src/pages/Index.tsx` | App Window page orchestrator |
 | `app-ui/src/overlay/main.tsx` | Overlay entry point |
 | `python-service/app/main.py` | FastAPI server — all AI endpoints |
-| `native/windows-core/src/lib.rs` | Rust N-API exports — keyboard hook and text replacement |
+| `native/platform-core/src/lib.rs` | Rust N-API exports — keyboard hook and text replacement |
 
 ### Initialization Sequence
 
@@ -1424,15 +1485,60 @@ The `app:send-message` handler orchestrates the full send flow:
 
 #### overlay-ipc-handlers.ts
 
-Handles: `overlay:optimize`, `overlay:copy`, `overlay:close`, `overlay:open-app`, `overlay:insert`, `overlay:save`, `overlay:check-auth`, `overlay:get-collections`, `overlay:create-collection`, `overlay:get-chats`, `overlay:save-to-chat`, `overlay:new-session`, `overlay:stop-generation`, `overlay:truncate-history`, `overlay:get-settings`.
+The most complex IPC module in the application. Handles the complete overlay optimization lifecycle, clarification state machine, dual-chat persistence, real-time app window sync, and all overlay utility operations.
 
-- **`overlay:optimize`**: Similar to `app:send-message` but sends chunks/completion/error to the overlay window via `overlay:optimization-chunk/complete/error` channels.
-- **`overlay:insert`**: Calls `replaceAtLastAnchor(text)` from the native bridge. Returns `{ success: true }` if the native module performed the replacement. Returns `{ success: false, fallback: "clipboard" }` if the native module is unavailable (the text is copied to clipboard as a fallback).
-- **`overlay:copy`**: Copies text to the system clipboard via `clipboard.writeText()`.
-- **`overlay:close`**: Hides the overlay window.
-- **`overlay:open-app`**: Shows the app window, hides the overlay.
-- **`overlay:save`**: Saves a prompt to the prompt library.
-- **`overlay:get-settings`**: Returns user settings (used by overlay to match app settings like mode preference).
+**Full channel list**: `overlay:optimize`, `overlay:submit-clarification`, `overlay:copy`, `overlay:close`, `overlay:open-app`, `overlay:insert`, `overlay:insert-section`, `overlay:save`, `overlay:check-auth`, `overlay:get-collections`, `overlay:create-collection`, `overlay:get-chats`, `overlay:save-to-chat`, `overlay:get-source-info`, `overlay:new-session`, `overlay:stop-generation`, `overlay:truncate-history`, `overlay:get-settings`.
+
+**Key module-level state**:
+- `inMemoryOverlayHistory` — rolling 20-message conversation buffer (trimmed to last 20 when exceeded); used as LLM context when no `chatId` is provided
+- `currentOverlayChatId` — tracks the overlay session's DB chat so all messages within a session go to the same chat
+- `pendingOverlayClarification` — stores the full `PendingOverlayOptimization` state (prompt, custom instructions, history context) while the user is answering clarification questions; set to `null` before resuming
+- `sourceHwnd` / `sourceWindowTitle` / `firstSectionDone` — source window state captured at `@prompt` trigger time; `firstSectionDone` tracks whether the first section has been inserted (used by `overlay:insert-section`)
+
+**`overlay:optimize` flow**:
+1. Auth check → offline check (blocks file attachments, warns; allows text through)
+2. Client-side rate limit check via `RateLimitService.checkRateLimit(userId)` — sends error frame immediately if exceeded, no LLM call
+3. Fetch custom instructions from `SettingsService` + memory context from `MemoryService` (both silent-fail)
+4. Build history context: if `chatId` is attached → load last 8 messages from DB; otherwise use in-memory overlay session history
+5. Clarification pre-pass: if NOT a regeneration AND `!isWeakMessage(text)` → call `pythonClient.clarify(text)`. If questions returned, store `pendingOverlayClarification` and send `overlay:clarification-required` — **optimization is completely paused here**
+6. If no clarification needed → call `pythonClient.optimizeStream()` with all parameters including `projectId`, `projectBranch`, `wantsSections`, `clarificationAnswers`
+7. On complete: send `overlay:optimization-complete`, log analytics event, invalidate rate-limit cache
+8. Fire-and-forget DB save: save optimization record, trigger background memory analysis, persist user+assistant messages
+
+**Dual-chat persistence paths** (in both `overlay:optimize` and `overlay:submit-clarification`):
+- **Context chat path** (when `chatId` is attached): Append messages to that existing chat. Pre-generate user message ID for file upload paths. Call `svc.touchChat()` to bump `updated_at` so the chat rises to the top of the sidebar. Push `overlay:messages-appended` to the app window for instant real-time sync without a full reload.
+- **Session chat path** (no `chatId`): Create or reuse `currentOverlayChatId`. On first message, create a placeholder chat title (first 4 words), then fire-and-forget a smart AI title from `pythonClient.generateTitle()` and push `chat-renamed` to the app window sidebar.
+
+**`overlay:submit-clarification`**:
+- Reads `pendingOverlayClarification`, clears it atomically, formats answers via `formatOverlayClarificationAnswers()`, then calls `pythonClient.optimizeStream()` with the original prompt data plus the formatted answers as `clarificationAnswers`
+- Full DB save with `clarificationChoices` metadata stored on the assistant message so the UI can display "answered X questions" badges
+- Same dual-chat persistence logic as `overlay:optimize`
+
+**`overlay:insert`**:
+Closes the overlay immediately, waits 150ms for focus to return to the source window, calls `replaceAtLastAnchor(text)`. If that fails (anchor consumed), falls back to `pasteTextToWindow(sourceHwnd, text)`. Sets `firstSectionDone = true` on success.
+
+**`overlay:insert-section`** (multi-task output):
+Does NOT close the overlay. Temporarily sets overlay opacity to 0 (visually hides it) so the native focus manipulation doesn't flash. First section uses `replaceAtLastAnchor`, subsequent sections use `pasteTextToWindow(sourceHwnd)`. For chat windows (`detectWindowMode(sourceWindowTitle).mode === 'chat'`): calls `sendEnterToWindow(sourceHwnd)` to auto-submit the message into the chat. After paste, restores overlay opacity to 1 and calls `forceFocusWindow(overlayHwnd)` to return focus to the overlay.
+
+**`overlay:copy`**: Copies text to the system clipboard via `clipboard.writeText()`.
+
+**`overlay:close`**: Hides the overlay window.
+
+**`overlay:open-app`**: Shows the main app window (used for unauthenticated users prompted to log in).
+
+**`overlay:save`** (prompt library save): Fully offline-aware — when offline, creates temp IDs with `offline-pmt-*` prefix, stores in `localCache`, and queues to `offlineQueue` for sync on reconnect. Auto-creates "Quick Saves" collection if none specified, then notifies the app window to refresh the library in real-time.
+
+**`overlay:get-settings`**: Fetches and caches user settings to `localCache`; offline falls back to cached settings or defaults `{ theme: 'dark', font_size: 'medium', font_family: 'inter', prompt_instructions: '' }`.
+
+**`overlay:get-chats`**: Returns `{ id, title }[]` lightweight list for the context picker; offline falls back to `localCache.getChats()`.
+
+**`overlay:get-source-info`**: Returns source window metadata `{ hwnd, title, detectedMode, confidence, appName }` using `detectWindowMode(sourceWindowTitle)`.
+
+**`overlay:stop-generation`**: Calls `pythonClient.abortLatestStream()` to abort the current in-flight WebSocket stream.
+
+**`overlay:truncate-history`**: Truncates `inMemoryOverlayHistory` to `keepCount` messages — called by the overlay frontend when the user edits a message or retries, to keep backend history in sync with the rendered conversation.
+
+**Cursor polling** (`startCursorPolling`): Sets up a `setInterval` at ~60fps that reads `screen.getCursorScreenPoint()`, offsets it relative to the overlay window position, and sends `overlay:cursor-pos` to drive the emerald glow animation in the renderer. Started when `registerOverlayHandlers` is called; stopped via `stopCursorPolling()` on shutdown.
 
 #### settings-handlers.ts
 
@@ -1491,7 +1597,7 @@ The reason this is a plain object (not a class or EventEmitter) is to avoid circ
 
 The centralized loader for the Rust `.node` native module. It implements a lazy-loading pattern:
 
-1. On first call to any exported function, `loadBridge()` attempts to `require()` the native module from `native/windows-core/index.js`.
+1. On first call to any exported function, `loadBridge()` attempts to `require()` the native module from `native/platform-core/index.js`.
 2. If the module loads successfully, `_bridge` is set to the native module's exports.
 3. If loading fails (file not found, wrong architecture, etc.), `_bridge` remains as `STUB` — a set of no-op functions that log warnings.
 4. `isNativeBridgeAvailable()` returns `true` if the real module was loaded, `false` if using stubs.
@@ -2221,17 +2327,46 @@ Header (minimize buttons, settings icon, mode toggle)
 
 ---
 
-## Chapter 8: The Native Rust Module -- Win32 Deep Dive
+## Chapter 8: The Native Rust Module -- Cross-Platform Deep Dive
 
 ### Overview
 
-The native module (`native/windows-core/`) is a Rust crate compiled via napi-rs into a `.node` binary. It provides five functions to the Electron main process:
+The native module lives in **a single Rust crate** at `native/platform-core/` (renamed from `windows-core` once the macOS backend landed — the directory name was platform-specific by accident and is now neutral). The crate is compiled via `napi-rs` to **two `.node` binaries**, both checked into the repo:
 
-1. `getActiveWindowTitle()` — returns the title of the currently focused window
+- `native/platform-core/platform-core.win32-x64-msvc.node` — Windows x64 (built with `npm run native:build`)
+- `native/platform-core/platform-core.darwin-arm64.node` — macOS Apple Silicon (built with `npm run native:build:mac`)
+
+A loader at `native/platform-core/index.js` selects the right binary at runtime based on `process.platform` + `process.arch`. `electron/main/utils/native-bridge.ts` lazy-`require()`s through this loader and exposes a uniform JS API across platforms (with stub fallbacks if neither binary loads).
+
+The exported N-API surface — same on both platforms, but each function dispatches internally via `#[cfg(target_os = …)]`:
+
+1. `getActiveWindowTitle()` — title of the currently focused window
 2. `startHook(callback)` — installs a global keyboard hook that calls `callback` when `@prompt` is typed
 3. `stopHook()` — removes the keyboard hook
-4. `replaceAtLastAnchor(text)` — replaces the `@prompt` trigger text with `text` in the original window
-5. `forceFocusWindow(hwnd)` — forces a window to the foreground
+4. `replaceAtLastAnchor(text)` — replaces the `@prompt` trigger text with `text` in the originating window
+5. `pasteTextToWindow(target, text)` — pastes at the current cursor position in a specific window/process
+6. `sendEnterToWindow(target)` — sends an Enter keystroke to a specific window/process (used by `overlay:insert-section` to auto-submit in chat apps)
+7. `forceFocusWindow(target)` — forces a window/process to the foreground, bypassing platform foreground-stealing protections
+8. `checkAccessibilityPermission()` — Windows: returns `true` (no-op). macOS: wraps `AXIsProcessTrustedWithOptions`.
+
+> **`TriggerData.hwnd` is platform-overloaded.** On Windows it's a real `HWND`. On macOS it's the **PID** of the frontmost application, resolved via `NSWorkspace.frontmostApplication`. The JS layer never interprets it — it just round-trips the integer back into the next native call.
+
+### Backend Dispatch Table
+
+| Function | Windows backend | macOS backend |
+|---|---|---|
+| `startHook(cb)` | `SetWindowsHookExW(WH_KEYBOARD_LL, …)` on a dedicated message-pump thread | `CGEventTapCreate(kCGSessionEventTap, listenOnly)` attached to `CFRunLoopGetMain` |
+| `stopHook()` | `PostThreadMessageW(WM_QUIT)` to the hook thread, then join | `CGEventTapEnable(false)` + remove from run loop |
+| `replaceAtLastAnchor(text)` | `SetForegroundWindow` → `Shift+Left × N` → `KEYEVENTF_UNICODE` injection | save pasteboard → `CGEventPost` Backspace × N → set pasteboard to text → `CGEventPost` `Cmd+V` → 30 ms sleep → restore pasteboard |
+| `pasteTextToWindow(target, text)` | `SetForegroundWindow(hwnd)` → SendInput | `osascript tell process X to activate` (PID) → `CGEventPost` `Cmd+V` (with clipboard swap) |
+| `sendEnterToWindow(target)` | `SendInput VK_RETURN` to focused control of `hwnd` | `CGEventPost` `kVK_Return` to PID |
+| `forceFocusWindow(target)` | `AttachThreadInput` + `AllowSetForegroundWindow` + `SetForegroundWindow` | `osascript tell application process "X" to activate` |
+| `getActiveWindowTitle()` | `GetForegroundWindow` + `GetWindowTextW` | `osascript` against System Events (frontmost-app fallback) |
+| `checkAccessibilityPermission()` | `true` (no-op) | `AXIsProcessTrustedWithOptions` |
+
+Inside `src/`, the shared module `hook.rs` exposes `on_char_keydown(char)` which both backends call after translating their native key event into a character. The ring buffer in `buffer.rs` lives entirely in this shared layer and never touches platform-specific types.
+
+The Windows-specific deep dive in the rest of this chapter — message pump threads, `WH_KEYBOARD_LL`, `LLKHF_INJECTED`, UI Automation, the three-path replacement engine, clipboard-restore atomic — all describes the **Windows backend only**. The macOS backend is covered in **Chapter 38: Cross-Platform Support — Windows and macOS**, which walks through `CGEventTap`, `CGEventPost`, the clipboard-swap window, the Accessibility permission flow, and the macOS replacement edge cases.
 
 ### How Global Keyboard Hooks Work (WH_KEYBOARD_LL)
 
@@ -2774,9 +2909,17 @@ Handles file attachments (PDFs and images) sent with optimization requests.
 
 ### Rate Limiting
 
-Two layers:
-1. **IP-based** (SlowAPI): 60 requests/minute per IP, 200/minute application-wide. Applied to ALL endpoints.
-2. **User-based** (custom): Daily limit per user (default 50, env `DAILY_REQUEST_LIMIT`). Applied ONLY to the WebSocket optimizer. In-memory counters keyed by `user_id:YYYY-MM-DD`. Counters clear at midnight UTC.
+Three layers:
+
+1. **IP-based** (SlowAPI): 60 requests/minute per IP, 200/minute application-wide. Applied to ALL HTTP endpoints. `/health` and `/health/ready` are exempt via `@limiter.exempt`.
+2. **User-based daily cap** (custom `_check_rate_limit()`): In-memory counters keyed by `"{user_id}:{YYYY-MM-DD}"`. Default limit: `DAILY_REQUEST_LIMIT=50` (env-configurable). Applied to BOTH `POST /optimize` and the `WS /ws/optimize-stream` endpoint (per-request inside the WebSocket receive loop). On limit exceeded, the WebSocket path sends an error JSON frame and `continue`s — the connection stays alive. Counters reset at UTC midnight via `_rate_last_date` comparison.
+3. **Concurrency semaphore**: `_optimize_semaphore = Semaphore(MAX_CONCURRENT_OPTIMIZATIONS=50)` — caps simultaneous in-flight LLM inference calls. The `async with _optimize_semaphore:` block inside the WebSocket handler ensures no more than 50 optimization requests run concurrently regardless of the number of connected clients.
+
+**Client-side mirror**: `RateLimitService` in Electron applies the same daily cap check BEFORE sending to Python, allowing immediate UI feedback without a round-trip. The service is invalidated via `getRateLimitService().invalidateCache(userId)` after each successful optimization so the next check reflects the fresh count.
+
+### CORS Configuration
+
+CORS is restricted to `localhost`/`127.0.0.1` by default — the service is never intended to be publicly reachable. Override via `ALLOWED_ORIGINS` env var (comma-separated list of allowed origins). The `X-Request-ID` header is explicitly allowed so distributed Sentry traces can propagate between Electron and Python.
 
 ---
 
@@ -3402,7 +3545,7 @@ The project is NOT a monorepo (no npm workspaces). It's a single npm package at 
 - `app-ui/`: React app (its own package.json, node_modules)
 - `electron/`: TypeScript source for main process + preload
 - `python-service/`: Python service (its own venv, requirements.txt)
-- `native/windows-core/`: Rust native module (its own Cargo.toml, package.json)
+- `native/platform-core/`: Rust native module (its own Cargo.toml, package.json)
 
 ### Build Pipeline
 
@@ -3451,7 +3594,7 @@ There is no "hot reload" for Electron main process code — you must rebuild and
 **Native module**:
 ```bash
 npm run native:build
-# -> cd native/windows-core && npm install && npm run build
+# -> cd native/platform-core && npm install && npm run build
 # -> napi build --platform --release
 ```
 Requires Rust toolchain (rustup) + Visual Studio C++ build tools on Windows.
@@ -3699,13 +3842,13 @@ The security audit noted:
 ### Rust Native Module
 | File | Purpose |
 |------|---------|
-| `native/windows-core/src/lib.rs` | N-API exports |
-| `native/windows-core/src/hook.rs` | Keyboard hook thread + callback |
-| `native/windows-core/src/buffer.rs` | Rolling buffer for @prompt detection |
-| `native/windows-core/src/keymap.rs` | Virtual key to character mapping |
-| `native/windows-core/src/replacement.rs` | Text replacement engine |
-| `native/windows-core/index.js` | Auto-generated N-API loader |
-| `native/windows-core/index.d.ts` | TypeScript type declarations |
+| `native/platform-core/src/lib.rs` | N-API exports |
+| `native/platform-core/src/hook.rs` | Keyboard hook thread + callback |
+| `native/platform-core/src/buffer.rs` | Rolling buffer for @prompt detection |
+| `native/platform-core/src/keymap.rs` | Virtual key to character mapping |
+| `native/platform-core/src/replacement.rs` | Text replacement engine |
+| `native/platform-core/index.js` | Auto-generated N-API loader |
+| `native/platform-core/index.d.ts` | TypeScript type declarations |
 
 ### Supabase
 | File | Purpose |
@@ -3722,9 +3865,1443 @@ The security audit noted:
 | `app-ui/package.json` | React app dependencies |
 | `app-ui/vite.config.ts` | Vite build configuration |
 | `app-ui/tailwind.config.ts` | Tailwind CSS configuration |
-| `native/windows-core/Cargo.toml` | Rust crate configuration |
+| `native/platform-core/Cargo.toml` | Rust crate configuration |
 | `python-service/requirements.txt` | Python dependencies |
 
 ---
 
 *This document covers every aspect of the Prmpt codebase — from the physics of sound waves to the Win32 API calls in the Rust module, from the TCP handshake to the React component hierarchy. If you've read this, you understand not just what the code does, but why it works the way it does at every level.*
+
+---
+
+## Chapter 16: Code Intelligence Service — The Codebase Indexing Brain
+
+> **This entire service is new and not covered anywhere in the existing documentation.**
+
+### What It Is
+
+The Code Intelligence Service (`code-intelligence-service/`) is a standalone Python FastAPI microservice that provides **semantic code search and indexing** capabilities to the Prmpt desktop application. It runs on port **8002** (separate from the AI optimization service on port 8001) and is deployed to Render.com as its own service.
+
+Its purpose: when a user opens a project folder in the "Spaces" workspace, Prmpt reads every source file, extracts function/class/method definitions (structural skeletons) using Tree-sitter WASM grammars **inside the Electron main process** (so source code never leaves the user's machine until parsing has reduced it to skeletons), generates LLM semantic summaries of each chunk, embeds those summaries as **512-dimensional vectors** (using `text-embedding-3-small` with the `dimensions=512` parameter, chosen for ~33% storage savings at near-1536-dim recall), and stores them in Supabase using pgvector with an **HNSW index** (`m=16, ef_construction=64`). When the user types a query, the service runs a **four-strategy hybrid retrieval pipeline** — vector ANN, full-text tsvector, concept (signature/name pattern matching), and file-path heuristics — fused via Reciprocal Rank Fusion, then expanded with the call graph for dependency-aware context. Results are injected into the prompt to make optimizations codebase-aware.
+
+### Architecture
+
+The service has four layers:
+
+1. **Routes** (`app/routes/`): Six FastAPI routers — `projects`, `ingest`, `retrieve`, `context`, `sync`, `webhooks`. (`context` provides project-scoped metadata used by the Electron app to render the Spaces sidebar without round-tripping through `retrieve`.)
+2. **Services** (`app/services/`): Domain services — `embedding`, `search`, `graph`, `github_sync`, `summarizer`, `query_preprocessor`, `query_analyzer`, `rrf` (Reciprocal Rank Fusion), `expander` (call-graph expansion).
+3. **Workers** (`app/workers/`): `index_worker`, `sync_worker`, `arq_worker` (Redis-backed task queue, runs as a separate process so a crash in the queue runner doesn't take down the HTTP service).
+4. **DB** (`app/db/`): Raw Supabase queries, models (Pydantic), and client initialization.
+
+**Sentry integration**: `code-intelligence-service/app/main.py` initializes `sentry_sdk` with the `FastApiIntegration` (auto-spans every route) and the `LoggingIntegration` (logs at WARNING+ become breadcrumbs, logs at ERROR+ become Sentry events). `traces_sample_rate` is `1.0` in development and `0.2` in production. The ARQ worker initializes its own SDK in `arq_worker.py` because it runs in a separate process.
+
+### Database Schema Tables (new tables in Supabase)
+
+| Table | Purpose |
+|-------|---------|
+| `projects` | One row per user project: `id`, `user_id`, `name`, `repo_url`, `local_path`, `current_branch`, `default_branch`, `index_status` (`stale`/`indexing`/`ready`/`error`/`partial`), `last_indexed_at`, `github_repo_owner`, `github_repo_name` |
+| `code_chunks` | One row per function/class/method: `id`, `project_id`, `user_id`, `file_path`, `start_line`, `end_line`, `chunk_type` (file/class/function/method), `name`, `signature`, `language`, `semantic_summary`, **`embedding` (vector(512))**, `content_hash`, `branch`, `branch_diverged`, `last_modified_commit`. The `embedding` column is indexed with **HNSW** (`m=16, ef_construction=64`) — see `supabase/migrations/20260414_fix_vector_index.sql` and `20260414_reduce_embedding_dims.sql`. There is also a `tsvector` GIN index on the chunk body for the full-text retrieval strategy. |
+| `code_relationships` | Call graph edges: `project_id`, `from_chunk_id`, `to_chunk_id`, `relationship_type` (calls/imports/inherits/implements). Unique on `(from_chunk_id, to_chunk_id, relationship_type)` |
+| `project_branches` | Branch metadata: `project_id`, `branch_name`, `last_commit_sha`, `last_commit_message`, `ahead_of_main_by`, `behind_main_by`, `diverged_files` (array of file paths) |
+
+A Supabase RPC function `match_code_chunks` (created via migration) does the pgvector cosine similarity search using the `embedding <=> query_embedding` operator with `LIMIT` and filters on `project_id`, `user_id`, and optionally `branch`.
+
+### Route Reference
+
+**`POST /api/projects`** — Create a project. Takes `name`, `repo_url`, `local_path`, `default_branch`, `github_repo_owner`, `github_repo_name`. Returns `ProjectResponse`. The index_status starts as `"stale"`.
+
+**`GET /api/projects`** — List all projects for the authenticated user, ordered by `created_at` descending.
+
+**`GET /api/projects/{project_id}`** — Get a single project (with ownership validation).
+
+**`DELETE /api/projects/{project_id}`** — Delete a project and all its `code_chunks`, `code_relationships`, and `project_branches` in sequence (no cascades — manually ordered to avoid FK constraint violations).
+
+**`DELETE /api/projects/{project_id}/chunks`** — Delete all chunks for a specific file path within a project. Called when a file is deleted from disk.
+
+**`POST /api/index/ingest`** (202 Accepted) — The main indexing endpoint. Receives an `IngestRequest` with `project_id`, `chunks` (list of up to 10,000 `ChunkInput`), `call_graph` (list of `CallGraphEdge`), `language_map` (dict of language to chunk count), and optional `branch`. Returns `202` immediately and runs indexing in the background (either via arq Redis queue if `REDIS_URL` is set and non-default, or via FastAPI `BackgroundTasks` otherwise). Updates `index_status` to `"indexing"` synchronously before returning.
+
+**`GET /api/retrieve`** — The semantic search endpoint. Parameters: `project_id`, `query` (string, max 10k chars), `branch` (optional), `limit` (1-25, default 10). Returns `RetrieveResponse` with `ranked_chunks`, `related_chunks`, and `branch_context`. Raises `409` if the project is currently indexing.
+
+**`POST /api/sync`** — Trigger GitHub polling sync for one or all projects. Body: `{ project_id?: string }`. If project_id is omitted, polls all GitHub-connected projects.
+
+**`POST /api/webhooks/github`** — Receives GitHub `push` events. Signature-verified via HMAC-SHA256 using `GITHUB_WEBHOOK_SECRET`. Extracts changed files from the push payload, marks corresponding chunks as `branch_diverged = true`, and upserts branch metadata. Supports both arq queue and direct processing.
+
+**`GET /health`** — Simple health check returning `{"status": "ok"}`.
+
+**`GET /health/ready`** — Readiness check that verifies Supabase connectivity and that at least one embedding key (`OPENAI_API_KEY` or `OPENROUTER_API_KEY`) is configured.
+
+### Ingest Pipeline: `index_worker.py`
+
+For each `ChunkInput` received from Electron:
+
+1. **Deduplication check**: Query `code_chunks` for a row matching `(project_id, file_path, name, content_hash)`. If found, skip — the chunk is unchanged.
+2. **Summarization**: Call `summarize_chunk()` — a synchronous LiteLLM call to `SUMMARIZER_MODEL` (default: `openrouter/openai/gpt-4.1-nano`). The system prompt instructs the model to produce a 1-2 sentence description of what the function does and why, in 60 tokens or less. If summarization fails, falls back to a concatenation of `name + signature + docstring[:100]`.
+3. **Embedding**: Call `embed_text(summary)` — async LiteLLM `embedding()` call using `text-embedding-3-small` with `dimensions=512` (truncated, re-normalized vectors). Retries up to 3 times with exponential backoff (1s, 2s, 4s). Embedded values are upserted directly into the `vector(512)` column.
+4. **Upsert**: `INSERT INTO code_chunks ... ON CONFLICT(project_id, file_path, name, chunk_type) DO UPDATE`. Stores the embedding, summary, content hash, branch, and resets `branch_diverged = False`.
+
+After all chunks are processed, `index_status` is set to `"ready"` (0 errors), `"partial"` (some errors), or `"error"` (all failed, 0 processed). `last_indexed_at` is set to the current UTC timestamp.
+
+### Search Pipeline: `search.py` (Hybrid Retrieval)
+
+The `retrieve_context()` function runs a **four-strategy hybrid pipeline**, designed because pure vector ANN throws away the structured signal in code (function names, file paths, identifier overlap) that small embedding models can underweight:
+
+1. **Query preprocessing** (`query_preprocessor.py`): Normalize whitespace, lowercase, strip Markdown noise, and run a fast LLM call (model from `QUERY_DECOMPOSE_MODEL`) to produce a query plan: extracted entities, intent (definition vs usage vs design vs how-to), and zero or more alternate phrasings. The plan is cached per (project_id, query) for 5 minutes to avoid double-billing on UI re-renders.
+2. **Parallel retrieval strategies** (run concurrently via `asyncio.gather`):
+   - **Vector ANN**: Embed the query (`text-embedding-3-small`, 512-dim), call the Supabase `match_code_chunks` RPC. The HNSW index keeps recall ~99% even at small corpus sizes (a few thousand chunks per project).
+   - **Full-text**: Postgres `tsvector @@ plainto_tsquery(...)` on the chunk body GIN index. Catches literal identifier hits the embedding model misses.
+   - **Concept**: Pattern-match against signature/name (e.g., "charge users" → functions matching `*charge*`, `*pay*`, `*billing*`) using the entities the preprocessor extracted.
+   - **File-path**: Boost chunks under directories whose path substring matches query terms (e.g., a query mentioning "auth" boosts `src/auth/`).
+3. **Reciprocal Rank Fusion** (`rrf.py`): Merge the four ranked lists with `score(d) = Σ 1 / (k + rank_i(d))` (k=60). RRF requires no per-strategy score normalization, which makes it robust to the wildly different score scales of vector cosine, BM25, and pattern matching.
+4. **Re-ranking layer**: Multiply each fused candidate by `log(1 + observation_count) * branch_weight`. Branch weight is 1.3x if the chunk's branch matches the requested branch, and 1.2x additional if `branch_diverged` is True (recently changed files rank higher). Truncate to `RETRIEVAL_DEFAULT_LIMIT = 15` (capped at `RETRIEVAL_MAX_LIMIT = 50`).
+5. **Call-graph expansion** (`expander.py`): Take the top 5 ranked chunks, query `code_relationships` for their callers and callees (both incoming `from_chunk_id` and outgoing `to_chunk_id`), fetch those chunk records. These are returned as `related_chunks` — not vector-ranked but relationship-connected.
+6. **Branch context**: Query `project_branches` for the requested branch metadata (ahead/behind counts, last commit, diverged files). Returned as `branch_context`.
+
+Each step is wrapped in a Sentry span (`code-intel.search.preprocess`, `code-intel.search.vector`, `code-intel.search.fts`, `code-intel.search.rrf`, `code-intel.search.expand`) so we can profile slow queries in production.
+
+### Call Graph Processing: `graph.py`
+
+`process_call_graph()` iterates over `CallGraphEdge` objects. For each edge, it looks up the `from_chunk` and `to_chunk` in `code_chunks` by `(project_id, name, file_path)`. If both are found, it upserts a row in `code_relationships`. Edges that reference unknown chunks (e.g., external library calls) are silently skipped and counted as `skipped`.
+
+Supported relationship types: `calls`, `imports`, `inherits`, `implements`.
+
+### GitHub Sync: `github_sync.py`
+
+**Phase 1 — Polling** (`poll_project()`): For a project with a non-main `current_branch`, calls the GitHub compare API (`/repos/{owner}/{repo}/compare/{default}...{branch}`) to get `ahead_by`, `behind_by`, and the list of changed files. Updates `project_branches` with this info and marks all changed file chunks as `branch_diverged = True`.
+
+**Phase 2 — Webhooks** (`webhooks.py`): Receives GitHub `push` events. Extracts added/modified/removed files from all commits in the push payload. Calls `flag_diverged_chunks()` to mark those file paths as stale. Upserts branch metadata with the HEAD commit SHA and message.
+
+**Webhook signature verification**: `verify_webhook_signature()` computes `HMAC-SHA256(GITHUB_WEBHOOK_SECRET, payload_bytes)` and compares with `X-Hub-Signature-256` header using `hmac.compare_digest()` — a timing-safe comparison that prevents timing attacks.
+
+### arq Redis Task Queue: `arq_worker.py`
+
+When `REDIS_URL` is set and points to a real Redis server (not the default `redis://localhost:6379`), the service uses `arq` for durable, retried background jobs:
+
+- **`WorkerSettings`**: `max_jobs = 10`, `job_timeout = 600s`, `max_tries = 3`, `health_check_interval = 30s`.
+- **`index_chunks_task`**: Deserializes `chunks_data` and `call_graph_data` (dicts for Redis serialization), runs `process_ingest_batch()` + `process_call_graph()`.
+- **`sync_project_task`**: Runs `process_push_webhook()` for webhook-triggered syncs.
+- **`enqueue_ingest()`** / **`enqueue_sync()`**: Use a shared arq connection pool (`create_pool()`) to push jobs to Redis.
+
+Without Redis (development), FastAPI's `BackgroundTasks` is used instead — simpler but not retried if the server restarts mid-indexing.
+
+### Middleware Stack
+
+From outermost to innermost:
+1. `SlowAPIMiddleware` — rate limiting (120 requests/minute per IP, using `slowapi`)
+2. `CORSMiddleware` — allows origins from `ALLOWED_ORIGINS` env var (defaults to localhost)
+3. `RequestIDMiddleware` — adds `X-Request-ID` response header (uses incoming header or generates UUID)
+
+### Authentication
+
+All routes use `require_auth` (from `app/auth.py`), a FastAPI `Depends` that:
+1. Extracts `Authorization: Bearer <token>` from the request header
+2. Decodes the Supabase JWT using `SUPABASE_JWT_SECRET` (HS256) via `PyJWT`
+3. Returns the decoded payload (including `sub` = user ID) on success
+4. Raises `HTTP 401` on missing/invalid/expired token
+
+### Configuration (`config.py`)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SUPABASE_URL` | (required) | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | (required) | Service role for admin DB access |
+| `SUPABASE_JWT_SECRET` | (required) | JWT verification secret |
+| `OPENAI_API_KEY` | — | Direct OpenAI embeddings (primary) |
+| `OPENROUTER_API_KEY` | — | OpenRouter for embeddings + summarization (fallback/alternative) |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `EMBEDDING_DIMENSIONS` | `512` | Vector dimensions (truncated; matches `vector(512)` column) |
+| `QUERY_DECOMPOSE_MODEL` | `openrouter/openai/gpt-4.1-mini` | Cheap LLM used by `query_preprocessor` to extract entities/intent |
+| `GITHUB_WEBHOOK_SECRET` | — | Webhook HMAC secret |
+| `REDIS_URL` | `redis://localhost:6379` | arq job queue (non-default = use arq) |
+| `ALLOWED_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | CORS allowlist |
+| `APP_ENV` | `development` | Sentry environment tag |
+| `APP_VERSION` | `1.0.1` | Release tag in Sentry |
+| `SENTRY_DSN` | — | Code-intel Sentry project DSN (distinct from the optimization service's DSN) |
+| `MAX_CHUNKS_PER_INGEST` | `10,000` | Hard cap on chunks per ingest request |
+| `SUMMARY_MAX_TOKENS` | `80` | LLM summary token cap |
+| `SUMMARIZER_MODEL` | `openrouter/openai/gpt-4.1-nano` | LLM used to summarize each chunk |
+| `RETRIEVAL_DEFAULT_LIMIT` | `15` | Default search result count |
+| `RETRIEVAL_MAX_LIMIT` | `50` | Maximum search result count |
+| `GITHUB_POLLING_INTERVAL_SECONDS` | `300` | Cron sync frequency (5 minutes) |
+
+### Deployment
+
+The service uses a `Dockerfile` (Python 3.12-slim base, uvicorn entrypoint on port 8002) and a `render.yaml` for one-click Render.com deployment. The Electron app connects to it via `CODE_INTELLIGENCE_SERVICE_URL` environment variable (defaults to `http://127.0.0.1:8002` for local development).
+
+### Dependencies (`requirements.txt`)
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `fastapi` | 0.128.0 | HTTP + WebSocket framework |
+| `uvicorn[standard]` | 0.40.0 | ASGI server |
+| `pydantic` | 2.12.5 | Request/response validation |
+| `httpx` | 0.28.1 | Async HTTP (GitHub API calls) |
+| `PyJWT` | >=2.9.0 | JWT verification |
+| `cryptography` | >=44.0.0 | Crypto primitives for JWT |
+| `sentry-sdk[fastapi]` | 2.56.0 | Error tracking + LoggingIntegration |
+| `slowapi` | 0.1.9 | Rate limiting middleware |
+| `litellm` | 1.81.14 | LLM abstraction (embeddings + summarization) |
+| `supabase` | 2.15.2 | DB client |
+| `python-dotenv` | 1.1.0 | .env file loading |
+| `arq` | 0.26.1 | Redis-backed async task queue |
+| `redis` | 5.3.0 | Redis client (arq dependency) |
+
+---
+
+## Chapter 17: The Spaces Feature — Project-Aware Prompt Workspaces
+
+> **This entire feature is new and not covered anywhere in the existing documentation.**
+
+### What Spaces Are
+
+"Spaces" is a new top-level navigation section in the App Window sidebar (rendered by `ProjectsView`). A Space is a named workspace that combines:
+
+- One or more **local project folders** attached to it (each connected to a project record in the Code Intelligence Service).
+- A **chat thread** (user/assistant message history, stored in localStorage).
+- A **Project Mode toggle** — when on, every prompt sent is enriched with retrieved code context before being sent to the AI optimizer.
+- **Index status tracking** — the UI shows whether each attached project is `ready`, `indexing`, or `stale`, along with the last indexed timestamp and current git branch.
+
+The entry point is `ProjectsView` (`app-ui/src/components/projects/ProjectsView.tsx`), which shows an onboarding screen (when empty), a space card grid (`SpacesList`), or the active workspace detail (`SpaceWorkspace`).
+
+### Data Model and Local Persistence
+
+All Space data is stored in **localStorage** under the key `"prmpt_spaces"`. There is no Supabase persistence for Spaces — they are local to the machine.
+
+```typescript
+interface Space {
+  id: string;                 // UUID, generated at creation
+  name: string;               // User-defined name
+  projects: SpaceProject[];   // Attached project folders
+  messages: SpaceMessage[];   // Chat history (user + assistant turns)
+  projectMode: boolean;       // Whether context injection is active
+  createdAt: number;          // Unix timestamp (ms)
+  lastUsedAt: number;         // Updated on every interaction
+}
+
+interface SpaceProject {
+  projectId: string;          // ID from Code Intelligence Service
+  name: string;               // Folder basename
+  localPath: string;          // Absolute local path on disk
+  branch?: string;            // Git branch at time of add
+  indexStatus?: string;       // Last known status (for display)
+}
+
+interface SpaceMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;          // Unix timestamp (ms)
+  feedback?: { rating: "positive" | "negative" };
+}
+```
+
+`loadSpaces()` includes a **schema migration**: old Space objects that had a `history` field (array of `{ id, issue, optimizedPrompt, timestamp }`) are automatically converted to the new `messages` format (one user message + one assistant message per history entry).
+
+### Adding a Project Folder
+
+When a user clicks "Add Folder" in `SpaceWorkspace`:
+
+1. `electronAPI.project.add()` is called (IPC channel `project:add`).
+2. In the main process (`project-handlers.ts`), `dialog.showOpenDialog({ properties: ['openDirectory'] })` opens the native folder picker.
+3. The folder path is checked with `isGitRepo()` (running `git rev-parse --is-inside-work-tree`).
+4. If it's a git repo: `getBranchInfo()` fetches the current branch, and `getGitRemoteUrl()` + `parseGitHubUrl()` extract the GitHub owner/repo if the remote is on GitHub.
+5. `CodeIntelClient.createProject()` sends `POST /api/projects` with name, local_path, repo_url, default_branch, github_repo_owner, github_repo_name.
+6. `performFullScan()` is triggered immediately as a background task — it walks the directory tree, parses every source file, and sends the chunks to the Code Intelligence Service for indexing.
+7. Status is broadcast to both the overlay and app window via IPC.
+
+### File Watching
+
+When a project is attached to a Space and Project Mode is on, `api.toggleWatching(projectId, localPath, true)` is called (IPC `project:toggle-watching`). This starts a chokidar watcher on the folder. When Project Mode is turned off or the Space is navigated away from, `toggleWatching(..., false)` stops the watcher.
+
+The `watchStartedRef` in `SpaceWorkspace` tracks which project IDs already have watchers started (to avoid double-starting on re-renders).
+
+### Context Injection Flow (Project Mode)
+
+When the user types a query and presses Send in Project Mode:
+
+1. `retrieve()` is called for each attached project: `electronAPI.project.retrieve({ project_id, query, branch, limit: 10 })` (IPC `project:retrieve` → `CodeIntelClient.retrieve()` → `GET /api/retrieve`).
+2. All `ranked_chunks` from all projects are merged and sorted by `similarity_score` descending. The top 10 are kept.
+3. All `related_chunks` (callers/callees of top results) are merged; the top 5 are kept.
+4. `buildTailoredPrompt(query, rankedChunks, relatedChunks)` constructs the enriched prompt string injecting the code context as structured markdown.
+5. This tailored prompt is sent to `electronAPI.optimizePrompt(tailoredPrompt, false, undefined, "thinking", "space")`.
+6. The optimization streams back via `onOptimizationChunk` / `onOptimizationComplete` events, filtered by `source === 'space'` to avoid collision with main chat stream events.
+7. The streaming response is rendered in the Space's chat thread using `useSmoothStreaming`.
+
+### `buildTailoredPrompt()` Format
+
+```
+{original user query}
+
+Here are the most relevant parts of my codebase for this task:
+
+- **{name}** ({chunk_type}) in `{...shortened_path}` (lines {start}-{end})
+  Signature: `{signature}`
+  Summary: {semantic_summary}
+
+Related/connected code:
+- **{name}** in `{...shortened_path}`
+  {semantic_summary}
+
+Please provide a detailed, step-by-step plan considering these specific files and functions.
+Include exact file paths and function names in your response.
+```
+
+`shortenPath()` trims paths to the last 3 segments with `...` prefix when longer (e.g., `".../src/auth/login.ts"`).
+
+### Index Status UI
+
+The right panel of `SpaceWorkspace` shows each attached project with:
+- A colored dot (green = ready, amber = indexing + CSS pulse animation, red = stale).
+- The index status label.
+- The current git branch (with a `GitBranch` icon).
+- Time since last indexed (e.g., "2h ago"), computed client-side.
+- On hover: "Re-index" and "Remove" buttons.
+
+`broadcastProjectStatus()` in `project-handlers.ts` sends `project:status-update` to the app window and `overlay:project-status` to the overlay, which updates `projectStatuses` state in real-time.
+
+If a project has `index_status === "stale"` when the Space is loaded, `api.reindex()` is called automatically.
+
+---
+
+## Chapter 18: Code Parser — Tree-Sitter WASM Code Parsing
+
+> **This module is new and not covered anywhere in the existing documentation.**
+
+`electron/main/services/code-parser.ts` runs entirely in the **Electron main process** and uses **web-tree-sitter** (the WASM build of Tree-sitter) to parse source files into structural skeletons without executing the code.
+
+### Initialization
+
+`initializeParser()` dynamically requires `web-tree-sitter` and calls its `init()` method to load the WASM binary. This is called lazily before the first parse. Each language grammar is loaded on demand via `Language.load(wasmPath)` and cached in `languageParsers: Map<string, any>`.
+
+### Supported Languages
+
+| File Extensions | Language | Grammar WASM |
+|----------------|---------|-------------|
+| `.js`, `.jsx` | javascript | `tree-sitter-javascript.wasm` |
+| `.ts`, `.tsx` | typescript | `tree-sitter-typescript.wasm` |
+| `.py` | python | `tree-sitter-python.wasm` |
+| `.go` | go | `tree-sitter-go.wasm` |
+| `.rs` | rust | `tree-sitter-rust.wasm` |
+| `.java` | java | `tree-sitter-java.wasm` |
+| `.rb` | ruby | `tree-sitter-ruby.wasm` |
+| `.c`, `.h` | c | `tree-sitter-c.wasm` |
+| `.cpp`, `.hpp` | cpp | `tree-sitter-cpp.wasm` |
+| `.cs` | c_sharp | `tree-sitter-c_sharp.wasm` |
+
+WASM files are stored in `tree-sitter-wasms/` at the project root.
+
+### `parseFile(filePath, content): Promise<ChunkData[]>`
+
+1. Detect language from extension. Return `[]` if unsupported.
+2. Load grammar parser for the detected language.
+3. Call `parser.parse(content)` to get a CST.
+4. **Import collection**: Walk the entire tree for import-type nodes and collect their text (up to 200 chars each).
+5. **Chunk extraction** (`walkForChunks()` recursive traversal):
+   - **Class nodes**: Create a `class` chunk. Recurse into children to find method nodes (which become `method` chunks named `{ClassName}.{methodName}`).
+   - **Function nodes**: Create a `function` chunk. Extract `name` via `childForFieldName('name')`, `signature` via `parameters` + optional `return_type` (truncated to 500 chars), `docstring` from the first string literal in the body or a preceding comment node (truncated to 500 chars), and `callees` by walking child nodes for call expressions (max 50, method calls stripped to bare function name).
+   - Skip anonymous functions (`name === '<anonymous>'`).
+6. **File-level fallback**: If no chunks were extracted, create a single `file` chunk for the whole file using the basename.
+7. **Content hash**: `sha256(node.text).hex().slice(0, 16)` — used for deduplication.
+
+### `ChunkData` Structure
+
+```typescript
+{
+  file_path: string,       // relative path
+  start_line: number,      // 1-indexed
+  end_line: number,
+  chunk_type: 'file' | 'class' | 'function' | 'method',
+  name: string,            // e.g., "AuthService.login"
+  signature?: string,      // e.g., "(email: string): Promise<User>"
+  language: string,
+  docstring?: string,      // first docstring/comment, max 500 chars
+  content_hash: string,    // 16-char hex sha256
+  callees: string[],       // called function names, max 50
+  imports: string[],       // file-level import texts
+}
+```
+
+---
+
+## Chapter 19: File Watcher — Incremental Re-indexing on File Changes
+
+> **This module is new and not covered anywhere in the existing documentation.**
+
+`electron/main/services/file-watcher.ts` uses **chokidar** to monitor project directories for file changes and triggers incremental re-indexing.
+
+### `startWatching(projectId, projectPath, client, branch?)`
+
+Creates a chokidar watcher with:
+- `persistent: true` — keeps watching until explicitly stopped
+- `ignoreInitial: true` — does not fire events for pre-existing files
+- `awaitWriteFinish: { stabilityThreshold: 500ms, pollInterval: 200ms }` — waits for writes to stabilize before emitting
+- `ignored` patterns: `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `.venv`, `venv`, `.next`, `target`, `*.min.js`, `*.map`, `*.lock`, `package-lock.json`, `yarn.lock`
+
+All `change` and `add` events are **debounced at 2000ms** per file — rapid saves only trigger one reindex.
+
+### On File Change / Add (`handleFileChange`)
+
+1. Check if file language is supported. Skip if not.
+2. Skip files larger than 500KB.
+3. Compute SHA-256 hash of file content.
+4. Compare with cached hash from `local-project-cache.ts`. Skip if unchanged.
+5. Parse file with `parseFile()`.
+6. If chunks extracted: update local cache hash, call `client.ingestSkeleton()`.
+
+### On File Delete (`unlink`)
+
+1. Clear the file's entry from local SQLite cache.
+2. Call `client.deleteChunksForFile(projectId, relativePath)`.
+
+### `performFullScan(projectId, projectPath, client, branch?, onProgress?)`
+
+Recursively collects all parseable files (skipping hidden dirs, node_modules, dist, build, target, venv). For each file:
+1. Skip if >500KB.
+2. Check hash against local cache. Skip unchanged files (incremental).
+3. Parse with `parseFile()` and accumulate chunks.
+
+The full batch is sent in **500-chunk sub-batches** to avoid HTTP payload size limits. Returns `{ totalFiles, totalChunks }`. The `onProgress` callback is called every 50 files for progress display in the UI.
+
+### State Management
+
+`activeWatchers: Map<string, WatcherState>` tracks all running watchers. Each `WatcherState` contains the chokidar watcher instance, projectId, projectPath, and a `debounceTimers` Map per file path.
+
+`stopAllWatchers()` is called on app quit to close all chokidar instances and cancel pending debounce timers.
+
+---
+
+## Chapter 20: Git Service — Local Repository Introspection
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/services/git-service.ts` wraps the `git` CLI via `child_process.execFile`. All operations use a 10-second timeout and 1MB buffer.
+
+### Functions
+
+| Function | Git Command | Returns |
+|----------|------------|---------|
+| `isGitRepo(path)` | `git rev-parse --is-inside-work-tree` | `boolean` |
+| `getCurrentBranch(path)` | `git rev-parse --abbrev-ref HEAD` | branch name string |
+| `getDefaultBranch(path)` | `git symbolic-ref refs/remotes/origin/HEAD --short` | branch name (fallback: `main` or `master`) |
+| `getAheadBehind(path, branch, default)` | `git rev-list --left-right --count origin/{default}...{branch}` | `{ ahead, behind }` |
+| `getRecentCommits(path, count)` | `git log --max-count={n} --format=%H|%s|%an|%aI` | `GitCommitInfo[]` |
+| `getChangedFiles(path, default)` | `git diff --name-only origin/{default}...HEAD` | `string[]` |
+| `getGitRemoteUrl(path)` | `git config --get remote.origin.url` | URL string or `null` |
+| `parseGitHubUrl(url)` | (regex) | `{ owner, repo }` or `null` |
+| `getBranchInfo(path)` | (aggregates all above) | `GitBranchInfo` |
+
+`parseGitHubUrl()` matches both HTTPS (`https://github.com/owner/repo`) and SSH (`git@github.com:owner/repo`) formats.
+
+---
+
+## Chapter 21: Local Project Cache — SQLite File Hash Store
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/database/local-project-cache.ts` maintains a **SQLite database** at `{userData}/project-cache.db` using the synchronous `better-sqlite3` library.
+
+**Purpose**: Avoid re-parsing and re-sending unchanged files. Before parsing any file, the watcher checks the local cache; if the content hash matches the last successfully indexed version, the file is skipped.
+
+**Schema**:
+```sql
+CREATE TABLE file_cache (
+  project_id    TEXT NOT NULL,
+  file_path     TEXT NOT NULL,      -- relative path
+  content_hash  TEXT NOT NULL,      -- 16-char hex SHA-256
+  chunk_count   INTEGER NOT NULL DEFAULT 0,
+  last_parsed_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (project_id, file_path)
+)
+```
+
+WAL journal mode is enabled for better concurrent read performance.
+
+**API**: `getCachedHash(projectId, filePath)`, `setCachedHash(projectId, filePath, contentHash, chunkCount)`, `clearProjectCache(projectId)`, `clearFileCache(projectId, filePath)`, `getProjectFileCount(projectId)`.
+
+If `better-sqlite3` is not available, all functions gracefully degrade (return `null`/`0`) — the watcher still works but every file is treated as changed.
+
+---
+
+## Chapter 22: Code Intelligence Client — Electron-Side HTTP Client
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/api/code-intel-client.ts` is the axios-based HTTP client that the Electron main process uses to communicate with the Code Intelligence Service.
+
+`CodeIntelClient` is initialized with `baseUrl` from `CODE_INTELLIGENCE_SERVICE_URL` env var (defaults to `http://127.0.0.1:8002`). It uses an **axios request interceptor** to automatically attach `Authorization: Bearer {currentAccessToken}` from `authState` to every outgoing request.
+
+Timeouts: 120s for most requests, 300s for `ingestSkeleton()` (large batch operations may take longer).
+
+---
+
+## Chapter 23: Project IPC Handlers
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/ipc-handlers/project-handlers.ts` registers all project-related IPC channels. These are exposed via `electronAPI.project.*` in the preload.
+
+| IPC Channel | Action |
+|-------------|--------|
+| `project:add` | Native folder dialog, git detection, `createProject()`, initial full scan |
+| `project:remove` | Stop watcher, `deleteProject()`, clear local cache, broadcast null status |
+| `project:list` | Return all user projects |
+| `project:status` | Return single project info |
+| `project:set-active` | Set active project, start watcher, broadcast status |
+| `project:get-active` | Return `{ projectId, branch }` |
+| `project:reindex` | Clear cache, broadcast `indexing`, `performFullScan()` with progress, broadcast result |
+| `project:sync` | Call `client.syncProject()` |
+| `project:toggle-watching` | `startWatching()` or `stopWatching()` |
+| `project:is-watching` | Return `isWatching(projectId)` |
+| `project:retrieve` | Call `client.retrieve(params)` |
+
+`broadcastProjectStatus(data)` sends `overlay:project-status` to the overlay and `project:status-update` to the app window simultaneously.
+
+---
+
+## Chapter 24: Analytics Service — Session Tracking and Usage Events
+
+> **This feature is new and not covered in the existing documentation.**
+
+### `AnalyticsService` (`electron/main/analytics/analytics-service.ts`)
+
+Singleton (`analyticsService`) that manages:
+1. **App sessions**: `app_sessions` Supabase table row created on `startSession()`, updated with duration on `endSession()`.
+2. **Usage events**: Discrete named events queued in `EventBuffer` and batch-flushed to `usage_events` table.
+
+**Crash recovery**: On `startSession()`, any session rows where `ended_at IS NULL` are closed first with `duration_seconds = null` (indicating unclean termination).
+
+All public methods are designed to never throw — exceptions are captured to Sentry but never surfaced.
+
+### `EventBuffer` (`electron/main/analytics/event-buffer.ts`)
+
+Batched write system for analytics events:
+- **Auto-flush**: Every **10 seconds** via `setInterval`, or immediately when buffer reaches **50 events**.
+- **Offline persistence**: If a Supabase flush fails, events are written to `{userData}/offline-cache/analytics-{userId}.json`. On next `initialize()`, `drainOfflineQueue()` retries the upload and deletes the file on success.
+- **Shutdown flush**: `flushSync()` is awaited on app quit to ensure no events are lost.
+
+### Database Tables
+
+| Table | Columns |
+|-------|---------|
+| `app_sessions` | `id UUID`, `user_id`, `app_version`, `platform`, `started_at`, `ended_at`, `duration_seconds` |
+| `usage_events` | `id UUID`, `user_id`, `event_type`, `metadata JSONB`, `created_at` |
+| `user_feedback` | `id UUID`, `user_id`, `rating` (positive/negative), `comment TEXT`, `created_at` |
+
+---
+
+## Chapter 25: Clarification System — Pre-Optimization Questionnaire
+
+> **This feature is new and not covered in the existing documentation.**
+
+### Overview
+
+Before the optimizer runs, the Python service can optionally return a set of clarification questions about the user's prompt. Answering these helps the optimizer produce more targeted output.
+
+### `ClarificationCard` (`app-ui/src/components/chat/ClarificationCard.tsx`)
+
+Rendered inline in the chat stream before the optimized response appears.
+
+**Question types**:
+- `multiple_choice` — multi-select by default (checkboxes). "Delivery format" questions (detected by keywords: "task sections", "broken into", "delivery", "one complete", "delivered") are single-select (radio buttons).
+- `text` — free-text input.
+
+**UX details**:
+- Questions fade in one by one with a 120ms stagger (CSS `translate-y` + `opacity` transition).
+- An "Other" option with a revealed text input is added to all multiple-choice questions.
+- A progress bar shows which questions have been answered.
+- An "Anything else?" free-text textarea is always shown at the bottom.
+- The "Optimize" button brightens once at least one answer is given.
+- `compact` prop renders a smaller variant for use in the Overlay.
+- `initialAnswers` pre-fills all fields for re-edit mode.
+
+**`wantsSections` detection**: If the user selected an option containing "section", "broken", or "task" in the delivery-format question, `wantsSections = true` is passed to `onSubmit`. The optimizer uses this to generate a multi-section structured output rather than a single block.
+
+**Answer serialization**: Multiple-choice answers are joined with `", "`. Free-text "Other" input is appended to the same string. `parseAnswerToSelections()` reverses this on re-edit.
+
+### `ClarificationSummaryCard` (`app-ui/src/components/chat/ClarificationSummaryCard.tsx`)
+
+Shown after optimization completes, displaying which preferences were selected. Features:
+- A "Tasks" or "Single" mode badge.
+- Each answered question with pill badges for selected values.
+- "Additional context" text if provided.
+- An "Edit" button that replaces the summary with a pre-filled `ClarificationCard` for re-optimization.
+
+---
+
+## Chapter 26: Feedback System
+
+> **This feature is new and not fully covered in the existing documentation.**
+
+### Inline Message Feedback (`FeedbackWidget`)
+
+`app-ui/src/components/chat/FeedbackWidget.tsx` renders thumbs-up/thumbs-down buttons below assistant messages. Selecting a rating calls `onFeedback(messageId, rating)`, then auto-dismisses after 900ms. Accepts `initialRating` prop for persisted ratings.
+
+### App-Level Feedback Modal (`FeedbackModal`)
+
+`app-ui/src/components/feedback/FeedbackModal.tsx` is a `Dialog` for rating the overall app experience. Renders rating buttons, optional comment textarea (shown after rating is selected with fade-in animation), and submit. Shows a success animation on submit, then closes after 1.5s.
+
+### IPC Handler (`feedback-handlers.ts`)
+
+`feedback:submit` IPC channel saves `{ rating, comment }` to the `user_feedback` Supabase table under the authenticated user's ID. Errors are captured to Sentry.
+
+---
+
+## Chapter 27: Skill System — Optimization Domain Skills
+
+> **This feature is new and not covered in the existing documentation.**
+
+Skills are markdown files in the `files/` directory, named `skill_{name}.md`. The Python service injects the selected skill's content into the optimizer system prompt to apply domain-specific guidance.
+
+### `registerSkillHandlers()` (`electron/main/ipc-handlers/skill-handlers.ts`)
+
+`skills:list` IPC channel:
+1. Resolves the skills directory: `files/` (dev) or `process.resourcesPath/files` (packaged).
+2. Finds all `skill_*.md` files.
+3. Parses each with `parseSkillMetadata()`:
+   - **Label**: First `# Heading` line, `SKILL FILE:` prefix stripped, title-cased.
+   - **Description**: First two bullet points from the `## WHEN TO USE THIS SKILL` section, joined with `", "`, truncated to 80 chars.
+4. Returns alphabetically sorted `SkillInfo[]`: `{ name, label, description }`.
+
+`app-ui/src/components/chat/SkillPicker.tsx` renders the skill selection UI in the chat input. `app-ui/src/lib/skillIcons.tsx` maps skill names to Phosphor icon components.
+
+---
+
+## Chapter 28: AI Guardrails — Request Deduplication and Rate Control
+
+> **This module is new and not covered in the existing documentation.**
+
+`electron/main/optimization/ai-guardrails.ts` — `AIGuardrails` class — protects against spam and concurrent request conflicts.
+
+### Rules
+
+| Rule | Value | Effect |
+|------|-------|--------|
+| Minimum length | 10 chars | Rejects very short prompts |
+| Similarity threshold | 0.9 (90%) | Skips near-duplicate requests (Levenshtein distance) |
+| Cooldown | 3000ms | Enforces 3-second gap between requests |
+| Max in-flight | 1 | Rejects if an optimization is already running |
+
+### `optimize(promptText, requestId, skipCache)`
+
+If an in-flight request with the same `requestId` exists and `skipCache` is false, returns the existing promise (deduplication). Otherwise creates a new optimization request, stores the promise in `inFlightRequests`, and removes it on completion.
+
+### Levenshtein Similarity
+
+```
+similarity = 1 - (levenshteinDistance(a, b) / max(len(a), len(b)))
+```
+
+A score above 0.9 means the texts are considered too similar to re-optimize.
+
+---
+
+## Chapter 29: New Overlay Components
+
+> **These components are new and not covered in the existing documentation.**
+
+### `ChatPicker` (`app-ui/src/overlay/components/ChatPicker.tsx`)
+
+A modal panel inside the overlay for selecting an existing app-window chat to attach as context. On open, loads the full chat list via `window.electronAPI.overlay.getChats()`. Renders a search input that filters by title, a scrollable list, and confirm/cancel buttons. Escape closes the picker. Confirming calls `onConfirm(chatId, chatName)`.
+
+### `ProjectStatus` (`app-ui/src/overlay/components/ProjectStatus.tsx`)
+
+A small status badge in the overlay header. Subscribes to `api.project.onOverlayStatus()` for real-time status updates. Shows:
+- A colored dot (green/amber/red) with a pulsing animation when indexing.
+- Project name + optional branch name.
+- Indexing percentage when `status === 'indexing'` and `progress` is provided.
+- Returns `null` if no active project.
+
+### `CollectionPicker` (`app-ui/src/overlay/components/CollectionPicker.tsx`)
+
+A modal panel in the overlay for selecting a prompt library collection to save the current optimization result to.
+
+---
+
+## Chapter 30: History View
+
+`app-ui/src/components/history/HistoryView.tsx` — a read-only list of past chat sessions grouped by date.
+
+**Date grouping**: "Today", "Yesterday", named weekday (within 7 days), or formatted date. Grouping is done client-side in a `reduce()`.
+
+**`HistoryItem`**: `{ id, title, preview, date: Date, messageCount }`. Rendered as clickable bordered cards with truncated title, message count badge, and relative timestamp. Clicking calls `onSelectItem(id)` to navigate to the chat.
+
+---
+
+## Chapter 31: Updated File Map — All New Files Since Last Documentation
+
+### `code-intelligence-service/` (entirely new service)
+
+| File | Purpose |
+|------|---------|
+| `app/main.py` | FastAPI factory, middleware, router registration, health endpoints |
+| `app/config.py` | All environment variables and runtime constants |
+| `app/auth.py` | JWT Bearer auth FastAPI dependency |
+| `app/routes/projects.py` | Project CRUD (create/list/get/delete/delete-chunks) |
+| `app/routes/ingest.py` | Async chunk ingestion (202, arq or BackgroundTasks) |
+| `app/routes/retrieve.py` | Semantic search with re-ranking |
+| `app/routes/sync.py` | GitHub polling sync endpoint |
+| `app/routes/webhooks.py` | GitHub push webhook receiver with HMAC verification |
+| `app/services/embedding.py` | LiteLLM embedding with retry backoff |
+| `app/services/search.py` | Vector search + re-ranking + related chunks |
+| `app/services/graph.py` | Call graph edge resolution and relationship upsert |
+| `app/services/github_sync.py` | GitHub API polling and webhook utilities |
+| `app/services/summarizer.py` | LLM-based 60-token semantic chunk summaries |
+| `app/db/models.py` | Pydantic request/response models for all routes |
+| `app/db/queries.py` | All raw Supabase queries (CRUD, vector search RPC, branch ops) |
+| `app/db/supabase_client.py` | Supabase client singleton (service role) |
+| `app/workers/index_worker.py` | Per-chunk pipeline: hash check → summarize → embed → upsert |
+| `app/workers/sync_worker.py` | Webhook-triggered delta re-indexing worker |
+| `app/workers/arq_worker.py` | arq WorkerSettings, task functions, enqueue helpers |
+| `Dockerfile` | Python 3.12-slim, uvicorn on port 8002 |
+| `render.yaml` | Render.com deployment configuration |
+| `requirements.txt` | Python dependency list |
+
+### `electron/main/` (new files)
+
+| File | Purpose |
+|------|---------|
+| `analytics/analytics-service.ts` | Session tracking + event logging singleton |
+| `analytics/event-buffer.ts` | Batched analytics flusher with offline JSON persistence |
+| `api/code-intel-client.ts` | axios HTTP client for Code Intelligence Service |
+| `database/local-project-cache.ts` | better-sqlite3 file hash cache for incremental indexing |
+| `ipc-handlers/feedback-handlers.ts` | `feedback:submit` IPC → `user_feedback` Supabase table |
+| `ipc-handlers/project-handlers.ts` | All project/space IPC channels |
+| `ipc-handlers/skill-handlers.ts` | `skills:list` IPC → parse skill markdown files |
+| `optimization/ai-guardrails.ts` | Request deduplication, cooldown, similarity, in-flight limits |
+| `optimization/response-validator.ts` | AI response structure validation |
+| `optimization/session-state.ts` | Per-session optimization phase state machine |
+| `optimization/stability-tracker.ts` | Optimization request success rate tracking |
+| `services/code-parser.ts` | web-tree-sitter WASM code parser (13 languages, 4 chunk types) |
+| `services/file-watcher.ts` | Chokidar watcher with 2s debounce and incremental ingest |
+| `services/git-service.ts` | Git CLI wrapper (branch, commits, ahead/behind, remote URL) |
+
+### `app-ui/src/` (new files)
+
+| File | Purpose |
+|------|---------|
+| `components/chat/ClarificationCard.tsx` | Pre-optimization questionnaire with multi-select, stagger animation |
+| `components/chat/ClarificationSummaryCard.tsx` | Post-optimization preference summary with re-edit |
+| `components/chat/FeedbackWidget.tsx` | Inline thumbs up/down message rating |
+| `components/chat/SkillPicker.tsx` | Skill selection UI in chat input |
+| `components/feedback/FeedbackModal.tsx` | App-level rating dialog with optional comment |
+| `components/history/HistoryView.tsx` | Date-grouped chat history list |
+| `components/projects/ProjectsView.tsx` | Top-level Spaces navigation view |
+| `components/projects/SpacesList.tsx` | Card grid of all user Spaces |
+| `components/projects/SpaceWorkspace.tsx` | Space detail: chat thread, project panel, context toggle |
+| `components/projects/types.ts` | Space data types, localStorage helpers, `buildTailoredPrompt()` |
+| `lib/skillIcons.tsx` | Skill name to Phosphor icon component mapping |
+| `overlay/components/ChatPicker.tsx` | Overlay modal for attaching existing chat context |
+| `overlay/components/CollectionPicker.tsx` | Overlay modal for saving to prompt library collection |
+| `overlay/components/ProjectStatus.tsx` | Overlay project indexing status badge |
+
+### `tree-sitter-wasms/` (new directory)
+
+WASM grammar files used by `code-parser.ts`:
+`tree-sitter-javascript.wasm`, `tree-sitter-typescript.wasm`, `tree-sitter-python.wasm`, `tree-sitter-go.wasm`, `tree-sitter-rust.wasm`, `tree-sitter-java.wasm`, `tree-sitter-ruby.wasm`, `tree-sitter-c.wasm`, `tree-sitter-cpp.wasm`, `tree-sitter-c_sharp.wasm`.
+
+---
+
+*Documentation last extended: April 2026. Chapters 16–31 cover the Code Intelligence Service, Spaces workspaces, code parsing pipeline, file watching, git integration, analytics system, clarification questionnaire, feedback system, skill system, AI guardrails, and all new overlay components — none of which appeared in the original documentation.*
+
+---
+
+## Chapter 32: Task Planner — Structured Builds for Complex Prompts
+
+> **New module in `pipeline_v2/task_planner.py` — not covered in any previous documentation.**
+
+### The Problem It Solves
+
+When a user submits a complex, multi-part build request (e.g., "Build a full SaaS dashboard with auth, billing, and analytics"), a single flat optimized prompt is insufficient. The optimizer needs to know what comes first, what each phase produces, and what state the codebase is in after each step. Without this, the AI coding assistant either tries to do everything at once or makes assumptions about what already exists.
+
+The `task_planner.py` module runs a pre-pass before the optimizer in these cases, producing a structured task graph that the optimizer can use to write accurate, dependency-aware sectioned output.
+
+### When It Runs
+
+Task planning is triggered when the user's clarification answer indicates they want **sectioned task output** (the `wantsSections: true` flag from `ClarificationCard`). The flow is:
+
+```
+Clarification answers received
+    └── wantsSections: true
+            │
+            ▼
+plan_tasks(user_input, model=SUMMARIZER_MODEL)
+            │
+            ├── Returns None (failure) → optimizer falls back to generic sectioned format
+            └── Returns List[TaskDict] → injected into optimizer system prompt
+```
+
+### `plan_tasks(user_input, model?, provider?)` Function
+
+**Model**: `SUMMARIZER_MODEL` (cheap, fast — `gpt-4o-mini` or equivalent)
+**Temperature**: 0.2 (deterministic — consistency is critical for dependency ordering)
+**Response format**: `json_object`
+**Max tokens**: 1024
+
+The planner is given a strict system prompt with these rules:
+1. Order tasks by dependency — earlier tasks must not depend on later ones
+2. Each task must be independently executable by an AI coding assistant
+3. Task 1 always handles project setup / scaffolding
+4. 3–12 tasks. Merge trivial steps; split overly large ones
+5. Be specific in "produces" — name actual files, components, or endpoints
+6. "state_after" must describe what a developer would see after running this task
+7. Do not include testing, deployment, or CI/CD unless explicitly requested
+
+### Task Schema
+
+Each task in the returned list has this shape:
+
+```python
+{
+    "number": 1,
+    "name": "Project Setup & Scaffolding",
+    "goal": "Initialize the Next.js project with TypeScript, Tailwind, and Supabase",
+    "depends_on": "",                          # Empty for task 1
+    "produces": ["package.json", "tailwind.config.ts", "lib/supabase.ts"],
+    "state_after": "A running Next.js dev server with Supabase client configured"
+}
+```
+
+### Failure Handling
+
+`plan_tasks` returns `None` on any error (LLM failure, JSON parse error, fewer than 2 valid tasks). The optimizer catches `None` and falls back to its own internal task-section format. This ensures the feature degrades gracefully without surfacing errors to the user.
+
+### Token Logging
+
+Every successful call logs to the daily usage `.jsonl` file with `call_type="task_planner"`, enabling cost tracking separate from optimization calls.
+
+---
+
+## Chapter 33: OTP-Based Email Authentication
+
+> **New module in `app/email_otp.py` and `components/auth/OtpVerification.tsx` — not covered in any previous documentation.**
+
+### Why OTP?
+
+The app supports two email-based auth flows that don't map cleanly to Supabase's standard JWT flow:
+1. **Signup OTP verification** — confirm email ownership before creating the Supabase account
+2. **Password reset OTP** — reset password without Supabase's magic link flow (which requires a web redirect)
+
+Both flows use a self-contained OTP system managed entirely by the Python service.
+
+### OTP Service (`app/email_otp.py`)
+
+**Storage**: In-memory Python dict — `_store: Dict[str, OTPRecord]` — no database required for OTP codes.
+
+**OTPRecord shape**:
+```python
+{
+    "otp": "847291",           # 6-digit random string
+    "email": "user@example.com",
+    "purpose": "signup",       # or "reset"
+    "expires_at": datetime,    # now() + 10 minutes
+    "data": {...}              # Optional extra data (for signup: display_name, custom_instructions)
+}
+```
+
+**Key Functions**:
+
+| Function | Description |
+|---|---|
+| `send_signup_otp(email, display_name?, custom_instructions?)` | Generate 6-digit OTP, store in `_store`, send via SMTP, return `{ message }` |
+| `verify_signup_otp(email, otp)` | Verify OTP + expiry, create Supabase user via Admin API, return JWT session, delete OTP record |
+| `send_reset_otp(email)` | Generate OTP, store with `purpose="reset"`, send via SMTP |
+| `reset_password(email, otp, new_password)` | Verify OTP, call Supabase Admin API to update password, delete OTP record |
+| `cleanup_expired()` | Removes all OTPRecords where `expires_at < now()` — called every 5 minutes by a background asyncio task started in `startup_event()` |
+
+**OTP Expiry**: 10 minutes. After expiry, `verify_signup_otp` and `reset_password` return a 400 error.
+
+**Brute-force protection**: No explicit lockout in the current implementation — rate limiting via SlowAPI (`60/minute` default) provides the primary protection.
+
+### Frontend OTP UI (`OtpVerification.tsx`)
+
+A 6-digit OTP entry form rendered after signup or password reset initiation. Features:
+- 6 separate single-character `<input>` fields for controlled input
+- Auto-advances focus to the next field on input
+- Auto-submits when all 6 digits are entered
+- Backspace on an empty field focuses the previous field
+- Paste support — pasting a 6-digit string fills all fields and auto-submits
+- Countdown timer showing remaining validity
+
+### API Endpoints
+
+```
+POST /auth/send-signup-otp    { email, display_name?, custom_instructions? }
+POST /auth/verify-signup-otp  { email, otp }  → { access_token, refresh_token, user }
+POST /auth/send-reset-otp     { email }
+POST /auth/reset-password     { email, otp, new_password }
+```
+
+None of these endpoints require a JWT (`require_auth` dependency is not applied).
+
+---
+
+## Chapter 34: GDPR Account Deletion — 30-Day Graceful Wipe
+
+> **New modules in `database/services/deletion-service.ts`, `ipc-handlers/deletion-handlers.ts`, and the `deletion_requests` Supabase table.**
+
+### The Lifecycle
+
+```
+User → Settings → "Delete Account" → Confirmation dialog
+        │
+        ▼
+account:request-deletion IPC
+  → DeletionService.scheduleDeletion(userId)
+  → INSERT into deletion_requests { user_id, scheduled_for: now() + 30 days }
+  → Return { scheduledFor: Date }
+        │
+        ▼
+UI shows: "Your account is scheduled for deletion on [date]. You can cancel anytime."
+        │
+        ├── User clicks "Cancel Deletion"
+        │       → account:cancel-deletion IPC
+        │       → UPDATE deletion_requests SET cancelled_at = now()
+        │       → Deletion prevented
+        │
+        └── 30 days pass without cancellation
+                → Supabase edge function (cron job, runs daily)
+                → SELECT from deletion_requests WHERE scheduled_for <= now() AND cancelled_at IS NULL
+                → Permanently delete all user data (using service role key)
+                → Auth.deleteUser(userId)
+```
+
+### `DeletionService`
+
+| Method | Supabase Operation |
+|---|---|
+| `scheduleDeletion(userId)` | INSERT into `deletion_requests` |
+| `cancelDeletion(userId)` | UPDATE `deletion_requests` SET `cancelled_at = now()` WHERE `cancelled_at IS NULL` |
+| `getPendingDeletion(userId)` | SELECT most recent non-cancelled deletion request |
+
+### Security
+
+The Supabase edge function that executes deletions uses the **service role key** — it can bypass RLS and delete any user's data. The function validates that the caller is the cron scheduler (via a secret header) before executing. This ensures no user can trigger another user's deletion.
+
+### Data Wiped on Deletion
+
+All rows in every table where `user_id = userId`:
+- `user_profiles`, `user_preferences`, `chats`, `messages`, `prompt_collections`, `saved_prompts`, `user_memory`, `app_sessions`, `usage_events`, `code_intel_projects`, `deletion_requests`
+
+Cloudinary avatars and Supabase Storage attachments are deleted via their respective APIs. The Supabase Auth user (`auth.users`) is deleted last.
+
+---
+
+## Chapter 35: Rate Limiting and Daily Usage Caps
+
+> **New module in `database/services/rate-limit-service.ts`.**
+
+Prmpt enforces two layers of rate limiting:
+
+### Layer 1: API-Level Rate Limiting (Python Service)
+
+Implemented via **SlowAPI** middleware on every HTTP/WebSocket endpoint:
+- Default: `60/minute` per IP address
+- Application-wide: `10000/minute`
+- Specific endpoints can override: e.g., OTP endpoints may have stricter limits
+
+When a rate limit is exceeded, SlowAPI returns HTTP 429 with a `Retry-After` header. The Electron main process surfaces this as a toast notification: "You're going too fast. Wait a moment before sending again."
+
+### Layer 2: Daily Usage Cap (Per-User, Electron-Side)
+
+`RateLimitService` enforces a daily optimization count cap per user:
+
+```typescript
+interface DailyUsage {
+  user_id: string;
+  date: string;           // "YYYY-MM-DD"
+  optimization_count: number;
+  limit: number;          // Per-tier cap
+}
+```
+
+**Flow**:
+1. Before each optimization: `RateLimitService.checkLimit(userId)` → returns `{ allowed: boolean, remaining: number, resetAt: Date }`
+2. If `allowed: false`: request is rejected with a specific error surfaced in the UI
+3. If `allowed: true`: optimization proceeds, then `RateLimitService.increment(userId)` is called after completion
+4. The `daily_usage_summaries` Supabase table is updated via a database trigger on every INSERT into `usage_events`
+
+**Daily Summary Trigger**: The Supabase `upsert_daily_session_on_close` trigger (added in migration `20260415_fix_session_trigger_crash_recovery.sql`) ensures that crash-recovered sessions — where `duration_seconds IS NULL` — do **not** increment the `total_sessions` counter in `daily_usage_summaries`. This prevents inflated session counts from crashed app instances.
+
+---
+
+## Chapter 36: Active Window Detector and Zoom Indicator
+
+### Active Window Detector (`services/active-window-detector.ts`)
+
+Wraps the Rust native module's `getActiveWindowTitle()` function in a polling mechanism. Polls the currently focused window title at configurable intervals (default: 1 second) when the overlay is open.
+
+Used by `ProjectStatus` in the overlay to determine if the user's current application matches any configured Space project path — enabling automatic context surfacing without manual selection.
+
+**Polling stops** when the overlay closes to avoid unnecessary OS calls while the app is in the background.
+
+### Zoom Indicator (`components/layout/ZoomIndicator.tsx`)
+
+A floating indicator rendered in `AppLayout.tsx` that appears temporarily when the user adjusts font size in Settings.
+
+**Behavior**:
+- Watches the `--font-size` CSS variable on the document root
+- When the value changes, a pill-shaped badge slides in from the bottom-right corner showing the current zoom level (e.g., "100%", "115%", "85%")
+- Auto-dismisses after 1.5 seconds via a CSS transition
+- Uses `animate-slide-up` from the design system for entry animation
+
+**Implementation**: Uses a `MutationObserver` on `document.documentElement` watching the `style` attribute. When `--font-size` changes, it parses the value, sets the visible label, and starts a dismiss timer. The observer is cleaned up on component unmount.
+
+---
+
+## Chapter 37: Request ID Middleware and Production API Hardening
+
+### Request ID Middleware
+
+`RequestIDMiddleware` is applied to the FastAPI app as a Starlette `BaseHTTPMiddleware`. On every request:
+1. Reads the `X-Request-ID` header from the incoming request (if present)
+2. Falls back to generating a new UUID if not present
+3. Attaches the `X-Request-ID` header to the outgoing response
+
+This enables distributed tracing — Electron's `axios` can log the request ID, Python logs can reference the same ID, and Sentry breadcrumbs can include it.
+
+### Production API Hardening
+
+When `APP_ENV=production`:
+- `/docs` (Swagger UI) is disabled
+- `/redoc` is disabled
+- `/openapi.json` is disabled
+
+This prevents API schema disclosure in production environments. In development, all three are enabled for rapid iteration.
+
+### Prompt Content Scrubbing
+
+The `_scrub_prompts` Sentry `before_send` hook redacts any key containing "prompt", "content", "message", or "text" from:
+- `event.extra` dict
+- Breadcrumb `data` dicts
+- `request.data` dict
+- Exception `value` strings
+- Stack frame `vars` dicts
+
+This is applied before any data leaves the machine, ensuring no user prompt content appears in error reports.
+
+### Lazy Pipeline Loading
+
+`_ensure_pipeline()` is a once-guarded lazy loader that imports `pipeline_v2` (and its transitive dependencies: LiteLLM, tiktoken, torch, etc.) on first use, not at server startup. This allows the uvicorn server to bind its port immediately on startup — critical for Render.com's health check polling during cold starts — while the expensive model loading happens in a background `asyncio.create_task`.
+
+The warmup sequence:
+1. `_background_warmup()` runs as a fire-and-forget task on `startup_event`
+2. Loads the pipeline (imports all heavy deps)
+3. Makes a warm-up LLM call to OpenRouter to establish the connection
+4. Pre-loads the Whisper and Silero VAD models
+
+After warmup, the first user request is served with zero cold-start latency.
+
+---
+
+## Chapter 38: Cross-Platform Support — Windows and macOS
+
+> **This chapter documents the macOS port. Prmpt was Windows-only through chapter 37; from this point onward the codebase ships for both Windows and macOS Apple Silicon from a single source tree.**
+
+### 38.1 The Two Compiled Worlds
+
+The same TypeScript / React / Rust source tree produces two different runtime artifacts:
+
+| Layer | Windows | macOS |
+|---|---|---|
+| Electron app | `electron-builder --win nsis` → `Prmpt-Setup-x.y.z.exe` | `electron-builder --mac dmg` → `Prmpt-x.y.z-arm64.dmg` |
+| Native module | `platform-core.win32-x64-msvc.node` | `platform-core.darwin-arm64.node` |
+| Tray icon | `build/tray-icon.png` (full color) | `build/tray-iconTemplate.png` + `@2x` (template — auto-tinted by macOS) |
+| App icon | `build/icon.ico` | `build/icon.icns` (+ `build/dock-icon.png` for dev) |
+| Login item | `app.setLoginItemSettings({ path: process.execPath, args: ['--hidden'] })` | `app.setLoginItemSettings({ openAsHidden: true })` |
+| Auto-update | `electron-updater` NSIS feed | `electron-updater` DMG feed (hardened runtime, entitlements) |
+| Code signing | (currently unsigned in dev) | `mac.hardenedRuntime: true` + `entitlements.mac.plist` for Gatekeeper |
+
+Platform-aware runtime branches use `process.platform === 'darwin'` (or `'win32'`) — there is **no** `if (isMac)` boolean utility because TypeScript narrowing on `process.platform` is sharper.
+
+### 38.2 The macOS Native Module Backend
+
+Chapter 8 already enumerated the dispatch table. Below is the macOS-specific reasoning for the harder choices:
+
+#### Why CGEventTap and not Carbon `RegisterEventHotKey`?
+
+Carbon hotkeys can only register *specific* key combinations (e.g., `Cmd+Shift+K`). They cannot observe arbitrary keystrokes. Detecting `@prompt` requires watching every key event in the system to maintain a 64-character rolling buffer — Carbon doesn't support that. `CGEventTap` is the only public macOS API that gives system-wide keystroke observation. It requires Accessibility permission, which is the cost of admission.
+
+#### Why `kCGSessionEventTap` and not `kCGAnnotatedSessionEventTap` or `kCGHIDEventTap`?
+
+- `kCGHIDEventTap` requires root privileges (we are not a root daemon).
+- `kCGAnnotatedSessionEventTap` is for transformations that need knowledge of what the system has *already done* with the event (e.g., dead-key composition); we just need raw key events.
+- `kCGSessionEventTap` runs in the user's login session, requires only Accessibility permission, and gives us pre-application keystroke observation — exactly the macOS analog of `WH_KEYBOARD_LL`.
+
+The tap is created with `kCGEventTapOptionListenOnly` so we never block the user's keystrokes — the event always reaches the target app, identical to the `CallNextHookEx`-always semantics on Windows.
+
+#### Why clipboard-swap for text replacement and not `CGEventCreateKeyboardEvent` per character?
+
+We tested per-character `CGEventPost` of Unicode characters via `CGEventKeyboardSetUnicodeString`. Three problems:
+
+1. **Slow** — 30–60 ms per character on average; pasting 800 characters would take 30+ seconds.
+2. **Reliability** — some apps (Slack, Discord Electron apps, Notion's web view) drop characters when the rate is too high but stutter visibly when it is too low.
+3. **IME interference** — Korean/Japanese/Chinese IMEs intercept Unicode keystrokes for re-composition, garbling the output.
+
+Cmd+V on a clipboard we just set works in every text-accepting app on macOS, because `Cmd+V` is the universal contract. The cost is that we briefly clobber the user's pasteboard. We mitigate this:
+
+```rust
+let saved = NSPasteboard::generalPasteboard.string_for_type(NSStringPboardType);
+set_pasteboard(text);
+post_cmd_v();
+sleep(Duration::from_millis(30));   // let the target app process the paste
+NSPasteboard::generalPasteboard.set_string(saved, NSStringPboardType);
+```
+
+The 30 ms window is the gap between our paste and the restore. If a clipboard manager (Maccy, Paste, Alfred) was running and watched for changes, it might briefly capture our injected text. We surface this as a known caveat in the macOS docs for the Spaces beta.
+
+#### Why osascript instead of `[NSRunningApplication activateWithOptions:]`?
+
+`NSRunningApplication.activateWithOptions(.activateIgnoringOtherApps)` requires an `NSRunningApplication` instance, which requires linking AppKit and adopting the Cocoa main run loop. The Rust crate is a `cdylib` loaded into Electron's Node.js process, which does *not* run a Cocoa main loop. Spawning `osascript -e 'tell application process "PID" to activate'` is one fork-exec but works without any Cocoa setup. The latency is ~80 ms, which is acceptable because focus return only happens on Insert (a discrete user action, not a hot path).
+
+### 38.3 Accessibility Permission Flow
+
+On first launch on macOS, `electron/main/utils/native-bridge.ts` calls `checkAccessibilityPermission()` which wraps `AXIsProcessTrustedWithOptions` (passing `kAXTrustedCheckOptionPrompt = false`, so the OS does **not** show its own permission dialog). If false:
+
+1. `index-new.ts` shows a custom dialog explaining that Prmpt needs Accessibility permission to detect the `@prompt` trigger and to insert optimized text.
+2. The dialog's primary action calls `shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')` which deep-links straight to the right pane.
+3. The main process polls `checkAccessibilityPermission()` every 2 seconds (with Sentry breadcrumbs on each transition).
+4. The moment it returns `true`, we call `startHook(callback)` — no app restart required.
+
+We deliberately do **not** start the keyboard hook before permission is granted. `CGEventTapCreate` will succeed without Accessibility, but it returns an inert tap that never delivers events. Starting it would silently break `@prompt` detection with no error to surface. Gating on the explicit check produces clear logs and a clear UX.
+
+### 38.4 macOS-Specific Window Behavior
+
+#### App Window — `titleBarStyle: 'hiddenInset'`
+
+```ts
+new BrowserWindow({
+  width: 1400, height: 900,
+  ...(process.platform === 'darwin' ? {
+    titleBarStyle: 'hiddenInset' as const,
+    trafficLightPosition: { x: 12, y: 12 },
+  } : {
+    frame: false,
+  }),
+});
+```
+
+Native traffic-light buttons are kept (users expect them), but the title bar is "hidden inset" — there is no visible chrome between the buttons and the React content. We position the buttons at `(12, 12)` to align with the sidebar's vertical rhythm.
+
+#### Dock visibility tied to App Window lifecycle
+
+```ts
+this.window.on('close', (e) => {
+  e.preventDefault();
+  this.window?.hide();
+  if (process.platform === 'darwin') app.dock?.hide();
+});
+
+show() {
+  if (process.platform === 'darwin') app.dock?.show();
+  this.window?.show();
+}
+```
+
+When the user clicks the red traffic light, the window hides, the Dock icon disappears, and Prmpt vanishes from `Cmd+Tab`. The keyboard hook keeps running and the tray icon remains. Re-opening from the tray restores the Dock icon. This is the explicit product intent — Prmpt is a tray-resident background app that *also* has a full UI when wanted.
+
+#### Dock icon set in `app.whenReady()` via PNG (dev) / icns (packaged)
+
+In packaged builds, `app.dock.setIcon(path.join(process.resourcesPath, 'icon.icns'))` works. In dev mode, Electron's `.icns` loader is unreliable (resolves to an empty `nativeImage` because the path lookup goes through `node_modules/electron/`). We sidestep with a 512×512 `build/dock-icon.png`:
+
+```ts
+app.whenReady().then(async () => {
+  if (process.platform === 'darwin') {
+    const { nativeImage } = await import('electron');
+    const dockIconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.icns')
+      : path.join(app.getAppPath(), 'build', 'dock-icon.png');
+    const dockIcon = nativeImage.createFromPath(dockIconPath);
+    if (!dockIcon.isEmpty()) app.dock?.setIcon(dockIcon);
+  }
+});
+```
+
+#### Overlay `visibleOnAllWorkspaces` + `showInactive`
+
+The overlay window must surface on *every* Mission Control space (including spaces running a full-screen app) and must surface *without* stealing keyboard focus from the user's source application:
+
+```ts
+this.window = new BrowserWindow({
+  /* ... */
+  visibleOnAllWorkspaces: true,
+});
+this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+show(x: number, y: number) {
+  this.window!.setPosition(x, y);
+  this.window!.showInactive();   // surface without focus
+  this.window!.moveTop();         // raise above other windows
+}
+```
+
+`showInactive()` is the macOS-correct call (`show()` would steal focus on macOS); on Windows we use `show()` because Windows treats focus stealing on `show()` more conservatively to begin with.
+
+#### Tray template image
+
+`build/tray-iconTemplate.png` (and `@2x` for Retina) is a black-on-transparent silhouette with no color. macOS auto-inverts and tints it based on menu bar appearance (white on dark menu bar, dark on light, blue when the menu is open). The `-Template` filename suffix is the signal Electron uses to apply this behavior. Windows uses `build/tray-icon.png` (full color) because the system tray on Windows does not have template-image semantics.
+
+### 38.5 Cross-Platform Build Matrix
+
+| `npm` script | What it does |
+|---|---|
+| `npm run native:build` | Build the Rust crate for `x86_64-pc-windows-msvc` |
+| `npm run native:build:mac` | Build the Rust crate for `aarch64-apple-darwin` |
+| `npm run python:install` | Bootstrap the optimization service venv on Windows (PowerShell) |
+| `npm run python:install:mac` | Bootstrap the optimization service venv on macOS (bash) |
+| `npm run code-intel:dev` | Run the Code Intelligence service on Windows |
+| `npm run code-intel:dev:mac` | Run the Code Intelligence service on macOS |
+| `npm run package:win` | `electron-builder --win nsis` — produces NSIS installer |
+| `npm run package:mac` | `electron-builder --mac dmg` — produces hardened-runtime DMG |
+
+> **There is currently no `code-intel:install:mac` script.** macOS users follow a small manual venv setup, documented in the README. This is a tracked follow-up.
+
+---
+
+## Chapter 39: Silent Auto-Launch at Login
+
+### 39.1 Why It Exists
+
+Prmpt's value depends on it being *running* — without the keyboard hook, `@prompt` does nothing. Asking users to remember to open Prmpt after every reboot eroded the "always one keystroke away" promise. The "Start at Login" feature removes that friction by registering Prmpt as a login item that boots silently into the tray.
+
+### 39.2 The Tray Toggle (Cross-Platform)
+
+The tray menu (`electron/main/windows/system-tray.ts`) renders a checkbox bound to `app.getLoginItemSettings().openAtLogin`:
+
+```ts
+const isLoginEnabled = app.getLoginItemSettings().openAtLogin;
+const startAtLoginItem: MenuItemConstructorOptions = {
+  label: 'Start at Login',
+  type: 'checkbox',
+  checked: isLoginEnabled,
+  click: (item) => {
+    const enable = item.checked;
+    app.setLoginItemSettings({
+      openAtLogin: enable,
+      openAsHidden: true,                               // macOS — boots without bringing window to front
+      ...(process.platform === 'win32' ? {
+        path: process.execPath,
+        args: ['--hidden'],                             // Windows — registered with our --hidden CLI arg
+      } : {}),
+    });
+    Sentry.addBreadcrumb({
+      category: 'auto-launch',
+      message: `Start at login ${enable ? 'enabled' : 'disabled'}`,
+      level: 'info',
+    });
+  },
+};
+```
+
+The breadcrumb lets us correlate "user enabled auto-launch" with subsequent silent-boot startup events in Sentry.
+
+### 39.3 The Detection Function
+
+`electron/main/index-new.ts` defines:
+
+```ts
+function isSilentLaunch(): boolean {
+  if (process.platform === 'darwin') {
+    return app.getLoginItemSettings().wasOpenedAsHidden;
+  }
+  return process.argv.includes('--hidden');
+}
+```
+
+- On macOS, `app.getLoginItemSettings().wasOpenedAsHidden` returns `true` if we were launched as a login item registered with `openAsHidden: true`. macOS sets this flag at the OS level; we just read it.
+- On Windows, there is no equivalent OS flag. We set `args: ['--hidden']` in the login item registration, so when the OS runs us, our own executable receives `--hidden` in `process.argv`. We detect it, gate the window-show on it.
+
+### 39.4 The Gate at Startup
+
+```ts
+async function initialize() {
+  await loadEnv();
+  await initializeSentry();
+  await registerIpcHandlers();
+  await initializeServices();           // ProjectManager, AnalyticsService, AppWindowManager, OverlayWindowManager, SystemTray
+  await startKeyboardHook();
+  await checkAndPromptAccessibility();  // macOS only
+
+  if (!isSilentLaunch()) {
+    appWindowManager.show();
+    Sentry.addBreadcrumb({ category: 'startup', message: 'Normal launch — window shown', level: 'info' });
+  } else {
+    Sentry.addBreadcrumb({ category: 'startup', message: 'Silent launch — window hidden', level: 'info' });
+  }
+}
+```
+
+Crucially, **everything except the App Window is initialized regardless** of whether this is a silent launch. The tray, the keyboard hook, the overlay, the Code Intelligence client, the offline cache — all of them come up. Only the App Window's `show()` call is gated. This is what makes the boot-into-tray UX work: the user reboots, sees only the tray icon, then types `@prompt` somewhere and gets an immediate overlay because the hook is already running.
+
+### 39.5 Tradeoffs
+
+- **First-time silent launch can feel invisible.** The tray icon is the only signal that Prmpt is running. We accept this — the alternative (briefly flashing the App Window on every boot) is a worse UX. We surface a Sentry breadcrumb on silent launch so support cases can correlate "user types `@prompt` for first time after boot" with "app started silently".
+- **The `--hidden` CLI arg is best-effort on Windows.** If a user manually runs `Prmpt.exe` without the arg from a shortcut, it shows the window — which is the correct behavior. The arg is set only by the login-item registration we install.
+- **Disabling the toggle does not uninstall the login item registration.** It rewrites it with `openAtLogin: false`. macOS's login items list will still show Prmpt with a disabled checkbox. Removing it entirely requires the user to delete it from System Settings → General → Login Items.
+
+---
+
+## Chapter 40: Sentry Observability — Four-Surface Coverage
+
+### 40.1 The Four Runtime Surfaces
+
+Prmpt's runtime is genuinely four processes (five, if you count the ARQ worker as separate from the FastAPI server). Each surface initializes Sentry with its own DSN and integration set.
+
+| Surface | SDK | Init site | DSN env var | Notes |
+|---|---|---|---|---|
+| Electron main | `@sentry/electron/main` | `electron/main/index-new.ts` | `SENTRY_DSN` | Captures process errors, IPC errors, child-process errors. Tags: `analytics_session`, `active_project`, `code_intel.healthy`, `parser.initialized`. Spans: `code-intel.ingest`, `code-intel.retrieve`, `code-intel.health`, `parser.parseFile`, `git.getCurrentBranch`. Breadcrumbs: `code-intel`, `file-watcher`, `active-window`, `git`, `auto-launch`, `startup`. |
+| React App Window | `@sentry/react` | `app-ui/src/main.tsx` | `VITE_SENTRY_DSN` | `browserTracingIntegration` + `replayIntegration`; whole tree wrapped in `Sentry.ErrorBoundary`. |
+| React Overlay | `@sentry/react` | `app-ui/src/overlay/main.tsx` | `VITE_SENTRY_DSN` | Separate Sentry client (each renderer is its own browser context). Tagged `window: overlay` to disambiguate from app-window events. |
+| Python optimization | `sentry-sdk[fastapi]` | `python-service/app/main.py` | `SENTRY_PYTHON_DSN` | `LoggingIntegration` (WARN+ → breadcrumbs, ERROR+ → events). Trace continuation from `sentry-trace` headers on inbound WebSocket and HTTP. |
+| Python Code Intelligence | `sentry-sdk[fastapi]` | `code-intelligence-service/app/main.py` | `SENTRY_DSN` (service-local `.env`) | `LoggingIntegration` + **`FastApiIntegration`** — every route is auto-spanned. `traces_sample_rate=1.0` in dev, `0.2` in prod. |
+| ARQ worker | `sentry-sdk` | `code-intelligence-service/app/workers/arq_worker.py` | `SENTRY_DSN` | Initializes its own SDK because it runs in a separate process. |
+
+The DSN allocation is intentional: each surface goes to its own Sentry project so we can tune sample rates, alert routing, and PII scrubbing independently. Releases are tagged with `APP_VERSION` from `package.json` (Electron) or env (`APP_VERSION` for Python services), keeping per-release error rates correlatable across surfaces.
+
+### 40.2 PII Scrubbing — The `beforeSend` Hook
+
+User prompt bodies are explicitly *not* shipped to Sentry. Each Sentry init declares a `beforeSend` hook (Python: `before_send`) that recursively walks the event payload and replaces any field whose key contains `prompt`, `content`, `message`, or `text` with `[REDACTED]`. The same logic runs over breadcrumb `data`, exception `value` strings, and stack frame local-variable maps.
+
+```ts
+function scrubEvent(event: any): any {
+  const SENSITIVE_KEYS = /(prompt|content|message|text)/i;
+  const walk = (obj: any) => {
+    if (typeof obj !== 'object' || obj === null) return obj;
+    for (const key of Object.keys(obj)) {
+      if (SENSITIVE_KEYS.test(key) && typeof obj[key] === 'string') obj[key] = '[REDACTED]';
+      else walk(obj[key]);
+    }
+    return obj;
+  };
+  walk(event.extra ?? {});
+  walk(event.contexts ?? {});
+  if (event.breadcrumbs) for (const bc of event.breadcrumbs) walk(bc.data ?? {});
+  if (event.exception?.values) for (const v of event.exception.values) {
+    if (typeof v.value === 'string' && SENSITIVE_KEYS.test(v.value)) v.value = '[REDACTED]';
+  }
+  return event;
+}
+```
+
+The scrubber runs **before** the SDK's network transport, so redacted fields never leave the device.
+
+### 40.3 Distributed Trace Chain — Current State
+
+- **Electron main → Python optimization service**: ✅ trace headers (`sentry-trace`, `baggage`) propagated by axios/WebSocket interceptors.
+- **Electron main → Code Intelligence service**: ⚠️ partial. Spans are created on the Electron side (`codeIntel.ingestSkeleton`, `codeIntel.retrieve`); the service's `FastApiIntegration` creates its own root span. Header propagation is in place but the service-side trace continuation is verified in fewer paths than the optimization service. Tracked follow-up.
+- **Renderer ↔ main IPC**: ❌ not yet part of the trace chain. Adding it would require a custom span propagator across the contextBridge — feasible but not implemented. This is a known gap (see questions Q26 and Q50 in `system-deconstruction.md`).
+- **HTTP correlation IDs**: Both Python services emit/echo `X-Request-ID` via `RequestIDMiddleware`. The Electron `CodeIntelClient` does not yet attach an outbound request ID — it relies on the service auto-generating one and surfacing it in error responses for support correlation.
+
+### 40.4 What Each Surface Captures
+
+- **Electron main** — anything thrown in an IPC handler reaches Sentry (the IPC dispatcher wraps every handler in `try/catch` + `Sentry.captureException`); Code Intelligence client failures (HTTP errors, deserialization errors); native module load failures (with breadcrumbs about which `.node` the loader tried); file watcher errors; git introspection errors; auto-launch state changes; silent-launch detection; Accessibility permission flips.
+- **App Window React** — uncaught component errors via `Sentry.ErrorBoundary`; Replay sessions on errors (`replaysOnErrorSampleRate: 1.0`); promise rejections in IPC calls (each `electronAPI.*` call is `try/catch`-wrapped at call sites that matter).
+- **Overlay React** — same coverage as App Window, but tagged `window: overlay`. Overlay errors are particularly important because the overlay is the most-exercised UI surface.
+- **Python optimization** — every uncaught exception in a route or background task; LiteLLM provider failures (timeouts, 429 throttles, malformed responses); WebSocket connection failures; pipeline lazy-load failures.
+- **Python Code Intelligence** — every uncaught exception in a route (auto via `FastApiIntegration`); embedding failures (with the model name in tags); summarization failures; ARQ task crashes; webhook signature verification failures.
+
+### 40.5 Sample Rates
+
+- Errors: 100% (we want every exception)
+- Tracing (Electron main, Python optimization): 100% in dev, 10–20% in prod
+- Tracing (Code Intelligence): 100% in dev, 20% in prod (it's a chatty service — every UI keystroke can fan out to retrieve calls)
+- Replay (App Window, Overlay): 10% session sample, 100% on-error sample (`replaysSessionSampleRate: 0.1, replaysOnErrorSampleRate: 1.0`)
+
+---
+
+## Chapter 41: Prmpt Branding and Cross-Platform Packaging
+
+### 41.1 Brand Identity
+
+The app's product name is **Prmpt** (no vowel between *r* and *m* — pronounced "prompt"). The mark is a stylized lowercase wordmark: a thick "P" with the descender kerned tight against an "rmpt" set in a geometric sans-serif. Source files live in `logos/`:
+
+- `logos/dark-logo-svg.svg` — primary mark, dark-on-light
+- `logos/light-logo-svg.svg` — inverse, light-on-dark
+- `logos/icon-glyph.svg` — square glyph used for app icons (the "P" alone)
+
+All raster assets in `build/` are generated from these SVGs via a `sharp` script (Node) and `iconutil`/`sips` (macOS) — see `scripts/generate-icons.ts`.
+
+### 41.2 The `build/` Directory — Packaged Assets
+
+| File | Used by | Notes |
+|---|---|---|
+| `build/icon.icns` | macOS app bundle, Dock (packaged) | Generated from `logos/icon-glyph.svg`: rasterize once at 1024×1024 (`density: 300` to avoid `sharp`'s pixel-limit error on SVGs), then resize down to 512, 256, 128, 64, 32, 16; bundle into `.iconset/`; `iconutil --convert icns` to produce `icon.icns`. The `iconutil` step must run unsandboxed. |
+| `build/icon.ico` | Windows NSIS installer + executable | Generated by `sharp` from a 256×256 PNG export of the same glyph. |
+| `build/dock-icon.png` | macOS Dock in dev mode | 512×512 PNG; used because `app.dock.setIcon('.icns path')` is unreliable under `electron .` (resolves the path inside `node_modules/electron/`). |
+| `build/tray-iconTemplate.png` (+ `@2x`) | macOS menu bar tray | Black-on-transparent silhouette of the glyph at 18×18 (× 36×36 for @2x). The `-Template` filename activates Electron's auto-tinting for light/dark/active menu bar states. |
+| `build/tray-icon.png` | Windows system tray | Full-color 32×32 of the glyph. Windows tray has no template-image semantics. |
+| `build/entitlements.mac.plist` | `electron-builder` `mac.entitlements` | Declares `com.apple.security.device.audio-input` (for voice transcription), `com.apple.security.cs.allow-jit` (for V8), `com.apple.security.cs.allow-unsigned-executable-memory` (for native modules). |
+
+### 41.3 `electron-builder` Configuration
+
+In `package.json`:
+
+```json
+"build": {
+  "productName": "Prmpt",
+  "appId": "com.prmpt.app",
+  "files": ["electron/dist/**/*", "app-ui/dist/**/*", "preload.js"],
+  "extraResources": [
+    { "from": "build/", "to": "." },
+    { "from": "native/platform-core/", "to": "native/platform-core/", "filter": ["*.node", "index.js"] },
+    { "from": "python-service/dist/", "to": "python-service/" },
+    { "from": "code-intelligence-service/dist/", "to": "code-intelligence-service/" }
+  ],
+  "win": {
+    "target": "nsis",
+    "icon": "build/icon.ico"
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "build/icon.icns",
+    "category": "public.app-category.productivity",
+    "hardenedRuntime": true,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.plist"
+  }
+}
+```
+
+### 41.4 Why `productName: "Prmpt"` Matters
+
+`productName` is what the OS sees in:
+
+- The macOS `.app` bundle name (`Prmpt.app`)
+- The macOS Dock tooltip
+- The macOS `Cmd+Tab` switcher
+- The Windows installer title bar
+- The Windows Start Menu entry
+- The Windows uninstaller registry name
+
+Setting it via `electron-builder` (and the `name` field in `app-ui/package.json` for the rendered HTML title) replaces the Electron defaults end-to-end. The user never sees the word "Electron" anywhere.
+
+### 41.5 macOS Hardened Runtime and Entitlements
+
+`hardenedRuntime: true` is required for distributable macOS apps that need to bypass Gatekeeper without ad-hoc signing warnings. It enables a stricter runtime: by default, no JIT, no unsigned executable memory, no DYLD environment variable injection. Electron's V8 needs JIT, and the napi-rs `.node` binary is unsigned executable memory — both must be re-allowed via entitlements:
+
+```xml
+<key>com.apple.security.cs.allow-jit</key><true/>
+<key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+<key>com.apple.security.device.audio-input</key><true/>
+```
+
+Without these, the app would crash on first launch with `EXC_BAD_ACCESS` inside V8 or refuse to load `platform-core.darwin-arm64.node`.
+
+---
+
+## Updated Table of Contents (Chapters 32–41)
+
+| Chapter | Topic |
+|---|---|
+| 32 | Task Planner — Structured Builds for Complex Prompts |
+| 33 | OTP-Based Email Authentication |
+| 34 | GDPR Account Deletion — 30-Day Graceful Wipe |
+| 35 | Rate Limiting and Daily Usage Caps |
+| 36 | Active Window Detector and Zoom Indicator |
+| 37 | Request ID Middleware and Production API Hardening |
+| 38 | Cross-Platform Support — Windows and macOS |
+| 39 | Silent Auto-Launch at Login |
+| 40 | Sentry Observability — Four-Surface Coverage |
+| 41 | Prmpt Branding and Cross-Platform Packaging |
+
+---
+
+*Documentation extended: April 2026. Chapters 32–37 document the Task Planner pipeline pre-pass, OTP email authentication system, GDPR deletion lifecycle, dual-layer rate limiting, active window detection, zoom indicator, and production API hardening. Chapters 38–41 document the macOS port (cross-platform Rust crate, accessibility flow, dock visibility, template tray icon, hardened runtime), the silent auto-launch system, the four-surface Sentry coverage map (with PII scrubbing and trace propagation status), and the Prmpt branding + cross-platform packaging pipeline — completing the full picture of all systems in the Prmpt codebase as of the cross-platform release.*

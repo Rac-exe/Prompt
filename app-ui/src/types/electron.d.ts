@@ -66,8 +66,11 @@ export interface SharedPromptView {
 }
 
 export interface ElectronAPI {
+  // Platform
+  platform: 'darwin' | 'win32' | 'linux';
+
   // Auth
-  signIn: (data: { email: string; password: string }) => void;
+  signIn: (data: { email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
   signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
   checkAuth: () => void;
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any; error?: string }) => void) => void;
@@ -218,6 +221,17 @@ export interface ElectronAPI {
   // Skills
   skills: {
     list: () => Promise<SkillInfo[]>;
+  };
+
+  // GDPR Account Deletion (Option C — hard lockout)
+  deletion: {
+    request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
+    status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
+    restore: {
+      request: (email: string) => Promise<{ success: boolean; error?: string }>;
+      confirm: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+    };
+    onRequested: (callback: (data: { scheduledAt: string }) => void) => () => void;
   };
 
   // Stop generation

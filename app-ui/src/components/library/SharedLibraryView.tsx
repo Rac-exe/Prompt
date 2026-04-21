@@ -52,7 +52,7 @@ const SharedPromptRow = ({ prompt }: { prompt: SharedPrompt }) => {
     navigator.clipboard.writeText(prompt.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({ title: "Copied!", description: "Prompt copied to clipboard." });
+    toast({ title: "Prompt copied" });
   };
 
   return (
@@ -143,10 +143,10 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
       });
       setSaved(true);
       toast({
-        title: result.alreadyExisted ? "Already saved" : "Library saved!",
+        title: result.alreadyExisted ? "Already saved" : "Library saved",
         description: result.alreadyExisted
           ? "You already have a copy. Redirecting…"
-          : "Library saved. You can now edit and add prompts.",
+          : "You can now edit it and add prompts.",
       });
 
       onSaved?.(result.collection.id);
@@ -157,8 +157,8 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
         extra: { libraryId: library?.id || "unknown" },
       });
       toast({
-        title: "Error",
-        description: err?.message || "Failed to save the library.",
+        title: "Couldn't save library",
+        description: err?.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -241,7 +241,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
               "flex-shrink-0 gap-2 text-sm font-semibold transition-smooth",
               saved
                 ? "bg-emerald/10 text-emerald border border-emerald/30 hover:bg-emerald/10 cursor-default"
-                : "bg-emerald text-white hover:bg-emerald/90"
+                : "border border-input text-foreground hover:bg-muted"
             )}
           >
             {saving ? (

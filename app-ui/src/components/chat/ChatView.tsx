@@ -76,7 +76,6 @@ export const ChatView = ({
   const voiceActiveRef = useRef(false);
   const [isPlusMenuOpen, setIsPlusMenuOpen] = useState(false);
   const [showSlashPicker, setShowSlashPicker] = useState(false);
-  // File preview modal — null = closed
   const [previewFile, setPreviewFile] = useState<PreviewFile | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -101,6 +100,12 @@ export const ChatView = ({
       streamingTrigger: streamingMessage?.content,
     },
   );
+
+  // The "active project" concept lives in the Spaces section only — the new
+  // chat screen is intentionally project-agnostic. Folder add/remove inside
+  // a Space updates its own SpaceWorkspace UI; this view should never react
+  // to project:status-update broadcasts. (Previously a chip with the active
+  // project name leaked in here whenever a folder was added in Spaces.)
 
   // ── Transcription IPC listeners ─────────────────────────────
   useEffect(() => {

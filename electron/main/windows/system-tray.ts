@@ -16,7 +16,7 @@ export class SystemTray {
   constructor(
     onOpenApp: () => void,
     onToggleOverlay: () => void,
-    onQuit: () => void
+    onQuit: () => void,
   ) {
     this.onOpenApp = onOpenApp;
     this.onToggleOverlay = onToggleOverlay;
@@ -28,12 +28,13 @@ export class SystemTray {
    */
   create() {
     try {
-      // In packaged mode the tray icon lives in extraResources.
-      // In dev mode it lives in build/ at the project root (app.getAppPath()).
+      const isMac = process.platform === 'darwin';
+      const iconName = isMac ? 'tray-iconTemplate.png' : 'tray-icon.png';
+      const iconSize = isMac ? { width: 18, height: 18 } : { width: 32, height: 32 };
       const iconPath = app.isPackaged
-        ? path.join(process.resourcesPath, 'tray-icon.png')
-        : path.join(app.getAppPath(), 'build', 'tray-icon.png');
-      const icon = nativeImage.createFromPath(iconPath).resize({ width: 32, height: 32 });
+        ? path.join(process.resourcesPath, iconName)
+        : path.join(app.getAppPath(), 'build', iconName);
+      const icon = nativeImage.createFromPath(iconPath).resize(iconSize);
 
       this.tray = new Tray(icon);
       this.tray.setToolTip('Prmpt');
@@ -45,7 +46,12 @@ export class SystemTray {
         this.onOpenApp();
       });
 
-      Sentry.addBreadcrumb({ category: 'system-tray', message: 'System tray created', level: 'info' });
+      Sentry.addBreadcrumb({
+        category: 'system-tray',
+        message: 'System tray created',
+        level: 'info',
+        data: { iconType: isMac ? 'template-image' : 'full-color', iconName },
+      });
       console.log('[SystemTray] System tray created');
     } catch (err) {
       Sentry.captureException(err, { tags: { component: 'system-tray', op: 'create' } });
@@ -54,9 +60,9 @@ export class SystemTray {
   }
 
   /**
-   * Update the tray menu
+   * Update the tray menu — call after any state change to refresh checkmarks.
    */
-  private updateMenu() {
+  updateMenu() {
     if (!this.tray) return;
 
     const contextMenu = Menu.buildFromTemplate([
@@ -65,8 +71,32 @@ export class SystemTray {
         click: () => this.onOpenApp(),
       },
       {
-        label: 'Toggle Overlay (Ctrl+5)',
+        label: `Toggle Overlay (${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+5)`,
         click: () => this.onToggleOverlay(),
+      },
+      {
+        type: 'separator',
+      },
+      {
+        label: 'Start at Login',
+        type: 'checkbox',
+        checked: app.getLoginItemSettings().openAtLogin,
+        click: (item) => {
+          app.setLoginItemSettings({
+            openAtLogin: item.checked,
+            openAsHidden: true,
+            ...(process.platform === 'win32' ? {
+              path: process.execPath,
+              args: ['--hidden'],
+            } : {}),
+          });
+          Sentry.addBreadcrumb({
+            category: 'auto-launch',
+            message: `Start at login ${item.checked ? 'enabled' : 'disabled'}`,
+            level: 'info',
+          });
+          console.log(`[SystemTray] Start at login: ${item.checked}`);
+        },
       },
       {
         type: 'separator',

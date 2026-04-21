@@ -96,6 +96,7 @@ export class OverlayWindowManager {
       show: false,
       focusable: true,
       hasShadow: false,
+      ...(process.platform === 'darwin' ? { visibleOnAllWorkspaces: true } : {}),
       backgroundColor: '#00000000',
       webPreferences: {
         nodeIntegration: false,
@@ -113,18 +114,37 @@ export class OverlayWindowManager {
     // 'screen-saver' is the highest z-order level available on Windows/macOS.
     this.window.setAlwaysOnTop(true, 'screen-saver');
 
-    // ── Disable zoom completely ────────────────────────────────────────────
+    if (process.platform === 'darwin') {
+      this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      Sentry.setTag('overlay.visible_all_workspaces', 'true');
+    }
+
+    // ── Disable zoom + reload completely ───────────────────────────────────
     // Clamp Chromium's pinch/gesture zoom to 1x so it cannot drift.
     this.window.webContents.setVisualZoomLevelLimits(1, 1);
 
-    // Block Ctrl+=/+, Ctrl+-, Ctrl+0 — Chromium handles these natively and
-    // they fire even without any JS handler, so we must swallow them here.
+    // Swallow zoom (Ctrl/Cmd + = / + / - / _ / 0) and reload (Ctrl/Cmd + R,
+    // Ctrl/Cmd + Shift + R, F5) shortcuts on both platforms. macOS uses the
+    // Command modifier (input.meta); Windows/Linux uses Control. Without this
+    // Chromium would handle these natively even though our custom menu has no
+    // such accelerators registered.
     this.window.webContents.on('before-input-event', (_event, input) => {
-      if (input.type !== 'keyDown' || !input.control) return;
+      if (input.type !== 'keyDown') return;
+
+      if (input.key === 'F5') {
+        _event.preventDefault();
+        return;
+      }
+
+      const isAccel = input.control || input.meta;
+      if (!isAccel) return;
+
+      const k = input.key.toLowerCase();
       if (
-        input.key === '=' || input.key === '+' ||
-        input.key === '-' || input.key === '_' ||
-        input.key === '0'
+        k === '=' || k === '+' ||
+        k === '-' || k === '_' ||
+        k === '0' ||
+        k === 'r'
       ) {
         _event.preventDefault();
       }
@@ -141,22 +161,30 @@ export class OverlayWindowManager {
     this.shouldShowOnReady = false;
     this.isOpen = false;
 
-    // Listen for renderer signal (registered once per window via
-    // webContents.ipc so it auto-cleans on destroy).
-    this.window.webContents.ipc.once('overlay:ready', () => {
-      this.preheatCompositor();
-    });
+    if (process.platform === 'win32') {
+      this.window.webContents.ipc.once('overlay:ready', () => {
+        this.preheatCompositor();
+      });
 
-    // Safety fallback: if the renderer signal never arrives (e.g. preload
-    // error), pre-heat after did-finish-load + a short delay.
-    this.window.webContents.once('did-finish-load', () => {
-      setTimeout(() => {
-        if (!this.isLoaded && this.window && !this.window.isDestroyed()) {
-          console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback pre-heat');
-          this.preheatCompositor();
+      this.window.webContents.once('did-finish-load', () => {
+        setTimeout(() => {
+          if (!this.isLoaded && this.window && !this.window.isDestroyed()) {
+            console.warn('[OverlayWindowManager] Renderer did not send overlay:ready — fallback pre-heat');
+            this.preheatCompositor();
+          }
+        }, 200);
+      });
+    } else {
+      // macOS: no DWM pre-heat needed, mark as loaded once content is ready
+      this.window.webContents.once('did-finish-load', () => {
+        this.isLoaded = true;
+        console.log('[OverlayWindowManager] Overlay ready (no pre-heat needed on macOS)');
+        if (this.shouldShowOnReady) {
+          this.shouldShowOnReady = false;
+          this.showAndFocus();
         }
-      }, 200);
-    });
+      });
+    }
 
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'overlay.html');
     this.window.loadFile(htmlPath);
@@ -286,6 +314,21 @@ export class OverlayWindowManager {
   private showAndFocus() {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
+    if (process.platform === 'darwin') {
+      // macOS: when @prompt is typed, the source app (Cursor, browser, etc.)
+      // is the frontmost app and owns keyboard focus. To redirect keystrokes
+      // into the overlay's input we must:
+      //   1. Make Electron the frontmost app  -> app.focus({ steal: true })
+      //   2. Show + activate the overlay window itself -> show() (NOT showInactive)
+      //   3. Move it above any other Prmpt windows -> moveTop()
+      // showInactive() + moveTop() alone bring the window on top visually
+      // but leave keyboard focus on the source app, so typing keeps going
+      // there instead of the overlay input.
+      app.focus({ steal: true });
+      this.window.show();
+      this.window.moveTop();
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS app.focus + show + moveTop', level: 'info' });
+    }
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     analyticsService.logEvent('overlay_open');
     this.focusWindow();
@@ -300,11 +343,22 @@ export class OverlayWindowManager {
    */
   private focusWindow() {
     if (!this.window || this.window.isDestroyed()) return;
-    const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
-    const focused = forceFocusWindow(Number(overlayHwnd));
-    if (!focused) {
-      // AttachThreadInput fallback failed — try Electron's own focus as last resort.
+    if (process.platform === 'darwin') {
+      // Re-focus path (e.g. when @prompt is typed while overlay is already
+      // open). Same reasoning as in showAndFocus(): we have to make Electron
+      // the frontmost app and then activate this BrowserWindow, otherwise
+      // keyboard focus stays on whatever the user just typed into.
+      app.focus({ steal: true });
+      this.window.show();
       this.window.focus();
+      this.window.moveTop();
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS app.focus + show + focus + moveTop', level: 'info' });
+    } else {
+      const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
+      const focused = forceFocusWindow(Number(overlayHwnd));
+      if (!focused) {
+        this.window.focus();
+      }
     }
   }
 
@@ -357,8 +411,13 @@ export class OverlayWindowManager {
     if (this.window && !this.window.isDestroyed()) {
       this.isOpen = false;
       Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay closed', level: 'info' });
-      this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
-      this.window.blur();
+      if (process.platform === 'darwin') {
+        this.window.hide();
+        Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS overlay hidden', level: 'info' });
+      } else {
+        this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
+        this.window.blur();
+      }
     }
   }
 

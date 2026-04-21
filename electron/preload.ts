@@ -154,7 +154,7 @@ declare global {
       // ============================================
       // APP WINDOW API
       // ============================================
-      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string) => void;
+      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string, source?: 'chat' | 'space') => void;
       saveToChat: (originalText: string, optimizedText: string) => void;
       requestUserData: () => void;
       onUserDataLoaded: (callback: (user: any) => void) => void;
@@ -176,9 +176,9 @@ declare global {
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
-      onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => void;
-      onOptimizationChunk: (callback: (data: { chunk: string; accumulated: string }) => void) => (() => void);
-      onOptimizationError: (callback: (data: { error: string }) => void) => (() => void);
+      onOptimizationComplete: (callback: (data: { optimized: string; original: string; source?: 'chat' | 'space' }) => void) => (() => void);
+      onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string; source?: 'chat' | 'space' }) => void) => (() => void);
+      onOptimizationError: (callback: (data: { error: string; source?: 'chat' | 'space' }) => void) => (() => void);
 
       // Clarification API
       submitClarification: (data: { chatId: string; answers: Record<string, string>; wantsSections: boolean }) => void;
@@ -186,7 +186,7 @@ declare global {
 
       // Auth API
       signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
-      signIn: (data: { email: string; password: string }) => void;
+      signIn: (data: { email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
       signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
@@ -280,11 +280,15 @@ declare global {
         submit: (data: { rating: 'positive' | 'negative'; comment?: string }) => Promise<{ success: boolean; error?: string }>;
       };
 
-      // GDPR Account Deletion API
+      // GDPR Account Deletion API (Option C — hard lockout)
       deletion: {
         request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
-        cancel: () => Promise<{ success: boolean; cancelledAt?: string; error?: string }>;
         status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
+        restore: {
+          request: (email: string) => Promise<{ success: boolean; error?: string }>;
+          confirm: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
+        };
+        onRequested: (callback: (data: { scheduledAt: string }) => void) => () => void;
       };
 
       // Skills API
@@ -310,17 +314,87 @@ declare global {
         onDownloaded: (callback: (data: { version: string }) => void) => () => void;
         install: () => void;
       };
+
+      // Project Context API
+      project: {
+        add: (options?: { folderPath?: string }) => Promise<any>;
+        remove: (projectId: string) => Promise<void>;
+        list: () => Promise<any[]>;
+        status: (projectId: string) => Promise<any>;
+        setActive: (projectId: string, localPath?: string) => Promise<void>;
+        getActive: () => Promise<{ projectId: string | null; branch: string | null }>;
+        reindex: (projectId: string, localPath: string) => Promise<{ totalFiles: number; totalChunks: number }>;
+        sync: (projectId?: string) => Promise<void>;
+        toggleWatching: (projectId: string, localPath: string, enable: boolean) => Promise<{ watching: boolean }>;
+        isWatching: (projectId: string) => Promise<boolean>;
+        retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => Promise<any>;
+        ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => Promise<{ triggered: number; total?: number }>;
+        onStatusUpdate: (callback: (data: any) => void) => () => void;
+        onOverlayStatus: (callback: (data: any) => void) => () => void;
+      };
+
+      // Spaces bridge API — see electron/main/ipc-handlers/spaces-bridge-handlers.ts
+      // for the full architectural rationale. The gist: the app window owns
+      // the canonical Spaces state (localStorage + React state); the overlay
+      // window cannot read its sibling's localStorage so we relay through
+      // main as a lightweight pub/sub.
+      spaces: {
+        /** App window: push the current spaces list to main's cache. */
+        publishSnapshot: (
+          spaces: Array<{
+            id: string;
+            name: string;
+            projects: Array<{ projectId: string; name: string; localPath: string; branch?: string }>;
+            lastUsedAt: number;
+          }>,
+        ) => void;
+        /** Overlay (or any renderer): read the cached snapshot. */
+        list: () => Promise<Array<{
+          id: string;
+          name: string;
+          projects: Array<{ projectId: string; name: string; localPath: string; branch?: string }>;
+          lastUsedAt: number;
+        }>>;
+        /** Overlay: append messages to a specific space (relayed to app window). */
+        appendMessages: (payload: {
+          spaceId: string;
+          messages: Array<{
+            id: string;
+            role: 'user' | 'assistant';
+            content: string;
+            timestamp: number;
+            groupId?: string;
+            versionIndex?: number;
+          }>;
+        }) => void;
+        /** App window: subscribe to overlay-originated appends. */
+        onApplyAppend: (
+          callback: (payload: {
+            spaceId: string;
+            messages: Array<{
+              id: string;
+              role: 'user' | 'assistant';
+              content: string;
+              timestamp: number;
+              groupId?: string;
+              versionIndex?: number;
+            }>;
+          }) => void,
+        ) => () => void;
+      };
     };
   }
 }
 
 // Expose protected methods to the renderer process
 const electronAPI = {
+  platform: process.platform as 'darwin' | 'win32' | 'linux',
+
   // ============================================
   // OVERLAY API (clean IPC contract)
   // ============================================
       overlay: {
-        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
+        optimize: (data: { text: string; isRegenerate?: boolean; mode?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string }; chatId?: string; spaceMode?: boolean; spaceId?: string }) => {
           ipcRenderer.send('overlay:optimize', data);
         },
     save: (data: { title: string; content: string; collectionId?: string }) => {
@@ -446,8 +520,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);
@@ -597,7 +671,9 @@ const electronAPI = {
 
   // Streaming optimization (app window uses these channels)
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
-    ipcRenderer.on('optimization-complete', (_event, data) => callback(data));
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('optimization-complete', handler);
+    return () => ipcRenderer.removeListener('optimization-complete', handler);
   },
   onOptimizationChunk: (callback: (data: { chatId: string | null; chunk: string; accumulated: string }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
@@ -614,7 +690,7 @@ const electronAPI = {
   // AUTH API
   // ============================================
   signIn: (data: { email: string; password: string }) => {
-    ipcRenderer.send('auth:sign-in', data);
+    return ipcRenderer.invoke('auth:sign-in', data);
   },
   signInWithOAuth: (provider: 'google' | 'github') => {
     return ipcRenderer.invoke('auth:oauth-sign-in', { provider });
@@ -817,12 +893,20 @@ const electronAPI = {
   },
 
   // ============================================
-  // GDPR ACCOUNT DELETION API
+  // GDPR ACCOUNT DELETION API (Option C — hard lockout)
   // ============================================
   deletion: {
-    request: (reason?: string) => ipcRenderer.invoke('deletion:request', reason),
-    cancel: () => ipcRenderer.invoke('deletion:cancel'),
+    request: (reason?: string) => ipcRenderer.invoke('deletion:request', { reason }),
     status: () => ipcRenderer.invoke('deletion:status'),
+    restore: {
+      request: (email: string) => ipcRenderer.invoke('deletion:restore-request', { email }),
+      confirm: (email: string, otp: string) => ipcRenderer.invoke('deletion:restore-confirm', { email, otp }),
+    },
+    onRequested: (callback: (data: { scheduledAt: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('deletion:requested', handler);
+      return () => ipcRenderer.removeListener('deletion:requested', handler);
+    },
   },
 
   // ============================================
@@ -884,6 +968,56 @@ const electronAPI = {
       return () => ipcRenderer.removeListener('update:downloaded', handler);
     },
     install: () => ipcRenderer.send('update:install'),
+  },
+
+  // ============================================
+  // PROJECT CONTEXT API
+  // ============================================
+  project: {
+    add: (options?: { folderPath?: string }) => ipcRenderer.invoke('project:add', options),
+    remove: (projectId: string) => ipcRenderer.invoke('project:remove', projectId),
+    list: () => ipcRenderer.invoke('project:list'),
+    status: (projectId: string) => ipcRenderer.invoke('project:status', projectId),
+    setActive: (projectId: string, localPath?: string) => ipcRenderer.invoke('project:set-active', projectId, localPath),
+    getActive: () => ipcRenderer.invoke('project:get-active'),
+    reindex: (projectId: string, localPath: string) => ipcRenderer.invoke('project:reindex', projectId, localPath),
+    sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
+    toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
+    isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
+    retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => ipcRenderer.invoke('project:retrieve', params),
+    ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => ipcRenderer.invoke('project:ensure-fresh', projects),
+    onStatusUpdate: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('project:status-update', handler);
+      return () => ipcRenderer.removeListener('project:status-update', handler);
+    },
+    onOverlayStatus: (callback: (data: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('overlay:project-status', handler);
+      return () => ipcRenderer.removeListener('overlay:project-status', handler);
+    },
+  },
+
+  // ============================================
+  // SPACES BRIDGE API
+  // ============================================
+  // Cross-window relay for the Spaces feature. The app window publishes
+  // its current spaces snapshot to main; overlay reads that snapshot for
+  // the picker and appends finalized turns back through the same bridge.
+  // Full design notes live in spaces-bridge-handlers.ts.
+  spaces: {
+    publishSnapshot: (spaces: any[]) => {
+      ipcRenderer.send('spaces:publish-snapshot', spaces);
+    },
+    list: () => ipcRenderer.invoke('spaces:list'),
+    appendMessages: (payload: { spaceId: string; messages: any[] }) => {
+      ipcRenderer.send('spaces:append-messages', payload);
+    },
+    onApplyAppend: (callback: (payload: { spaceId: string; messages: any[] }) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('spaces:apply-append', handler);
+      return () => ipcRenderer.removeListener('spaces:apply-append', handler);
+    },
   },
 };
 

@@ -1,11 +1,12 @@
 {
   "name": "prompt-optimizer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Global desktop app for AI prompt optimization with Supabase",
   "main": "dist/main/index-new.js",
   "scripts": {
-    "native:build": "cd native/windows-core && npm install && npm run build",
-    "native:build:debug": "cd native/windows-core && npm install && npm run build:debug",
+    "native:build": "cd native/platform-core && npm install && npm run build",
+    "native:build:mac": "cd native/platform-core && npm install && npm run build",
+    "native:build:debug": "cd native/platform-core && npm install && npm run build:debug",
     "install:ui": "cd app-ui && npm install",
     "build:ui": "cd app-ui && npm run build",
     "build:electron": "tsc",
@@ -17,10 +18,16 @@
     "python:dev": "cd python-service && .\\venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
     "python:dev:mac": "cd python-service && ./venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8001",
     "python:install": "cd python-service && python -m venv venv && .\\venv\\Scripts\\python.exe -m pip install -r requirements.txt",
+    "python:install:mac": "cd python-service && python3 -m venv venv && ./venv/bin/python -m pip install -r requirements.txt",
+    "code-intel:dev": "cd code-intelligence-service && .\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8002",
+    "code-intel:dev:mac": "cd code-intelligence-service && ./.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8002",
+    "code-intel:install": "cd code-intelligence-service && python -m venv .venv && .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt",
     "start": "npm run build && npm run electron",
     "package:win": "npm run build && electron-builder --win --x64",
+    "package:mac": "npm run build && electron-builder --mac",
     "supabase:migrate": "supabase db push",
-    "clean": "rm -rf electron/renderer/app-ui/* dist/"
+    "clean": "rm -rf electron/renderer/app-ui/* dist/",
+    "postinstall": "node scripts/patch-dev-electron-name.js"
   },
   "build": {
     "appId": "com.prmpt.desktop",
@@ -35,12 +42,15 @@
     ],
     "extraResources": [
       {
-        "from": "native/windows-core",
-        "to": "native/windows-core",
+        "from": "native/platform-core",
+        "to": "native/platform-core",
         "filter": [
           "index.js",
           "index.d.ts",
-          "windows-core.win32-x64-msvc.node"
+          "platform-core.win32-x64-msvc.node",
+          "platform-core.darwin-x64.node",
+          "platform-core.darwin-arm64.node",
+          "platform-core.darwin-universal.node"
         ]
       },
       {
@@ -56,8 +66,20 @@
         "to": "tray-icon.png"
       },
       {
+        "from": "build/tray-iconTemplate.png",
+        "to": "tray-iconTemplate.png"
+      },
+      {
+        "from": "build/tray-iconTemplate@2x.png",
+        "to": "tray-iconTemplate@2x.png"
+      },
+      {
         "from": "build/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "build/icon.icns",
+        "to": "icon.icns"
       }
     ],
     "win": {
@@ -71,6 +93,20 @@
       ],
       "icon": "build/icon.ico",
       "forceCodeSigning": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "nsis": {
       "oneClick": false,
@@ -110,11 +146,16 @@
   "dependencies": {
     "@sentry/electron": "^7.10.0",
     "@supabase/supabase-js": "^2.39.0",
+    "active-win": "^8.2.1",
     "axios": "^1.6.2",
+    "better-sqlite3": "^12.8.0",
+    "chokidar": "^4.0.3",
     "dotenv": "^16.3.1",
     "electron-updater": "^6.8.3",
     "file-type": "^16.5.4",
+    "tree-sitter-wasms": "^0.1.13",
     "uiohook-napi": "^1.5.4",
+    "web-tree-sitter": "^0.25.10",
     "ws": "^8.19.0"
   }
 }

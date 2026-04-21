@@ -18,6 +18,7 @@ import { useAuth } from "@/context/AuthContext";
 import { AvatarUploadModal } from "@/components/profile/AvatarUploadModal";
 import { MemoryView } from "@/components/settings/MemoryView";
 import { OtpVerification } from "@/components/auth/OtpVerification";
+import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
 import { cn } from "@/lib/utils";
 
 /* ── Reusable section wrapper ─────────────────────────────── */
@@ -64,6 +65,9 @@ export const SettingsView = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [localInstructions, setLocalInstructions] = useState("");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+
+  const [nameSaving, setNameSaving] = useState(false);
 
   const [identities, setIdentities] = useState<any[]>([]);
   const [identityLoading, setIdentityLoading] = useState<string | null>(null);
@@ -126,7 +130,7 @@ export const SettingsView = () => {
         if (result?.error) {
           span.setAttribute('result', 'failed');
           Sentry.addBreadcrumb({ category: 'auth', message: `Link identity failed: ${provider}`, level: 'warning', data: { provider, error: result.error } });
-          toast({ title: "Connection failed", description: result.error, variant: "destructive" });
+          toast({ title: `Couldn't connect ${provider === 'google' ? 'Google' : 'GitHub'}`, description: result.error, variant: "destructive" });
         } else {
           span.setAttribute('result', 'success');
           Sentry.addBreadcrumb({ category: 'auth', message: `Identity linked: ${provider}`, level: 'info', data: { provider } });
@@ -136,7 +140,7 @@ export const SettingsView = () => {
       } catch (err) {
         span.setAttribute('result', 'error');
         Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleLinkIdentity', provider } });
-        toast({ title: "Error", description: "Failed to connect account", variant: "destructive" });
+        toast({ title: `Couldn't connect ${provider === 'google' ? 'Google' : 'GitHub'}`, description: "Something went wrong. Please try again.", variant: "destructive" });
       } finally {
         setIdentityLoading(null);
       }
@@ -152,7 +156,7 @@ export const SettingsView = () => {
         if (result?.error) {
           span.setAttribute('result', 'failed');
           Sentry.addBreadcrumb({ category: 'auth', message: `Unlink identity failed: ${providerLabel}`, level: 'warning', data: { provider: providerLabel, error: result.error } });
-          toast({ title: "Disconnect failed", description: result.error, variant: "destructive" });
+          toast({ title: `Couldn't disconnect ${providerLabel}`, description: result.error, variant: "destructive" });
         } else {
           span.setAttribute('result', 'success');
           Sentry.addBreadcrumb({ category: 'auth', message: `Identity unlinked: ${providerLabel}`, level: 'info', data: { provider: providerLabel } });
@@ -162,7 +166,7 @@ export const SettingsView = () => {
       } catch (err) {
         span.setAttribute('result', 'error');
         Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleUnlinkIdentity', provider: providerLabel } });
-        toast({ title: "Error", description: "Failed to disconnect account", variant: "destructive" });
+        toast({ title: `Couldn't disconnect ${providerLabel}`, description: "Something went wrong. Please try again.", variant: "destructive" });
       } finally {
         setIdentityLoading(null);
       }
@@ -188,18 +192,18 @@ export const SettingsView = () => {
         if (result?.error) {
           span.setAttribute('result', 'failed');
           Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP send failed', level: 'warning', data: { error: result.error } });
-          toast({ title: "Failed", description: result.error, variant: "destructive" });
+          toast({ title: "Couldn't send code", description: result.error, variant: "destructive" });
         } else {
           span.setAttribute('result', 'sent');
           Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP sent', level: 'info' });
           setResetStep('otp');
           setOtpError('');
-          toast({ title: "Code sent", description: "Check your inbox for the verification code." });
+          toast({ title: "Code sent", description: "We sent a 6-digit code to your email." });
         }
       } catch (err) {
         span.setAttribute('result', 'error');
         Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleSetPassword' } });
-        toast({ title: "Error", description: "Failed to send reset code", variant: "destructive" });
+        toast({ title: "Couldn't send code", description: "Something went wrong. Please try again.", variant: "destructive" });
       } finally {
         setIdentityLoading(null);
       }
@@ -225,7 +229,7 @@ export const SettingsView = () => {
         setOtpError(result.error);
       } else {
         Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resent', level: 'info' });
-        toast({ title: "Code resent", description: "A new verification code has been sent." });
+        toast({ title: "Code resent", description: "A new code is on the way." });
       }
     } catch (err) {
       Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResendResetOtp' } });
@@ -266,7 +270,7 @@ export const SettingsView = () => {
         } else {
           span.setAttribute('result', 'success');
           Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info' });
-          toast({ title: "Password updated", description: "Your password has been changed successfully." });
+          toast({ title: "Password updated", description: "You can now sign in with your new password." });
           setResetStep('idle');
           setResetOtp('');
           // Persist the flag so the UI stays correct across restarts (Supabase admin API
@@ -290,7 +294,6 @@ export const SettingsView = () => {
   const userInitial = (userName[0] || "U").toUpperCase();
 
   const [editedName, setEditedName] = useState(userName);
-  const [nameSaving, setNameSaving] = useState(false);
   const nameChanged = editedName.trim() !== userName;
 
   useEffect(() => { setEditedName(userName); }, [userName]);
@@ -305,10 +308,10 @@ export const SettingsView = () => {
           window.electronAPI.updateProfile({ name: trimmed });
         }
       });
-      toast({ title: "Username updated", description: "Your username has been saved." });
+      toast({ title: "Username updated" });
     } catch (err) {
       Sentry.captureException(err);
-      toast({ title: "Error", description: "Failed to update username.", variant: "destructive" });
+      toast({ title: "Couldn't update username", description: "Something went wrong. Please try again.", variant: "destructive" });
     } finally {
       setNameSaving(false);
     }
@@ -351,7 +354,7 @@ export const SettingsView = () => {
     saveSettings(newSettings, user?.profile?.id).catch((err) => {
       Sentry.captureException(err, { tags: { component: 'settings-view', op: 'auto-save' }, extra: { key } });
       console.error('[SettingsView] Failed to auto-save:', err);
-      toast({ title: "Auto-save failed", description: "Changes may not persist.", variant: "destructive" });
+      toast({ title: "Couldn't save settings", description: "Your last change wasn't stored. Try again.", variant: "destructive" });
     });
     if (window.electronAPI && window.electronAPI.send) {
       window.electronAPI.send('overlay:settings-update', newSettings);
@@ -361,10 +364,7 @@ export const SettingsView = () => {
   const handleAvatarUploaded = (url: string) => {
     if (window.electronAPI?.updateProfile) {
       window.electronAPI.updateProfile({ avatar_url: url });
-      toast({
-        title: "Avatar updated",
-        description: "Your profile picture has been changed successfully.",
-      });
+      toast({ title: "Avatar updated" });
     }
   };
 
@@ -604,13 +604,24 @@ export const SettingsView = () => {
                     <p className="text-sm font-medium text-destructive">Delete Account</p>
                     <p className="text-xs text-muted-foreground mt-0.5">Permanently remove your account and all data</p>
                   </div>
-                  <Button variant="destructive" size="sm" className="h-8 text-xs flex-shrink-0">
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="h-8 text-xs flex-shrink-0"
+                    onClick={() => setDeleteAccountOpen(true)}
+                  >
                     Delete Account
                   </Button>
                 </Row>
               </Section>
             </div>
           </ScrollArea>
+
+          <DeleteAccountModal
+            open={deleteAccountOpen}
+            onOpenChange={setDeleteAccountOpen}
+            userEmail={userEmail}
+          />
         </TabsContent>
 
         {/* ── Customize tab ── */}
@@ -638,7 +649,7 @@ export const SettingsView = () => {
                         <Button variant="ghost" size="sm" onClick={discardInstructions} className="h-7 px-3 text-xs text-muted-foreground hover:text-foreground">
                           Discard
                         </Button>
-                        <Button size="sm" onClick={saveInstructions} className="h-7 px-3 text-xs bg-emerald hover:bg-emerald/90 text-white font-semibold">
+                        <Button size="sm" onClick={saveInstructions} className="h-7 px-3 text-xs border border-input text-foreground hover:bg-muted font-semibold">
                           Save
                         </Button>
                       </div>
@@ -799,7 +810,7 @@ export const SettingsView = () => {
                     </Button>
                     <Button
                       type="submit" disabled={resetPasswordLoading}
-                      className="flex-1 h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold"
+                      className="flex-1 h-10 border border-input text-foreground hover:bg-muted font-semibold"
                     >
                       {resetPasswordLoading ? (
                         <CircleNotch size={16} weight="light" className="animate-spin" />

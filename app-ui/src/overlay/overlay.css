@@ -124,18 +124,26 @@ textarea { min-height: 40px; }
 
 /* ======== BUTTON STYLES ======== */
 .btn-primary {
-  background: linear-gradient(135deg, hsl(var(--accent)), hsl(217 91% 50%));
-  color: white;
+  background: transparent;
+  color: hsl(var(--foreground));
   font-weight: 600;
-  border: none;
+  border: 1px solid hsl(var(--input));
   cursor: pointer;
   position: relative;
   overflow: hidden;
   transition: all 0.2s ease;
 }
-.btn-primary:hover { filter: brightness(1.1); box-shadow: 0 0 20px hsl(var(--accent) / 0.35); }
+.btn-primary:hover { background: hsl(var(--muted)); }
 .btn-primary:active { transform: scale(0.98); }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; filter: none; box-shadow: none; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.dark .btn-primary {
+  background: linear-gradient(135deg, hsl(var(--accent)), hsl(217 91% 50%));
+  color: white;
+  border: none;
+}
+.dark .btn-primary:hover { background: linear-gradient(135deg, hsl(var(--accent)), hsl(217 91% 50%)); filter: brightness(1.1); box-shadow: 0 0 20px hsl(var(--accent) / 0.35); }
+.dark .btn-primary:disabled { filter: none; box-shadow: none; }
 
 .btn-secondary {
   background: hsl(var(--secondary));
@@ -806,6 +814,16 @@ textarea { min-height: 40px; }
   border-color: hsl(var(--accent) / 0.4);
   color: hsl(var(--accent));
   background: hsl(var(--accent) / 0.05);
+}
+
+/* Pulsing dot used inside the Space context pill while the attached
+   folder is mid-indexing. The amber glow expands and fades on a 1.4s
+   loop so the user sees that the folder is actively being processed
+   and the answer they get next will be based on the freshest state. */
+@keyframes overlay-status-pulse {
+  0%   { box-shadow: 0 0 0 2px hsl(38 92% 50% / 0.35); }
+  50%  { box-shadow: 0 0 0 6px hsl(38 92% 50% / 0); }
+  100% { box-shadow: 0 0 0 2px hsl(38 92% 50% / 0.35); }
 }
 
 /* ======== PLUS MENU POPUP ======== */

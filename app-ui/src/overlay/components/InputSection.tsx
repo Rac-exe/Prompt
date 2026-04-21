@@ -218,37 +218,121 @@ const SkillPill: React.FC<SkillPillProps> = ({ skill, skillLabel, onRemove }) =>
   );
 };
 
+// ── Status dot helper (shared by space pill) ─────────────────────────
+// Maps the four `index_status` values published by the code-intel service
+// onto a colored dot + label. Mirrors the STATUS_META dictionary used in
+// SpaceWorkspace.tsx so the overlay and main-app surfaces stay visually
+// consistent.
+const SPACE_STATUS_META: Record<string, { dot: string; label: string }> = {
+  ready:    { dot: 'hsl(160 84% 39%)', label: 'Ready' },
+  indexing: { dot: 'hsl(38 92% 50%)',  label: 'Indexing' },
+  stale:    { dot: 'hsl(0 72% 51%)',   label: 'Stale' },
+  error:    { dot: 'hsl(0 72% 51%)',   label: 'Error' },
+};
+
+function getSpaceStatusMeta(status: string | null | undefined) {
+  if (!status) return { dot: 'hsl(var(--muted-foreground) / 0.4)', label: 'Unknown' };
+  return SPACE_STATUS_META[status] ?? { dot: 'hsl(var(--muted-foreground) / 0.4)', label: status };
+}
+
 // ── Context Pill Row ─────────────────────────────────────────────────────────
 
 interface ContextPillRowProps {
   isAuthenticated: boolean;
   chatId: string | null;
   chatName: string;
-  onAttach: () => void;
-  onRemove: () => void;
+  spaceId: string | null;
+  spaceName: string;
+  /** Live `index_status` of the attached space's folder, or null if no
+   * status update has been received yet. Powers the colored dot + label
+   * inside the space chip — kept fully reactive so a folder transitioning
+   * stale → indexing → ready visibly updates while the overlay is open.
+   */
+  spaceStatus: string | null;
+  onAttachChat: () => void;
+  onRemoveChat: () => void;
+  onAttachSpace: () => void;
+  onRemoveSpace: () => void;
+  /** When false, the chat-attach pill/button is not rendered at all.
+   *  Used by the Spaces mode to keep the composer clean (in Spaces mode
+   *  the Space IS the context, so a second attach affordance is noise).*/
+  showChatAttach: boolean;
+  /** When false, the space-attach pill/button is not rendered at all.
+   *  Used by the Chat mode because attaching a Space is now handled by
+   *  switching into Spaces mode from the header, not by a button here. */
+  showSpaceAttach: boolean;
 }
 
-const ContextPillRow: React.FC<ContextPillRowProps> = ({ isAuthenticated, chatId, chatName, onAttach, onRemove }) => {
+const ContextPillRow: React.FC<ContextPillRowProps> = ({
+  isAuthenticated,
+  chatId, chatName,
+  spaceId, spaceName, spaceStatus,
+  onAttachChat, onRemoveChat,
+  onAttachSpace, onRemoveSpace,
+  showChatAttach, showSpaceAttach,
+}) => {
   if (!isAuthenticated) return null;
+  // When both affordances are hidden (e.g. spaces-mode with no extra
+  // context concept) we still return null rather than an empty row so the
+  // composer doesn't reserve vertical space for nothing.
+  if (!showChatAttach && !showSpaceAttach) return null;
+  const statusMeta = getSpaceStatusMeta(spaceStatus);
   return (
-    <div className="context-pill-row" style={{ display: '' }}>
-      {chatId ? (
-        <div>
+    <div className="context-pill-row" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      {/* Chat context pill / button */}
+      {showChatAttach && (
+        chatId ? (
           <span className="context-pill">
             <svg style={{ width: 11, height: 11, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
             <span className="context-pill-name">{chatName}</span>
-            <button className="context-pill-remove" title="Remove context" onClick={onRemove}>✕</button>
+            <button className="context-pill-remove" title="Remove context" onClick={onRemoveChat}>✕</button>
           </span>
-        </div>
-      ) : (
-        <button className="btn-attach-context" onClick={onAttach}>
-          <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
-          </svg>
-          Attach Chat Context
-        </button>
+        ) : (
+          <button className="btn-attach-context" onClick={onAttachChat}>
+            <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4" />
+            </svg>
+            Attach Chat Context
+          </button>
+        )
+      )}
+
+      {/* Space context pill / button — sibling of the chat affordance.
+          When a space is attached we render a chip identical in shape to
+          the chat pill so the user has a uniform visual model: chip ⇒
+          context attached, button ⇒ tap to attach. */}
+      {showSpaceAttach && (
+        spaceId ? (
+          <span className="context-pill" title={`${spaceName} — ${statusMeta.label}`}>
+            <svg style={{ width: 11, height: 11, flexShrink: 0 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+            <span className="context-pill-name">{spaceName}</span>
+            <span
+              aria-label={statusMeta.label}
+              title={statusMeta.label}
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: '50%',
+                background: statusMeta.dot,
+                flexShrink: 0,
+                boxShadow: `0 0 0 2px ${statusMeta.dot}33`,
+                animation: spaceStatus === 'indexing' ? 'overlay-status-pulse 1.4s ease-in-out infinite' : undefined,
+              }}
+            />
+            <button className="context-pill-remove" title="Detach space" onClick={onRemoveSpace}>✕</button>
+          </span>
+        ) : (
+          <button className="btn-attach-context" onClick={onAttachSpace}>
+            <svg style={{ width: 11, height: 11 }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+            </svg>
+            Attach Space
+          </button>
+        )
       )}
     </div>
   );
@@ -265,6 +349,11 @@ interface InputSectionProps {
   selectedSkillLabel: string | null;
   selectedChatId: string | null;
   selectedChatName: string;
+  /** Currently attached space (Spaces feature) — null when none. */
+  selectedSpaceId: string | null;
+  selectedSpaceName: string;
+  /** Live `index_status` of the attached space's folder. */
+  selectedSpaceStatus: string | null;
   skills: SkillInfo[];
   onSend: (text: string) => void;
   onStop: () => void;
@@ -274,6 +363,15 @@ interface InputSectionProps {
   onRemoveSkill: () => void;
   onAttachContext: () => void;
   onRemoveContext: () => void;
+  onAttachSpace: () => void;
+  onRemoveSpace: () => void;
+  /** Show the "Attach Chat Context" pill/button. Defaults to true for
+   *  backwards-compat; Spaces mode passes false. */
+  showChatAttach?: boolean;
+  /** Show the "Attach Space" pill/button. Defaults to true for
+   *  backwards-compat; Chat mode passes false because space-attach lives
+   *  in the header mode switcher now, not the composer. */
+  showSpaceAttach?: boolean;
   /** Ref so parent can set prefill text */
   inputRef?: React.RefObject<HTMLTextAreaElement>;
 }
@@ -281,9 +379,14 @@ interface InputSectionProps {
 const InputSection: React.FC<InputSectionProps> = ({
   isOptimizing, isOnline, isAuthenticated,
   attachedFiles, selectedSkill, selectedSkillLabel,
-  selectedChatId, selectedChatName, skills,
+  selectedChatId, selectedChatName,
+  selectedSpaceId, selectedSpaceName, selectedSpaceStatus,
+  skills,
   onSend, onStop, onAttachFiles, onRemoveFile,
   onSelectSkill, onRemoveSkill, onAttachContext, onRemoveContext,
+  onAttachSpace, onRemoveSpace,
+  showChatAttach = true,
+  showSpaceAttach = true,
   inputRef: externalInputRef,
 }) => {
   const internalInputRef = useRef<HTMLTextAreaElement>(null);
@@ -299,6 +402,13 @@ const InputSection: React.FC<InputSectionProps> = ({
   const [isListening, setIsListening] = useState(false);
   const voiceActiveRef = useRef(false);
   const transcriptionSessionIdRef = useRef<string | null>(null);
+
+  // Project / Spaces context is intentionally NOT auto-injected here. The
+  // old behavior subscribed to `project.onOverlayStatus` and showed the
+  // last-active project as a pill, which leaked Spaces UI into the
+  // overlay even when the user wasn't intending to use a Space. The
+  // upcoming Space-attach flow will be opt-in (explicit picker / slash
+  // command), surfaced in the existing context-attach button.
 
   const canSend = !!inputValue.trim() && !isOptimizing && isOnline;
 
@@ -478,8 +588,15 @@ const InputSection: React.FC<InputSectionProps> = ({
         isAuthenticated={isAuthenticated}
         chatId={selectedChatId}
         chatName={selectedChatName}
-        onAttach={onAttachContext}
-        onRemove={onRemoveContext}
+        spaceId={selectedSpaceId}
+        spaceName={selectedSpaceName}
+        spaceStatus={selectedSpaceStatus}
+        onAttachChat={onAttachContext}
+        onRemoveChat={onRemoveContext}
+        onAttachSpace={onAttachSpace}
+        onRemoveSpace={onRemoveSpace}
+        showChatAttach={showChatAttach}
+        showSpaceAttach={showSpaceAttach}
       />
 
       <input
@@ -545,6 +662,7 @@ const InputSection: React.FC<InputSectionProps> = ({
 
             {/* Skill pill */}
             <SkillPill skill={selectedSkill} skillLabel={selectedSkillLabel} onRemove={onRemoveSkill} />
+
           </div>
 
           <div className="input-toolbar-right">

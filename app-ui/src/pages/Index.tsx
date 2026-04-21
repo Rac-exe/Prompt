@@ -10,6 +10,9 @@ import { SavedPrompt } from "@/components/library/PromptCard";
 import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
+import { ProjectsView } from "@/components/projects/ProjectsView";
+import { loadSpaces, saveSpaces, toSpaceSummary, flushSpacesSaves } from "@/components/projects/types";
+import type { SpaceMessage } from "@/components/projects/types";
 import { Message } from "@/components/chat/MessageBubble";
 import type { ClarifyQuestion } from "@/components/chat/ClarificationCard";
 import { PromptPreviewModal } from "@/components/library/PromptPreviewModal";
@@ -48,8 +51,138 @@ const Index = () => {
   // Initialize settings after authentication, scoped to user
   useInitializeSettings(user?.profile?.id);
 
+  // ── Bootstrap Spaces for overlay + drift reconciliation ────────────
+  // Two things have to happen as soon as auth resolves, regardless of
+  // whether the user ever opens the Spaces tab:
+  //
+  //   1. publishSnapshot — warms the main-process cache the overlay's
+  //      SpacePicker reads from. Without it, opening the overlay before
+  //      visiting the Spaces tab shows "no spaces found".
+  //
+  //   2. ensureFresh — runs the hash-diff scan against each project's
+  //      localPath, re-uploads anything that drifted while the app was
+  //      closed, AND starts the chokidar watcher so further edits during
+  //      this session are picked up. Previously this lived in
+  //      ProjectsView's mount effect, which meant a user who only ever
+  //      used the overlay would silently work against stale embeddings
+  //      and never have a watcher running. The cost of running it here
+  //      is the same as before — short-circuits when nothing changed.
+  //
+  // ProjectsView no longer triggers ensureFresh itself (would cause a
+  // double-scan). Its publishSnapshot effect still handles subsequent
+  // live updates (add / remove / rename) while the user is on the
+  // Spaces tab.
+  useEffect(() => {
+    const userId = user?.profile?.id ?? null;
+    if (!userId) return;
+    const spacesApi = (window as any).electronAPI?.spaces;
+    const projectApi = (window as any).electronAPI?.project;
+
+    let spaces: ReturnType<typeof loadSpaces> = [];
+    try {
+      spaces = loadSpaces(userId);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-load-spaces" } });
+      return;
+    }
+
+    if (spacesApi?.publishSnapshot) {
+      try {
+        spacesApi.publishSnapshot(spaces.map(toSpaceSummary));
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-spaces-snapshot" } });
+      }
+    }
+
+    if (projectApi?.ensureFresh) {
+      try {
+        const projects = spaces.flatMap((s) =>
+          s.projects
+            .filter((p) => p.projectId && p.localPath)
+            .map((p) => ({ projectId: p.projectId, localPath: p.localPath })),
+        );
+        if (projects.length > 0) {
+          projectApi.ensureFresh(projects).catch((err: unknown) => {
+            Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-ensure-fresh" } });
+          });
+        }
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-ensure-fresh" } });
+      }
+    }
+  }, [user?.profile?.id]);
+
+  // ── Always-on overlay→app Spaces append sync ────────────────────────
+  // Persistence layer for `spaces:apply-append`. Previously this listener
+  // lived in ProjectsView, which is mounted lazily — only when the user
+  // navigates to the Spaces tab. That meant overlay chats against a Space
+  // the user had never opened in-app silently evaporated (the main process
+  // forwarded `spaces:apply-append`, but nothing in the app window was
+  // listening). Fresh Spaces with no prior history were the common-case
+  // victims; spaces with existing chats "worked" only because the user
+  // had previously visited the Spaces tab and kept the listener mounted.
+  //
+  // Hoisting the persistence write to Index.tsx (always mounted once auth
+  // resolves) guarantees the append lands in localStorage regardless of
+  // the current view. ProjectsView keeps its own listener for live React
+  // state updates while the Spaces tab is open — both listeners de-dupe
+  // by message id and converge on the same final state, so running them
+  // in parallel is safe.
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    userIdRef.current = user?.profile?.id ?? null;
+  }, [user?.profile?.id]);
+
+  useEffect(() => {
+    const spacesApi = (window as any).electronAPI?.spaces;
+    if (!spacesApi?.onApplyAppend) return;
+    const unsub = spacesApi.onApplyAppend((payload: { spaceId: string; messages: SpaceMessage[] }) => {
+      try {
+        if (!payload?.spaceId || !Array.isArray(payload.messages) || payload.messages.length === 0) return;
+        const uid = userIdRef.current;
+        if (!uid) return;
+
+        // Flush any pending debounced writes first so we're not racing
+        // ProjectsView's save timer against our synchronous write.
+        flushSpacesSaves();
+
+        const snapshot = loadSpaces(uid);
+        const idx = snapshot.findIndex((s) => s.id === payload.spaceId);
+        if (idx === -1) return;
+
+        const target = snapshot[idx];
+        const existingIds = new Set(target.messages.map((m) => m.id));
+        const fresh = payload.messages.filter((m) => !existingIds.has(m.id));
+        if (fresh.length === 0) return;
+
+        const next = snapshot.slice();
+        next[idx] = {
+          ...target,
+          messages: [...target.messages, ...fresh],
+          lastUsedAt: Date.now(),
+        };
+        saveSpaces(next, uid);
+
+        // Re-publish the snapshot so the main-process cache (and any
+        // other window that reads it) reflects the bumped lastUsedAt.
+        // Safe to call synchronously — payload is the lightweight
+        // projection, no messages leak across the bridge.
+        try {
+          if (spacesApi.publishSnapshot) {
+            spacesApi.publishSnapshot(next.map(toSpaceSummary));
+          }
+        } catch {
+          // ignore — main cache will catch up on next ProjectsView mount
+        }
+      } catch (err) {
+        Sentry.captureException(err, { tags: { component: "index", op: "spaces-apply-append" } });
+      }
+    });
+    return () => { unsub?.(); };
+  }, []);
+
   // Navigation state
-  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library">("chat");
+  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library" | "projects">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   // Ref always holds the latest selectedChatId — used in long-lived IPC listeners
   // to avoid stale closures when the user switches chats.
@@ -177,7 +310,7 @@ const Index = () => {
             setSavedPrompts(mapPrompts(rawPrompts, mappedCollections));
           });
         })
-        .catch((error) => console.error('[Index] Error loading library:', error));
+        .catch((err) => { console.error('[Index] Error loading library:', err); Sentry.captureException(err, { tags: { component: 'index-page' } }); });
     }
   }, [isElectron]);
 
@@ -251,8 +384,8 @@ const Index = () => {
       const handleRenameError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat rename error:', data);
         toast({
-          title: "Rename failed",
-          description: data.error || "Failed to rename chat. Please try again.",
+          title: "Couldn't rename chat",
+          description: data.error || "Something went wrong. Please try again.",
           variant: "destructive",
         });
       };
@@ -277,7 +410,7 @@ const Index = () => {
         }
         toast({
           title: "Chat deleted",
-          description: "Chat has been permanently removed.",
+          description: "It's been permanently removed.",
         });
       };
       const cleanup = window.electronAPI.onChatDeleted(handleChatDeleted);
@@ -291,8 +424,8 @@ const Index = () => {
       const handleDeleteError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat delete error:', data);
         toast({
-          title: "Delete failed",
-          description: data.error || "Failed to delete chat. Please try again.",
+          title: "Couldn't delete chat",
+          description: data.error || "Something went wrong. Please try again.",
           variant: "destructive",
         });
       };
@@ -469,8 +602,8 @@ const Index = () => {
   // Listen for streaming chunks (real-time text updates)
   useEffect(() => {
     if (isElectron && window.electronAPI?.onOptimizationChunk) {
-      const handleOptimizationChunk = (data: { chatId: string | null; chunk: string; accumulated: string }) => {
-        // Only process chunks for the currently selected chat
+      const handleOptimizationChunk = (data: { chatId: string | null; chunk: string; accumulated: string; source?: 'chat' | 'space' }) => {
+        if (data.source === 'space') return;
         if (data.chatId && data.chatId !== selectedChatIdRef.current) return;
 
         handleChunk(data.chunk, data.accumulated);
@@ -831,7 +964,7 @@ const Index = () => {
       }
       toast({
         title: "Chat renamed",
-        description: `Chat renamed to "${newTitle}".`,
+        description: `Renamed to "${newTitle}".`,
       });
     }
   }, [selectedChatId]);
@@ -842,7 +975,8 @@ const Index = () => {
     if (isElectron && window.electronAPI?.deleteChat) {
       window.electronAPI.deleteChat(chatId);
     } else {
-      // Fallback for web mode
+      // Fallback for web mode — IPC `onChatDeleted` listener owns the toast
+      // in Electron mode, so we don't fire one here to avoid double toasts.
       setRecentChats(prev => prev.filter(c => c.id !== chatId));
       if (selectedChatId === chatId) {
         setSelectedChatId(null);
@@ -850,10 +984,6 @@ const Index = () => {
         messageTree.init([]);
         setCurrentChatTitle('');
       }
-      toast({
-        title: "Chat deleted",
-        description: "Chat has been permanently removed.",
-      });
     }
   }, [selectedChatId, deleteChatState]);
 
@@ -987,10 +1117,7 @@ Your prompt was: "${content}"`;
   }, [selectedChatId]);
 
   const handleCopyPrompt = (id: string) => {
-    toast({
-      title: "Copied!",
-      description: "Prompt copied to clipboard.",
-    });
+    toast({ title: "Prompt copied" });
   };
 
   // Edit a user message: create a new branch in the version tree instead of
@@ -1169,10 +1296,7 @@ Your prompt was: "${content}"`;
         prev.map((m) => m.id === messageId ? { ...m, feedback: { rating } } : m)
     );
 
-    toast({
-      title: "Thank you!",
-      description: "Your feedback helps us improve.",
-    });
+    toast({ title: "Thanks for the feedback" });
   };
 
   const handleSavePrompt = async (collectionId: string, title: string, newCollectionName?: string) => {
@@ -1216,8 +1340,8 @@ Your prompt was: "${content}"`;
         setSavedPromptIds((prev) => [...prev, promptToSave.id]);
 
         toast({
-          title: "Saved!",
-          description: "Prompt saved to your library.",
+          title: "Prompt saved",
+          description: "Find it in your library.",
         });
       }
 
@@ -1226,8 +1350,8 @@ Your prompt was: "${content}"`;
     } catch (error: any) {
       console.error('[Index] Error saving prompt:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to save prompt",
+        title: "Couldn't save prompt",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1248,13 +1372,13 @@ Your prompt was: "${content}"`;
       }
       toast({
         title: "Collection created",
-        description: `"${name}" has been created.`,
+        description: `"${name}" is ready.`,
       });
     } catch (error: any) {
       console.error('[Index] Error creating collection:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to create collection",
+        title: "Couldn't create collection",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1270,13 +1394,13 @@ Your prompt was: "${content}"`;
       );
       toast({
         title: "Collection renamed",
-        description: `Collection renamed to "${name}".`,
+        description: `Renamed to "${name}".`,
       });
     } catch (error: any) {
       console.error('[Index] Error renaming collection:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to rename collection",
+        title: "Couldn't rename collection",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1293,13 +1417,13 @@ Your prompt was: "${content}"`;
       );
       toast({
         title: "Collection deleted",
-        description: "Collection and its prompts have been removed.",
+        description: "It and its prompts have been removed.",
       });
     } catch (error: any) {
       console.error('[Index] Error deleting collection:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete collection",
+        title: "Couldn't delete collection",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1309,10 +1433,7 @@ Your prompt was: "${content}"`;
     const prompt = savedPrompts.find((p) => p.id === id);
     if (prompt) {
       navigator.clipboard.writeText(prompt.content);
-      toast({
-        title: "Copied!",
-        description: "Prompt copied to clipboard.",
-      });
+      toast({ title: "Prompt copied" });
     }
   };
 
@@ -1328,15 +1449,12 @@ Your prompt was: "${content}"`;
             : p
         )
       );
-      toast({
-        title: "Saved",
-        description: "Prompt updated successfully.",
-      });
+      toast({ title: "Prompt updated" });
     } catch (error: any) {
       console.error('[Index] Error updating prompt:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to update prompt",
+        title: "Couldn't update prompt",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
       throw error; // re-throw so the modal stays open on failure
@@ -1349,15 +1467,12 @@ Your prompt was: "${content}"`;
         await window.electronAPI.promptLibrary.deletePrompt(id);
       }
       setSavedPrompts((prev) => prev.filter((p) => p.id !== id));
-      toast({
-        title: "Deleted",
-        description: "Prompt has been removed.",
-      });
+      toast({ title: "Prompt deleted" });
     } catch (error: any) {
       console.error('[Index] Error deleting prompt:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to delete prompt",
+        title: "Couldn't delete prompt",
+        description: error.message || "Something went wrong. Please try again.",
         variant: "destructive",
       });
     }
@@ -1375,7 +1490,7 @@ Your prompt was: "${content}"`;
       setCurrentView("chat");
       toast({
         title: "Chat restored",
-        description: `Loaded "${session.title}"`,
+        description: `Loaded "${session.title}".`,
       });
     }
   };
@@ -1474,6 +1589,24 @@ Your prompt was: "${content}"`;
       case "settings":
         return (
           <SettingsView />
+        );
+      case "projects":
+        return (
+          <ProjectsView
+            onSaveMessage={(content: string) => {
+              // Save from inside a Space → open the same library save modal
+              // the chat view uses. Previously this redirected to a brand-new
+              // chat, which was a bug — Save means "save to my library" everywhere.
+              const synthetic: Message = {
+                id: crypto.randomUUID(),
+                role: 'assistant',
+                content,
+                timestamp: new Date(),
+              };
+              setPromptToSave(synthetic);
+              setSaveModalOpen(true);
+            }}
+          />
         );
       case "chat":
       default:

@@ -21,13 +21,13 @@ export interface TriggerAnchor {
 
 interface NativeBridge {
     getActiveWindowTitle(): string;
-    // napi v3 ThreadsafeFunction uses error-first callbacks: (err, value)
     startHook(callback: (err: Error | null, anchor: TriggerAnchor) => void): void;
     stopHook(): void;
     replaceAtLastAnchor(text: string): boolean;
     forceFocusWindow(hwnd: number): boolean;
     pasteTextToWindow(hwnd: number, text: string): boolean;
     sendEnterToWindow(hwnd: number): boolean;
+    checkAccessibilityPermission(): boolean;
 }
 
 // ─── Stub (used when .node binary is absent) ─────────────────────────────────
@@ -52,6 +52,9 @@ const STUB: NativeBridge = {
         console.warn('[NativeBridge] sendEnterToWindow called but native module not loaded');
         return false;
     },
+    checkAccessibilityPermission: () => {
+        return process.platform !== 'darwin';
+    },
 };
 
 // ─── Lazy loader ──────────────────────────────────────────────────────────────
@@ -69,15 +72,21 @@ function loadBridge(): NativeBridge {
         const nativeRoot = app.isPackaged
             ? process.resourcesPath
             : path.resolve(__dirname, '..', '..', '..');
-        const nativeIndexPath = path.join(nativeRoot, 'native', 'windows-core', 'index.js');
+        const nativeIndexPath = path.join(nativeRoot, 'native', 'platform-core', 'index.js');
 
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         _bridge = require(nativeIndexPath) as NativeBridge;
         console.log('[NativeBridge] Loaded from:', nativeIndexPath);
+        Sentry.setTag('native_module_loaded', 'true');
+        Sentry.setTag('native_module_platform', process.platform);
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('[NativeBridge] Not loaded — stub mode.\n  Fix: npm run native:build\n  Reason:', msg);
-        Sentry.addBreadcrumb({ category: 'native-bridge', message: 'Native module load failed', level: 'warning', data: { reason: msg } });
+        Sentry.captureException(err instanceof Error ? err : new Error(msg), {
+            tags: { component: 'native-bridge', platform: process.platform },
+            extra: { reason: msg },
+        });
+        Sentry.setTag('native_module_loaded', 'false');
     }
 
     return _bridge;
@@ -101,6 +110,7 @@ export function startHook(callback: (anchor: TriggerAnchor) => void): void {
     loadBridge().startHook((err: Error | null, anchor: TriggerAnchor) => {
         if (err) {
             console.error('[NativeBridge] startHook callback error:', err);
+            Sentry.captureException(err, { tags: { component: 'native-hook', platform: process.platform } });
             return;
         }
         callback(anchor);
@@ -173,6 +183,19 @@ export function pasteTextToWindow(hwnd: number, text: string): boolean {
             return false;
         }
     });
+}
+
+/**
+ * Check if the app has Accessibility permission (macOS only).
+ * Returns true on Windows and other platforms.
+ */
+export function checkAccessibilityPermission(): boolean {
+    try {
+        return loadBridge().checkAccessibilityPermission();
+    } catch (err) {
+        Sentry.captureException(err, { tags: { component: 'native-bridge', op: 'checkAccessibilityPermission' } });
+        return process.platform !== 'darwin';
+    }
 }
 
 /**

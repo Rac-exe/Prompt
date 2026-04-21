@@ -18,6 +18,7 @@ import { uploadAttachment } from './file-upload-service';
 import { offlineQueue } from '../database/offline-queue';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { analyticsService } from '../analytics/analytics-service';
+import { getActiveProjectId, getActiveProjectBranch } from './project-handlers';
 
 // ── Model metadata helper ─────────────────────────────────────────────────────
 function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
@@ -225,7 +226,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking') => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
@@ -277,11 +278,28 @@ export function registerChatHandlers(
                     (chunk, accumulated) => {
                         if (chatId) activeGenerations.set(chatId, { accumulated });
                         if (appWindowManager) {
-                            appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated });
+                            appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated, source });
                         }
                     },
                     mode,
-                    customInstructions
+                    customInstructions,
+                    [],
+                    null,
+                    null,
+                    null,
+                    false,
+                    // Space mode: the renderer (SpaceWorkspace) has already
+                    // run retrieval against the *correct* space-scoped
+                    // project_id(s) and embedded the resulting chunks into
+                    // `promptText` via buildTailoredPrompt. Passing the
+                    // global `getActiveProjectId()` here would trigger a
+                    // SECOND retrieval inside the Python optimizer against
+                    // whichever folder was last "active" globally — which
+                    // is often a different space's folder, leaking its
+                    // code into the prompt. Skip the server-side retrieval
+                    // entirely in space mode.
+                    source === 'space' ? null : getActiveProjectId(),
+                    source === 'space' ? null : getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -329,6 +347,7 @@ export function registerChatHandlers(
                 appWindowManager.send('optimization-complete', {
                     original: promptText,
                     optimized: optimizedText,
+                    source,
                 });
             }
 
@@ -337,10 +356,9 @@ export function registerChatHandlers(
             Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
             if (appWindowManager) {
-                appWindowManager.send('optimization-complete', {
-                    original: promptText,
-                    optimized: 'Optimization failed. Please try again.',
+                appWindowManager.send('optimization-error', {
                     error: error instanceof Error ? error.message : 'Unknown error',
+                    source,
                 });
             }
         }
@@ -810,7 +828,12 @@ export function registerChatHandlers(
                     data.mode || 'thinking',
                     customInstructions,
                     attachedFiles,
-                    data.forcedSkill || null
+                    data.forcedSkill || null,
+                    null,
+                    null,
+                    false,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -952,6 +975,8 @@ export function registerChatHandlers(
                     null,
                     formattedAnswers || null,
                     data.wantsSections,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -1146,6 +1171,8 @@ export function registerChatHandlers(
                     data.previousContent || null,
                     data.clarificationAnswers || null,
                     data.wantsSections ?? false,
+                    getActiveProjectId(),
+                    getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
@@ -1360,6 +1387,11 @@ export async function syncChatMessageQueue(
                 '',
                 [],
                 forcedSkill || null,
+                null,
+                null,
+                false,
+                getActiveProjectId(),
+                getActiveProjectBranch(),
             );
 
             // Save optimization record

@@ -15,6 +15,7 @@ interface SignupPageProps {
 type SignupStep = 'form' | 'otp';
 
 export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps) {
+  const isMac = window.electronAPI?.platform === 'darwin';
   const [step, setStep] = useState<SignupStep>('form');
   const [formData, setFormData] = useState({
     name: '',
@@ -43,11 +44,11 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
       }
       const result = await window.electronAPI.signInWithOAuth(provider);
       if (result?.error) {
-        toast({ variant: 'destructive', title: 'Sign-up Failed', description: result.error, duration: 4000 });
+        toast({ variant: 'destructive', title: "Couldn't sign you up", description: result.error, duration: 4000 });
       }
       // On success, browser opens. Auth state updates via deep-link callback.
     } catch {
-      toast({ variant: 'destructive', title: 'Error', description: 'An unexpected error occurred' });
+      toast({ variant: 'destructive', title: "Couldn't sign you up", description: 'Something went wrong. Please try again.' });
     } finally {
       setOauthLoading(null);
     }
@@ -97,7 +98,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
       } else {
         setStep('otp');
         setOtpError('');
-        toast({ title: 'Code sent', description: 'Check your inbox for the verification code.' });
+        toast({ title: 'Code sent', description: `We sent a 6-digit code to ${formData.email}.` });
       }
     } catch {
       setError('An unexpected error occurred');
@@ -133,7 +134,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
       if (result?.error) {
         setOtpError(result.error);
       } else {
-        toast({ title: 'Code resent', description: 'A new verification code has been sent.' });
+        toast({ title: 'Code resent', description: 'A new code is on the way.' });
       }
     } catch {
       setOtpError('Failed to resend code.');
@@ -147,11 +148,13 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
           className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-            <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
-            <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
-            <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
-          </div>
+          {!isMac && (
+            <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+              <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+              <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+              <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
+            </div>
+          )}
         </div>
         <div className="flex-1 flex items-center justify-center p-8">
           <OtpVerification
@@ -175,11 +178,13 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
         className="h-9 flex-shrink-0 flex items-center justify-end select-none bg-background"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-          <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
-          <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
-        </div>
+        {!isMac && (
+          <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            <button onClick={() => window.electronAPI?.windowControls?.minimize()} aria-label="Minimise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Minus size={14} weight="light" /></button>
+            <button onClick={() => window.electronAPI?.windowControls?.maximize()} aria-label="Maximise" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"><Square size={12} weight="light" /></button>
+            <button onClick={() => window.electronAPI?.windowControls?.close()} aria-label="Close" className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"><X size={14} weight="light" /></button>
+          </div>
+        )}
       </div>
       <div className="flex flex-1">
       {/* Left decorative panel */}
@@ -365,7 +370,7 @@ export function SignupPage({ onSwitchToLogin, onSignupSuccess }: SignupPageProps
 
             <Button
               type="submit" disabled={isLoading}
-              className="w-full h-10 bg-emerald hover:bg-emerald/90 text-white font-semibold glow-emerald-sm transition-button mt-1"
+              className="w-full h-10 border border-input text-foreground hover:bg-muted font-semibold transition-button mt-1"
             >
               {isLoading ? (
                 <CircleNotch size={16} weight="light" className="animate-spin" />

@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
+import * as Sentry from '@sentry/react';
 import { Logo } from "@/components/ui/Logo";
 import { LoginPage } from './LoginPage';
 import { SignupPage } from './SignupPage';
 import { OnboardingPage } from './OnboardingPage';
 import { AuthContext, CompleteUserData } from '@/context/AuthContext';
-import { useToast } from "@/hooks/use-toast";
 import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
 
 interface AuthWrapperProps {
@@ -22,7 +22,6 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [authView, setAuthView] = useState<AuthView>('loading');
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
-  const { toast } = useToast();
   const [loadingSlow, setLoadingSlow] = useState(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout>>();
   const giveupTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -32,12 +31,8 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       window.electronAPI.signOut();
       setUser(null);
       setAuthView('login');
-      toast({
-        title: "Signed out",
-        description: "You have been signed out successfully.",
-      });
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     console.log('[AuthWrapper] Initializing');
@@ -59,6 +54,20 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       });
 
       if (data.error) {
+        // Surface auth errors that crossed the IPC boundary into the breadcrumb
+        // trail so a follow-up Sentry event has context about what the renderer
+        // actually saw (e.g. OAuth banned-user errors that originate in main).
+        const lower = data.error.toLowerCase();
+        const isBanned = lower.includes('banned');
+        Sentry.addBreadcrumb({
+          category: 'auth',
+          message: 'auth:state-changed received with error',
+          level: 'warning',
+          data: {
+            error: data.error,
+            blocked_reason: isBanned ? 'account_scheduled_for_deletion' : 'other',
+          },
+        });
         setError(data.error);
         setAuthView('login');
         setUser(null);

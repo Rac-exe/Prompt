@@ -53,7 +53,7 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    toast({ title: "Downloaded", description: "Prompt saved as .txt file" });
+    toast({ title: "Downloaded", description: "Saved as .txt to your downloads." });
   };
 
   return (

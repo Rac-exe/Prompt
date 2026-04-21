@@ -397,7 +397,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
     });
 
     // Sign In
-    ipcMain.on('auth:sign-in', async (event, data: { email: string; password: string }) => {
+    ipcMain.handle('auth:sign-in', async (_event, data: { email: string; password: string }) => {
         Sentry.addBreadcrumb({ category: 'auth', message: 'Login attempt', level: 'info' });
         logger.info(logger.fmt`auth.login_attempt email=${data.email}`);
         try {
@@ -409,19 +409,21 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 Sentry.addBreadcrumb({ category: 'auth', message: 'Login failed', level: 'warning' });
                 logger.warn(logger.fmt`auth.login_failed email=${data.email} error=${error?.message ?? 'unknown'}`);
                 console.error('[Auth] Sign in failed:', error?.message);
+                const errMsg = error?.message || 'Sign in failed';
                 appWindowManager.send('auth:state-changed', {
                     isAuthenticated: false,
                     user: null,
-                    error: error?.message || 'Sign in failed',
+                    error: errMsg,
                 });
-                return;
+                return { error: errMsg };
             }
 
             Sentry.addBreadcrumb({ category: 'auth', message: 'Login successful', level: 'info' });
             logger.info('auth.login_success via password');
             console.log('[Auth] ✅ Sign in successful');
             await handleSuccessfulAuth(appWindowManager);
-        } catch (error) {
+            return { success: true };
+        } catch (error: any) {
             console.error('[Auth] Unexpected sign in error:', error);
             Sentry.captureException(error);
             appWindowManager.send('auth:state-changed', {
@@ -429,6 +431,7 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                 user: null,
                 error: 'Sign in failed',
             });
+            return { error: error?.message || 'Sign in failed' };
         }
     });
 
@@ -551,12 +554,32 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                         if (code) {
                             const { session, error: sessionError } = await authService!.exchangeCodeForSession(code);
                             if (sessionError || !session) {
-                                logger.warn(logger.fmt`auth.oauth_exchange_failed provider=${provider} error=${sessionError?.message ?? 'unknown'}`);
-                                Sentry.addBreadcrumb({ category: 'auth', message: `OAuth exchange failed: ${provider}`, level: 'warning' });
-                                console.error('[Auth] OAuth code exchange failed:', sessionError?.message);
+                                const errMsg = sessionError?.message || 'OAuth sign-in failed';
+                                const isBanned = errMsg.toLowerCase().includes('banned');
+                                logger.warn(logger.fmt`auth.oauth_exchange_failed provider=${provider} error=${errMsg} blocked=${isBanned ? 'banned' : 'other'}`);
+                                Sentry.addBreadcrumb({
+                                    category: 'auth',
+                                    message: `OAuth exchange failed: ${provider}`,
+                                    level: 'warning',
+                                    data: { blocked_reason: isBanned ? 'account_scheduled_for_deletion' : 'other' },
+                                });
+                                if (isBanned) {
+                                    // Banned-OAuth attempts are a first-class GDPR signal —
+                                    // we want to dashboard them separately from generic OAuth failures.
+                                    Sentry.captureMessage('OAuth sign-in blocked: account scheduled for deletion', {
+                                        level: 'warning',
+                                        tags: {
+                                            component: 'auth-handlers',
+                                            op: 'oauth-sign-in.exchange',
+                                            provider,
+                                            blocked_reason: 'account_scheduled_for_deletion',
+                                        },
+                                    });
+                                }
+                                console.error('[Auth] OAuth code exchange failed:', errMsg);
                                 appWindowManager.send('auth:state-changed', {
                                     isAuthenticated: false, user: null,
-                                    error: sessionError?.message || 'OAuth sign-in failed',
+                                    error: errMsg,
                                 });
                                 return;
                             }
@@ -692,10 +715,30 @@ export function registerAuthHandlers(appWindowManager: AppWindowManager) {
                             const { authService } = getServices();
                             const { session, error: sessionError } = await authService.exchangeCodeForSession(code);
                             if (sessionError || !session) {
-                                logger.warn(logger.fmt`auth.link_exchange_failed provider=${provider} error=${sessionError?.message ?? 'unknown'}`);
-                                Sentry.addBreadcrumb({ category: 'auth', message: `Link exchange failed: ${provider}`, level: 'warning' });
-                                console.error('[Auth] Link identity code exchange failed:', sessionError?.message);
-                                resolve({ error: sessionError?.message || 'Code exchange failed' });
+                                const errMsg = sessionError?.message || 'Code exchange failed';
+                                const isBanned = errMsg.toLowerCase().includes('banned');
+                                logger.warn(logger.fmt`auth.link_exchange_failed provider=${provider} error=${errMsg} blocked=${isBanned ? 'banned' : 'other'}`);
+                                Sentry.addBreadcrumb({
+                                    category: 'auth',
+                                    message: `Link exchange failed: ${provider}`,
+                                    level: 'warning',
+                                    data: { blocked_reason: isBanned ? 'account_scheduled_for_deletion' : 'other' },
+                                });
+                                if (isBanned) {
+                                    // Same dashboarding signal as the sign-in path — a banned user
+                                    // shouldn't even reach link-identity, so this is anomalous.
+                                    Sentry.captureMessage('Link-identity blocked: account scheduled for deletion', {
+                                        level: 'warning',
+                                        tags: {
+                                            component: 'auth-handlers',
+                                            op: 'link-identity.exchange',
+                                            provider,
+                                            blocked_reason: 'account_scheduled_for_deletion',
+                                        },
+                                    });
+                                }
+                                console.error('[Auth] Link identity code exchange failed:', errMsg);
+                                resolve({ error: errMsg });
                                 return;
                             }
                             logger.info(logger.fmt`auth.link_success provider=${provider} userId=${session.user.id}`);

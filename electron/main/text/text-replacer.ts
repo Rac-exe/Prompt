@@ -1,5 +1,6 @@
 import { exec } from "child_process";
 import { promisify } from "util";
+import * as Sentry from '@sentry/electron/main';
 
 const execAsync = promisify(exec);
 
@@ -89,30 +90,33 @@ export class TextReplacer {
   }
 
   private async replaceTextMacOS(originalText: string, newText: string): Promise<void> {
-    try {
-      // Copy to clipboard using pbcopy
-      const { exec } = require("child_process");
-      const { promisify } = require("util");
-      const execAsync = promisify(exec);
-      
-      // Use pbcopy to set clipboard
-      const proc = execAsync(`echo "${newText.replace(/"/g, '\\"')}" | pbcopy`);
-      await proc;
-      
-      // Wait a moment
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Simulate Cmd+V
-      // Would need native module or AppleScript
-      console.log("Text replacement requested:");
-      console.log("Original:", originalText);
-      console.log("New:", newText);
-      console.log("Note: Actual replacement requires native keyboard simulation");
-      
-    } catch (error) {
-      console.error("Failed to replace text:", error);
-      throw error;
-    }
+    return Sentry.startSpan({ name: 'replaceTextMacOS', op: 'text.replace.macos' }, async (span) => {
+      try {
+        const { exec } = require("child_process");
+        const { promisify } = require("util");
+        const execAsync = promisify(exec);
+
+        const proc = execAsync(`echo "${newText.replace(/"/g, '\\"')}" | pbcopy`);
+        await proc;
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        console.log("Text replacement requested:");
+        console.log("Original:", originalText);
+        console.log("New:", newText);
+        console.log("Note: Actual replacement requires native keyboard simulation");
+
+        span.setAttribute('text.length', newText.length);
+        Sentry.addBreadcrumb({ category: 'text-replacer', message: 'macOS text replacement completed', level: 'info' });
+      } catch (error) {
+        console.error("Failed to replace text:", error);
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+          tags: { component: 'text-replacer', op: 'replaceTextMacOS', platform: 'darwin' },
+        });
+        span.setStatus({ code: 2, message: 'exception' });
+        throw error;
+      }
+    });
   }
 
   /**
@@ -441,28 +445,34 @@ Write-Host "SUCCESS: @prompt deleted and text pasted"
    * macOS implementation: Delete @prompt and paste optimized text
    */
   private async replacePromptMarkerMacOS(optimizedText: string): Promise<void> {
-    console.log("[TextReplacer] macOS: Deleting @prompt and pasting optimized text");
+    return Sentry.startSpan({ name: 'replacePromptMarkerMacOS', op: 'text.replace_marker.macos' }, async (span) => {
+      console.log("[TextReplacer] macOS: Deleting @prompt and pasting optimized text");
 
-    // Step 1: Copy to clipboard
-    await this.copyToClipboard(optimizedText);
+      await this.copyToClipboard(optimizedText);
 
-    // Step 2: Use AppleScript to send backspace keys and paste
-    const script = `
-      repeat 7 times
-        tell application "System Events" to keystroke (ASCII character 8)
-        delay 0.02
-      end repeat
-      delay 0.05
-      tell application "System Events" to keystroke "v" using command down
-    `;
+      const script = `
+        repeat 7 times
+          tell application "System Events" to keystroke (ASCII character 8)
+          delay 0.02
+        end repeat
+        delay 0.05
+        tell application "System Events" to keystroke "v" using command down
+      `;
 
-    try {
-      await execAsync(`osascript -e '${script.replace(/'/g, "\\'")}'`);
-      console.log("[TextReplacer] ✅ @prompt replaced successfully (macOS)");
-    } catch (error) {
-      console.error("[TextReplacer] macOS replacement failed:", error);
-      throw error;
-    }
+      try {
+        await execAsync(`osascript -e '${script.replace(/'/g, "\\'")}'`);
+        console.log("[TextReplacer] @prompt replaced successfully (macOS)");
+        span.setAttribute('text.length', optimizedText.length);
+        Sentry.addBreadcrumb({ category: 'text-replacer', message: 'macOS @prompt marker replaced', level: 'info' });
+      } catch (error) {
+        console.error("[TextReplacer] macOS replacement failed:", error);
+        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
+          tags: { component: 'text-replacer', op: 'replacePromptMarkerMacOS', platform: 'darwin' },
+        });
+        span.setStatus({ code: 2, message: 'exception' });
+        throw error;
+      }
+    });
   }
 
   /**

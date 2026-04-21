@@ -69,7 +69,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
     });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast({ title: "Copied!", description: "Prompt copied to clipboard." });
+    toast({ title: "Prompt copied" });
   };
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ export const SharedPromptPage = ({ token, onBack }: SharedPromptPageProps) => {
               "flex-shrink-0 gap-2 text-sm font-semibold transition-smooth",
               copied
                 ? "bg-emerald/10 text-emerald border border-emerald/30 hover:bg-emerald/10"
-                : "bg-emerald text-white hover:bg-emerald/90"
+                : "border border-input text-foreground hover:bg-muted"
             )}
           >
             {copied ? (

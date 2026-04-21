@@ -9,7 +9,7 @@ import { PromptLibraryService } from '../database/services/prompt-library-servic
 import { OptimizationService } from '../database/services/optimization-service';
 import { ChatService } from '../database/services/chat-service';
 import { authState } from '../utils/auth-state';
-import { replaceAtLastAnchor, isNativeBridgeAvailable, pasteTextToWindow, sendEnterToWindow, forceFocusWindow, getActiveWindowTitle } from '../utils/native-bridge';
+import { replaceAtLastAnchor, isNativeBridgeAvailable, pasteTextToWindow, forceFocusWindow, getActiveWindowTitle } from '../utils/native-bridge';
 import { detectWindowMode } from '../utils/window-detector';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
@@ -23,6 +23,7 @@ import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
 import { buildTitlePrompt, isWeakMessage } from './chat-handlers';
 import { analyticsService } from '../analytics/analytics-service';
+import { getActiveProjectId, getActiveProjectBranch } from './project-handlers';
 
 function humanizeLlmError(err: unknown): string {
     const raw: string = ((err as any)?.message ?? (err as any)?.code ?? String(err)).toLowerCase();
@@ -139,6 +140,11 @@ interface PendingOverlayOptimization {
     userVersionIndex?: number;
     assistantGroupId?: string;
     assistantVersionIndex?: number;
+    // Carried through the clarification round-trip so the resume
+    // path can apply the same project-isolation rule (skip the
+    // server-side retrieval) as the direct path.
+    spaceMode?: boolean;
+    spaceId?: string;
   };
   customInstructions: string;
   historyContext: Array<{ role: string; content: string }> | null;
@@ -226,7 +232,7 @@ export function registerOverlayHandlers(
   // ============================================
   // overlay:optimize — Run prompt optimization with streaming
   // ============================================
-  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string } }) => {
+  ipcMain.on('overlay:optimize', async (_event, data: { text: string; isRegenerate?: boolean; mode?: string; chatId?: string; attachedFiles?: Array<{ name: string; mimeType: string; base64: string; sizeBytes: number }>; forcedSkill?: string; userGroupId?: string; userVersionIndex?: number; assistantGroupId?: string; assistantVersionIndex?: number; previousOutput?: string; clarificationAnswers?: string; wantsSections?: boolean; clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string }; spaceMode?: boolean; spaceId?: string }) => {
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Optimize requested', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, isRegenerate: data.isRegenerate } });
     logger.info(logger.fmt`overlay.optimize_requested mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'} isRegenerate=${String(!!data.isRegenerate)}`);
     if (!authState.isAuthenticated) {
@@ -309,12 +315,21 @@ export function registerOverlayHandlers(
       }
 
       // ── Build history context ──────────────────────────────────────
-      // Priority: if a chatId is attached, use that chat's real messages
-      // as context (up to last 8). Otherwise fall back to in-memory overlay
-      // session history.
+      // Priority order:
+      //   1. spaceMode — the renderer has already done codebase retrieval
+      //      and embedded the relevant code chunks directly into `text`.
+      //      Mixing in unrelated chat history at this point would dilute
+      //      that signal, so we deliberately send NO history. This matches
+      //      how SpaceWorkspace routes through `app:optimize-prompt` with
+      //      `source: 'space'` and no chatId.
+      //   2. chatId attached — pull last 8 messages from that chat.
+      //   3. Fallback — rolling in-memory overlay session history.
       let historyContext: Array<{role: string; content: string}> | null = null;
 
-      if (data.chatId) {
+      if (data.spaceMode) {
+        historyContext = null;
+        console.log(`[Overlay] spaceMode=true (spaceId=${data.spaceId ?? 'none'}) — skipping chat history`);
+      } else if (data.chatId) {
         try {
           const chatMessages = await getChatService().getMessages(data.chatId);
           // Take last 8 messages, exclude any that were already sent in this
@@ -331,11 +346,16 @@ export function registerOverlayHandlers(
         historyContext = inMemoryOverlayHistory.length > 0 ? [...inMemoryOverlayHistory] : null;
       }
 
-      // Add the user's new message to in-memory history (used when no chatId)
-      inMemoryOverlayHistory.push({ role: 'user', content: data.text });
+      // Add the user's new message to in-memory history (used when no chatId).
+      // Skip in spaceMode so codebase-context turns don't leak into a later
+      // "no space attached" optimization session.
+      if (!data.spaceMode) {
+        inMemoryOverlayHistory.push({ role: 'user', content: data.text });
+      }
 
-      // ── Clarification check (skip regenerations & weak messages) ──────
-      if (!data.isRegenerate && !isWeakMessage(data.text)) {
+      // ── Clarification check (skip regenerations, weak messages, and
+      // spaceMode where the prompt is already context-loaded) ───────────
+      if (!data.isRegenerate && !data.spaceMode && !isWeakMessage(data.text)) {
         try {
           const clarifyResult = await pythonClient.clarify(data.text);
           console.log(`[Overlay] Clarify result: should_clarify=${clarifyResult.should_clarify}, questions=${clarifyResult.questions.length}`);
@@ -367,10 +387,24 @@ export function registerOverlayHandlers(
         data.previousOutput || null,
         data.clarificationAnswers || null,
         data.wantsSections,
+        // Space mode: the overlay renderer (App.tsx → buildSpacePrompt)
+        // has already run retrieval against the *attached* space's
+        // project_id(s) and embedded the resulting chunks into
+        // `data.text` via buildTailoredPrompt. Passing the global
+        // `getActiveProjectId()` here would trigger a SECOND retrieval
+        // inside the Python optimizer against whichever folder was
+        // last "active" globally — which is often a different space's
+        // folder, leaking its code into the prompt. Skip the
+        // server-side retrieval entirely in space mode.
+        data.spaceMode ? null : getActiveProjectId(),
+        data.spaceMode ? null : getActiveProjectBranch(),
       );
 
-      // Add the assistant's response to history
-      inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
+      // Add the assistant's response to history (skip in spaceMode for
+      // the same isolation reason as the user-side push above).
+      if (!data.spaceMode) {
+        inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });
+      }
 
       // Invalidate rate-limit cache so the next check reflects the new message
       if (authState.currentUserId) {
@@ -418,8 +452,14 @@ export function registerOverlayHandlers(
         // If the overlay has a chatId context attached → save into THAT
         // existing chat. Never create a new chat in that case.
         // If no chatId → use/create the overlay session chat as before.
+        // ── EXCEPTION: spaceMode ─────────────────────────────────────
+        // When the user has attached a Space, the renderer routes the
+        // turn into `space.messages` via the spaces bridge instead. We
+        // skip the Supabase chat save here so a Space-scoped overlay
+        // session doesn't pollute the user's chat sidebar with an
+        // auto-generated session chat that holds the same text twice.
         // ──────────────────────────────────────────────────────────────
-        (async () => {
+        if (!data.spaceMode) (async () => {
           try {
             const svc = getChatService();
             const targetChatId = data.chatId || null;
@@ -875,7 +915,12 @@ export function registerOverlayHandlers(
   //
   // First insert: replaceAtLastAnchor (removes @prompt, pastes at exact position)
   // Subsequent:   pasteTextToWindow   (pastes at current cursor in source window)
-  // Chat windows: sendEnterToWindow after every paste to submit the message
+  //
+  // We deliberately do NOT auto-press Enter after the paste, even when the
+  // detected window is a chat app. Sending Enter automatically submits the
+  // message before the user can review or edit the inserted prompt — which
+  // is unwanted for task-style prompts where the user typically wants to
+  // tweak the result before sending. Same behavior on Windows and macOS.
   // ============================================
   ipcMain.handle('overlay:insert-section', async (_event, data: { text: string }) => {
     return Sentry.startSpan({ name: 'overlay.insert_section', op: 'ui.section_paste' }, async (span) => {
@@ -921,18 +966,20 @@ export function registerOverlayHandlers(
 
         span.setAttribute('paste.method', method);
 
-        if (success && isChat) {
-          await new Promise(r => setTimeout(r, 150));
-          const enterOk = sendEnterToWindow(sourceHwnd);
-          Sentry.addBreadcrumb({ category: 'overlay.section', message: 'Enter sent to chat window', level: 'info', data: { success: enterOk } });
-          span.setAttribute('enter.sent', enterOk);
-        }
-
         await new Promise(r => setTimeout(r, 200));
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.setOpacity(1);
-          const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-          forceFocusWindow(Number(hwnd));
+          if (process.platform === 'darwin') {
+            try {
+              overlayWin.focus();
+              Sentry.addBreadcrumb({ category: 'overlay-ipc', message: 'macOS overlay focus restored after insert', level: 'info' });
+            } catch (focusErr) {
+              Sentry.captureException(focusErr, { tags: { component: 'overlay-ipc', op: 'focus-restore-macos' } });
+            }
+          } else {
+            const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+            forceFocusWindow(Number(hwnd));
+          }
         }
 
         span.setStatus({ code: success ? 1 : 2, message: success ? undefined : 'paste_failed' });
@@ -943,8 +990,17 @@ export function registerOverlayHandlers(
       } catch (err) {
         if (overlayWin && !overlayWin.isDestroyed()) {
           overlayWin.setOpacity(1);
-          const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
-          forceFocusWindow(Number(hwnd));
+          if (process.platform === 'darwin') {
+            try {
+              overlayWin.focus();
+              Sentry.addBreadcrumb({ category: 'overlay-ipc', message: 'macOS overlay focus restored in catch', level: 'info' });
+            } catch (focusErr) {
+              Sentry.captureException(focusErr, { tags: { component: 'overlay-ipc', op: 'focus-restore-macos-catch' } });
+            }
+          } else {
+            const hwnd = overlayWin.getNativeWindowHandle().readBigInt64LE(0);
+            forceFocusWindow(Number(hwnd));
+          }
         }
         Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'insert-section' }, extra: { sourceHwnd, firstSectionDone, isChat, windowTitle: sourceWindowTitle } });
         span.setStatus({ code: 2, message: 'exception' });
@@ -1083,6 +1139,10 @@ export function registerOverlayHandlers(
         pending.data.previousOutput || null,
         formattedAnswers || null,
         submitData.wantsSections,
+        // Same space-mode isolation as the non-clarification path —
+        // see comment at the primary optimizeStream call above.
+        pending.data.spaceMode ? null : getActiveProjectId(),
+        pending.data.spaceMode ? null : getActiveProjectBranch(),
       );
 
       inMemoryOverlayHistory.push({ role: 'assistant', content: optimizedText });

@@ -93,11 +93,22 @@ export default {
           "0%": { backgroundPosition: "-200% 0" },
           "100%": { backgroundPosition: "200% 0" },
         },
+        // Drives the indeterminate progress bar shown while a project is
+        // being indexed (see components/projects/IndexingProgressBar).
+        // A short pill slides from the left edge, stretches across the
+        // track, then collapses off the right — the classic Material-style
+        // "work is happening but we don't know for how long" pattern.
+        "indexing-slide": {
+          "0%":   { left: "-40%", right: "100%" },
+          "60%":  { left: "100%", right: "-10%" },
+          "100%": { left: "100%", right: "-10%" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         shimmer: "shimmer 2s infinite linear",
+        "indexing-slide": "indexing-slide 1.6s cubic-bezier(0.65, 0.815, 0.735, 0.395) infinite",
       },
       boxShadow: {
         glow: "inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 16px hsl(217 91% 60% / 0.08), 0 1px 4px hsl(217 91% 60% / 0.06)",

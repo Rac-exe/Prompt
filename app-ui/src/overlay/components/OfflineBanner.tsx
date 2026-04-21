@@ -9,7 +9,7 @@ const OfflineBanner: React.FC<OfflineBannerProps> = ({ visible }) => {
   return (
     <div className="offline-banner visible">
       <span className="offline-dot" />
-      <span>You&rsquo;re offline — optimization unavailable. Cached prompts are still viewable &amp; saveable.</span>
+      <span>You&rsquo;re offline &mdash; prompt optimization is paused. Cached prompts still work.</span>
     </div>
   );
 };

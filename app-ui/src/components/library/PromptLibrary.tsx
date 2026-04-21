@@ -412,7 +412,7 @@ export const PromptLibrary = ({
           <Button
             onClick={handleOpenSharedLink}
             disabled={!pastedLink.trim()}
-            className="w-full bg-emerald text-white hover:bg-emerald/90 font-semibold"
+            className="w-full border border-input text-foreground hover:bg-muted font-semibold"
           >
             Open
           </Button>

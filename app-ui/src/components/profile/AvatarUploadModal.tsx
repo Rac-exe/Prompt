@@ -170,7 +170,7 @@ export function AvatarUploadModal({
             </div>
             <div className="flex gap-3">
               <Button variant="outline" onClick={() => { stopCamera(); setMode("pick"); }}>Cancel</Button>
-              <Button onClick={capturePhoto} disabled={!cameraReady} className="bg-primary hover:bg-primary/90 text-white gap-2">
+              <Button onClick={capturePhoto} disabled={!cameraReady} className="border border-input text-foreground hover:bg-muted gap-2">
                 <Camera size={16} weight="light" /> Capture
               </Button>
             </div>
@@ -280,7 +280,7 @@ export function AvatarUploadModal({
             <Button
               onClick={handleUpload}
               disabled={!selectedFile || isUploading}
-              className="bg-primary hover:bg-primary/90 text-white gap-2 font-semibold px-6"
+              className="border border-input text-foreground hover:bg-muted gap-2 font-semibold px-6"
             >
               {isUploading ? (
                 <><CircleNotch size={16} weight="light" className="animate-spin" /> Saving...</>

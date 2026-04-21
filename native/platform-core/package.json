@@ -1,0 +1,28 @@
+{
+    "name": "platform-core",
+    "version": "0.1.0",
+    "description": "Cross-platform (Windows + macOS) native bridge for the Prmpt Electron app — keyboard hook, text injection, window focus, and accessibility",
+    "main": "index.js",
+    "scripts": {
+        "build": "napi build --platform --release",
+        "build:debug": "napi build --platform"
+    },
+    "napi": {
+        "name": "platform-core",
+        "triples": {
+            "defaults": false,
+            "additional": [
+                "x86_64-pc-windows-msvc",
+                "aarch64-apple-darwin"
+            ]
+        }
+    },
+    "devDependencies": {
+        "@napi-rs/cli": "^3.6.0"
+    },
+    "files": [
+        "index.js",
+        "index.d.ts",
+        "*.node"
+    ]
+}

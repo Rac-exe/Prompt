@@ -52,6 +52,7 @@ Sentry.init({
 
 import { app, globalShortcut, ipcMain, session, shell } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import { installApplicationMenu } from './menu/application-menu';
 import { AppWindowManager } from './windows/app-window-manager';
 import { OverlayWindowManager } from './overlay/overlay-window-manager';
 import { SystemTray } from './windows/system-tray';
@@ -71,12 +72,17 @@ import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
 import { registerOverlayHandlers, setSourceWindow } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
-import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle } from './utils/native-bridge';
+import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle, checkAccessibilityPermission } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { registerFeedbackHandlers } from './ipc-handlers/feedback-handlers';
 import { registerDeletionHandlers } from './ipc-handlers/deletion-handlers';
 import { analyticsService } from './analytics/analytics-service';
+import { CodeIntelClient } from './api/code-intel-client';
+import { registerProjectHandlers, cleanupProjectHandlers, restoreActiveProject } from './ipc-handlers/project-handlers';
+import { registerSpacesBridgeHandlers } from './ipc-handlers/spaces-bridge-handlers';
+import { initializeParser } from './services/code-parser';
+import { setKnownProjects, startDetection, stopDetection } from './services/active-window-detector';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -88,6 +94,7 @@ let overlayManager: OverlayWindowManager;
 let systemTray: SystemTray;
 let pythonClient: PythonClient;
 let transcriptionClient: TranscriptionClient;
+let codeIntelClient: CodeIntelClient;
 
 function getPythonHttpBaseUrl(): string {
   const raw = (process.env.PYTHON_SERVICE_URL || '').trim();
@@ -114,15 +121,76 @@ function toWsBaseUrl(httpBaseUrl: string): string {
 // ============================================
 // KEYSTROKE DETECTION (Rust native bridge)
 // ============================================
+async function ensureAccessibilityPermission(): Promise<boolean> {
+  if (process.platform !== 'darwin') return true;
+
+  return Sentry.startSpan({ name: 'ensureAccessibilityPermission', op: 'accessibility.check' }, async (span) => {
+    if (checkAccessibilityPermission()) {
+      Sentry.setTag('accessibility_permission', 'granted');
+      span.setAttribute('result', 'already_granted');
+      return true;
+    }
+
+    Sentry.addBreadcrumb({ category: 'accessibility', message: 'Permission not yet granted, showing dialog', level: 'info' });
+
+    const { dialog, shell } = require('electron');
+    await dialog.showMessageBox({
+      type: 'warning',
+      title: 'Accessibility Permission Required',
+      message: 'Prmpt needs Accessibility access to detect @prompt anywhere on your Mac.',
+      detail: 'Click "Open System Settings" to grant Accessibility access to Prmpt, then return here.',
+      buttons: ['Open System Settings', 'Later'],
+      defaultId: 0,
+    }).then((result: { response: number }) => {
+      if (result.response === 0) {
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+      }
+    });
+
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      Sentry.addBreadcrumb({ category: 'accessibility', message: `Poll attempt ${i + 1}/30`, level: 'debug', data: { elapsedMs: (i + 1) * 2000 } });
+      if (checkAccessibilityPermission()) {
+        console.log('[Main] Accessibility permission granted');
+        Sentry.setTag('accessibility_permission', 'granted');
+        span.setAttribute('result', 'granted_after_poll');
+        span.setAttribute('poll_attempts', i + 1);
+        return true;
+      }
+    }
+
+    console.warn('[Main] Accessibility permission not granted after timeout');
+    Sentry.setTag('accessibility_permission', 'denied');
+    Sentry.captureMessage('macOS Accessibility permission denied after 60s timeout', 'warning');
+    span.setAttribute('result', 'timeout');
+    return false;
+  });
+}
+
 function startKeystrokeDetection() {
   if (!isNativeBridgeAvailable()) {
     console.warn('[Main] Native bridge not available — @prompt hook disabled. Run: npm run native:build');
     return;
   }
 
+  if (process.platform === 'darwin') {
+    ensureAccessibilityPermission().then(granted => {
+      if (!granted) {
+        console.warn('[Main] Accessibility permission not granted — @prompt hook disabled');
+        Sentry.addBreadcrumb({ category: 'accessibility', message: 'macOS Accessibility permission not granted', level: 'warning' });
+        return;
+      }
+      installHook();
+    });
+  } else {
+    installHook();
+  }
+}
+
+function installHook() {
   startHook((anchor: TriggerAnchor) => {
     const title = getActiveWindowTitle();
-    console.log(`[Main] @prompt detected — hwnd=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
+    console.log(`[Main] @prompt detected — pid=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
     Sentry.addBreadcrumb({ category: 'hook', message: '@prompt detected', level: 'info', data: { hwnd: anchor.hwnd } });
     setSourceWindow(anchor.hwnd, title);
     overlayManager.open(authState.isAuthenticated, undefined, undefined, true,
@@ -295,6 +363,13 @@ function installCSP() {
   });
 }
 
+function isSilentLaunch(): boolean {
+  if (process.platform === 'darwin') {
+    return app.getLoginItemSettings().wasOpenedAsHidden;
+  }
+  return process.argv.includes('--hidden');
+}
+
 async function initialize() {
   installCSP();
   console.log('[Main] Initializing Prompt Optimizer...');
@@ -323,6 +398,11 @@ async function initialize() {
   transcriptionClient = new TranscriptionClient(pythonWsBase);
   console.log('[Main] Transcription client initialized');
 
+  // Code Intelligence Service client
+  const codeIntelUrl = (process.env.CODE_INTELLIGENCE_SERVICE_URL || '').trim() || 'http://127.0.0.1:8002';
+  codeIntelClient = new CodeIntelClient(codeIntelUrl);
+  console.log(`[Main] Code Intelligence Service URL: ${codeIntelUrl}`);
+
   // ============================================
   // REGISTER ALL IPC HANDLERS BEFORE WINDOW PRELOAD
   // ============================================
@@ -339,6 +419,36 @@ async function initialize() {
   registerFileUploadHandlers();
   registerFeedbackHandlers();
   registerDeletionHandlers();
+  registerProjectHandlers(codeIntelClient, overlayManager, appWindowManager);
+  registerSpacesBridgeHandlers(overlayManager, appWindowManager);
+
+  // Initialize tree-sitter parser in background
+  initializeParser().catch(e => console.warn('[Main] Tree-sitter init deferred:', e));
+
+  // Phase 2: Auto-detect active project from window titles
+  codeIntelClient.listProjects().then(projects => {
+    setKnownProjects(projects);
+    startDetection({
+      onDetected: (project) => {
+        console.log(`[Main] Auto-detected project: ${project.name}`);
+        overlayManager.send('overlay:project-status', {
+          projectId: project.id,
+          name: project.name,
+          status: project.index_status,
+          auto: true,
+        });
+      },
+      onLost: () => {
+        overlayManager.send('overlay:project-status', null);
+      },
+    });
+  }).catch(() => {
+    // Code intel service not available yet — detection starts when projects are loaded
+  });
+
+  restoreActiveProject().catch(e =>
+    console.warn('[Main] Active project restore failed:', e)
+  );
 
   // Transcription IPC handlers (inline — depend on transcriptionClient)
   ipcMain.on('transcription:debug', (_event, msg: string) => {
@@ -554,9 +664,14 @@ async function initialize() {
   );
   systemTray.create();
 
-  // Show the main window immediately — auth resolves in the background
-  // so the user sees the loading spinner within ~2s instead of ~10s.
-  appWindowManager.show();
+  // Show the main window immediately unless this is a silent auto-launch at login.
+  // On silent launch (boot auto-start), stay hidden in tray — user opens manually.
+  if (!isSilentLaunch()) {
+    appWindowManager.show();
+  } else {
+    console.log('[Main] Silent launch — starting in tray only');
+    Sentry.addBreadcrumb({ category: 'startup', message: 'Silent launch — window hidden', level: 'info' });
+  }
 
   console.log('[Main] ========================================');
   console.log('[Main] Prompt Optimizer ready!');
@@ -601,6 +716,17 @@ async function initialize() {
       Sentry.setUser(null);
       Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_OUT', level: 'info' });
       if (appWindowManager) appWindowManager.send('sentry:set-user', null);
+
+      // Tear down every active file watcher and pending status poll. Without
+      // this, the previous user's chokidar handles continued running and
+      // attempted ingest with the next user's bearer token (resulting in
+      // 404s server-side, but more importantly leaking which folders the
+      // previous user had attached). cleanupProjectHandlers() handles both.
+      try {
+        cleanupProjectHandlers();
+      } catch (e) {
+        Sentry.captureException(e, { level: 'warning', tags: { component: 'auth-cleanup' } });
+      }
 
       if (appWindowManager) {
         appWindowManager.send('auth:state-changed', {
@@ -649,6 +775,8 @@ async function shutdown() {
   console.log('[Main] Shutting down...');
   stopKeystrokeDetection();
   globalShortcut.unregisterAll();
+  cleanupProjectHandlers();
+  stopDetection();
 
   // Disconnect transcription client
   if (transcriptionClient) {
@@ -812,6 +940,30 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(async () => {
+    // Install our custom application menu BEFORE creating any window so that
+    // the default Electron accelerators (Cmd+R reload, Cmd+= zoom, Cmd+Q
+    // quit, Cmd+Alt+I devtools, etc.) never get registered.
+    installApplicationMenu();
+
+    // Set dock icon as early as possible on macOS
+    if (process.platform === 'darwin') {
+      try {
+        const { nativeImage } = await import('electron');
+        const dockIconPath = app.isPackaged
+          ? path.join(process.resourcesPath, 'icon.icns')
+          : path.join(app.getAppPath(), 'build', 'dock-icon.png');
+        const dockIcon = nativeImage.createFromPath(dockIconPath);
+        if (!dockIcon.isEmpty()) {
+          app.dock?.setIcon(dockIcon);
+          console.log('[Main] Dock icon set from:', dockIconPath);
+        } else {
+          console.warn('[Main] Dock icon empty, path:', dockIconPath);
+        }
+      } catch (err) {
+        console.warn('[Main] Failed to set dock icon:', err);
+      }
+    }
+
     // Handle protocol URL passed on startup (Windows/Linux first-launch)
     const startUrl = process.argv.find((arg) => arg.startsWith('prmpt://'));
     if (startUrl) {

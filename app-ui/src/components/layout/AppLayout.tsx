@@ -9,6 +9,7 @@ interface AppLayoutProps {
 }
 
 export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
+  const isMac = window.electronAPI?.platform === 'darwin';
   const minimize = () => window.electronAPI?.windowControls?.minimize();
   const maximize = () => window.electronAPI?.windowControls?.maximize();
   const close = () => window.electronAPI?.windowControls?.close();
@@ -89,44 +90,45 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
             Height h-9 (36px).
         ──────────────────────────────────────────────────────────── */}
         <div
-          className="h-9 flex-shrink-0 flex items-center justify-end select-none
-                     bg-background"
+          className={`h-9 flex-shrink-0 flex items-center select-none bg-background ${isMac ? 'justify-start pl-[80px]' : 'justify-end'}`}
           style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
         >
-          <div
-            className="flex items-center h-full"
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          >
-            <button
-              onClick={minimize}
-              aria-label="Minimise"
-              className="h-full w-11 flex items-center justify-center
-                         text-muted-foreground/50 hover:text-foreground
-                         hover:bg-white/5 transition-colors duration-150"
+          {!isMac && (
+            <div
+              className="flex items-center h-full"
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             >
-              <Minus size={14} weight="light" />
-            </button>
+              <button
+                onClick={minimize}
+                aria-label="Minimise"
+                className="h-full w-11 flex items-center justify-center
+                           text-muted-foreground/50 hover:text-foreground
+                           hover:bg-white/5 transition-colors duration-150"
+              >
+                <Minus size={14} weight="light" />
+              </button>
 
-            <button
-              onClick={maximize}
-              aria-label="Maximise"
-              className="h-full w-11 flex items-center justify-center
-                         text-muted-foreground/50 hover:text-foreground
-                         hover:bg-white/5 transition-colors duration-150"
-            >
-              <Square size={12} weight="light" />
-            </button>
+              <button
+                onClick={maximize}
+                aria-label="Maximise"
+                className="h-full w-11 flex items-center justify-center
+                           text-muted-foreground/50 hover:text-foreground
+                           hover:bg-white/5 transition-colors duration-150"
+              >
+                <Square size={12} weight="light" />
+              </button>
 
-            <button
-              onClick={close}
-              aria-label="Close"
-              className="h-full w-11 flex items-center justify-center
-                         text-muted-foreground/50 hover:text-white
-                         hover:bg-red-500/80 transition-colors duration-150"
-            >
-              <X size={14} weight="light" />
-            </button>
-          </div>
+              <button
+                onClick={close}
+                aria-label="Close"
+                className="h-full w-11 flex items-center justify-center
+                           text-muted-foreground/50 hover:text-white
+                           hover:bg-red-500/80 transition-colors duration-150"
+              >
+                <X size={14} weight="light" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* ── Offline banner ── */}
@@ -135,7 +137,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-amber-500/10 border-b border-amber-500/20 text-amber-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <WifiSlash size={12} weight="light" className="flex-shrink-0" />
-            <span>You're offline — Prompt optimization unavailable.</span>
+            <span>You're offline — prompt optimization is paused.</span>
           </div>
         )}
 
@@ -145,7 +147,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-red-500/10 border-b border-red-500/20 text-red-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <Warning size={12} weight="light" className="flex-shrink-0" />
-            <span>AI service unavailable — please restart the application.</span>
+            <span>AI service stopped — restart Prmpt to recover.</span>
           </div>
         )}
 
@@ -182,7 +184,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
               }}
               className="underline underline-offset-2 hover:text-emerald-300 transition-colors"
             >
-              Restart &amp; update
+              Restart now
             </button>
           </div>
         )}
