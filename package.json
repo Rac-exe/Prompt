@@ -23,8 +23,8 @@
     "code-intel:dev:mac": "cd code-intelligence-service && ./.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8002",
     "code-intel:install": "cd code-intelligence-service && python -m venv .venv && .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt",
     "start": "npm run build && npm run electron",
-    "package:win": "npm run build && electron-builder --win --x64",
-    "package:mac": "npm run build && electron-builder --mac",
+    "package:win": "npm run build && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --win --x64",
+    "package:mac": "npm run build && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --mac",
     "supabase:migrate": "supabase db push",
     "clean": "rm -rf electron/renderer/app-ui/* dist/",
     "postinstall": "node scripts/patch-dev-electron-name.js"
@@ -98,7 +98,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "build/icon.icns",
@@ -137,6 +140,7 @@
   "devDependencies": {
     "@types/node": "^20.16.0",
     "@types/ws": "^8.18.1",
+    "cross-env": "^10.1.0",
     "electron": "32.2.7",
     "electron-builder": "^26.8.1",
     "png-to-ico": "^3.0.1",
@@ -153,7 +157,7 @@
     "dotenv": "^16.3.1",
     "electron-updater": "^6.8.3",
     "file-type": "^16.5.4",
-    "tree-sitter-wasms": "^0.1.13",
+    "tree-sitter-wasms": "0.1.10",
     "uiohook-napi": "^1.5.4",
     "web-tree-sitter": "^0.25.10",
     "ws": "^8.19.0"

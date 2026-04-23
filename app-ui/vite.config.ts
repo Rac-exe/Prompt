@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
@@ -9,7 +9,15 @@ const rootPkg = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json
 const APP_VERSION: string = rootPkg.version;
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  // Hydrate process.env from root .env so server-side plugins (e.g. Sentry sourcemap upload)
+  // can read non-VITE_ vars like SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT.
+  const rootEnv = loadEnv(mode, path.resolve(__dirname, ".."), "");
+  for (const [key, value] of Object.entries(rootEnv)) {
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+
+  return ({
   base: "./", // Required for Electron file:// protocol
   envDir: "..", // Read .env from Prompt/ root (parent of app-ui/)
   server: {
@@ -53,4 +61,5 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-}));
+  });
+});
