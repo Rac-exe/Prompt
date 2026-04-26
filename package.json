@@ -58,6 +58,10 @@
         "to": "files"
       },
       {
+        "from": "tree-sitter-wasms",
+        "to": "tree-sitter-wasms"
+      },
+      {
         "from": ".env.packaged",
         "to": ".env"
       },
