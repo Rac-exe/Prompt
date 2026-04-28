@@ -6,6 +6,7 @@
 
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import type { ChunkData } from '../api/code-intel-client';
 
@@ -105,7 +106,10 @@ async function getParserForLanguage(language: string): Promise<any | null> {
 
   try {
     const parser = new Parser();
-    const wasmPath = path.join(__dirname, '..', '..', '..', 'tree-sitter-wasms', `tree-sitter-${language}.wasm`);
+    const wasmDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'tree-sitter-wasms')
+      : path.join(__dirname, '..', '..', '..', 'tree-sitter-wasms');
+    const wasmPath = path.join(wasmDir, `tree-sitter-${language}.wasm`);
     const lang = await Language.load(wasmPath);
     parser.setLanguage(lang);
     languageParsers.set(language, parser);
