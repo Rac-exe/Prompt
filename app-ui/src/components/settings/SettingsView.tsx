@@ -319,6 +319,11 @@ export const SettingsView = () => {
 
   const settingsReadyRef = useRef(false);
 
+  // Auto-launch (start-at-login) is a per-machine system setting, kept
+  // separate from user-level settings (which are persisted to Supabase).
+  const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(true);
+  const [autoLaunchSaving, setAutoLaunchSaving] = useState(false);
+
   useEffect(() => {
     loadSettings()
       .then((loaded) => {
@@ -334,6 +339,30 @@ export const SettingsView = () => {
         requestAnimationFrame(() => { settingsReadyRef.current = true; });
       });
   }, []);
+
+  useEffect(() => {
+    if (!window.electronAPI?.autoLaunch?.get) return;
+    window.electronAPI.autoLaunch.get()
+      .then((res) => setAutoLaunchEnabled(!!res?.enabled))
+      .catch((err) => Sentry.captureException(err, { tags: { component: 'settings-view', op: 'autoLaunch.get' } }));
+  }, []);
+
+  const toggleAutoLaunch = async (next: boolean) => {
+    if (!window.electronAPI?.autoLaunch?.set) return;
+    const previous = autoLaunchEnabled;
+    setAutoLaunchEnabled(next);
+    setAutoLaunchSaving(true);
+    Sentry.addBreadcrumb({ category: 'auto-launch', message: `Auto-launch toggle: ${next}`, level: 'info' });
+    try {
+      await window.electronAPI.autoLaunch.set(next);
+    } catch (err) {
+      setAutoLaunchEnabled(previous);
+      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'autoLaunch.set' } });
+      toast({ title: "Couldn't update startup setting", description: "Please try again.", variant: "destructive" });
+    } finally {
+      setAutoLaunchSaving(false);
+    }
+  };
 
   const instructionsDirty = localInstructions !== settings.promptInstructions;
 
@@ -656,6 +685,22 @@ export const SettingsView = () => {
                     )}
                   </div>
                 </div>
+              </Section>
+
+              <Section title="Startup" description="Control how Prmpt behaves when you sign in to your computer">
+                <Row>
+                  <RowLabel
+                    label="Launch at login"
+                    hint="Run Prmpt automatically in the system tray when you sign in"
+                  />
+                  <Switch
+                    checked={autoLaunchEnabled}
+                    disabled={autoLaunchSaving}
+                    onCheckedChange={toggleAutoLaunch}
+                    data-testid="auto-launch-toggle"
+                    className="data-[state=checked]:bg-emerald"
+                  />
+                </Row>
               </Section>
 
               <Section title="Appearance">

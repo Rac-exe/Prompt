@@ -1,6 +1,11 @@
 import { Tray, Menu, nativeImage, app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
+import {
+  getAutoLaunchPreference,
+  setAutoLaunchPreference,
+  applyAutoLaunchToOS,
+} from '../utils/auto-launch';
 
 
 /**
@@ -80,22 +85,17 @@ export class SystemTray {
       {
         label: 'Start at Login',
         type: 'checkbox',
-        checked: app.getLoginItemSettings().openAtLogin,
+        checked: getAutoLaunchPreference(),
         click: (item) => {
-          app.setLoginItemSettings({
-            openAtLogin: item.checked,
-            openAsHidden: true,
-            ...(process.platform === 'win32' ? {
-              path: process.execPath,
-              args: ['--hidden'],
-            } : {}),
-          });
+          setAutoLaunchPreference(item.checked);
+          applyAutoLaunchToOS(item.checked);
           Sentry.addBreadcrumb({
             category: 'auto-launch',
-            message: `Start at login ${item.checked ? 'enabled' : 'disabled'}`,
+            message: `Start at login ${item.checked ? 'enabled' : 'disabled'} (tray)`,
             level: 'info',
           });
           console.log(`[SystemTray] Start at login: ${item.checked}`);
+          this.updateMenu();
         },
       },
       {

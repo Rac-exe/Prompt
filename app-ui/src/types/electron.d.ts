@@ -255,6 +255,12 @@ export interface ElectronAPI {
     install: () => void;
   };
 
+  // Auto-launch (start at login) — per-machine preference
+  autoLaunch?: {
+    get: () => Promise<{ enabled: boolean; osState: boolean }>;
+    set: (enabled: boolean) => Promise<{ enabled: boolean }>;
+  };
+
   // Overlay (available when running inside the overlay renderer)
   overlay?: {
     optimize: (data: {

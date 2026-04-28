@@ -83,6 +83,12 @@ import { registerProjectHandlers, cleanupProjectHandlers, restoreActiveProject }
 import { registerSpacesBridgeHandlers } from './ipc-handlers/spaces-bridge-handlers';
 import { initializeParser } from './services/code-parser';
 import { setKnownProjects, startDetection, stopDetection } from './services/active-window-detector';
+import {
+  syncAutoLaunchOnStartup,
+  getAutoLaunchPreference,
+  setAutoLaunchPreference,
+  applyAutoLaunchToOS,
+} from './utils/auto-launch';
 
 // Import modular IPC handlers (these auto-register on import)
 import './ipc-handlers/prompt-library-handlers';
@@ -630,6 +636,21 @@ async function initialize() {
   });
 
   // ============================================
+  // AUTO-LAUNCH (start at login) IPC
+  // ============================================
+  ipcMain.handle('auto-launch:get', () => ({
+    enabled: getAutoLaunchPreference(),
+    osState: app.getLoginItemSettings().openAtLogin,
+  }));
+
+  ipcMain.handle('auto-launch:set', (_event, enabled: boolean) => {
+    setAutoLaunchPreference(!!enabled);
+    applyAutoLaunchToOS(!!enabled);
+    systemTray?.updateMenu();
+    return { enabled: !!enabled };
+  });
+
+  // ============================================
   // KEYSTROKE DETECTION
   // ============================================
   startKeystrokeDetection();
@@ -663,6 +684,11 @@ async function initialize() {
     }
   );
   systemTray.create();
+
+  // Enforce the stored auto-launch preference against the OS on every startup.
+  // Default is enabled — fresh installs register themselves as a login item
+  // so the app silently appears in the tray after the next reboot.
+  syncAutoLaunchOnStartup();
 
   // Show the main window immediately unless this is a silent auto-launch at login.
   // On silent launch (boot auto-start), stay hidden in tray — user opens manually.

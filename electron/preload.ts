@@ -315,6 +315,12 @@ declare global {
         install: () => void;
       };
 
+      // Auto-launch (start at login) API — per-machine preference
+      autoLaunch: {
+        get: () => Promise<{ enabled: boolean; osState: boolean }>;
+        set: (enabled: boolean) => Promise<{ enabled: boolean }>;
+      };
+
       // Project Context API
       project: {
         add: (options?: { folderPath?: string }) => Promise<any>;
@@ -968,6 +974,14 @@ const electronAPI = {
       return () => ipcRenderer.removeListener('update:downloaded', handler);
     },
     install: () => ipcRenderer.send('update:install'),
+  },
+
+  // ============================================
+  // AUTO-LAUNCH API (start at login — per-machine preference)
+  // ============================================
+  autoLaunch: {
+    get: () => ipcRenderer.invoke('auto-launch:get'),
+    set: (enabled: boolean) => ipcRenderer.invoke('auto-launch:set', enabled),
   },
 
   // ============================================
