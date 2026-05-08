@@ -30,7 +30,8 @@ interface SpacesListProps {
    *  from this so it never drifts from what you'd see inside the space. */
   projectStatusMap: Record<string, string>;
   onSelectSpace: (id: string) => void;
-  onCreateSpace: (name: string) => void;
+  /** Opens native folder dialog, derives name from folder, creates + opens space. */
+  onCreateSpace: () => void;
   onRenameSpace: (id: string, name: string) => void;
   onDeleteSpace: (id: string) => void;
 }
@@ -345,7 +346,6 @@ export const SpacesList = ({
   spaces, projectStatusMap, onSelectSpace,
   onCreateSpace, onRenameSpace, onDeleteSpace,
 }: SpacesListProps) => {
-  const [isCreating, setIsCreating] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Space | null>(null);
@@ -444,7 +444,7 @@ export const SpacesList = ({
               <Button
                 size="sm"
                 className="h-8 px-3 text-[12px] font-semibold gap-1.5 bg-foreground hover:bg-foreground/90 text-background rounded-lg"
-                onClick={() => setIsCreating(true)}
+                onClick={onCreateSpace}
               >
                 <Plus size={12} weight="bold" />
                 New space
@@ -482,39 +482,10 @@ export const SpacesList = ({
                 />
               ))}
 
-              {/* "Add space" tile — discoverable affordance at the end of the grid. */}
-              <button
-                onClick={() => setIsCreating(true)}
-                className={cn(
-                  "rounded-xl border border-dashed border-border/35 bg-transparent",
-                  "hover:border-emerald/45 hover:bg-emerald/[0.03]",
-                  "p-3.5 cursor-pointer transition-all duration-150 group",
-                  "flex items-center gap-2.5 text-left",
-                )}
-              >
-                <div className="w-8 h-8 rounded-lg bg-muted/30 group-hover:bg-emerald/12 border border-border/30 group-hover:border-emerald/30 flex items-center justify-center flex-shrink-0 transition-colors">
-                  <Plus size={14} weight="bold" className="text-muted-foreground/55 group-hover:text-emerald transition-colors" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-semibold text-foreground/70 group-hover:text-foreground transition-colors">
-                    New space
-                  </div>
-                  <div className="text-[10.5px] text-muted-foreground/45 mt-0.5">
-                    Attach a folder & start prompting
-                  </div>
-                </div>
-              </button>
             </div>
           )}
         </div>
       </div>
-
-      {/* Create modal */}
-      <CreateSpaceModal
-        open={isCreating}
-        onOpenChange={setIsCreating}
-        onCreate={onCreateSpace}
-      />
 
       {/* Delete dialog */}
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
