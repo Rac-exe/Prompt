@@ -23,6 +23,7 @@ import { useMessageTree } from "@/hooks/useMessageTree";
 import { useChatUIState } from "@/hooks/useChatUIState";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 import { useAuth } from "@/context/AuthContext";
+import { friendlyError } from "@/lib/ipc-error";
 
 // Empty initial data
 const initialRecentChats: { id: string; title: string; date: string }[] = [];
@@ -385,7 +386,7 @@ const Index = () => {
         console.error('[Index] Chat rename error:', data);
         toast({
           title: "Couldn't rename chat",
-          description: data.error || "Something went wrong. Please try again.",
+          description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
           variant: "destructive",
         });
       };
@@ -425,7 +426,7 @@ const Index = () => {
         console.error('[Index] Chat delete error:', data);
         toast({
           title: "Couldn't delete chat",
-          description: data.error || "Something went wrong. Please try again.",
+          description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
           variant: "destructive",
         });
       };
@@ -1351,7 +1352,7 @@ Your prompt was: "${content}"`;
       console.error('[Index] Error saving prompt:', error);
       toast({
         title: "Couldn't save prompt",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1378,7 +1379,7 @@ Your prompt was: "${content}"`;
       console.error('[Index] Error creating collection:', error);
       toast({
         title: "Couldn't create collection",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1400,7 +1401,7 @@ Your prompt was: "${content}"`;
       console.error('[Index] Error renaming collection:', error);
       toast({
         title: "Couldn't rename collection",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1423,7 +1424,7 @@ Your prompt was: "${content}"`;
       console.error('[Index] Error deleting collection:', error);
       toast({
         title: "Couldn't delete collection",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1454,7 +1455,7 @@ Your prompt was: "${content}"`;
       console.error('[Index] Error updating prompt:', error);
       toast({
         title: "Couldn't update prompt",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
       throw error; // re-throw so the modal stays open on failure
@@ -1472,7 +1473,7 @@ Your prompt was: "${content}"`;
       console.error('[Index] Error deleting prompt:', error);
       toast({
         title: "Couldn't delete prompt",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }

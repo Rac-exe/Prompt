@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
+import { friendlyError } from "@/lib/ipc-error";
 import { cn } from "@/lib/utils";
 
 interface SharedPrompt {
@@ -116,7 +117,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
           tags: { component: "shared-library-view", action: "load" },
           extra: { tokenLength: token.length },
         });
-        setLoadError(err?.message || "Failed to load the shared library.");
+        setLoadError(friendlyError(err, "Failed to load the shared library."));
       })
       .finally(() => setLoading(false));
   }, [token]);
@@ -158,7 +159,7 @@ export const SharedLibraryView = ({ token, onBack, onSaved }: SharedLibraryViewP
       });
       toast({
         title: "Couldn't save library",
-        description: err?.message || "Something went wrong. Please try again.",
+        description: friendlyError(err, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     } finally {

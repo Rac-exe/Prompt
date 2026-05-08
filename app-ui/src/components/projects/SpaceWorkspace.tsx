@@ -21,6 +21,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/ipc-error";
 import { MessageBubble, type Message } from "@/components/chat/MessageBubble";
 import { VersionNavigator } from "@/components/chat/VersionNavigator";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
@@ -404,7 +405,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const cur = spaceRef.current;
       onUpdateSpaceRef.current({
         ...cur,
-        messages: [...cur.messages, { id: crypto.randomUUID(), role: 'assistant' as const, content: `Optimization failed: ${d.error}`, timestamp: Date.now() }],
+        messages: [...cur.messages, { id: crypto.randomUUID(), role: 'assistant' as const, content: "Something went wrong. Please try again.", timestamp: Date.now() }],
         lastUsedAt: Date.now(),
       });
     });
@@ -552,7 +553,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantParentRef.current = null;
       pendingAssistantGroupIdRef.current = null;
       pendingAssistantVersionIdxRef.current = 0;
-      toast({ title: "Failed to process", description: e.message, variant: "destructive" });
+      toast({ title: "Failed to process", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     }
   }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI, messageTree]);
 
@@ -610,7 +611,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         toast({ title: "Folder attached", description: `${r.name} \u2014 indexing in background` });
       }
     } catch (e: any) {
-      toast({ title: "Failed to add folder", description: e.message, variant: "destructive" });
+      toast({ title: "Couldn't attach folder", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     } finally {
       setAddingFolder(false);
     }
@@ -649,7 +650,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const s = await api.status(proj.projectId);
       if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s }));
     } catch (e: any) {
-      toast({ title: "Re-index failed", description: e.message, variant: "destructive" });
+      toast({ title: "Re-index failed", description: friendlyError(e, "Something went wrong while indexing. Please restart the app and try again."), variant: "destructive" });
     } finally {
       setReindexingId(null);
     }
@@ -722,7 +723,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantParentRef.current = null;
       pendingAssistantGroupIdRef.current = null;
       pendingAssistantVersionIdxRef.current = 0;
-      toast({ title: "Edit failed", description: e.message, variant: "destructive" });
+      toast({ title: "Couldn't edit message", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     });
   }, [isGenerating, space, onUpdateSpace, runOptimization, resetStreaming, messageTree]);
 
@@ -766,7 +767,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantParentRef.current = null;
       pendingAssistantGroupIdRef.current = null;
       pendingAssistantVersionIdxRef.current = 0;
-      toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
+      toast({ title: "Couldn't regenerate", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     });
   }, [isGenerating, space, runOptimization, resetStreaming, messageTree]);
 

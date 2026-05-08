@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
+import { friendlyError } from "@/lib/ipc-error";
 
 interface ShareCollectionModalProps {
   open: boolean;
@@ -68,7 +69,7 @@ export const ShareCollectionModal = ({
           });
           toast({
             title: "Couldn't create share link",
-            description: err?.message || "Something went wrong. Please try again.",
+            description: friendlyError(err, "Something went wrong. Please try again."),
             variant: "destructive",
           });
           onOpenChange(false);

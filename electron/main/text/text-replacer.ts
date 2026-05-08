@@ -337,7 +337,7 @@ try {
       console.log("[UIAutomation] STDERR:", errorObj.stderr);
       console.log("[UIAutomation] STDOUT:", errorObj.stdout);
       console.log("[UIAutomation] Message:", errorObj.message);
-      throw new Error(`UI Automation not available: ${errorMsg}`);
+      throw new Error("Auto-replace failed. Use the Copy button and paste manually (Ctrl+V).");
     }
   }
 

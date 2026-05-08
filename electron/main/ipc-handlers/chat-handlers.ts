@@ -382,7 +382,7 @@ export function registerChatHandlers(
             console.error('[Chat] Optimization failed:', error);
             if (appWindowManager) {
                 appWindowManager.send('optimization-error', {
-                    error: error instanceof Error ? error.message : 'Unknown error',
+                    error: humanizeLlmError(error),
                     source,
                 });
             }
@@ -524,7 +524,7 @@ export function registerChatHandlers(
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Failed to rename chat:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const errorMessage = 'Something went wrong. Please try again.';
             if (appWindowManager) {
                 appWindowManager.send('chat-rename-error', { chatId: data.chatId, error: errorMessage });
             }
@@ -546,7 +546,7 @@ export function registerChatHandlers(
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Failed to delete chat:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const errorMessage = 'Something went wrong. Please try again.';
             if (appWindowManager) {
                 appWindowManager.send('chat-delete-error', { chatId, error: errorMessage });
             }
