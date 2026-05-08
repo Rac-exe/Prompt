@@ -50,7 +50,7 @@ Sentry.init({
   },
 });
 
-import { app, globalShortcut, ipcMain, session, shell } from 'electron';
+import { app, globalShortcut, ipcMain, session, shell, systemPreferences } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { installApplicationMenu } from './menu/application-menu';
 import { AppWindowManager } from './windows/app-window-manager';
@@ -966,6 +966,44 @@ if (!gotTheLock) {
   }
 
   app.whenReady().then(async () => {
+    // On macOS, proactively request microphone permission so the system dialog
+    // appears before the user tries transcription. Bundle ID changes between
+    // dev (Electron.app) and packaged (Prmpt.app) — each needs its own grant.
+    // Without this, getUserMedia() in the renderer silently fails on first use.
+    if (process.platform === 'darwin' && app.isPackaged) {
+      const micStatus = systemPreferences.getMediaAccessStatus('microphone');
+      if (micStatus !== 'granted') {
+        systemPreferences.askForMediaAccess('microphone').then(granted => {
+          console.log(`[Main] Microphone permission: ${granted ? 'granted' : 'denied'}`);
+          if (!granted) {
+            Sentry.captureMessage('macOS microphone permission denied', 'warning');
+          }
+        }).catch(err => {
+          console.warn('[Main] Microphone permission request failed:', err);
+        });
+      }
+
+      // Automation (System Events) — required by osascript in the Rust native
+      // module to bring the source app to the foreground before pasting. macOS
+      // prompts on first use, but if it was denied, activate_pid() silently
+      // fails and text gets pasted into the wrong window. Pre-flight check here
+      // so we can warn the user early.
+      const automationAllowed = systemPreferences.isTrustedAccessibilityClient(false);
+      if (!automationAllowed) {
+        // Trigger a test osascript call that will prompt for Automation permission
+        // if not yet determined, or silently fail if already denied.
+        const { exec } = require('child_process');
+        exec('osascript -e \'tell application "System Events" to return name of first process whose frontmost is true\'', (err: any) => {
+          if (err) {
+            console.warn('[Main] Automation (System Events) permission not granted — text insertion may fail');
+            Sentry.captureMessage('macOS Automation permission not granted', 'warning');
+          } else {
+            console.log('[Main] Automation (System Events) permission: granted');
+          }
+        });
+      }
+    }
+
     // Install our custom application menu BEFORE creating any window so that
     // the default Electron accelerators (Cmd+R reload, Cmd+= zoom, Cmd+Q
     // quit, Cmd+Alt+I devtools, etc.) never get registered.

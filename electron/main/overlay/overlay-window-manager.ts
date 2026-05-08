@@ -189,6 +189,18 @@ export class OverlayWindowManager {
     const htmlPath = path.join(app.getAppPath(), 'electron', 'renderer', 'app-ui', 'overlay.html');
     this.window.loadFile(htmlPath);
 
+    // On macOS, alwaysOnTop at 'screen-saver' level prevents the renderer from
+    // receiving blur events when the user clicks another app — the window server
+    // does not deliver the event at that NSWindowLevel. Handle close in the main
+    // process directly so we never rely on the renderer firing overlay:close.
+    if (process.platform === 'darwin') {
+      this.window.on('blur', () => {
+        if (this.isOpen) {
+          this.close();
+        }
+      });
+    }
+
     this.window.on('closed', () => {
       this.window = null;
       this.isLoaded = false;
