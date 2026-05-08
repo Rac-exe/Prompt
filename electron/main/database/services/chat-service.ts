@@ -286,6 +286,25 @@ export class ChatService {
   }
 
   /**
+   * Count how many user-role messages exist in a chat.
+   * Used to decide whether the title should still be updated on follow-up messages.
+   */
+  async countUserMessages(chatId: string): Promise<number> {
+    const { data: userData } = await this.client.auth.getUser();
+    if (!userData.user) throw new Error('Not authenticated');
+
+    const { count, error } = await this.client
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('chat_id', chatId)
+      .eq('user_id', userData.user.id)
+      .eq('role', 'user');
+
+    if (error) throw error;
+    return count ?? 0;
+  }
+
+  /**
    * Update only the attachedFiles metadata on an existing message.
    * Used to backfill Cloudinary/Supabase URLs after background uploads complete.
    */

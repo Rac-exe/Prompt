@@ -21,9 +21,9 @@ import { errorLog } from '../database/error-log';
 import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
 import { RateLimitService } from '../database/services/rate-limit-service';
-import { buildTitlePrompt, isWeakMessage } from './chat-handlers';
 import { analyticsService } from '../analytics/analytics-service';
 import { getActiveProjectId, getActiveProjectBranch } from './project-handlers';
+import { isWeakMessage } from './chat-handlers';
 
 function humanizeLlmError(err: unknown): string {
     const raw: string = ((err as any)?.message ?? (err as any)?.code ?? String(err)).toLowerCase();
@@ -125,6 +125,8 @@ const inMemoryOverlayHistory: Array<{role: string, content: string}> = [];
 
 // Track the current overlay session's chat ID so all messages go to the same chat
 let currentOverlayChatId: string | null = null;
+// Track the placeholder title so we know whether to attempt a title upgrade later
+let currentOverlayChatTitle: string | null = null;
 
 // Pending overlay clarification — only one can be active at a time
 interface PendingOverlayOptimization {
@@ -188,6 +190,7 @@ export function setSourceWindow(hwnd: number, title: string) {
 export function clearOverlayHistory() {
   inMemoryOverlayHistory.length = 0;
   currentOverlayChatId = null;
+  currentOverlayChatTitle = null;
   sourceHwnd = null;
   sourceWindowTitle = '';
   firstSectionDone = false;
@@ -552,36 +555,38 @@ export function registerOverlayHandlers(
             } else {
               // ── No-context path: use/create the overlay session chat ──
               if (!currentOverlayChatId) {
-                // Use first 4 words as a placeholder while smart title generates
-                const words = data.text.trim().split(/\s+/).slice(0, 4);
-                const placeholderTitle = words.join(' ') || 'Overlay Optimization';
+                const placeholderTitle = data.text.trim().split(/\s+/).slice(0, 4).join(' ') || 'Overlay Optimization';
                 const chat = await svc.createChat(placeholderTitle);
                 currentOverlayChatId = chat.id;
                 console.log('[Overlay] Created new chat for overlay session:', currentOverlayChatId);
-
-                // Fire-and-forget: generate a smart AI title in the background
-                const titlePrompt = buildTitlePrompt(data.text, data.attachedFiles || []);
-                if (titlePrompt) {
-                  const chatIdForTitle = currentOverlayChatId;
-                  (async () => {
-                    try {
-                      const smartTitle = await pythonClient.generateTitle(titlePrompt);
-                      if (smartTitle && smartTitle !== placeholderTitle) {
-                        await svc.updateChatTitle(chatIdForTitle, smartTitle);
-                        // Push the rename to the main app sidebar immediately
-                        appWindowManager.send('chat-renamed', {
-                          chatId: chatIdForTitle,
-                          title: smartTitle,
-                        });
-                        console.log(`[Overlay] Smart title generated: "${smartTitle}"`);
-                      }
-                    } catch (err) {
-                      Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'smart-title-generation' } });
-                      console.warn('[Overlay] Smart title generation failed (non-critical):', err);
-                    }
-                  })();
-                }
               }
+
+              // Fire-and-forget: update title for each of the first 3 messages
+              // using the accumulated conversation for the best context.
+              const olChatIdForTitle = currentOverlayChatId;
+              (async () => {
+                try {
+                  const prevUserMsgs = inMemoryOverlayHistory.filter(m => m.role === 'user');
+                  if (prevUserMsgs.length < 3) {
+                    const combinedContent = [
+                      ...prevUserMsgs.map(m => m.content),
+                      data.text,
+                    ].filter(s => s.trim()).join('\n').slice(0, 300);
+
+                    if (combinedContent.trim()) {
+                      const smartTitle = await pythonClient.generateTitle(combinedContent);
+                      if (smartTitle && smartTitle !== 'New Chat') {
+                        await svc.updateChatTitle(olChatIdForTitle!, smartTitle);
+                        appWindowManager.send('chat-renamed', { chatId: olChatIdForTitle!, title: smartTitle });
+                        console.log(`[Overlay] Title updated (msg ${prevUserMsgs.length + 1}/3): "${smartTitle}"`);
+                      }
+                    }
+                  }
+                } catch (err) {
+                  Sentry.captureException(err, { tags: { component: 'overlay-ipc', op: 'smart-title-generation' } });
+                  console.warn('[Overlay] Title generation failed (non-critical):', err);
+                }
+              })();
 
               const olUserGroupId = data.userGroupId || crypto.randomUUID();
               const olUserVersionIndex = data.userVersionIndex ?? 0;
@@ -1255,28 +1260,36 @@ export function registerOverlayHandlers(
               console.log('[Overlay/Clarify] Saved messages to context chat:', targetChatId);
             } else {
               if (!currentOverlayChatId) {
-                const words = pending.data.text.trim().split(/\s+/).slice(0, 4);
-                const placeholderTitle = words.join(' ') || 'Overlay Optimization';
+                const placeholderTitle = pending.data.text.trim().split(/\s+/).slice(0, 4).join(' ') || 'Overlay Optimization';
                 const chat = await svc.createChat(placeholderTitle);
                 currentOverlayChatId = chat.id;
                 console.log('[Overlay/Clarify] Created new chat:', currentOverlayChatId);
-
-                const titlePrompt = buildTitlePrompt(pending.data.text, pending.data.attachedFiles || []);
-                if (titlePrompt) {
-                  const chatIdForTitle = currentOverlayChatId;
-                  (async () => {
-                    try {
-                      const smartTitle = await pythonClient.generateTitle(titlePrompt);
-                      if (smartTitle && smartTitle !== placeholderTitle) {
-                        await svc.updateChatTitle(chatIdForTitle, smartTitle);
-                        appWindowManager.send('chat-renamed', { chatId: chatIdForTitle, title: smartTitle });
-                      }
-                    } catch (err) {
-                      console.warn('[Overlay/Clarify] Smart title failed:', err);
-                    }
-                  })();
-                }
               }
+
+              // Fire-and-forget: update title for each of the first 3 messages.
+              const olClarifyChatIdForTitle = currentOverlayChatId;
+              (async () => {
+                try {
+                  const prevUserMsgs = inMemoryOverlayHistory.filter(m => m.role === 'user');
+                  if (prevUserMsgs.length < 3) {
+                    const combinedContent = [
+                      ...prevUserMsgs.map(m => m.content),
+                      pending.data.text,
+                    ].filter(s => s.trim()).join('\n').slice(0, 300);
+
+                    if (combinedContent.trim()) {
+                      const smartTitle = await pythonClient.generateTitle(combinedContent);
+                      if (smartTitle && smartTitle !== 'New Chat') {
+                        await svc.updateChatTitle(olClarifyChatIdForTitle!, smartTitle);
+                        appWindowManager.send('chat-renamed', { chatId: olClarifyChatIdForTitle!, title: smartTitle });
+                        console.log(`[Overlay/Clarify] Title updated (msg ${prevUserMsgs.length + 1}/3): "${smartTitle}"`);
+                      }
+                    }
+                  }
+                } catch (err) {
+                  console.warn('[Overlay/Clarify] Title generation failed (non-critical):', err);
+                }
+              })();
 
               const olUserGroupId = pending.data.userGroupId || crypto.randomUUID();
               const olAssistantGroupId = pending.data.assistantGroupId || crypto.randomUUID();

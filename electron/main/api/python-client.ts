@@ -232,6 +232,13 @@ export class PythonClient extends EventEmitter {
     projectId: string | null = null,
     projectBranch: string | null = null,
   ): Promise<OptimizeResult> {
+    // The remote service enforces a 3-character minimum. Pad short inputs (e.g.
+    // "hi", "yo") so they reach the LLM and get a natural response instead of
+    // a hard-coded fallback or an error.
+    const effectivePrompt = prompt.trim().length < 3
+      ? prompt.trimEnd().padEnd(3, '!')
+      : prompt;
+
     await this.ensureConnection();
 
     const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -341,7 +348,7 @@ export class PythonClient extends EventEmitter {
 
         this.ws.send(JSON.stringify({
           request_id: requestId,
-          prompt,
+          prompt: effectivePrompt,
           previous_output: previousOutput || undefined,
           messages,
           mode,
