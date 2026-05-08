@@ -196,8 +196,8 @@ const Index = () => {
     input,
     setInput,
     mode,
-    selectedSkill,
-    setSelectedSkill,
+    selectedSkills,
+    setSelectedSkills,
     attachedFiles,
     setAttachedFiles,
     deleteChatState,
@@ -1047,13 +1047,14 @@ const Index = () => {
     content: string, 
     mode: "fast" | "thinking" = "thinking",
     attachedFiles?: any[],
-    selectedSkill?: string | null,
+    selectedSkills?: string[],
     versionMeta?: { groupId: string; versionIndex: number }
   ) => {
     if (sendingRef.current) {
       return;
     }
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skill: selectedSkill || 'auto' } });
+    const skillsJoined = selectedSkills?.length ? selectedSkills.join(',') : null;
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skills: skillsJoined || 'auto' } });
     sendingRef.current = true;
 
     const groupId = versionMeta?.groupId || crypto.randomUUID();
@@ -1064,23 +1065,21 @@ const Index = () => {
       contentLength: content.length,
       mode,
       filesCount: attachedFiles?.length || 0,
-      skill: selectedSkill || 'auto',
+      skills: skillsJoined || 'auto',
       groupId,
       versionIndex,
     });
 
-    // Clear any previous send error or clarification
     setSendError(null);
     setClarificationData(null);
 
-    // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
       window.electronAPI.sendMessage({
         chatId: selectedChatId,
         content: content,
         mode,
         attachedFiles,
-        forcedSkill: selectedSkill,
+        forcedSkill: skillsJoined,
         groupId,
         versionIndex,
       });
@@ -1643,8 +1642,8 @@ Your prompt was: "${content}"`;
             mode={mode}
             attachedFiles={attachedFiles}
             setAttachedFiles={setAttachedFiles}
-            selectedSkill={selectedSkill}
-            setSelectedSkill={setSelectedSkill}
+            selectedSkills={selectedSkills}
+            setSelectedSkills={setSelectedSkills}
             clarificationData={clarificationData}
             onSubmitClarification={handleSubmitClarification}
             clarificationAnswersMap={clarificationAnswersMap}

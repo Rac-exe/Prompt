@@ -428,13 +428,16 @@ def optimize(
         else:
             system_prompt = _load_system_prompt("system_prompt_optimizer.md")
         
-        # Select skills (or use forced skill)
+        # Select skills (or use forced skill — supports comma-separated multi-skill)
         if forced_skill:
-            logger.info(f"Using forced skill: {forced_skill}")
-            skill_names = [forced_skill]
-            skills_content = load_skill_file(forced_skill)
+            forced_names = [s.strip() for s in forced_skill.split(",") if s.strip()]
+            forced_names = forced_names[:2]
+            logger.info(f"Using forced skill(s): {forced_names}")
+            skill_names = forced_names
+            contents = [load_skill_file(n) for n in forced_names]
+            skills_content = "\n\n".join(c for c in contents if c)
             if not skills_content:
-                logger.warning(f"Forced skill '{forced_skill}' not found, falling back to auto-selection")
+                logger.warning(f"Forced skill(s) {forced_names} not found, falling back to auto-selection")
                 skill_names, skills_content = load_selected_skills(user_input)
         else:
             skill_names, skills_content = load_selected_skills(user_input)

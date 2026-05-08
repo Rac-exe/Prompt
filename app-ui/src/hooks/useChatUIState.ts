@@ -4,14 +4,16 @@ import type { AttachedFile } from "@/types/electron";
 export type ChatUIState = {
   input: string;
   mode: "fast" | "thinking";
-  skill: string | null;
+  skills: string[];
   attachedFiles: AttachedFile[];
 };
+
+const MAX_SKILLS = 2;
 
 const getDefaultState = (): ChatUIState => ({
   input: "",
   mode: "thinking",
-  skill: null,
+  skills: [],
   attachedFiles: [],
 });
 
@@ -27,25 +29,30 @@ export const useChatUIState = (selectedChatId: string | null) => {
   // Local state for current chat
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"fast" | "thinking">("thinking");
-  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+  const [selectedSkills, setSelectedSkillsRaw] = useState<string[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+
+  const setSelectedSkills = useCallback((update: string[] | ((prev: string[]) => string[])) => {
+    setSelectedSkillsRaw((prev) => {
+      const next = typeof update === "function" ? update(prev) : update;
+      return next.slice(0, MAX_SKILLS);
+    });
+  }, []);
 
   // Load state when selectedChatId changes
   useEffect(() => {
     if (!selectedChatId) {
-      // No chat selected → reset to defaults
       setInput("");
       setMode("thinking");
-      setSelectedSkill(null);
+      setSelectedSkillsRaw([]);
       setAttachedFiles([]);
       return;
     }
 
-    // Load state for this chat (or defaults if it doesn't exist yet)
     const state = chatUIStateMapRef.current[selectedChatId] || getDefaultState();
     setInput(state.input);
     setMode(state.mode);
-    setSelectedSkill(state.skill);
+    setSelectedSkillsRaw(state.skills);
     setAttachedFiles(state.attachedFiles);
   }, [selectedChatId]);
 
@@ -56,10 +63,10 @@ export const useChatUIState = (selectedChatId: string | null) => {
     chatUIStateMapRef.current[selectedChatId] = {
       input,
       mode,
-      skill: selectedSkill,
+      skills: selectedSkills,
       attachedFiles,
     };
-  }, [selectedChatId, input, mode, selectedSkill, attachedFiles]);
+  }, [selectedChatId, input, mode, selectedSkills, attachedFiles]);
 
   // Clean up deleted chat state
   const deleteChatState = useCallback((chatId: string) => {
@@ -71,8 +78,8 @@ export const useChatUIState = (selectedChatId: string | null) => {
     setInput,
     mode,
     setMode,
-    selectedSkill,
-    setSelectedSkill,
+    selectedSkills,
+    setSelectedSkills,
     attachedFiles,
     setAttachedFiles,
     deleteChatState,

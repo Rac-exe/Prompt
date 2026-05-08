@@ -26,7 +26,7 @@ interface ChatViewProps {
     content: string, 
     mode: "fast" | "thinking",
     attachedFiles?: AttachedFile[],
-    selectedSkill?: string | null
+    selectedSkills?: string[]
   ) => void;
   onCopyPrompt: (id: string) => void;
   onSavePrompt: (id: string) => void;
@@ -49,8 +49,8 @@ interface ChatViewProps {
   mode: "fast" | "thinking";
   attachedFiles: AttachedFile[];
   setAttachedFiles: (files: AttachedFile[]) => void;
-  selectedSkill: string | null;
-  setSelectedSkill: (skill: string | null) => void;
+  selectedSkills: string[];
+  setSelectedSkills: (skills: string[] | ((prev: string[]) => string[])) => void;
   // Clarification
   clarificationData?: any;
   onSubmitClarification?: (answers: Record<string, string>, wantsSections: boolean) => void;
@@ -68,7 +68,7 @@ export const ChatView = ({
   onRetryLoad, sendError, onStopGeneration, avatarUrl,
   versionInfoMap, onNavigateVersion,
   // Per-chat UI state
-  input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkill, setSelectedSkill,
+  input, setInput, mode, attachedFiles, setAttachedFiles, selectedSkills, setSelectedSkills,
   clarificationData, onSubmitClarification, clarificationAnswersMap, onReoptimize,
 }: ChatViewProps) => {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
@@ -162,8 +162,8 @@ export const ChatView = ({
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("idle");
     }
-    Sentry.addBreadcrumb({ category: "app.action", message: "Message sent", level: "info", data: { mode, hasFiles: attachedFiles.length > 0, skill: selectedSkill || 'auto' } });
-    onSendMessage(input.trim(), mode, attachedFiles, selectedSkill);
+    Sentry.addBreadcrumb({ category: "app.action", message: "Message sent", level: "info", data: { mode, hasFiles: attachedFiles.length > 0, skills: selectedSkills.length > 0 ? selectedSkills.join(',') : 'auto' } });
+    onSendMessage(input.trim(), mode, attachedFiles, selectedSkills);
     setInput("");
     setAttachedFiles([]);
     setShowSlashPicker(false);
@@ -357,12 +357,15 @@ export const ChatView = ({
           {showSlashPicker && (
             <div className="absolute bottom-full left-0 mb-2">
               <SkillPicker
-                onSelect={(skillName) => {
-                  setSelectedSkill(skillName);
-                  setShowSlashPicker(false);
+                onToggle={(skillName) => {
+                  setSelectedSkills((prev) => {
+                    if (prev.includes(skillName)) return prev.filter(s => s !== skillName);
+                    return [...prev, skillName];
+                  });
                   setInput("");
                   textareaRef.current?.focus();
                 }}
+                activeSkills={selectedSkills}
                 onClose={() => setShowSlashPicker(false)}
               />
             </div>
@@ -392,9 +395,13 @@ export const ChatView = ({
               onFilesSelected={(files) => {
                 setAttachedFiles(prev => [...prev, ...files].slice(0, 5));
               }}
-              onSkillSelected={(skillName) => {
-                setSelectedSkill(skillName);
+              onSkillToggled={(skillName) => {
+                setSelectedSkills((prev) => {
+                  if (prev.includes(skillName)) return prev.filter(s => s !== skillName);
+                  return [...prev, skillName];
+                });
               }}
+              activeSkills={selectedSkills}
               anchorRef={plusButtonRef}
             />
 
@@ -418,22 +425,22 @@ export const ChatView = ({
               </Tooltip>
             </TooltipProvider>
 
-            {/* Skill pill — shows skill-specific icon */}
-            {selectedSkill && (() => {
-              const SkillIcon = SKILL_ICON_MAP[selectedSkill] ?? Sparkle;
+            {/* Skill pills — one per selected skill */}
+            {selectedSkills.map((skill) => {
+              const SkillIcon = SKILL_ICON_MAP[skill] ?? Sparkle;
               return (
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-xs text-emerald-500 border border-emerald-500/20 ml-1">
+                <div key={skill} className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-xs text-emerald-500 border border-emerald-500/20 ml-1">
                   <SkillIcon size={12} weight="light" />
-                  <span className="capitalize">{selectedSkill}</span>
+                  <span className="capitalize">{skill}</span>
                   <button
-                    onClick={() => setSelectedSkill(null)}
+                    onClick={() => setSelectedSkills((prev) => prev.filter(s => s !== skill))}
                     className="hover:text-emerald-400 transition-colors"
                   >
                     <X size={12} weight="light" />
                   </button>
                 </div>
               );
-            })()}
+            })}
 
             {/* Voice state indicators */}
             {voiceState === "listening" && (
