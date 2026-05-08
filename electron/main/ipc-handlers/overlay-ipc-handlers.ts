@@ -435,6 +435,7 @@ export function registerOverlayHandlers(
         ).then(opt => { optimizationId = opt.id; })
         .catch((err: Error) => {
           errorLog.append('[Overlay] optimization record save', err);
+          Sentry.captureException(err, { tags: { component: 'overlay-handlers', op: 'save-optimization' } });
         });
 
         // 1b. Trigger background memory analysis (fire-and-forget, non-critical)
@@ -1175,6 +1176,7 @@ export function registerOverlayHandlers(
         ).then(opt => { optimizationId = opt.id; })
         .catch((err: Error) => {
           errorLog.append('[Overlay] clarification optimization record save', err);
+          Sentry.captureException(err, { tags: { component: 'overlay-handlers', op: 'save-optimization-clarify' } });
         });
 
         if (authState.currentUserId) {
@@ -1217,6 +1219,7 @@ export function registerOverlayHandlers(
                     if (r.status === 'fulfilled') return r.value;
                     const reason = (r as PromiseRejectedResult).reason;
                     console.error(`[Overlay/Clarify] Upload failed for "${pending.data.attachedFiles![i].name}":`, reason?.message);
+                    Sentry.captureException(reason, { tags: { component: 'file-upload', context: 'overlay-clarify-chat' }, extra: { fileName: pending.data.attachedFiles![i].name, mimeType: pending.data.attachedFiles![i].mimeType } });
                     return { name: pending.data.attachedFiles![i].name, mimeType: pending.data.attachedFiles![i].mimeType, sizeBytes: pending.data.attachedFiles![i].sizeBytes, uploadFailed: true };
                   });
                 }

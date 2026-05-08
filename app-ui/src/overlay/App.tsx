@@ -253,7 +253,9 @@ const OverlayApp: React.FC = () => {
     // ── Pre-warm auth state so AuthGate never flashes on first open ──
     api.overlay?.checkAuth?.().then((data: { isAuthenticated: boolean }) => {
       if (data?.isAuthenticated) setIsAuthenticated(true);
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      Sentry.captureException(e, { tags: { component: 'overlay-app', op: 'check-auth' } });
+    });
 
     // ── Cursor glow via IPC ──
     api.overlay?.onCursorPos?.(({ x, y }: { x: number; y: number }) => updateGlow(x, y));
@@ -397,7 +399,9 @@ const OverlayApp: React.FC = () => {
 
     // Load skills once
     if (api.skills?.list) {
-      api.skills.list().then((s: SkillInfo[]) => setSkills(s || [])).catch(() => {});
+      api.skills.list().then((s: SkillInfo[]) => setSkills(s || [])).catch((e: unknown) => {
+        Sentry.captureException(e, { tags: { component: 'overlay-app', op: 'load-skills' } });
+      });
     }
 
     return () => {
@@ -860,7 +864,8 @@ const OverlayApp: React.FC = () => {
             spaceId: space.id,
           });
         })
-        .catch(() => {
+        .catch((err) => {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt-edit' } });
           window.electronAPI?.overlay?.optimize?.({
             text: newContent,
             isRegenerate: false,
@@ -939,7 +944,8 @@ const OverlayApp: React.FC = () => {
             spaceId: space.id,
           });
         })
-        .catch(() => {
+        .catch((err) => {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt-regen' } });
           window.electronAPI?.overlay?.optimize?.({
             text: result.userVer.content,
             isRegenerate: true,

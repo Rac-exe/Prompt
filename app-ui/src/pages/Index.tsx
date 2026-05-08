@@ -384,6 +384,7 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onChatRenameError) {
       const handleRenameError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat rename error:', data);
+        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'chat-rename' } });
         toast({
           title: "Couldn't rename chat",
           description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
@@ -424,6 +425,7 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onChatDeleteError) {
       const handleDeleteError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat delete error:', data);
+        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'chat-delete' } });
         toast({
           title: "Couldn't delete chat",
           description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
@@ -678,6 +680,7 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onMessageSendError) {
       const handleMessageSendError = (data: { error: string; details?: string }) => {
         console.error('[Index] Message send error:', data);
+        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'message-send' }, extra: { details: data.details } });
         setIsGenerating(false);
         editInProgressRef.current = false;
         pendingPlaceholderId.current = null;
@@ -1349,6 +1352,7 @@ Your prompt was: "${content}"`;
       setPromptToSave(null);
     } catch (error: any) {
       console.error('[Index] Error saving prompt:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'save-prompt' } });
       toast({
         title: "Couldn't save prompt",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1376,6 +1380,7 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error creating collection:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'create-collection' } });
       toast({
         title: "Couldn't create collection",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1398,6 +1403,7 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error renaming collection:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'rename-collection' } });
       toast({
         title: "Couldn't rename collection",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1421,6 +1427,7 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error deleting collection:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'delete-collection' } });
       toast({
         title: "Couldn't delete collection",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1452,12 +1459,13 @@ Your prompt was: "${content}"`;
       toast({ title: "Prompt updated" });
     } catch (error: any) {
       console.error('[Index] Error updating prompt:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'update-prompt' } });
       toast({
         title: "Couldn't update prompt",
         description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
-      throw error; // re-throw so the modal stays open on failure
+      throw error;
     }
   };
 
@@ -1470,6 +1478,7 @@ Your prompt was: "${content}"`;
       toast({ title: "Prompt deleted" });
     } catch (error: any) {
       console.error('[Index] Error deleting prompt:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'delete-prompt' } });
       toast({
         title: "Couldn't delete prompt",
         description: friendlyError(error, "Something went wrong. Please try again."),

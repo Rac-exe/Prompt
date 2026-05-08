@@ -78,6 +78,7 @@ export class PythonClient extends EventEmitter {
       await this.ensureConnection();
     } catch (error) {
       console.error('[PythonClient] Background connection failed:', error);
+      Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-connect' } });
     }
   }
 
@@ -89,7 +90,10 @@ export class PythonClient extends EventEmitter {
       this.ws = null;
       this.connectionPromise = null;
     }
-    this.connect().catch(e => console.error('[PythonClient] Reconnect failed:', e));
+    this.connect().catch(e => {
+      console.error('[PythonClient] Reconnect failed:', e);
+      Sentry.captureException(e, { tags: { component: 'python-client', op: 'ws-reconnect' } });
+    });
   }
 
   /** Builds the WS URL including the auth token as a query param when available. */
@@ -189,6 +193,7 @@ export class PythonClient extends EventEmitter {
             }
           } catch (error) {
             console.error('[PythonClient] Failed to parse message:', error);
+            Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-message-parse' } });
           }
         });
 
@@ -366,6 +371,7 @@ export class PythonClient extends EventEmitter {
       } catch (error) {
         clearTimeout(timeoutId);
         this.activeRequests.delete(requestId);
+        Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-send' } });
         reject(error);
       }
     });

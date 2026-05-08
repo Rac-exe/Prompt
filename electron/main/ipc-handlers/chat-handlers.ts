@@ -364,6 +364,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization to DB:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-legacy' } });
                 }
             }
 
@@ -907,6 +908,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-stream' } });
                 }
             }
 
@@ -1047,6 +1049,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-clarify' } });
                 }
             }
 
@@ -1233,6 +1236,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-regen' } });
                 }
             }
 

@@ -85,6 +85,7 @@ export class TextReplacer {
       
     } catch (error) {
       console.error("Failed to replace text:", error);
+      Sentry.captureException(error, { tags: { component: 'text-replacer', op: 'replace-text-windows' } });
       throw error;
     }
   }
@@ -337,6 +338,7 @@ try {
       console.log("[UIAutomation] STDERR:", errorObj.stderr);
       console.log("[UIAutomation] STDOUT:", errorObj.stdout);
       console.log("[UIAutomation] Message:", errorObj.message);
+      Sentry.captureException(error, { tags: { component: 'text-replacer', op: 'ui-automation-replace' } });
       throw new Error("Auto-replace failed. Use the Copy button and paste manually (Ctrl+V).");
     }
   }
@@ -437,6 +439,7 @@ Write-Host "SUCCESS: @prompt deleted and text pasted"
       const errorObj = error as any;
       const errorMsg = errorObj.stderr || errorObj.stdout || errorObj.message || String(error);
       console.error("[TextReplacer] Failed to replace @prompt:", errorMsg);
+      Sentry.captureException(error, { tags: { component: 'text-replacer', op: 'replace-prompt-marker-windows' } });
       throw new Error(`Failed to replace @prompt: ${errorMsg}`);
     }
   }

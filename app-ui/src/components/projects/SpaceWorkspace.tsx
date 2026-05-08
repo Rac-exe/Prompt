@@ -611,6 +611,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         toast({ title: "Folder attached", description: `${r.name} \u2014 indexing in background` });
       }
     } catch (e: any) {
+      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'attach-folder' } });
       toast({ title: "Couldn't attach folder", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     } finally {
       setAddingFolder(false);
@@ -650,6 +651,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const s = await api.status(proj.projectId);
       if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s }));
     } catch (e: any) {
+      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'reindex' } });
       toast({ title: "Re-index failed", description: friendlyError(e, "Something went wrong while indexing. Please restart the app and try again."), variant: "destructive" });
     } finally {
       setReindexingId(null);
