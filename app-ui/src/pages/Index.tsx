@@ -23,6 +23,7 @@ import { useMessageTree } from "@/hooks/useMessageTree";
 import { useChatUIState } from "@/hooks/useChatUIState";
 import type { VersionInfo } from "@/hooks/useMessageTree";
 import { useAuth } from "@/context/AuthContext";
+import { friendlyError } from "@/lib/ipc-error";
 
 // Empty initial data
 const initialRecentChats: { id: string; title: string; date: string }[] = [];
@@ -195,8 +196,8 @@ const Index = () => {
     input,
     setInput,
     mode,
-    selectedSkill,
-    setSelectedSkill,
+    selectedSkills,
+    setSelectedSkills,
     attachedFiles,
     setAttachedFiles,
     deleteChatState,
@@ -383,9 +384,10 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onChatRenameError) {
       const handleRenameError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat rename error:', data);
+        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'chat-rename' } });
         toast({
           title: "Couldn't rename chat",
-          description: data.error || "Something went wrong. Please try again.",
+          description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
           variant: "destructive",
         });
       };
@@ -423,9 +425,10 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onChatDeleteError) {
       const handleDeleteError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat delete error:', data);
+        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'chat-delete' } });
         toast({
           title: "Couldn't delete chat",
-          description: data.error || "Something went wrong. Please try again.",
+          description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
           variant: "destructive",
         });
       };
@@ -677,6 +680,7 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onMessageSendError) {
       const handleMessageSendError = (data: { error: string; details?: string }) => {
         console.error('[Index] Message send error:', data);
+        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'message-send' }, extra: { details: data.details } });
         setIsGenerating(false);
         editInProgressRef.current = false;
         pendingPlaceholderId.current = null;
@@ -1046,13 +1050,14 @@ const Index = () => {
     content: string, 
     mode: "fast" | "thinking" = "thinking",
     attachedFiles?: any[],
-    selectedSkill?: string | null,
+    selectedSkills?: string[],
     versionMeta?: { groupId: string; versionIndex: number }
   ) => {
     if (sendingRef.current) {
       return;
     }
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skill: selectedSkill || 'auto' } });
+    const skillsJoined = selectedSkills?.length ? selectedSkills.join(',') : null;
+    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skills: skillsJoined || 'auto' } });
     sendingRef.current = true;
 
     const groupId = versionMeta?.groupId || crypto.randomUUID();
@@ -1063,23 +1068,21 @@ const Index = () => {
       contentLength: content.length,
       mode,
       filesCount: attachedFiles?.length || 0,
-      skill: selectedSkill || 'auto',
+      skills: skillsJoined || 'auto',
       groupId,
       versionIndex,
     });
 
-    // Clear any previous send error or clarification
     setSendError(null);
     setClarificationData(null);
 
-    // Use new unified send-message API that handles everything
     if (isElectron && window.electronAPI?.sendMessage) {
       window.electronAPI.sendMessage({
         chatId: selectedChatId,
         content: content,
         mode,
         attachedFiles,
-        forcedSkill: selectedSkill,
+        forcedSkill: skillsJoined,
         groupId,
         versionIndex,
       });
@@ -1349,9 +1352,10 @@ Your prompt was: "${content}"`;
       setPromptToSave(null);
     } catch (error: any) {
       console.error('[Index] Error saving prompt:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'save-prompt' } });
       toast({
         title: "Couldn't save prompt",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1376,9 +1380,10 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error creating collection:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'create-collection' } });
       toast({
         title: "Couldn't create collection",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1398,9 +1403,10 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error renaming collection:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'rename-collection' } });
       toast({
         title: "Couldn't rename collection",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1421,9 +1427,10 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error deleting collection:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'delete-collection' } });
       toast({
         title: "Couldn't delete collection",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1452,12 +1459,13 @@ Your prompt was: "${content}"`;
       toast({ title: "Prompt updated" });
     } catch (error: any) {
       console.error('[Index] Error updating prompt:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'update-prompt' } });
       toast({
         title: "Couldn't update prompt",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
-      throw error; // re-throw so the modal stays open on failure
+      throw error;
     }
   };
 
@@ -1470,9 +1478,10 @@ Your prompt was: "${content}"`;
       toast({ title: "Prompt deleted" });
     } catch (error: any) {
       console.error('[Index] Error deleting prompt:', error);
+      Sentry.captureException(error, { tags: { component: 'index', op: 'delete-prompt' } });
       toast({
         title: "Couldn't delete prompt",
-        description: error.message || "Something went wrong. Please try again.",
+        description: friendlyError(error, "Something went wrong. Please try again."),
         variant: "destructive",
       });
     }
@@ -1642,8 +1651,8 @@ Your prompt was: "${content}"`;
             mode={mode}
             attachedFiles={attachedFiles}
             setAttachedFiles={setAttachedFiles}
-            selectedSkill={selectedSkill}
-            setSelectedSkill={setSelectedSkill}
+            selectedSkills={selectedSkills}
+            setSelectedSkills={setSelectedSkills}
             clarificationData={clarificationData}
             onSubmitClarification={handleSubmitClarification}
             clarificationAnswersMap={clarificationAnswersMap}

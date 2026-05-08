@@ -515,7 +515,7 @@ class Message(BaseModel):
     content: str = Field(..., max_length=50_000)
 
 class OptimizeRequest(BaseModel):
-    prompt: str = Field(..., min_length=3, max_length=50_000)
+    prompt: str = Field(..., min_length=1, max_length=50_000)
     skip_cache: Optional[bool] = False
     messages: Optional[list[Message]] = Field(None, max_length=100)
     mode: Optional[str] = "thinking"
@@ -637,8 +637,8 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
 
     start_time = time.time()
 
-    if not request.prompt or len(request.prompt.strip()) < 3:
-        raise HTTPException(status_code=400, detail="Prompt too short (minimum 3 characters)")
+    if not request.prompt or len(request.prompt.strip()) < 1:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
 
     prompt_text = request.prompt.strip()
 
@@ -845,11 +845,11 @@ async def optimize_stream(websocket: WebSocket):
                 })
                 continue
             
-            if not prompt_text or len(prompt_text) < 3:
+            if not prompt_text or len(prompt_text) < 1:
                 await websocket.send_json({
                     "type": "error",
                     "request_id": request_id,
-                    "message": "Prompt too short (minimum 3 characters)"
+                    "message": "Prompt cannot be empty"
                 })
                 continue
 

@@ -308,7 +308,7 @@ export function MemoryView() {
             : 'You can still add facts manually.',
         });
       } else {
-        toast({ title: "Couldn't update setting", description: result.error, variant: 'destructive' });
+        toast({ title: "Couldn't update setting", description: "Something went wrong. Please try again.", variant: 'destructive' });
       }
     } catch {
       toast({ title: "Couldn't update setting", description: 'Something went wrong. Please try again.', variant: 'destructive' });
@@ -328,7 +328,7 @@ export function MemoryView() {
       });
       toast({ title: 'Memory removed' });
     } else {
-      toast({ title: "Couldn't remove memory", description: result.error, variant: 'destructive' });
+      toast({ title: "Couldn't remove memory", description: "Something went wrong. Please try again.", variant: 'destructive' });
     }
   }, [isElectron]);
 
@@ -344,7 +344,7 @@ export function MemoryView() {
         },
       }));
     } else {
-      toast({ title: "Couldn't update memory", description: result.error, variant: 'destructive' });
+      toast({ title: "Couldn't update memory", description: "Something went wrong. Please try again.", variant: 'destructive' });
     }
   }, [isElectron]);
 
@@ -362,7 +362,7 @@ export function MemoryView() {
       }));
       toast({ title: 'Memory saved' });
     } else {
-      toast({ title: "Couldn't save memory", description: result.error, variant: 'destructive' });
+      toast({ title: "Couldn't save memory", description: "Something went wrong. Please try again.", variant: 'destructive' });
     }
   }, [isElectron]);
 

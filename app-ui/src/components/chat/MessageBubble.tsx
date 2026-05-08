@@ -328,16 +328,18 @@ export const MessageBubble = ({
               )}
 
               
-              {/* Selected skill pill — same icon as composer / skill picker */}
-              {message.selectedSkill && (() => {
-                const SkillIcon = SKILL_ICON_MAP[message.selectedSkill] ?? Sparkle;
+              {/* Selected skill pills — supports comma-separated multi-skill strings */}
+              {message.selectedSkill && message.selectedSkill.split(',').map((skill) => {
+                const s = skill.trim();
+                if (!s) return null;
+                const SkillIcon = SKILL_ICON_MAP[s] ?? Sparkle;
                 return (
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
+                  <div key={s} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald/10 border border-emerald/20 text-xs">
                     <SkillIcon size={12} weight="light" className="text-emerald" />
-                    <span className="text-emerald font-medium capitalize">{message.selectedSkill}</span>
+                    <span className="text-emerald font-medium capitalize">{s}</span>
                   </div>
                 );
-              })()}
+              })}
               
               <div className="bg-emerald/10 border border-emerald/20 rounded-2xl rounded-br-sm px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">{message.content}</p>

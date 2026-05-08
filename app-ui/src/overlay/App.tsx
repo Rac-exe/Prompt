@@ -149,8 +149,8 @@ const OverlayApp: React.FC = () => {
   );
 
   const [attachedFilesByMode, setAttachedFilesByMode] = useState<Record<OverlayMode, AttachedFile[]>>({ chat: [], spaces: [] });
-  const [selectedSkillByMode, setSelectedSkillByMode] = useState<Record<OverlayMode, string | null>>({ chat: null, spaces: null });
-  const [selectedSkillLabelByMode, setSelectedSkillLabelByMode] = useState<Record<OverlayMode, string | null>>({ chat: null, spaces: null });
+  const [selectedSkillsByMode, setSelectedSkillsByMode] = useState<Record<OverlayMode, string[]>>({ chat: [], spaces: [] });
+  const [selectedSkillLabelsByMode, setSelectedSkillLabelsByMode] = useState<Record<OverlayMode, string[]>>({ chat: [], spaces: [] });
   const [clarificationAnswersByMode, setClarificationAnswersByMode] = useState<Record<OverlayMode, Record<number, ClarificationAnswerRecord>>>({ chat: {}, spaces: {} });
   const [insertedSectionsByMode, setInsertedSectionsByMode] = useState<Record<OverlayMode, Set<number>>>({ chat: new Set(), spaces: new Set() });
   /** Index of the turn currently receiving streamed chunks, per mode.
@@ -253,7 +253,9 @@ const OverlayApp: React.FC = () => {
     // ── Pre-warm auth state so AuthGate never flashes on first open ──
     api.overlay?.checkAuth?.().then((data: { isAuthenticated: boolean }) => {
       if (data?.isAuthenticated) setIsAuthenticated(true);
-    }).catch(() => {});
+    }).catch((e: unknown) => {
+      Sentry.captureException(e, { tags: { component: 'overlay-app', op: 'check-auth' } });
+    });
 
     // ── Cursor glow via IPC ──
     api.overlay?.onCursorPos?.(({ x, y }: { x: number; y: number }) => updateGlow(x, y));
@@ -397,7 +399,9 @@ const OverlayApp: React.FC = () => {
 
     // Load skills once
     if (api.skills?.list) {
-      api.skills.list().then((s: SkillInfo[]) => setSkills(s || [])).catch(() => {});
+      api.skills.list().then((s: SkillInfo[]) => setSkills(s || [])).catch((e: unknown) => {
+        Sentry.captureException(e, { tags: { component: 'overlay-app', op: 'load-skills' } });
+      });
     }
 
     return () => {
@@ -508,8 +512,8 @@ const OverlayApp: React.FC = () => {
     const mode = activeModeRef.current;
     turnsByMode[mode].clearAll();
     setAttachedFilesByMode((prev) => ({ ...prev, [mode]: [] }));
-    setSelectedSkillByMode((prev) => ({ ...prev, [mode]: null }));
-    setSelectedSkillLabelByMode((prev) => ({ ...prev, [mode]: null }));
+    setSelectedSkillsByMode((prev) => ({ ...prev, [mode]: [] }));
+    setSelectedSkillLabelsByMode((prev) => ({ ...prev, [mode]: [] }));
     setClarificationAnswersByMode((prev) => ({ ...prev, [mode]: {} }));
     setInsertedSectionsByMode((prev) => ({ ...prev, [mode]: new Set() }));
     setStreamingTurnIdxByMode((prev) => ({ ...prev, [mode]: -1 }));
@@ -716,8 +720,10 @@ const OverlayApp: React.FC = () => {
     const bundle = turnsByMode[mode];
     const files = attachedFilesByMode[mode];
     const filesToSend = files.length > 0 ? [...files] : undefined;
-    const skillToSend = selectedSkillByMode[mode] || undefined;
-    const skillLabel = selectedSkillLabelByMode[mode];
+    const skillsArr = selectedSkillsByMode[mode];
+    const skillToSend = skillsArr.length > 0 ? skillsArr.join(',') : undefined;
+    const labelsArr = selectedSkillLabelsByMode[mode];
+    const skillLabel = labelsArr.length > 0 ? labelsArr.join(', ') : null;
 
     const { msg: userMsg, turnIdx, userGroupId, assistantGroupId } = bundle.addUserMessage(text, filesToSend, skillToSend, skillLabel);
     setStreamingTurnIdxByMode((prev) => ({ ...prev, [mode]: turnIdx }));
@@ -789,7 +795,7 @@ const OverlayApp: React.FC = () => {
     }
 
     setAttachedFilesByMode((prev) => ({ ...prev, [mode]: [] }));
-  }, [isOptimizing, attachedFilesByMode, selectedSkillByMode, selectedSkillLabelByMode, turnsByMode, currentMode, selectedChatId, selectedSpace, buildSpacePrompt]);
+  }, [isOptimizing, attachedFilesByMode, selectedSkillsByMode, selectedSkillLabelsByMode, turnsByMode, currentMode, selectedChatId, selectedSpace, buildSpacePrompt]);
 
   // ── Stop generation ──────────────────────────────────────────────────────
   const handleStop = useCallback(() => {
@@ -858,7 +864,8 @@ const OverlayApp: React.FC = () => {
             spaceId: space.id,
           });
         })
-        .catch(() => {
+        .catch((err) => {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt-edit' } });
           window.electronAPI?.overlay?.optimize?.({
             text: newContent,
             isRegenerate: false,
@@ -937,7 +944,8 @@ const OverlayApp: React.FC = () => {
             spaceId: space.id,
           });
         })
-        .catch(() => {
+        .catch((err) => {
+          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt-regen' } });
           window.electronAPI?.overlay?.optimize?.({
             text: result.userVer.content,
             isRegenerate: true,
@@ -1083,15 +1091,35 @@ const OverlayApp: React.FC = () => {
   // ── Skill selection (per-mode) ───────────────────────────────────────────
   const handleSelectSkill = useCallback((name: string, label: string) => {
     const mode = activeModeRef.current;
-    setSelectedSkillByMode((prev) => ({ ...prev, [mode]: name }));
-    setSelectedSkillLabelByMode((prev) => ({ ...prev, [mode]: label }));
+    setSelectedSkillsByMode((prev) => {
+      const current = prev[mode];
+      if (current.includes(name)) return { ...prev, [mode]: current.filter(s => s !== name) };
+      if (current.length >= 2) return prev;
+      return { ...prev, [mode]: [...current, name] };
+    });
+    setSelectedSkillLabelsByMode((prev) => {
+      const current = prev[mode];
+      if (current.includes(label)) return { ...prev, [mode]: current.filter(l => l !== label) };
+      if (current.length >= 2) return prev;
+      return { ...prev, [mode]: [...current, label] };
+    });
   }, []);
 
-  const handleRemoveSkill = useCallback(() => {
+  const handleRemoveSkill = useCallback((name?: string) => {
     const mode = activeModeRef.current;
-    setSelectedSkillByMode((prev) => ({ ...prev, [mode]: null }));
-    setSelectedSkillLabelByMode((prev) => ({ ...prev, [mode]: null }));
-  }, []);
+    if (name) {
+      setSelectedSkillsByMode((prev) => ({ ...prev, [mode]: prev[mode].filter(s => s !== name) }));
+      setSelectedSkillLabelsByMode((prev) => {
+        const skills = selectedSkillsByMode[mode];
+        const idx = skills.indexOf(name);
+        if (idx === -1) return prev;
+        return { ...prev, [mode]: prev[mode].filter((_, i) => i !== idx) };
+      });
+    } else {
+      setSelectedSkillsByMode((prev) => ({ ...prev, [mode]: [] }));
+      setSelectedSkillLabelsByMode((prev) => ({ ...prev, [mode]: [] }));
+    }
+  }, [selectedSkillsByMode]);
 
   // ── Chat context (chat-mode only) ────────────────────────────────────────
   const handleAttachContext = useCallback(() => setChatPickerOpen(true), []);
@@ -1154,8 +1182,8 @@ const OverlayApp: React.FC = () => {
         if (isDifferentSpace) {
           spacesTurns.clearAll();
           setAttachedFilesByMode((p) => ({ ...p, spaces: [] }));
-          setSelectedSkillByMode((p) => ({ ...p, spaces: null }));
-          setSelectedSkillLabelByMode((p) => ({ ...p, spaces: null }));
+          setSelectedSkillsByMode((p) => ({ ...p, spaces: [] }));
+          setSelectedSkillLabelsByMode((p) => ({ ...p, spaces: [] }));
           setClarificationAnswersByMode((p) => ({ ...p, spaces: {} }));
           setInsertedSectionsByMode((p) => ({ ...p, spaces: new Set() }));
           setStreamingTurnIdxByMode((p) => ({ ...p, spaces: -1 }));
@@ -1282,8 +1310,8 @@ const OverlayApp: React.FC = () => {
                   isOnline={isOnline}
                   isAuthenticated={isAuthenticated}
                   attachedFiles={attachedFilesByMode.chat}
-                  selectedSkill={selectedSkillByMode.chat}
-                  selectedSkillLabel={selectedSkillLabelByMode.chat}
+                  selectedSkills={selectedSkillsByMode.chat}
+                  selectedSkillLabels={selectedSkillLabelsByMode.chat}
                   selectedChatId={selectedChatId}
                   selectedChatName={selectedChatName}
                   selectedSpaceId={null}
@@ -1362,8 +1390,8 @@ const OverlayApp: React.FC = () => {
                       isOnline={isOnline}
                       isAuthenticated={isAuthenticated}
                       attachedFiles={attachedFilesByMode.spaces}
-                      selectedSkill={selectedSkillByMode.spaces}
-                      selectedSkillLabel={selectedSkillLabelByMode.spaces}
+                      selectedSkills={selectedSkillsByMode.spaces}
+                      selectedSkillLabels={selectedSkillLabelsByMode.spaces}
                       selectedChatId={null}
                       selectedChatName=""
                       selectedSpaceId={selectedSpace.id}

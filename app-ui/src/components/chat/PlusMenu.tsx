@@ -8,7 +8,8 @@ interface PlusMenuProps {
   isOpen: boolean;
   onClose: () => void;
   onFilesSelected: (files: AttachedFile[]) => void;
-  onSkillSelected: (skillName: string) => void;
+  onSkillToggled: (skillName: string) => void;
+  activeSkills: string[];
   anchorRef: React.RefObject<HTMLButtonElement>;
 }
 
@@ -23,7 +24,8 @@ export const PlusMenu = ({
   isOpen,
   onClose,
   onFilesSelected,
-  onSkillSelected,
+  onSkillToggled,
+  activeSkills,
   anchorRef,
 }: PlusMenuProps) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -155,8 +157,9 @@ export const PlusMenu = ({
         ) : (
           <div className="py-1">
             <SkillPicker
-              onSelect={(name) => { onSkillSelected(name); setShowSkillPicker(false); onClose(); }}
-              onClose={() => setShowSkillPicker(false)}
+              onToggle={(name) => { onSkillToggled(name); }}
+              activeSkills={activeSkills}
+              onClose={() => { setShowSkillPicker(false); onClose(); }}
               className="static w-full shadow-none border-0 rounded-xl bg-transparent max-w-[320px]"
             />
           </div>

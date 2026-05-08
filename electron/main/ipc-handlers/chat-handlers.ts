@@ -55,6 +55,31 @@ export function isWeakMessage(content: string): boolean {
   return WEAK_PATTERNS.some(p => p.test(trimmed));
 }
 
+/** Patterns that identify greeting/small-talk openers. */
+const GREETING_PATTERNS = [
+  /^(hi|hello|hey|howdy|hiya|yo|sup|helo+|he+y+|h+i+)\b/i,
+  /^how\s+(are\s+(you|u)|r\s+u|is\s+it\s+going|have\s+you\s+been)/i,
+  /^what'?s\s+up/i,
+  /^good\s+(morning|afternoon|evening|day|night)/i,
+  /^greetings?\b/i,
+];
+
+/**
+ * Return a human-readable default title for messages that are too generic to
+ * pass to the LLM title generator, so the chat doesn't stay as "New Chat".
+ */
+export function classifyWeakMessage(content: string): string {
+  const trimmed = content.trim();
+  if (GREETING_PATTERNS.some(p => p.test(trimmed))) return 'Greeting';
+  return 'New Chat';
+}
+
+/**
+ * Titles that are considered generic/placeholder and eligible for replacement
+ * when a better signal arrives in a follow-up message.
+ */
+export const GENERIC_TITLES = new Set(['New Chat', 'Greeting']);
+
 /**
  * Build the prompt string to send to /generate-title.
  * Returns null if the message is too generic — in that case use "New Chat".
@@ -339,6 +364,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization to DB:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-legacy' } });
                 }
             }
 
@@ -357,7 +383,7 @@ export function registerChatHandlers(
             console.error('[Chat] Optimization failed:', error);
             if (appWindowManager) {
                 appWindowManager.send('optimization-error', {
-                    error: error instanceof Error ? error.message : 'Unknown error',
+                    error: humanizeLlmError(error),
                     source,
                 });
             }
@@ -499,7 +525,7 @@ export function registerChatHandlers(
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Failed to rename chat:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const errorMessage = 'Something went wrong. Please try again.';
             if (appWindowManager) {
                 appWindowManager.send('chat-rename-error', { chatId: data.chatId, error: errorMessage });
             }
@@ -521,7 +547,7 @@ export function registerChatHandlers(
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Failed to delete chat:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            const errorMessage = 'Something went wrong. Please try again.';
             if (appWindowManager) {
                 appWindowManager.send('chat-delete-error', { chatId, error: errorMessage });
             }
@@ -631,40 +657,45 @@ export function registerChatHandlers(
                 if (!authState.isAuthenticated) {
                     throw new Error('User must be authenticated to create chat');
                 }
-            // Create the chat immediately with a placeholder title so the user
-            // sees something in the sidebar right away.
-            const titlePrompt = buildTitlePrompt(data.content, attachedFiles);
-            const placeholderTitle = titlePrompt
-              ? data.content.trim().split(/\s+/).slice(0, 4).join(' ') || titlePrompt.split(/\s+/).slice(0, 4).join(' ')
-              : 'New Chat';
-            chat = await chatService.createChat(placeholderTitle);
-            chatId = chat.id;
-
-            // Fire-and-forget: generate a smart title in the background.
-            // Only triggered when there is meaningful user input to work from.
-            if (titlePrompt) {
-                (async () => {
-                    try {
-                        const smartTitle = await pythonClient.generateTitle(titlePrompt);
-                        if (smartTitle && smartTitle !== placeholderTitle) {
-                            await chatService.updateChatTitle(chatId!, smartTitle);
-                            // Push the rename to the sidebar immediately
-                            if (appWindowManager) {
-                                appWindowManager.send('chat-renamed', {
-                                    chatId: chatId!,
-                                    title: smartTitle,
-                                });
-                            }
-                            console.log(`[Chat] Smart title generated: "${smartTitle}"`);
-                        }
-                    } catch (err) {
-                        console.warn('[Chat] Smart title generation failed (non-critical):', err);
-                    }
-                })();
-            }
+                // Use first 4 words as a visible placeholder; LLM title arrives shortly after.
+                const placeholderTitle = data.content.trim().split(/\s+/).slice(0, 4).join(' ') || 'New Chat';
+                chat = await chatService.createChat(placeholderTitle);
+                chatId = chat.id;
             } else {
                 chat = await chatService.getChat(chatId);
             }
+
+            // Fire-and-forget: update the title for every one of the first 3 user
+            // messages using the full conversation so far for the best context.
+            (async () => {
+                try {
+                    const prevUserMsgs = (await chatService.getMessages(chatId!))
+                        .filter(m => m.role === 'user');
+
+                    if (prevUserMsgs.length < 3) {
+                        const combinedContent = [
+                            ...prevUserMsgs.map(m => m.content),
+                            data.content,
+                        ].filter(s => s.trim()).join('\n').slice(0, 300);
+
+                        if (combinedContent.trim()) {
+                            const smartTitle = await pythonClient.generateTitle(combinedContent);
+                            if (smartTitle && smartTitle !== 'New Chat') {
+                                await chatService.updateChatTitle(chatId!, smartTitle);
+                                if (appWindowManager) {
+                                    appWindowManager.send('chat-renamed', {
+                                        chatId: chatId!,
+                                        title: smartTitle,
+                                    });
+                                }
+                                console.log(`[Chat] Title updated (msg ${prevUserMsgs.length + 1}/3): "${smartTitle}"`);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[Chat] Title generation failed (non-critical):', err);
+                }
+            })();
 
             // ── Insert message + notify renderer FIRST, upload in background ──
             // Strategy: DB INSERT with file metadata (no URLs) → fire message-sent
@@ -877,6 +908,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-stream' } });
                 }
             }
 
@@ -1017,6 +1049,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-clarify' } });
                 }
             }
 
@@ -1203,6 +1236,7 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
+                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-regen' } });
                 }
             }
 

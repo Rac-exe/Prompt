@@ -2,8 +2,10 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import * as Sentry from "@sentry/react";
 import {
   Sparkle,
-  PaperPlaneRight,
   ArrowRight,
+  ArrowLeft,
+  CaretRight,
+  CaretLeft,
   CheckSquare,
   Square,
   PencilSimpleLine,
@@ -271,20 +273,39 @@ export const ClarificationCard = ({
     return ta;
   });
   const [extraNotes, setExtraNotes] = useState(() => initialAnswers?.["Additional context"] || "");
-  const hasInitialAnswers = !!initialAnswers;
-  const [visibleCount, setVisibleCount] = useState(hasInitialAnswers ? questions.length + 1 : 0);
   const [submitted, setSubmitted] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
+  // Stepper: 0..questions.length-1 = individual questions, questions.length = final step
+  const totalSteps = questions.length + 1;
+  const [currentStep, setCurrentStep] = useState(0);
+  const [direction, setDirection] = useState<'forward' | 'back'>('forward');
+  const isFinalStep = currentStep === questions.length;
+
+  const goNext = useCallback(() => {
+    if (currentStep < questions.length) {
+      setDirection('forward');
+      setCurrentStep((s) => s + 1);
+    }
+  }, [currentStep, questions.length]);
+
+  const goPrev = useCallback(() => {
+    if (currentStep > 0) {
+      setDirection('back');
+      setCurrentStep((s) => s - 1);
+    }
+  }, [currentStep]);
+
   useEffect(() => {
-    if (hasInitialAnswers) return;
-    if (visibleCount >= questions.length + 1) return;
-    const timer = setTimeout(
-      () => setVisibleCount((c) => c + 1),
-      visibleCount === 0 ? 150 : 120
-    );
-    return () => clearTimeout(timer);
-  }, [visibleCount, questions.length, hasInitialAnswers]);
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [goNext, goPrev]);
 
   const isDeliveryQuestion = useCallback((q: ClarifyQuestion) => {
     return (
@@ -380,6 +401,8 @@ export const ClarificationCard = ({
 
   if (submitted) return null;
 
+  const currentQ = currentStep < questions.length ? questions[currentStep] : null;
+
   return (
     <div className={cn(
       compact ? "px-2 py-2 w-full" : "flex gap-3 px-4 py-3 max-w-4xl mx-auto w-full"
@@ -397,24 +420,34 @@ export const ClarificationCard = ({
         )}>
           {/* ── Header ── */}
           <div className={compact ? "px-3.5 pt-3 pb-2" : "px-5 pt-4 pb-3"}>
-            <div className="flex items-center gap-2">
-              <Sparkle
-                size={compact ? 13 : 15}
-                weight="fill"
-                className="text-amber-500 animate-[spin_3s_linear_infinite]"
-              />
-              <h3 className={cn(
-                "font-semibold text-foreground tracking-tight",
-                compact ? "text-[12px]" : "text-[13px]"
-              )}>
-                Let's dial this in
-              </h3>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkle
+                  size={compact ? 13 : 15}
+                  weight="fill"
+                  className="text-amber-500 animate-[spin_3s_linear_infinite]"
+                />
+                <h3 className={cn(
+                  "font-semibold text-foreground tracking-tight",
+                  compact ? "text-[12px]" : "text-[13px]"
+                )}>
+                  Let's dial this in
+                </h3>
+              </div>
+              {questions.length > 1 && (
+                <span className={cn(
+                  "text-muted-foreground/50 font-medium tabular-nums",
+                  compact ? "text-[10px]" : "text-[11px]"
+                )}>
+                  {Math.min(currentStep + 1, questions.length)} / {questions.length}
+                </span>
+              )}
             </div>
             <p className={cn(
               "text-muted-foreground/70 mt-0.5",
               compact ? "text-[10px] ml-[21px]" : "text-[11px] ml-[23px]"
             )}>
-              Pick all that apply — select multiple if you want
+              {isFinalStep ? "Almost done — anything to add?" : "Pick all that apply — select multiple if you want"}
             </p>
           </div>
 
@@ -424,17 +457,24 @@ export const ClarificationCard = ({
               "flex items-center gap-1.5",
               compact ? "px-3.5 pb-2" : "px-5 pb-3"
             )}>
-              {questions.map((q) => {
+              {questions.map((q, i) => {
                 const hasAnswer =
                   q.type === "multiple_choice"
                     ? (selections[q.id]?.size ?? 0) > 0 || otherActive[q.id]
                     : !!textAnswers[q.id];
+                const isCurrent = i === currentStep;
                 return (
                   <div
                     key={q.id}
                     className={cn(
                       "h-1 rounded-full transition-all duration-500",
-                      hasAnswer ? "bg-primary flex-[2]" : "bg-border/60 flex-1"
+                      isCurrent
+                        ? "bg-primary/60 flex-[2]"
+                        : hasAnswer
+                          ? "bg-primary flex-[2]"
+                          : i < currentStep
+                            ? "bg-border flex-1"
+                            : "bg-border/60 flex-1"
                     )}
                   />
                 );
@@ -442,30 +482,30 @@ export const ClarificationCard = ({
             </div>
           )}
 
-          {/* ── Questions ── */}
+          {/* ── Step content ── */}
           <div className={cn(
-            compact ? "px-3.5 pb-1.5 space-y-3.5" : "px-5 pb-2 space-y-5"
+            compact ? "px-3.5 pb-1.5" : "px-5 pb-2"
           )}>
-            {questions.map((q, i) => (
+            {currentQ ? (
               <div
-                key={q.id}
+                key={currentQ.id}
                 className={cn(
-                  "transition-all duration-[400ms] ease-[cubic-bezier(0.16,1,0.3,1)]",
-                  i < visibleCount
-                    ? "opacity-100 translate-y-0"
-                    : "opacity-0 translate-y-3 pointer-events-none"
+                  "transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
+                  direction === 'forward'
+                    ? "animate-[slideInRight_300ms_ease-out]"
+                    : "animate-[slideInLeft_300ms_ease-out]"
                 )}
               >
                 <p className={cn(
                   "font-medium text-foreground leading-snug",
                   compact ? "text-[12px] mb-2" : "text-[13px] mb-2.5"
                 )}>
-                  {q.question}
+                  {currentQ.question}
                 </p>
 
-                {q.type === "multiple_choice" && q.options.length > 0 ? (
+                {currentQ.type === "multiple_choice" && currentQ.options.length > 0 ? (
                   <OptionGroup
-                    q={q}
+                    q={currentQ}
                     compact={compact}
                     selections={selections}
                     otherActive={otherActive}
@@ -479,11 +519,11 @@ export const ClarificationCard = ({
                   <input
                     type="text"
                     placeholder="Type your answer..."
-                    value={textAnswers[q.id] || ""}
+                    value={textAnswers[currentQ.id] || ""}
                     onChange={(e) =>
                       setTextAnswers((prev) => ({
                         ...prev,
-                        [q.id]: e.target.value,
+                        [currentQ.id]: e.target.value,
                       }))
                     }
                     className={cn(
@@ -492,79 +532,107 @@ export const ClarificationCard = ({
                     )}
                   />
                 )}
-              </div>
-            ))}
 
-            {/* ── Suggested sections ── */}
-            {isComplex && suggestedSections.length > 0 && (
-              <div
-                className={cn(
-                  "flex items-start gap-2.5 rounded-xl bg-emerald-500/[0.05] border border-emerald-500/10 transition-all duration-[400ms]",
-                  compact ? "px-2.5 py-2" : "px-3.5 py-3",
-                  visibleCount > 0
-                    ? "opacity-100 translate-y-0"
-                    : "opacity-0 translate-y-3"
-                )}
-              >
-                <ListChecks
-                  size={compact ? 13 : 15}
-                  weight="duotone"
-                  className="text-emerald-600 dark:text-emerald-400 mt-px flex-shrink-0"
-                />
+                {/* ── Nav row ── */}
                 <div className={cn(
-                  "leading-relaxed text-muted-foreground",
-                  compact ? "text-[10px]" : "text-[11px]"
+                  "flex items-center justify-between",
+                  compact ? "mt-3 pt-2" : "mt-4 pt-2.5",
+                  "border-t border-border/20"
                 )}>
-                  <span className="font-medium text-foreground">
-                    Suggested build flow:{" "}
-                  </span>
-                  {suggestedSections.map((s, i) => (
-                    <span key={i}>
-                      <span className="text-foreground/80">{s}</span>
-                      {i < suggestedSections.length - 1 && (
-                        <span className="mx-1 text-muted-foreground/40">→</span>
-                      )}
-                    </span>
-                  ))}
+                  <button
+                    type="button"
+                    onClick={goPrev}
+                    disabled={currentStep === 0}
+                    className={cn(
+                      "inline-flex items-center gap-1 transition-colors",
+                      compact ? "text-[10px]" : "text-[11px]",
+                      currentStep === 0
+                        ? "text-muted-foreground/20 cursor-default"
+                        : "text-muted-foreground/60 hover:text-foreground"
+                    )}
+                  >
+                    <CaretLeft size={compact ? 10 : 12} weight="bold" />
+                    Back
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={goNext}
+                    className={cn(
+                      "inline-flex items-center gap-1 font-medium transition-colors",
+                      compact ? "text-[10px]" : "text-[11px]",
+                      "text-muted-foreground/60 hover:text-foreground"
+                    )}
+                  >
+                    {currentStep < questions.length - 1 ? "Next" : "Finish"}
+                    <CaretRight size={compact ? 10 : 12} weight="bold" />
+                  </button>
                 </div>
               </div>
-            )}
-
-            {/* ── Anything else box ── */}
-            <div
-              className={cn(
-                "transition-all duration-[400ms] ease-[cubic-bezier(0.16,1,0.3,1)]",
-                visibleCount >= questions.length
-                  ? "opacity-100 translate-y-0"
-                  : "opacity-0 translate-y-3 pointer-events-none"
-              )}
-            >
-              <textarea
-                placeholder="Anything else on your mind? Describe freely..."
-                value={extraNotes}
-                onChange={(e) => setExtraNotes(e.target.value)}
-                rows={compact ? 1 : 2}
-                className={cn(
-                  "w-full border border-dashed border-border/50 bg-muted/20 focus:border-primary/30 focus:bg-background focus:border-solid focus:outline-none focus:ring-1 focus:ring-primary/15 text-foreground placeholder:text-muted-foreground/35 transition-all resize-none",
-                  compact ? "px-2.5 py-2 text-[11px] rounded-lg" : "px-3.5 py-2.5 text-xs rounded-xl"
+            ) : (
+              /* ── Final step: "Anything else?" + suggested sections ── */
+              <div
+                key="final-step"
+                className="animate-[slideInRight_300ms_ease-out]"
+              >
+                {isComplex && suggestedSections.length > 0 && (
+                  <div
+                    className={cn(
+                      "flex items-start gap-2.5 rounded-xl bg-emerald-500/[0.05] border border-emerald-500/10 mb-3",
+                      compact ? "px-2.5 py-2" : "px-3.5 py-3"
+                    )}
+                  >
+                    <ListChecks
+                      size={compact ? 13 : 15}
+                      weight="duotone"
+                      className="text-emerald-600 dark:text-emerald-400 mt-px flex-shrink-0"
+                    />
+                    <div className={cn(
+                      "leading-relaxed text-muted-foreground",
+                      compact ? "text-[10px]" : "text-[11px]"
+                    )}>
+                      <span className="font-medium text-foreground">
+                        Suggested build flow:{" "}
+                      </span>
+                      {suggestedSections.map((s, i) => (
+                        <span key={i}>
+                          <span className="text-foreground/80">{s}</span>
+                          {i < suggestedSections.length - 1 && (
+                            <span className="mx-1 text-muted-foreground/40">→</span>
+                          )}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 )}
-              />
-            </div>
+
+                <textarea
+                  placeholder="Anything else on your mind? Describe freely..."
+                  value={extraNotes}
+                  onChange={(e) => setExtraNotes(e.target.value)}
+                  rows={compact ? 1 : 2}
+                  className={cn(
+                    "w-full border border-dashed border-border/50 bg-muted/20 focus:border-primary/30 focus:bg-background focus:border-solid focus:outline-none focus:ring-1 focus:ring-primary/15 text-foreground placeholder:text-muted-foreground/35 transition-all resize-none",
+                    compact ? "px-2.5 py-2 text-[11px] rounded-lg" : "px-3.5 py-2.5 text-xs rounded-xl"
+                  )}
+                />
+              </div>
+            )}
           </div>
 
           {/* ── Footer ── */}
           <div
             className={cn(
-              "border-t border-border/30 flex items-center justify-between transition-all duration-500",
-              compact ? "px-3.5 py-2" : "px-5 py-3",
-              visibleCount >= questions.length
-                ? "opacity-100"
-                : "opacity-0"
+              "border-t border-border/30 flex items-center justify-between",
+              compact ? "px-3.5 py-2" : "px-5 py-3"
             )}
           >
             <button
               type="button"
-              onClick={() => { Sentry.addBreadcrumb({ category: 'clarification', message: 'Clarification skipped', level: 'info', data: { questionCount: questions.length } }); onSkip(); }}
+              onClick={() => {
+                Sentry.addBreadcrumb({ category: 'clarification', message: 'Clarification skipped', level: 'info', data: { questionCount: questions.length, currentStep } });
+                onSkip();
+              }}
               className={cn(
                 "inline-flex items-center gap-1 text-muted-foreground/50 hover:text-muted-foreground transition-colors",
                 compact ? "text-[10px]" : "text-[11px]"
@@ -574,20 +642,38 @@ export const ClarificationCard = ({
               <ArrowRight size={compact ? 9 : 10} weight="bold" />
             </button>
 
-            <button
-              type="button"
-              onClick={handleSubmit}
-              className={cn(
-                "inline-flex items-center gap-1.5 font-semibold transition-all duration-200",
-                compact ? "px-3 py-1.5 rounded-lg text-[11px]" : "px-4 py-2 rounded-xl text-xs",
-                answeredCount > 0
-                  ? "bg-primary text-primary-foreground shadow-sm hover:shadow-md hover:brightness-110 active:scale-[0.97]"
-                  : "bg-primary/80 text-primary-foreground/80"
-              )}
-            >
-              <Lightning size={compact ? 11 : 13} weight="fill" />
-              {submitLabel}
-            </button>
+            {isFinalStep ? (
+              <button
+                type="button"
+                onClick={handleSubmit}
+                className={cn(
+                  "inline-flex items-center gap-1.5 font-semibold transition-all duration-200",
+                  compact ? "px-3 py-1.5 rounded-lg text-[11px]" : "px-4 py-2 rounded-xl text-xs",
+                  answeredCount > 0
+                    ? "bg-primary text-primary-foreground shadow-sm hover:shadow-md hover:brightness-110 active:scale-[0.97]"
+                    : "bg-primary/80 text-primary-foreground/80"
+                )}
+              >
+                <Lightning size={compact ? 11 : 13} weight="fill" />
+                {submitLabel}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={goPrev}
+                disabled={currentStep === 0}
+                className={cn(
+                  "inline-flex items-center gap-1 transition-colors",
+                  compact ? "text-[10px]" : "text-[11px]",
+                  currentStep === 0
+                    ? "text-transparent cursor-default pointer-events-none"
+                    : "text-muted-foreground/50 hover:text-muted-foreground"
+                )}
+              >
+                <ArrowLeft size={compact ? 9 : 10} weight="bold" />
+                Previous
+              </button>
+            )}
           </div>
         </div>
       </div>

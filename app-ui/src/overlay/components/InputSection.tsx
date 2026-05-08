@@ -201,13 +201,12 @@ const AttachmentsRow: React.FC<AttachmentsRowProps> = ({ files, onRemove }) => {
 // ── Skill Pill ───────────────────────────────────────────────────────────────
 
 interface SkillPillProps {
-  skill: string | null;
-  skillLabel: string | null;
+  skill: string;
+  skillLabel: string;
   onRemove: () => void;
 }
 
 const SkillPill: React.FC<SkillPillProps> = ({ skill, skillLabel, onRemove }) => {
-  if (!skill) return null;
   const iconPath = SKILL_ICON_SVGS[skill] || DEFAULT_SKILL_ICON;
   return (
     <div className="skill-pill" style={{ display: 'inline-flex' }}>
@@ -345,8 +344,8 @@ interface InputSectionProps {
   isOnline: boolean;
   isAuthenticated: boolean;
   attachedFiles: AttachedFile[];
-  selectedSkill: string | null;
-  selectedSkillLabel: string | null;
+  selectedSkills: string[];
+  selectedSkillLabels: string[];
   selectedChatId: string | null;
   selectedChatName: string;
   /** Currently attached space (Spaces feature) — null when none. */
@@ -360,7 +359,7 @@ interface InputSectionProps {
   onAttachFiles: (files: AttachedFile[]) => void;
   onRemoveFile: (index: number) => void;
   onSelectSkill: (name: string, label: string) => void;
-  onRemoveSkill: () => void;
+  onRemoveSkill: (name?: string) => void;
   onAttachContext: () => void;
   onRemoveContext: () => void;
   onAttachSpace: () => void;
@@ -378,7 +377,7 @@ interface InputSectionProps {
 
 const InputSection: React.FC<InputSectionProps> = ({
   isOptimizing, isOnline, isAuthenticated,
-  attachedFiles, selectedSkill, selectedSkillLabel,
+  attachedFiles, selectedSkills, selectedSkillLabels,
   selectedChatId, selectedChatName,
   selectedSpaceId, selectedSpaceName, selectedSpaceStatus,
   skills,
@@ -660,8 +659,15 @@ const InputSection: React.FC<InputSectionProps> = ({
               <span className="pro-mode-tooltip">You don't need any other mode !!</span>
             </div>
 
-            {/* Skill pill */}
-            <SkillPill skill={selectedSkill} skillLabel={selectedSkillLabel} onRemove={onRemoveSkill} />
+            {/* Skill pills */}
+            {selectedSkills.map((skill, idx) => (
+              <SkillPill
+                key={skill}
+                skill={skill}
+                skillLabel={selectedSkillLabels[idx] || skill}
+                onRemove={() => onRemoveSkill(skill)}
+              />
+            ))}
 
           </div>
 

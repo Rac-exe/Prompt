@@ -115,7 +115,7 @@ export const Sidebar = ({
 
   /* ── Chat row ─────────────────────────────────────────────── */
   const renderChatRow = (chat: { id: string; title: string; date: string }) => {
-    const isSelected = selectedChatId === chat.id;
+    const isSelected = currentView === "chat" && selectedChatId === chat.id;
     const isDropdownOpen = openDropdownChatId === chat.id;
 
     return (

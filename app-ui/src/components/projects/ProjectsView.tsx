@@ -198,6 +198,31 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
     setActiveSpaceId(newSpace.id);
   }, []);
 
+  // "New space" shortcut: open native folder dialog → use folder name as
+  // space name → create space with the folder already attached.
+  const handleCreateSpaceWithFolder = useCallback(async () => {
+    if (!api?.add) return;
+    const result = await api.add();
+    if (!result) return; // user cancelled dialog
+    const newSpace: Space = {
+      id: crypto.randomUUID(),
+      name: result.name,
+      projects: [{
+        projectId: result.id,
+        name: result.name,
+        localPath: result.local_path || '',
+        branch: result.current_branch,
+        indexStatus: result.index_status,
+      }],
+      messages: [],
+      projectMode: true,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+    };
+    setSpaces((prev) => [...prev, newSpace]);
+    setActiveSpaceId(newSpace.id);
+  }, [api]);
+
   const handleRenameSpace = useCallback((id: string, name: string) => {
     setSpaces((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
   }, []);
@@ -283,7 +308,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
         <Button
           size="lg"
           className="relative h-11 px-6 text-[13px] font-semibold gap-2 bg-emerald hover:bg-emerald/90 text-white rounded-xl shadow-glow-sm"
-          onClick={() => handleCreateSpace("My Space")}
+          onClick={handleCreateSpaceWithFolder}
         >
           <Folder size={16} weight="bold" />
           Create Your First Space
@@ -314,7 +339,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
         activeSpaceId={activeSpaceId}
         projectStatusMap={projectStatusMap}
         onSelectSpace={handleSelectSpace}
-        onCreateSpace={handleCreateSpace}
+        onCreateSpace={handleCreateSpaceWithFolder}
         onRenameSpace={handleRenameSpace}
         onDeleteSpace={handleDeleteSpace}
       />

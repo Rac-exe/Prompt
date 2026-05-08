@@ -78,6 +78,7 @@ export class PythonClient extends EventEmitter {
       await this.ensureConnection();
     } catch (error) {
       console.error('[PythonClient] Background connection failed:', error);
+      Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-connect' } });
     }
   }
 
@@ -89,7 +90,10 @@ export class PythonClient extends EventEmitter {
       this.ws = null;
       this.connectionPromise = null;
     }
-    this.connect().catch(e => console.error('[PythonClient] Reconnect failed:', e));
+    this.connect().catch(e => {
+      console.error('[PythonClient] Reconnect failed:', e);
+      Sentry.captureException(e, { tags: { component: 'python-client', op: 'ws-reconnect' } });
+    });
   }
 
   /** Builds the WS URL including the auth token as a query param when available. */
@@ -189,6 +193,7 @@ export class PythonClient extends EventEmitter {
             }
           } catch (error) {
             console.error('[PythonClient] Failed to parse message:', error);
+            Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-message-parse' } });
           }
         });
 
@@ -232,6 +237,13 @@ export class PythonClient extends EventEmitter {
     projectId: string | null = null,
     projectBranch: string | null = null,
   ): Promise<OptimizeResult> {
+    // The remote service enforces a 3-character minimum. Pad short inputs (e.g.
+    // "hi", "yo") so they reach the LLM and get a natural response instead of
+    // a hard-coded fallback or an error.
+    const effectivePrompt = prompt.trim().length < 3
+      ? prompt.trimEnd().padEnd(3, '!')
+      : prompt;
+
     await this.ensureConnection();
 
     const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -341,7 +353,7 @@ export class PythonClient extends EventEmitter {
 
         this.ws.send(JSON.stringify({
           request_id: requestId,
-          prompt,
+          prompt: effectivePrompt,
           previous_output: previousOutput || undefined,
           messages,
           mode,
@@ -359,6 +371,7 @@ export class PythonClient extends EventEmitter {
       } catch (error) {
         clearTimeout(timeoutId);
         this.activeRequests.delete(requestId);
+        Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-send' } });
         reject(error);
       }
     });

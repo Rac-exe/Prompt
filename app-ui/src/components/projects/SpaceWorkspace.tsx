@@ -21,12 +21,14 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { friendlyError } from "@/lib/ipc-error";
 import { MessageBubble, type Message } from "@/components/chat/MessageBubble";
 import { VersionNavigator } from "@/components/chat/VersionNavigator";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
 import { useMessageTree, type VersionInfo } from "@/hooks/useMessageTree";
 import type { Space, SpaceProject, SpaceMessage, RetrieveResult } from "./types";
-import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE } from "./types";
+import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE, loadSpaces, saveSpaces } from "./types";
+import { useAuth } from "@/context/AuthContext";
 import { IndexingProgressBar } from "./IndexingProgressBar";
 
 interface ProjectInfo {
@@ -109,6 +111,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const watchStartedRef = useRef<Set<string>>(new Set());
   const spaceRef = useRef(space);
   const onUpdateSpaceRef = useRef(onUpdateSpace);
+  // Tracks the latest accumulated text from the backend so we can persist it
+  // if the user navigates away before the stream finishes.
+  const lastAccumulatedRef = useRef<string>('');
   spaceRef.current = space;
   onUpdateSpaceRef.current = onUpdateSpace;
 
@@ -129,6 +134,15 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const pendingAssistantParentRef = useRef<string | null>(null);
   const pendingAssistantGroupIdRef = useRef<string | null>(null);
   const pendingAssistantVersionIdxRef = useRef<number>(0);
+
+  const { user } = useAuth();
+  const mountedRef = useRef(true);
+  const userIdRef = useRef(user?.profile?.id ?? null);
+  userIdRef.current = user?.profile?.id ?? null;
+
+  // Mark unmounted so the self-removing completion listener knows not to
+  // trigger the animation path (which requires the component to be alive).
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const api = (window as any).electronAPI?.project;
   const electronAPI = (window as any).electronAPI;
@@ -328,15 +342,84 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // ── Optimization stream ──────────────────────────────────────
   useEffect(() => {
     if (!electronAPI) return;
-    const c1 = electronAPI.onOptimizationChunk?.((d: any) => { if (d.source === 'space' && isStreamingRef.current) handleChunk(d.chunk, d.accumulated); });
-    const c2 = electronAPI.onOptimizationComplete?.((d: any) => { if (d.source === 'space' && isStreamingRef.current) handleFinalMessage({ id: crypto.randomUUID(), role: "assistant", content: d.optimized || "", timestamp: new Date() }); });
+
+    const c1 = electronAPI.onOptimizationChunk?.((d: any) => {
+      if (d.source === 'space' && isStreamingRef.current) {
+        lastAccumulatedRef.current = d.accumulated ?? '';
+        handleChunk(d.chunk, d.accumulated);
+      }
+    });
+
+    // The completion listener is intentionally self-removing so it survives
+    // component unmount. This ensures the AI response is always saved even
+    // when the user navigates away before (or during) streaming.
+    const c2Ref = { current: undefined as (() => void) | undefined };
+    const completionHandler = (d: any) => {
+      if (d.source !== 'space' || !isStreamingRef.current) return;
+      // Remove self immediately — prevents double-fire on re-registration.
+      c2Ref.current?.();
+      c2Ref.current = undefined;
+
+      lastAccumulatedRef.current = '';
+      isStreamingRef.current = false;
+      setIsGenerating(false);
+      const content = d.optimized || '';
+
+      if (mountedRef.current) {
+        // Component is alive — use the normal animation path.
+        handleFinalMessage({ id: crypto.randomUUID(), role: 'assistant', content, timestamp: new Date() });
+      } else {
+        // Component is gone — persist the response directly so it's there
+        // when the user comes back, regardless of whether ProjectsView is mounted.
+        if (!content) return;
+        const msg: SpaceMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content,
+          timestamp: Date.now(),
+          groupId: pendingAssistantGroupIdRef.current || crypto.randomUUID(),
+          versionIndex: pendingAssistantVersionIdxRef.current,
+        };
+        const updated: Space = {
+          ...spaceRef.current,
+          messages: [...spaceRef.current.messages, msg],
+          lastUsedAt: Date.now(),
+        };
+        // Update React state (no-op if ProjectsView also unmounted, but harmless).
+        onUpdateSpaceRef.current(updated);
+        // Write to localStorage so the data survives full tab navigation.
+        const uid = userIdRef.current;
+        const snapshot = loadSpaces(uid);
+        saveSpaces(snapshot.map(s => s.id === updated.id ? updated : s), uid);
+      }
+    };
+    c2Ref.current = electronAPI.onOptimizationComplete?.(completionHandler);
+
     const c3 = electronAPI.onOptimizationError?.((d: any) => {
       if (d.source !== 'space' || !isStreamingRef.current) return;
-      isStreamingRef.current = false; resetStreaming(); setIsGenerating(false);
+      c2Ref.current?.(); c2Ref.current = undefined;
+      lastAccumulatedRef.current = '';
+      isStreamingRef.current = false;
+      resetStreaming();
+      setIsGenerating(false);
       const cur = spaceRef.current;
-      onUpdateSpaceRef.current({ ...cur, messages: [...cur.messages, { id: crypto.randomUUID(), role: "assistant", content: `Optimization failed: ${d.error}`, timestamp: Date.now() }], lastUsedAt: Date.now() });
+      onUpdateSpaceRef.current({
+        ...cur,
+        messages: [...cur.messages, { id: crypto.randomUUID(), role: 'assistant' as const, content: "Something went wrong. Please try again.", timestamp: Date.now() }],
+        lastUsedAt: Date.now(),
+      });
     });
-    return () => { c1?.(); c2?.(); c3?.(); };
+
+    return () => {
+      c1?.();
+      c3?.();
+      // Only remove the completion listener if a stream is NOT in flight.
+      // If streaming is still active, leave it alive — it will self-remove
+      // once the response arrives and save it even after unmount.
+      if (!isStreamingRef.current) {
+        c2Ref.current?.();
+      }
+    };
   }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
 
   // ── Voice transcription IPC ──────────────────────────────────
@@ -410,7 +493,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     if (space.projects.length > 0) {
       tailoredPrompt = buildTailoredPrompt(rawQuery, allRanked, allRelated);
     }
-    isStreamingRef.current = true;
+    lastAccumulatedRef.current = '';
     startStreaming();
     electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
   }, [space.projects, api, electronAPI, startStreaming]);
@@ -426,6 +509,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       setVoiceState("idle");
     }
     setIsGenerating(true);
+    isStreamingRef.current = true; // Set before any async work so the completion
+    lastAccumulatedRef.current = ''; // listener survives navigation during retrieval.
     setInput("");
 
     // Generate IDs / version metadata up-front so the user message and the
@@ -468,7 +553,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantParentRef.current = null;
       pendingAssistantGroupIdRef.current = null;
       pendingAssistantVersionIdxRef.current = 0;
-      toast({ title: "Failed to process", description: e.message, variant: "destructive" });
+      toast({ title: "Failed to process", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     }
   }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI, messageTree]);
 
@@ -526,7 +611,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         toast({ title: "Folder attached", description: `${r.name} \u2014 indexing in background` });
       }
     } catch (e: any) {
-      toast({ title: "Failed to add folder", description: e.message, variant: "destructive" });
+      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'attach-folder' } });
+      toast({ title: "Couldn't attach folder", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     } finally {
       setAddingFolder(false);
     }
@@ -565,7 +651,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const s = await api.status(proj.projectId);
       if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s }));
     } catch (e: any) {
-      toast({ title: "Re-index failed", description: e.message, variant: "destructive" });
+      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'reindex' } });
+      toast({ title: "Re-index failed", description: friendlyError(e, "Something went wrong while indexing. Please restart the app and try again."), variant: "destructive" });
     } finally {
       setReindexingId(null);
     }
@@ -638,7 +725,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantParentRef.current = null;
       pendingAssistantGroupIdRef.current = null;
       pendingAssistantVersionIdxRef.current = 0;
-      toast({ title: "Edit failed", description: e.message, variant: "destructive" });
+      toast({ title: "Couldn't edit message", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     });
   }, [isGenerating, space, onUpdateSpace, runOptimization, resetStreaming, messageTree]);
 
@@ -682,7 +769,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantParentRef.current = null;
       pendingAssistantGroupIdRef.current = null;
       pendingAssistantVersionIdxRef.current = 0;
-      toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
+      toast({ title: "Couldn't regenerate", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     });
   }, [isGenerating, space, runOptimization, resetStreaming, messageTree]);
 
