@@ -101,6 +101,12 @@ export const ChatView = ({
     },
   );
 
+  useEffect(() => {
+    if (clarificationData) {
+      requestAnimationFrame(() => scrollToBottom());
+    }
+  }, [clarificationData, scrollToBottom]);
+
   // The "active project" concept lives in the Spaces section only — the new
   // chat screen is intentionally project-agnostic. Folder add/remove inside
   // a Space updates its own SpaceWorkspace UI; this view should never react
