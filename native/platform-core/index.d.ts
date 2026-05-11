@@ -2,6 +2,7 @@
 /* eslint-disable */
 /**
  * Check if the app has Accessibility permission (macOS).
+ * Uses the real AXIsProcessTrusted() API from ApplicationServices.
  * Always returns true on Windows and other platforms.
  */
 export declare function checkAccessibilityPermission(): boolean

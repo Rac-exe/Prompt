@@ -96,7 +96,9 @@ export class OverlayWindowManager {
       show: false,
       focusable: true,
       hasShadow: false,
-      ...(process.platform === 'darwin' ? { visibleOnAllWorkspaces: true } : {}),
+      ...(process.platform === 'darwin'
+        ? { type: 'panel' as any, visibleOnAllWorkspaces: true }
+        : {}),
       backgroundColor: '#00000000',
       webPreferences: {
         nodeIntegration: false,
@@ -327,19 +329,15 @@ export class OverlayWindowManager {
     if (!this.window || this.window.isDestroyed()) return;
     this.isOpen = true;
     if (process.platform === 'darwin') {
-      // macOS: when @prompt is typed, the source app (Cursor, browser, etc.)
-      // is the frontmost app and owns keyboard focus. To redirect keystrokes
-      // into the overlay's input we must:
-      //   1. Make Electron the frontmost app  -> app.focus({ steal: true })
-      //   2. Show + activate the overlay window itself -> show() (NOT showInactive)
-      //   3. Move it above any other Prmpt windows -> moveTop()
-      // showInactive() + moveTop() alone bring the window on top visually
-      // but leave keyboard focus on the source app, so typing keeps going
-      // there instead of the overlay input.
-      app.focus({ steal: true });
+      // macOS: the overlay is an NSPanel (type: 'panel') which can become the
+      // key window (accept keyboard input) WITHOUT activating the whole Prmpt
+      // app. This avoids bringing the main window forward, showing a dock icon,
+      // or appearing in Cmd-Tab — the overlay stays a lightweight floating panel
+      // like Spotlight or Raycast.
       this.window.show();
       this.window.moveTop();
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS app.focus + show + moveTop', level: 'info' });
+      this.window.focus();
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS panel show + moveTop + focus', level: 'info' });
     }
     Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
     analyticsService.logEvent('overlay_open');
@@ -356,15 +354,11 @@ export class OverlayWindowManager {
   private focusWindow() {
     if (!this.window || this.window.isDestroyed()) return;
     if (process.platform === 'darwin') {
-      // Re-focus path (e.g. when @prompt is typed while overlay is already
-      // open). Same reasoning as in showAndFocus(): we have to make Electron
-      // the frontmost app and then activate this BrowserWindow, otherwise
-      // keyboard focus stays on whatever the user just typed into.
-      app.focus({ steal: true });
-      this.window.show();
+      // NSPanel re-focus: bring to top and make key window. No app.focus()
+      // needed — the panel accepts keyboard input without app activation.
       this.window.focus();
       this.window.moveTop();
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS app.focus + show + focus + moveTop', level: 'info' });
+      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS panel focus + moveTop', level: 'info' });
     } else {
       const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
       const focused = forceFocusWindow(Number(overlayHwnd));

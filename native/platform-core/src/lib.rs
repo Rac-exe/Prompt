@@ -169,26 +169,16 @@ pub fn force_focus_window(hwnd: i64) -> bool {
 }
 
 /// Check if the app has Accessibility permission (macOS).
+/// Uses the real AXIsProcessTrusted() API from ApplicationServices.
 /// Always returns true on Windows and other platforms.
 #[napi]
 pub fn check_accessibility_permission() -> bool {
     #[cfg(target_os = "macos")]
     {
-        use std::process::Command;
-        // Use osascript to check AXIsProcessTrusted equivalent
-        let output = Command::new("osascript")
-            .args([
-                "-e",
-                "tell application \"System Events\" to get UI elements enabled",
-            ])
-            .output();
-        match output {
-            Ok(o) => {
-                let s = String::from_utf8_lossy(&o.stdout).trim().to_lowercase();
-                s == "true"
-            }
-            Err(_) => false,
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
         }
+        unsafe { AXIsProcessTrusted() }
     }
 
     #[cfg(not(target_os = "macos"))]
