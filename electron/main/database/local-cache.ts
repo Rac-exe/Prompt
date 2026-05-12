@@ -1,4 +1,5 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { app } from 'electron';
 
@@ -47,10 +48,10 @@ export interface CacheStore {
   collections: CachedCollection[];
   prompts: CachedPrompt[];
   chats: CachedChat[];
-  messages: Record<string, CachedMessage[]>; // keyed by chatId
-  settings: Record<string, any>; // keyed by userId
-  avatar: Record<string, string>; // keyed by userId, stores base64 data URL
-  lastSyncedAt: Record<string, string>; // table name -> ISO timestamp
+  messages: Record<string, CachedMessage[]>;
+  settings: Record<string, any>;
+  avatar: Record<string, string>;
+  lastSyncedAt: Record<string, string>;
 }
 
 const DEFAULT_STORE: CacheStore = {
@@ -69,11 +70,16 @@ const DEFAULT_STORE: CacheStore = {
  *
  * File location: {userData}/offline-cache/{userId}.json
  *
- * IMPORTANT: Uses lazy initialization so app.getPath('userData') is
- * called only after app.isReady(), not at module import time.
+ * Architecture:
+ *   - In-memory Map holds the authoritative CacheStore per userId.
+ *   - Reads always hit memory (microseconds) after the first disk load.
+ *   - Writes update memory immediately, then flush to disk asynchronously
+ *     so the main thread is never blocked by JSON serialization + I/O.
  */
 export class LocalCache {
   private _cacheDir: string | null = null;
+  private memCache: Map<string, CacheStore> = new Map();
+  private pendingFlush: Map<string, Promise<void>> = new Map();
 
   private get cacheDir(): string {
     if (!this._cacheDir) {
@@ -92,25 +98,74 @@ export class LocalCache {
   }
 
   load(userId: string): CacheStore {
+    const cached = this.memCache.get(userId);
+    if (cached) return cached;
+
+    let store: CacheStore;
     try {
       const path = this.cachePath(userId);
-      if (!existsSync(path)) return { ...DEFAULT_STORE };
-      const raw = readFileSync(path, 'utf-8');
-      const parsed = JSON.parse(raw);
-      // Merge with defaults to handle missing keys after upgrades
-      return { ...DEFAULT_STORE, ...parsed };
+      if (!existsSync(path)) {
+        store = { ...DEFAULT_STORE };
+      } else {
+        const raw = readFileSync(path, 'utf-8');
+        const parsed = JSON.parse(raw);
+        store = { ...DEFAULT_STORE, ...parsed };
+      }
     } catch (err) {
       console.error('[LocalCache] Error loading cache:', err);
-      return { ...DEFAULT_STORE };
+      store = { ...DEFAULT_STORE };
     }
+
+    this.memCache.set(userId, store);
+    return store;
+  }
+
+  private flushToDisk(userId: string): void {
+    const store = this.memCache.get(userId);
+    if (!store) return;
+
+    const path = this.cachePath(userId);
+    const flushPromise = writeFile(path, JSON.stringify(store), 'utf-8')
+      .catch(err => console.error('[LocalCache] Async flush error:', err))
+      .finally(() => {
+        if (this.pendingFlush.get(userId) === flushPromise) {
+          this.pendingFlush.delete(userId);
+        }
+      });
+    this.pendingFlush.set(userId, flushPromise);
   }
 
   save(userId: string, store: CacheStore): void {
-    try {
-      writeFileSync(this.cachePath(userId), JSON.stringify(store, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[LocalCache] Error saving cache:', err);
+    this.memCache.set(userId, store);
+    this.flushToDisk(userId);
+  }
+
+  /**
+   * Batch multiple field updates into a single load + save cycle.
+   * Prevents N separate disk reads/writes when setting chats, collections, and prompts together.
+   */
+  batchUpdate(userId: string, updates: Partial<Pick<CacheStore, 'chats' | 'collections' | 'prompts' | 'settings' | 'avatar'>>): void {
+    const store = this.load(userId);
+    const now = new Date().toISOString();
+    if (updates.chats !== undefined) {
+      store.chats = updates.chats;
+      store.lastSyncedAt['chats'] = now;
     }
+    if (updates.collections !== undefined) {
+      store.collections = updates.collections;
+      store.lastSyncedAt['collections'] = now;
+    }
+    if (updates.prompts !== undefined) {
+      store.prompts = updates.prompts;
+      store.lastSyncedAt['prompts'] = now;
+    }
+    if (updates.settings !== undefined) {
+      store.settings = updates.settings;
+    }
+    if (updates.avatar !== undefined) {
+      store.avatar = updates.avatar;
+    }
+    this.save(userId, store);
   }
 
   getCollections(userId: string): CachedCollection[] {
