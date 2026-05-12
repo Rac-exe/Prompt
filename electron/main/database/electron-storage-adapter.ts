@@ -5,7 +5,9 @@ import { app, safeStorage } from 'electron';
 /**
  * Custom storage adapter for Supabase in Electron main process.
  * Uses Electron's safeStorage API (OS keychain / DPAPI) to encrypt session
- * data at rest. Falls back to plaintext if safeStorage is unavailable.
+ * data at rest on Windows. On macOS, plaintext JSON is used because ad-hoc
+ * code signing causes Keychain prompts on every launch when the binary hash
+ * changes between builds.
  */
 export class ElectronStorageAdapter {
   private storagePath: string;
@@ -20,24 +22,37 @@ export class ElectronStorageAdapter {
       mkdirSync(storageDir, { recursive: true });
     }
 
-    this.encrypted = safeStorage.isEncryptionAvailable();
+    // macOS + ad-hoc signing = Keychain prompts on every launch.
+    // DPAPI on Windows doesn't have this problem, so encrypt only there.
+    this.encrypted = process.platform !== 'darwin' && safeStorage.isEncryptionAvailable();
     this.storagePath = join(storageDir, this.encrypted ? 'session.enc' : 'session.json');
-    this.legacyPath = join(storageDir, 'session.json');
+    this.legacyPath = join(storageDir, this.encrypted ? 'session.json' : 'session.enc');
 
-    // One-time migration: encrypt existing plaintext session.json
+    // On macOS: delete old encrypted file to avoid any Keychain interaction.
+    // User will simply need to log in again after upgrading from an encrypted build.
+    if (!this.encrypted && existsSync(join(storageDir, 'session.enc'))) {
+      try {
+        unlinkSync(join(storageDir, 'session.enc'));
+        console.log('[ElectronStorageAdapter] Removed old encrypted session (macOS ad-hoc migration)');
+      } catch {
+        // Non-fatal
+      }
+    }
+
+    // Migrate from plaintext → encrypted on Windows
     if (this.encrypted && existsSync(this.legacyPath) && !existsSync(this.storagePath)) {
       try {
         const plaintext = readFileSync(this.legacyPath, 'utf-8');
-        JSON.parse(plaintext); // validate before migrating
+        JSON.parse(plaintext);
         writeFileSync(this.storagePath, safeStorage.encryptString(plaintext));
         unlinkSync(this.legacyPath);
         console.log('[ElectronStorageAdapter] Migrated plaintext session to encrypted storage');
       } catch {
-        // Migration failure is non-fatal — we'll start fresh
+        // Migration failure is non-fatal
       }
     }
 
-    console.log('[ElectronStorageAdapter] Storage path:', this.storagePath, this.encrypted ? '(encrypted)' : '(plaintext)');
+    console.log('[ElectronStorageAdapter] Storage path:', this.storagePath, this.encrypted ? '(encrypted/DPAPI)' : '(plaintext)');
   }
 
   private readStore(): Record<string, string> {
