@@ -1528,9 +1528,23 @@ async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: li
             level="warning",
             data={"session_id": session_id, "error": str(e)},
         )
+        try:
+            await client_ws.send_json({
+                "type": "error",
+                "message": f"Transcription stream interrupted: {e.reason or 'connection lost'}",
+            })
+        except Exception:
+            pass
     except Exception as e:
         sentry_sdk.capture_exception(e)
         logger.error(f"[Deepgram] Relay error session={session_id}: {e}")
+        try:
+            await client_ws.send_json({
+                "type": "error",
+                "message": f"Transcription error: {e}",
+            })
+        except Exception:
+            pass
     finally:
         sentry_sdk.add_breadcrumb(
             category="transcription",
@@ -1592,7 +1606,7 @@ async def websocket_transcribe_stream(websocket: WebSocket):
                 message="Deepgram API key missing",
                 level="error",
             )
-            await websocket.send_json({"type": "error", "message": "Deepgram API key not configured"})
+            await websocket.send_json({"type": "error", "message": "Transcription unavailable: service API key not configured. Contact support."})
             await websocket.close(code=1011)
             transaction.set_status("unavailable")
             return
@@ -1610,6 +1624,13 @@ async def websocket_transcribe_stream(websocket: WebSocket):
                 dg_ws = await websockets.connect(dg_url, additional_headers=dg_headers)
             except Exception as e:
                 sentry_sdk.capture_exception(e)
+                err_str = str(e).lower()
+                if "401" in err_str or "403" in err_str or "unauthorized" in err_str:
+                    user_msg = "Transcription service is temporarily unavailable. Please try again shortly."
+                elif "timeout" in err_str or "timed out" in err_str:
+                    user_msg = "Transcription service unreachable. Try again in a moment."
+                else:
+                    user_msg = f"Transcription service connection failed: {e}"
                 sentry_sdk.add_breadcrumb(
                     category="transcription",
                     message="Deepgram connection failed",
@@ -1617,7 +1638,7 @@ async def websocket_transcribe_stream(websocket: WebSocket):
                     data={"session_id": session_id, "error": str(e)},
                 )
                 logger.error(f"[Deepgram] Failed to connect: {e}")
-                await websocket.send_json({"type": "error", "message": f"Deepgram connection failed: {e}"})
+                await websocket.send_json({"type": "error", "message": user_msg})
                 await websocket.close(code=1011)
                 transaction.set_status("internal_error")
                 return
