@@ -51,13 +51,39 @@ async function startLocalTranscription() {
       throw new Error('Microphone capture is not available in this window.');
     }
 
-    const stream = await mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    const devices = await mediaDevices.enumerateDevices();
+    const mics = devices.filter((d: any) => d.kind === 'audioinput');
+    ipcRenderer.send('transcription:debug', `audio devices: ${mics.length} mic(s) found`);
+
+    if (mics.length === 0) {
+      throw new Error(
+        'No microphone detected. Check System Preferences > Sound > Input.'
+      );
+    }
+
+    let stream: any;
+    try {
+      stream = await mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    } catch (mediaErr: any) {
+      const name = mediaErr?.name || 'UnknownError';
+      if (name === 'NotAllowedError') {
+        throw new Error('Microphone permission denied. Grant access in System Preferences > Privacy > Microphone.');
+      } else if (name === 'NotFoundError') {
+        throw new Error('Microphone not found. Ensure a microphone is connected and enabled.');
+      } else if (name === 'NotReadableError') {
+        throw new Error('Microphone is busy or unavailable. Close other apps using the mic and try again.');
+      }
+      throw new Error(`Microphone error (${name}): ${mediaErr?.message || 'unknown'}`);
+    }
+
+    const trackLabel = stream.getAudioTracks()?.[0]?.label || 'unknown';
+    ipcRenderer.send('transcription:debug', `mic acquired: "${trackLabel}"`);
 
     const mimeType = MR.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
@@ -80,7 +106,7 @@ async function startLocalTranscription() {
 
     activeRecorder = { stream, recorder };
 
-    ipcRenderer.send('transcription:debug', `mic started mimeType=${mimeType}`);
+    ipcRenderer.send('transcription:debug', `mic started mimeType=${mimeType} device="${trackLabel}"`);
     ipcRenderer.send('transcription:start', {
       sessionId: Date.now().toString(),
       sampleRate: 48000,
