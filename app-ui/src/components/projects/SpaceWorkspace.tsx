@@ -316,7 +316,13 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         if (s?.index_status === "stale" && p.localPath) {
           try {
             const alreadyScanning = await api.isScanning?.(p.projectId);
-            if (alreadyScanning) continue;
+            if (alreadyScanning) {
+              setProjectStatuses((prev) => ({
+                ...prev,
+                [p.projectId]: { ...prev[p.projectId], ...s, index_status: "indexing" } as ProjectInfo,
+              }));
+              continue;
+            }
             api.reindex(p.projectId, p.localPath).catch((err: unknown) => Sentry.captureException(err, { tags: { component: 'space-workspace' } }));
           } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
         }
