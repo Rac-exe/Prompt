@@ -311,14 +311,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         }
         return merged;
       });
-      // Auto-reindex stale projects on entry. Only kick this off based on the
-      // FRESHLY fetched value — relying on `merged` above would re-trigger
-      // every time we protect an `indexing` state.
       for (const p of space.projects) {
         const s = statuses[p.projectId];
         if (s?.index_status === "stale" && p.localPath) {
-          try { api.reindex(p.projectId, p.localPath).catch((err: unknown) => Sentry.captureException(err, { tags: { component: 'space-workspace' } })); }
-          catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
+          try {
+            const alreadyScanning = await api.isScanning?.(p.projectId);
+            if (alreadyScanning) continue;
+            api.reindex(p.projectId, p.localPath).catch((err: unknown) => Sentry.captureException(err, { tags: { component: 'space-workspace' } }));
+          } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
         }
       }
     };
