@@ -1024,6 +1024,7 @@ const electronAPI = {
     sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
     toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
     isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
+    isScanning: (projectId: string) => ipcRenderer.invoke('project:is-scanning', projectId),
     retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => ipcRenderer.invoke('project:retrieve', params),
     ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => ipcRenderer.invoke('project:ensure-fresh', projects),
     onStatusUpdate: (callback: (data: any) => void) => {
