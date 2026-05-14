@@ -516,10 +516,17 @@ mod macos {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use std::process::Command;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use objc::{msg_send, sel, sel_impl, class};
+    use cocoa::base::{id, nil};
+    use cocoa::foundation::NSString;
 
     const KVK_DELETE: u16 = 0x33;
     const KVK_RETURN: u16 = 0x24;
     const KVK_V: u16 = 0x09;
+
+    static RESTORE_CANCELLED: AtomicBool = AtomicBool::new(false);
+    static REPLACEMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
 
     fn activate_pid(pid: i32) -> bool {
         let script = format!(
@@ -533,42 +540,64 @@ mod macos {
             .unwrap_or(false)
     }
 
-    fn set_clipboard(text: &str) -> Option<String> {
-        let saved = Command::new("pbpaste")
-            .output()
-            .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string());
+    // ── NSPasteboard direct API ──────────────────────────────────────────────
 
-        let mut child = Command::new("pbcopy")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .ok()?;
-        if let Some(stdin) = child.stdin.as_mut() {
-            use std::io::Write;
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        let _ = child.wait();
-
-        saved
+    unsafe fn get_general_pasteboard() -> id {
+        msg_send![class!(NSPasteboard), generalPasteboard]
     }
 
-    fn restore_clipboard(saved: String) {
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let mut child = match Command::new("pbcopy")
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(_) => return,
-            };
-            if let Some(stdin) = child.stdin.as_mut() {
-                use std::io::Write;
-                let _ = stdin.write_all(saved.as_bytes());
+    fn clipboard_read() -> Option<String> {
+        unsafe {
+            let pb: id = get_general_pasteboard();
+            let ns_string_type: id = NSString::alloc(nil).init_str("public.utf8-plain-text");
+            let content: id = msg_send![pb, stringForType: ns_string_type];
+            if content == nil {
+                return None;
             }
-            let _ = child.wait();
+            let bytes: *const i8 = msg_send![content, UTF8String];
+            if bytes.is_null() {
+                return None;
+            }
+            Some(std::ffi::CStr::from_ptr(bytes).to_string_lossy().into_owned())
+        }
+    }
+
+    fn clipboard_write(text: &str) -> bool {
+        unsafe {
+            let pb: id = get_general_pasteboard();
+            let count_before: i64 = msg_send![pb, changeCount];
+            let _: i64 = msg_send![pb, clearContents];
+            let ns_string: id = NSString::alloc(nil).init_str(text);
+            let ns_string_type: id = NSString::alloc(nil).init_str("public.utf8-plain-text");
+            let success: bool = msg_send![pb, setString: ns_string forType: ns_string_type];
+            if !success {
+                eprintln!("[Replacement:macOS] NSPasteboard setString failed");
+                return false;
+            }
+            let count_after: i64 = msg_send![pb, changeCount];
+            if count_after == count_before {
+                eprintln!("[Replacement:macOS] NSPasteboard changeCount did not advance");
+                return false;
+            }
+            true
+        }
+    }
+
+    fn restore_clipboard(saved: String, generation: u64) {
+        RESTORE_CANCELLED.store(false, Ordering::SeqCst);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            if RESTORE_CANCELLED.load(Ordering::SeqCst) {
+                return;
+            }
+            if REPLACEMENT_GENERATION.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            clipboard_write(&saved);
         });
     }
+
+    // ── Key posting ──────────────────────────────────────────────────────────
 
     fn post_key(keycode: u16, key_down: bool, flags: CGEventFlags) {
         let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState).unwrap();
@@ -590,12 +619,17 @@ mod macos {
         post_key(KVK_V, false, CGEventFlags::CGEventFlagCommand);
     }
 
+    // ── Public replacement API ───────────────────────────────────────────────
+
     pub fn execute_replacement(anchor: AnchorData, text: &str) -> bool {
         let pid = anchor.handle as i32;
         if pid == 0 {
             eprintln!("[Replacement:macOS] Invalid PID");
             return false;
         }
+
+        let gen = REPLACEMENT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        RESTORE_CANCELLED.store(true, Ordering::SeqCst);
 
         if !activate_pid(pid) {
             eprintln!("[Replacement:macOS] Failed to activate PID {pid}");
@@ -607,15 +641,20 @@ mod macos {
 
         if text.is_empty() { return true; }
 
-        let saved = set_clipboard(text);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        let saved = clipboard_read();
+
+        if !clipboard_write(text) {
+            eprintln!("[Replacement:macOS] Failed to write to pasteboard — aborting paste");
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
 
         post_cmd_v();
 
         println!("[Replacement:macOS] Pasted {} chars into PID {pid}", text.chars().count());
 
         if let Some(saved) = saved {
-            restore_clipboard(saved);
+            restore_clipboard(saved, gen);
         }
 
         true
@@ -623,15 +662,25 @@ mod macos {
 
     pub fn paste_text_to_window_impl(pid: i32, text: &str) -> bool {
         if pid == 0 { return false; }
+
+        let gen = REPLACEMENT_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        RESTORE_CANCELLED.store(true, Ordering::SeqCst);
+
         activate_pid(pid);
         std::thread::sleep(std::time::Duration::from_millis(60));
 
-        let saved = set_clipboard(text);
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        let saved = clipboard_read();
+
+        if !clipboard_write(text) {
+            eprintln!("[Replacement:macOS] Failed to write to pasteboard — aborting paste");
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+
         post_cmd_v();
 
         if let Some(saved) = saved {
-            restore_clipboard(saved);
+            restore_clipboard(saved, gen);
         }
         true
     }

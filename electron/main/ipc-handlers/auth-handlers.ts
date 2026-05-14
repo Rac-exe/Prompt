@@ -215,39 +215,46 @@ async function _runHandleSuccessfulAuth(appWindowManager: AppWindowManager, cach
         console.log('[Auth] 📤 Sending authenticated state to renderer');
         appWindowManager.send('auth:state-changed', authPayload);
 
-        // 2. Load Chats (from Supabase if online, from cache if offline)
-        try {
-            if (networkMonitor.isOnline) {
-                const chats = await chatService.getChats();
-                appWindowManager.send('chats-loaded', { chats });
-                localCache.setChats(user.id, chats as any);
+        // 2. Load Chats + Prompt Library in parallel (independent network calls)
+        if (networkMonitor.isOnline) {
+            const [chatsResult, libraryResult] = await Promise.allSettled([
+                chatService.getChats(),
+                promptLibraryService.getFullLibrary(),
+            ]);
+
+            let chats: any[];
+            if (chatsResult.status === 'fulfilled') {
+                chats = chatsResult.value as any;
             } else {
-                const cachedChats = localCache.getChats(user.id);
-                appWindowManager.send('chats-loaded', { chats: cachedChats });
-                console.warn('[Auth] Offline — returning', cachedChats.length, 'cached chats');
+                chats = localCache.getChats(user.id);
             }
-        } catch (e) {
+            appWindowManager.send('chats-loaded', { chats });
+
+            let collections: any[] = [];
+            let prompts: any[] = [];
+            if (libraryResult.status === 'fulfilled') {
+                const library = libraryResult.value as any;
+                collections = library.collections || [];
+                prompts = library.prompts || [];
+                appWindowManager.send('prompt-library:loaded', library);
+            } else {
+                collections = localCache.getCollections(user.id);
+                prompts = localCache.getPrompts(user.id);
+                appWindowManager.send('prompt-library:loaded', { collections, prompts });
+            }
+
+            localCache.batchUpdate(user.id, {
+                chats: chats as any,
+                collections: collections as any,
+                prompts: prompts as any,
+            });
+        } else {
             const cachedChats = localCache.getChats(user.id);
             appWindowManager.send('chats-loaded', { chats: cachedChats });
-        }
-
-        // 3. Load Prompt Library (from Supabase if online, from cache if offline)
-        try {
-            if (networkMonitor.isOnline) {
-                const library = await promptLibraryService.getFullLibrary();
-                appWindowManager.send('prompt-library:loaded', library);
-                if (library.collections) localCache.setCollections(user.id, library.collections as any);
-                if (library.prompts) localCache.setPrompts(user.id, library.prompts as any);
-            } else {
-                const collections = localCache.getCollections(user.id);
-                const prompts = localCache.getPrompts(user.id);
-                appWindowManager.send('prompt-library:loaded', { collections, prompts });
-                console.warn('[Auth] Offline — returning cached prompt library');
-            }
-        } catch (e) {
             const collections = localCache.getCollections(user.id);
             const prompts = localCache.getPrompts(user.id);
             appWindowManager.send('prompt-library:loaded', { collections, prompts });
+            console.warn('[Auth] Offline — returning cached chats + library');
         }
 
         console.log('[Auth] ✅ User authenticated and data loaded');
