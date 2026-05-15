@@ -1,0 +1,143 @@
+{
+  "_doc": {
+    "purpose": "Hand-curated queries + expected answers for the /api/context retrieval evaluation. Metrics: File Recall@k, MRR, Line IoU (intersection-over-union on probable_line_start/end vs expected_line_range), prompt tokens, latency.",
+    "project_id_note": "Fill in real project_ids before running. Seed uses two placeholder projects: TEST_PROJECT_A (react/todo app), TEST_PROJECT_B (node/API service).",
+    "fields": {
+      "id":                    "stable test id for diffing",
+      "project_id":            "uuid of the indexed test project",
+      "query":                 "user query string, passed verbatim to /api/context",
+      "branch":                "optional branch filter",
+      "expected_files":        "list of file paths at least one of which MUST appear in ranked probable_locations",
+      "expected_line_range":   "optional [start,end]; used only for IoU on the first match",
+      "expected_concepts":     "optional list; at least one should appear in response.concepts",
+      "expected_intent":       "optional; compared to response.intent"
+    }
+  },
+  "cases": [
+    {
+      "id": "react-state-todo-001",
+      "project_id": "TEST_PROJECT_A",
+      "query": "state management issues in TodoContext",
+      "expected_files": ["src/context/TodoContext.tsx", "src/context/TodoContext.ts"],
+      "expected_line_range": [42, 98],
+      "expected_concepts": ["state-management"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "react-state-todo-002",
+      "project_id": "TEST_PROJECT_A",
+      "query": "toggle button on the todo item is not updating the state — clicking does nothing",
+      "expected_files": ["src/components/TodoItem.tsx"],
+      "expected_line_range": [20, 55],
+      "expected_concepts": ["state-management", "UI-rendering"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "react-auth-login-003",
+      "project_id": "TEST_PROJECT_A",
+      "query": "login form fails silently when password is wrong",
+      "expected_files": ["src/auth/LoginForm.tsx", "src/auth/useAuth.ts"],
+      "expected_concepts": ["auth", "error-handling"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "react-routing-protected-004",
+      "project_id": "TEST_PROJECT_A",
+      "query": "ProtectedRoute doesn't redirect unauthenticated users",
+      "expected_files": ["src/routes/ProtectedRoute.tsx"],
+      "expected_line_range": [10, 40],
+      "expected_concepts": ["routing", "auth"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "react-fetch-retry-005",
+      "project_id": "TEST_PROJECT_A",
+      "query": "how does the app retry failed fetches — I see duplicate requests",
+      "expected_files": ["src/api/client.ts", "src/hooks/useFetch.ts"],
+      "expected_concepts": ["data-fetching", "error-handling"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "react-render-list-006",
+      "project_id": "TEST_PROJECT_A",
+      "query": "add a 'Clear completed' button to the TodoList footer",
+      "expected_files": ["src/components/TodoList.tsx", "src/components/TodoFooter.tsx"],
+      "expected_concepts": ["UI-rendering", "state-management"],
+      "expected_intent": "feature"
+    },
+    {
+      "id": "react-perf-memo-007",
+      "project_id": "TEST_PROJECT_A",
+      "query": "TodoList re-renders on every keystroke in the input",
+      "expected_files": ["src/components/TodoList.tsx", "src/components/TodoInput.tsx"],
+      "expected_concepts": ["UI-rendering", "state-management"],
+      "expected_intent": "performance"
+    },
+    {
+      "id": "node-api-auth-008",
+      "project_id": "TEST_PROJECT_B",
+      "query": "JWT validation middleware rejects valid tokens after the secret rotation",
+      "expected_files": ["src/middleware/auth.ts", "src/middleware/jwt.ts"],
+      "expected_concepts": ["auth", "middleware", "security"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "node-api-db-009",
+      "project_id": "TEST_PROJECT_B",
+      "query": "user lookup by email is slow (full table scan)",
+      "expected_files": ["src/repos/userRepo.ts", "src/db/users.ts"],
+      "expected_line_range": [20, 80],
+      "expected_concepts": ["database", "performance"],
+      "expected_intent": "performance"
+    },
+    {
+      "id": "node-api-validation-010",
+      "project_id": "TEST_PROJECT_B",
+      "query": "POST /signup accepts empty password — where is body validation done?",
+      "expected_files": ["src/routes/signup.ts", "src/validation/user.ts"],
+      "expected_concepts": ["validation", "API", "auth"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "node-api-cache-011",
+      "project_id": "TEST_PROJECT_B",
+      "query": "redis cache keeps returning stale data after updates",
+      "expected_files": ["src/cache/redis.ts", "src/services/userService.ts"],
+      "expected_concepts": ["caching", "database"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "node-api-stacktrace-012",
+      "project_id": "TEST_PROJECT_B",
+      "query": "TypeError: Cannot read properties of undefined (reading 'id')\n    at getUserById (src/services/userService.ts:87:18)\n    at handleRequest (src/routes/users.ts:42:11)",
+      "expected_files": ["src/services/userService.ts"],
+      "expected_line_range": [79, 95],
+      "expected_concepts": ["error-handling", "database"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "node-api-webhook-013",
+      "project_id": "TEST_PROJECT_B",
+      "query": "GitHub webhook handler crashes on push events with no commits",
+      "expected_files": ["src/webhooks/github.ts"],
+      "expected_concepts": ["API", "error-handling"],
+      "expected_intent": "bug"
+    },
+    {
+      "id": "node-api-arch-014",
+      "project_id": "TEST_PROJECT_B",
+      "query": "how is request logging structured — I want to add a request_id to all logs",
+      "expected_files": ["src/middleware/logger.ts", "src/utils/logger.ts"],
+      "expected_concepts": ["logging", "middleware"],
+      "expected_intent": "architecture"
+    },
+    {
+      "id": "node-api-refactor-015",
+      "project_id": "TEST_PROJECT_B",
+      "query": "extract the duplicate auth check into a shared helper",
+      "expected_files": ["src/middleware/auth.ts"],
+      "expected_concepts": ["auth", "middleware"],
+      "expected_intent": "refactor"
+    }
+  ]
+}
