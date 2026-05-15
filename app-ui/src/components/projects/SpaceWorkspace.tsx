@@ -2,12 +2,13 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import * as Sentry from '@sentry/react';
 import {
   CircleNotch,
-  Sparkle, ArrowsClockwise, GitBranch,
+  ArrowsClockwise, GitBranch,
   FolderOpen, FolderPlus, FolderMinus,
   Trash, Clock, Square, CaretLeft,
   Microphone, MicrophoneSlash,
-  WarningCircle, Gear, ChatCircleText, ArrowDown,
+  WarningCircle, Gear, ChatCircleText, ArrowDown, Code,
 } from "@phosphor-icons/react";
+import { Logo } from "@/components/ui/Logo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -117,6 +118,16 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const lastAccumulatedRef = useRef<string>('');
   spaceRef.current = space;
   onUpdateSpaceRef.current = onUpdateSpace;
+
+  // Stable reference to projects — only changes when the project IDs or
+  // paths actually change, not when messages/lastUsedAt trigger a new
+  // space object. Prevents useEffects that depend on projects from
+  // re-running on every message save.
+  const projectsKey = useMemo(
+    () => space.projects.map(p => `${p.projectId}:${p.localPath}`).join(','),
+    [space.projects],
+  );
+  const stableProjects = useMemo(() => space.projects, [projectsKey]);
 
   // ── Message-tree refs (versioning) ─────────────────────────────────
   // The chat surface uses `useMessageTree` to model edit / regenerate
@@ -271,14 +282,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // ── Watch projects (start chokidar on enter) ─────────────────
   useEffect(() => {
     if (!api?.toggleWatching) return;
-    for (const proj of space.projects) {
+    for (const proj of stableProjects) {
       if (!proj.localPath || watchStartedRef.current.has(proj.projectId)) continue;
       watchStartedRef.current.add(proj.projectId);
       api.toggleWatching(proj.projectId, proj.localPath, true).catch((err: unknown) => {
         Sentry.captureException(err, { tags: { component: 'space-workspace' } });
       });
     }
-  }, [api, space.projects]);
+  }, [api, stableProjects]);
 
   // ── Initial status fetch + auto-reindex stale projects ───────
   // The merge here mirrors ProjectsView's: never let a fetched `stale` clobber
@@ -286,11 +297,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // status pill would flip Indexing → Stale within ~50ms of attaching a folder,
   // because the freshly-created backend row is `stale` until the Python worker
   // drains its queue.
+  //
+  // Uses `stableProjects` so this only fires on actual project list changes,
+  // NOT on every message save (which creates a new space object reference).
   useEffect(() => {
     if (!api) return;
     const load = async () => {
       const statuses: Record<string, ProjectInfo> = {};
-      for (const p of space.projects) {
+      for (const p of stableProjects) {
         try { const s = await api.status(p.projectId); if (s) statuses[p.projectId] = s; }
         catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
       }
@@ -304,8 +318,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
             existing.index_status === "indexing" &&
             (fresh.index_status === "stale" || fresh.index_status === "error")
           ) {
-            // Preserve in-flight indexing — adopt fresh metadata (branch,
-            // last_indexed_at, etc.) but keep our known status.
             merged[id] = { ...fresh, index_status: "indexing" };
           } else {
             merged[id] = { ...existing, ...fresh };
@@ -313,7 +325,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         }
         return merged;
       });
-      for (const p of space.projects) {
+      for (const p of stableProjects) {
         const s = statuses[p.projectId];
         if (s?.index_status === "stale" && p.localPath) {
           try {
@@ -331,21 +343,21 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       }
     };
     load();
-  }, [api, space.projects]);
+  }, [api, stableProjects]);
 
   // ── Live status broadcasts from main ─────────────────────────
   useEffect(() => {
     if (!api?.onStatusUpdate) return;
     const unsub = api.onStatusUpdate((data: any) => {
       if (!data?.projectId) return;
-      if (!space.projects.find((p) => p.projectId === data.projectId)) return;
+      if (!stableProjects.find((p) => p.projectId === data.projectId)) return;
       if (data.status) setProjectStatuses((prev) => ({
         ...prev,
         [data.projectId]: { ...prev[data.projectId], index_status: data.status } as ProjectInfo,
       }));
     });
     return () => unsub?.();
-  }, [api, space.projects]);
+  }, [api, stableProjects]);
 
   // ── Optimization stream ──────────────────────────────────────
   // These listeners stay alive for the lifetime of the component so they
@@ -942,25 +954,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         {/* Bottom toolbar — same skeleton as ChatView, minus Plus / Pro Mode */}
         <div className="flex items-center justify-between px-3 py-2.5">
           <div className="flex items-center gap-2 pl-1">
-            {/* Folder context pill — replaces the now-removed Pro Mode pill */}
-            {hasProject && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-muted/40 border border-border/30 text-[11px] font-medium text-muted-foreground/80 select-none">
-                    <FolderOpen size={11} weight="duotone" className="text-emerald" />
-                    <span className="max-w-[140px] truncate">{project!.name}</span>
-                    {indexStatus === "indexing" ? (
-                      <IndexingProgressBar className="ml-0.5" />
-                    ) : (
-                      <span className={cn("w-1.5 h-1.5 rounded-full ml-0.5", meta.dot)} />
-                    )}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Codebase context · {meta.label.toLowerCase()}
-                </TooltipContent>
-              </Tooltip>
-            )}
             {voiceState === "listening" && (
               <div className="flex items-center gap-1.5 ml-1 animate-fade-in">
                 <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
@@ -1109,8 +1102,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
               {/* ── Header: space name + (when attached) live folder chip ── */}
               <div className="px-3.5 pt-3.5 pb-3 border-b border-border/15 bg-muted/20">
                 <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-emerald/10 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-                    <Sparkle size={13} weight="duotone" className="text-emerald" />
+                  <div className="w-7 h-7 rounded-lg bg-muted/40 border border-border/30 flex items-center justify-center flex-shrink-0">
+                    <Gear size={13} weight="duotone" className="text-muted-foreground" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-[12.5px] font-semibold text-foreground tracking-tight truncate">
@@ -1267,40 +1260,24 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         // shadows, no floating decorative icons. Content is centred
         // both axes inside the now-correctly-full-width workspace.
         <div className="flex-1 flex items-center justify-center px-8">
-          <div className="flex flex-col items-center text-center">
-            <div className="w-16 h-16 rounded-2xl bg-emerald/10 border border-emerald/20 flex items-center justify-center mb-5">
-              <FolderPlus size={30} weight="duotone" className="text-emerald" />
-            </div>
-            <h2 className="text-[22px] font-semibold text-foreground tracking-tight">
+          <div className="flex flex-col items-center text-center max-w-sm">
+            <FolderPlus size={32} weight="duotone" className="text-muted-foreground/40 mb-4" />
+            <h2 className="text-lg font-semibold text-foreground tracking-tight">
               Attach a project folder
             </h2>
-            <p className="text-[13.5px] text-muted-foreground/70 mt-2.5 max-w-md leading-relaxed">
-              Folders added to <span className="font-semibold text-foreground/85">{space.name}</span> are
-              watched, indexed, and kept in sync — every prompt comes back
-              tailored to your codebase.
+            <p className="text-[13px] text-muted-foreground/60 mt-1.5 leading-relaxed">
+              Your codebase will be indexed and kept in sync so every prompt
+              is grounded in real code.
             </p>
             <Button
-              className="mt-6 h-10 px-5 text-[13px] font-semibold gap-2 bg-emerald hover:bg-emerald/90 text-white rounded-xl"
+              variant="outline"
+              className="mt-5 h-9 px-4 text-[12.5px] font-medium gap-2 rounded-lg"
               onClick={handleAddFolder}
               disabled={addingFolder}
             >
               {addingFolder ? <CircleNotch size={14} className="animate-spin" /> : <FolderOpen size={14} weight="bold" />}
               Select folder
             </Button>
-            <div className="flex items-center gap-5 mt-7 text-[11px] text-muted-foreground/55">
-              <span className="flex items-center gap-1.5">
-                <Sparkle size={12} weight="duotone" className="text-emerald/70" />
-                Always indexed
-              </span>
-              <span className="flex items-center gap-1.5">
-                <GitBranch size={12} weight="duotone" className="text-emerald/70" />
-                Branch-aware
-              </span>
-              <span className="flex items-center gap-1.5">
-                <Clock size={12} weight="duotone" className="text-emerald/70" />
-                Live watching
-              </span>
-            </div>
           </div>
         </div>
       ) : (
@@ -1309,62 +1286,50 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           <div className="flex-1 min-h-0 relative">
           <div className="h-full overflow-y-auto scrollbar-none" ref={scrollRef} onScroll={handleScroll}>
             <div className="max-w-5xl mx-auto px-8 py-8">
-              {/* Space header — only shows when there's no chat history yet,
-                  so the conversation view stays clean. */}
               {space.messages.length === 0 && !isGenerating && (
-                <div className="flex flex-col items-center text-center pt-10 pb-10">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald/10 border border-emerald/20 flex items-center justify-center mb-4 shadow-glow-sm">
-                    <Sparkle size={22} weight="duotone" className="text-emerald" />
-                  </div>
-                  <h1 className="text-[22px] font-semibold text-foreground tracking-tight">{space.name}</h1>
-                  <p className="text-[13.5px] text-muted-foreground/60 mt-2 max-w-lg leading-relaxed">
-                    Ask anything about <span className="text-foreground/85 font-semibold">{project!.name}</span> and
-                    you'll get a precise, codebase-grounded prompt back.
+                <div className="pt-[10%] pb-10">
+                  <Logo size="w-10 h-10" className="mb-5" />
+                  <h1 className="text-[26px] font-bold text-foreground tracking-tight leading-none">
+                    {space.name}
+                  </h1>
+                  <p className="text-[13.5px] text-muted-foreground/60 mt-2.5 max-w-md leading-relaxed">
+                    Ask anything about <span className="text-foreground/80 font-medium">{project!.name}</span> — prompts
+                    are grounded in your codebase.
                   </p>
 
-                  {/* Project meta strip — moved above suggestions so it sits
-                      visually attached to the title block instead of dangling
-                      at the bottom of a wide empty area. */}
-                  <div className="flex items-center gap-2 mt-5 text-[10.5px] text-muted-foreground/55 font-medium flex-wrap justify-center">
-                    <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/20">
+                  <div className="flex items-center gap-3 mt-4 text-[11px] text-muted-foreground/50 font-medium">
+                    <span className="flex items-center gap-1.5">
                       <FolderOpen size={11} weight="duotone" />
                       {shortPath(project!.localPath)}
                     </span>
                     {(projectStatus?.current_branch || project!.branch) && (
-                      <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/20">
-                        <GitBranch size={10} weight="bold" />
-                        {projectStatus?.current_branch || project!.branch}
-                      </span>
+                      <>
+                        <span className="text-border">·</span>
+                        <span className="flex items-center gap-1">
+                          <GitBranch size={10} weight="bold" />
+                          {projectStatus?.current_branch || project!.branch}
+                        </span>
+                      </>
                     )}
-                    {projectStatus?.last_indexed_at && (
-                      <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/20">
-                        <Clock size={10} />
-                        Indexed {relativeTime(projectStatus.last_indexed_at)}
-                      </span>
+                    {indexStatus !== "indexing" && (
+                      <>
+                        <span className="text-border">·</span>
+                        <span className={cn("flex items-center gap-1.5", meta.color)}>
+                          <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
+                          {meta.label}
+                        </span>
+                      </>
                     )}
-                    <span className={cn(
-                      "flex items-center gap-1.5 px-2 py-1 rounded-md ring-1",
-                      meta.color, meta.ring,
-                    )}>
-                      {indexStatus === "indexing" ? (
-                        <IndexingProgressBar />
-                      ) : (
-                        <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
-                      )}
-                      {meta.label}
-                    </span>
                   </div>
 
-                  {/* Prominent full-width indeterminate bar when indexing.
-                      Anchored under the status strip in the empty state so
-                      the user immediately sees motion on first load of a
-                      new folder — prevents the "did it freeze?" panic. */}
                   {indexStatus === "indexing" && (
-                    <div className="mt-3 w-full max-w-sm mx-auto">
-                      <IndexingProgressBar variant="block" />
+                    <div className="flex items-center gap-3 mt-4">
+                      <IndexingProgressBar variant="block" className="w-32" />
+                      <span className="text-[11px] text-amber-500/70 font-medium animate-pulse">
+                        Scanning your codebase…
+                      </span>
                     </div>
                   )}
-
                 </div>
               )}
 

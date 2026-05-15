@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import * as Sentry from "@sentry/react";
 import { SpacesList } from "./SpacesList";
 import { SpaceWorkspace } from "./SpaceWorkspace";
-import { Sparkle, Folder, Lightning, Eye, Database } from "@phosphor-icons/react";
+import { Folder, CircleNotch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/ui/Logo";
 import type { Space, SpaceMessage } from "./types";
 import { loadSpaces, saveSpacesDebounced, flushSpacesSaves, toSpaceSummary } from "./types";
 import { useAuth } from "@/context/AuthContext";
@@ -22,6 +23,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
 
   const [spaces, setSpaces] = useState<Space[]>(() => loadSpaces(userId));
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(null);
+  const [isCreatingSpace, setIsCreatingSpace] = useState(false);
   // Map of projectId → live index status. Lives at this level (not in
   // SpacesList) so that a single live broadcast updates both the card grid
   // AND the workspace simultaneously. Without this, the card kept showing
@@ -198,30 +200,35 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
     setActiveSpaceId(newSpace.id);
   }, []);
 
-  // "New space" shortcut: open native folder dialog → use folder name as
-  // space name → create space with the folder already attached.
   const handleCreateSpaceWithFolder = useCallback(async () => {
-    if (!api?.add) return;
-    const result = await api.add();
-    if (!result) return; // user cancelled dialog
-    const newSpace: Space = {
-      id: crypto.randomUUID(),
-      name: result.name,
-      projects: [{
-        projectId: result.id,
+    if (!api?.add || isCreatingSpace) return;
+    setIsCreatingSpace(true);
+    try {
+      const result = await api.add();
+      if (!result) return; // user cancelled dialog
+      const newSpace: Space = {
+        id: crypto.randomUUID(),
         name: result.name,
-        localPath: result.local_path || '',
-        branch: result.current_branch,
-        indexStatus: result.index_status,
-      }],
-      messages: [],
-      projectMode: true,
-      createdAt: Date.now(),
-      lastUsedAt: Date.now(),
-    };
-    setSpaces((prev) => [...prev, newSpace]);
-    setActiveSpaceId(newSpace.id);
-  }, [api]);
+        projects: [{
+          projectId: result.id,
+          name: result.name,
+          localPath: result.local_path || '',
+          branch: result.current_branch,
+          indexStatus: result.index_status,
+        }],
+        messages: [],
+        projectMode: true,
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      };
+      setSpaces((prev) => [...prev, newSpace]);
+      setActiveSpaceId(newSpace.id);
+    } catch (err) {
+      Sentry.captureException(err, { tags: { component: "projects-view", op: "create-space-with-folder" } });
+    } finally {
+      setIsCreatingSpace(false);
+    }
+  }, [api, isCreatingSpace]);
 
   const handleRenameSpace = useCallback((id: string, name: string) => {
     setSpaces((prev) => prev.map((s) => (s.id === id ? { ...s, name } : s)));
@@ -293,40 +300,22 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
   /* ── No spaces → onboarding ────────────────────── */
   if (spaces.length === 0) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-6 relative overflow-hidden">
-        {/* Ambient gradient backdrop */}
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,hsl(var(--accent)/0.08),transparent_60%)]" />
-
-        <div className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald to-emerald/60 flex items-center justify-center mb-6 shadow-glow">
-          <Sparkle size={30} weight="fill" className="text-white" />
-        </div>
-        <h2 className="relative text-2xl font-semibold text-foreground mb-2 tracking-tight">Welcome to Spaces</h2>
-        <p className="relative text-[14px] text-muted-foreground/60 max-w-[420px] leading-relaxed mb-8">
-          Create a workspace, attach your project folders, and get tailored prompts
-          that understand your codebase.
+      <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+        <Logo size="w-12 h-12" className="mb-5" />
+        <h2 className="text-xl font-semibold text-foreground tracking-tight">
+          Create your first space
+        </h2>
+        <p className="text-[13.5px] text-muted-foreground/60 max-w-sm leading-relaxed mt-2 mb-6">
+          Attach a project folder and every prompt will be grounded in your codebase.
         </p>
         <Button
-          size="lg"
-          className="relative h-11 px-6 text-[13px] font-semibold gap-2 bg-emerald hover:bg-emerald/90 text-white rounded-xl shadow-glow-sm"
+          className="h-10 px-5 text-[13px] font-semibold gap-2 bg-foreground hover:bg-foreground/90 text-background rounded-lg"
           onClick={handleCreateSpaceWithFolder}
+          disabled={isCreatingSpace}
         >
-          <Folder size={16} weight="bold" />
-          Create Your First Space
+          {isCreatingSpace ? <CircleNotch size={14} className="animate-spin" /> : <Folder size={16} weight="bold" />}
+          New space
         </Button>
-        <div className="relative flex items-center gap-6 mt-10 text-[11px] text-muted-foreground/40 font-medium">
-          <span className="flex items-center gap-1.5">
-            <Lightning size={11} weight="fill" />
-            Codebase-aware
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Eye size={11} weight="fill" />
-            Live watching
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Database size={11} weight="fill" />
-            Semantic search
-          </span>
-        </div>
       </div>
     );
   }
@@ -342,6 +331,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
         onCreateSpace={handleCreateSpaceWithFolder}
         onRenameSpace={handleRenameSpace}
         onDeleteSpace={handleDeleteSpace}
+        isCreating={isCreatingSpace}
       />
     </div>
   );
