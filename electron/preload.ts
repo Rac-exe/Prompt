@@ -553,8 +553,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string) => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source, spaceId);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);
@@ -1025,6 +1025,7 @@ const electronAPI = {
     sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
     toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
     isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
+    isScanning: (projectId: string) => ipcRenderer.invoke('project:is-scanning', projectId),
     retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => ipcRenderer.invoke('project:retrieve', params),
     context: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => ipcRenderer.invoke('project:context', params),
     ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => ipcRenderer.invoke('project:ensure-fresh', projects),
@@ -1060,6 +1061,10 @@ const electronAPI = {
       ipcRenderer.on('spaces:apply-append', handler);
       return () => ipcRenderer.removeListener('spaces:apply-append', handler);
     },
+    /** Returns the in-progress stream state for a space if one is active,
+     *  or null if the space is idle. Used by SpaceWorkspace on mount to
+     *  resume rendering when the user navigates back mid-generation. */
+    getActiveStream: (spaceId: string) => ipcRenderer.invoke('spaces:get-active-stream', spaceId),
   },
 };
 

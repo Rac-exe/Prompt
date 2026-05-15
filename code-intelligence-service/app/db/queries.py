@@ -145,6 +145,13 @@ def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str], dict]:
     return lookup
 
 
+def _is_fk_violation(error: Exception) -> bool:
+    """Check if a Supabase/PostgREST error is a foreign-key violation (23503).
+    This means the parent row (project) was deleted mid-ingest."""
+    err_str = str(error)
+    return "23503" in err_str or "foreign key constraint" in err_str.lower()
+
+
 def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_SIZE) -> int:
     """Bulk upsert chunks in batches instead of one-at-a-time."""
     if not chunks_data:
@@ -169,6 +176,13 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_
                 f"{len(batch)} rows OK (total processed={processed})"
             )
         except Exception as e:
+            if _is_fk_violation(e):
+                project_id = batch[0].get("project_id", "unknown") if batch else "unknown"
+                logger.warning(
+                    f"[BATCH UPSERT] Project {project_id} was deleted mid-ingest "
+                    f"(FK violation at batch {batch_num}/{total_batches}), aborting"
+                )
+                break
             logger.error(
                 f"[BATCH UPSERT] Batch {batch_num}/{total_batches} failed ({e}), "
                 f"falling back to individual upserts for {len(batch)} rows"
@@ -180,7 +194,17 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_
                     ).execute()
                     processed += 1
                 except Exception as inner_e:
+                    if _is_fk_violation(inner_e):
+                        project_id = row.get("project_id", "unknown")
+                        logger.warning(
+                            f"[BATCH UPSERT] Project {project_id} deleted, "
+                            f"aborting remaining rows"
+                        )
+                        break
                     logger.error(f"[BATCH UPSERT] Single fallback failed for {row.get('name')}: {inner_e}")
+            else:
+                continue
+            break
     logger.info(f"[BATCH UPSERT] Complete: {processed}/{len(chunks_data)} rows processed")
     return processed
 

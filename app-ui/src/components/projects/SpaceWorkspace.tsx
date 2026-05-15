@@ -2,12 +2,13 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import * as Sentry from '@sentry/react';
 import {
   CircleNotch,
-  Sparkle, ArrowsClockwise, GitBranch,
+  ArrowsClockwise, GitBranch,
   FolderOpen, FolderPlus, FolderMinus,
   Trash, Clock, Square, CaretLeft,
   Microphone, MicrophoneSlash,
-  WarningCircle, Gear, ChatCircleText,
+  WarningCircle, Gear, ChatCircleText, ArrowDown, Code,
 } from "@phosphor-icons/react";
+import { Logo } from "@/components/ui/Logo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -25,6 +26,7 @@ import { friendlyError } from "@/lib/ipc-error";
 import { MessageBubble, type Message } from "@/components/chat/MessageBubble";
 import { VersionNavigator } from "@/components/chat/VersionNavigator";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
+import { useScrollController } from "@/hooks/useScrollController";
 import { useMessageTree, type VersionInfo } from "@/hooks/useMessageTree";
 import type { Space, SpaceProject, SpaceMessage, RetrieveResult, ContextResult, RetrievedChunk, ContextLocation } from "./types";
 import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE, loadSpaces, saveSpaces } from "./types";
@@ -189,6 +191,16 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   spaceRef.current = space;
   onUpdateSpaceRef.current = onUpdateSpace;
 
+  // Stable reference to projects — only changes when the project IDs or
+  // paths actually change, not when messages/lastUsedAt trigger a new
+  // space object. Prevents useEffects that depend on projects from
+  // re-running on every message save.
+  const projectsKey = useMemo(
+    () => space.projects.map(p => `${p.projectId}:${p.localPath}`).join(','),
+    [space.projects],
+  );
+  const stableProjects = useMemo(() => space.projects, [projectsKey]);
+
   // ── Message-tree refs (versioning) ─────────────────────────────────
   // The chat surface uses `useMessageTree` to model edit / regenerate
   // branches as siblings under a shared parent. Spaces now mirrors that
@@ -255,6 +267,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   messageTreeRef.current = messageTree;
 
   const handleStreamingComplete = useCallback((finalMessage: Message) => {
+    console.log('[SW:streamComplete] content length:', finalMessage.content.length, 'placeholder:', pendingPlaceholderRef.current, 'parent:', pendingAssistantParentRef.current);
     const finalId = finalMessage.id || crypto.randomUUID();
     const placeholder = pendingPlaceholderRef.current;
     const groupId = pendingAssistantGroupIdRef.current || crypto.randomUUID();
@@ -298,7 +311,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     isStreamingRef.current = false;
   }, []);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, resumeStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete,
   });
 
@@ -341,14 +354,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // ── Watch projects (start chokidar on enter) ─────────────────
   useEffect(() => {
     if (!api?.toggleWatching) return;
-    for (const proj of space.projects) {
+    for (const proj of stableProjects) {
       if (!proj.localPath || watchStartedRef.current.has(proj.projectId)) continue;
       watchStartedRef.current.add(proj.projectId);
       api.toggleWatching(proj.projectId, proj.localPath, true).catch((err: unknown) => {
         Sentry.captureException(err, { tags: { component: 'space-workspace' } });
       });
     }
-  }, [api, space.projects]);
+  }, [api, stableProjects]);
 
   // ── Initial status fetch + auto-reindex stale projects ───────
   // The merge here mirrors ProjectsView's: never let a fetched `stale` clobber
@@ -356,11 +369,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // status pill would flip Indexing → Stale within ~50ms of attaching a folder,
   // because the freshly-created backend row is `stale` until the Python worker
   // drains its queue.
+  //
+  // Uses `stableProjects` so this only fires on actual project list changes,
+  // NOT on every message save (which creates a new space object reference).
   useEffect(() => {
     if (!api) return;
     const load = async () => {
       const statuses: Record<string, ProjectInfo> = {};
-      for (const p of space.projects) {
+      for (const p of stableProjects) {
         try { const s = await api.status(p.projectId); if (s) statuses[p.projectId] = s; }
         catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
       }
@@ -374,8 +390,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
             existing.index_status === "indexing" &&
             (fresh.index_status === "stale" || fresh.index_status === "error")
           ) {
-            // Preserve in-flight indexing — adopt fresh metadata (branch,
-            // last_indexed_at, etc.) but keep our known status.
             merged[id] = { ...fresh, index_status: "indexing" };
           } else {
             merged[id] = { ...existing, ...fresh };
@@ -383,35 +397,47 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         }
         return merged;
       });
-      // Auto-reindex stale projects on entry. Only kick this off based on the
-      // FRESHLY fetched value — relying on `merged` above would re-trigger
-      // every time we protect an `indexing` state.
-      for (const p of space.projects) {
+      for (const p of stableProjects) {
         const s = statuses[p.projectId];
         if (s?.index_status === "stale" && p.localPath) {
-          try { api.reindex(p.projectId, p.localPath).catch((err: unknown) => Sentry.captureException(err, { tags: { component: 'space-workspace' } })); }
-          catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
+          try {
+            const alreadyScanning = await api.isScanning?.(p.projectId);
+            if (alreadyScanning) {
+              setProjectStatuses((prev) => ({
+                ...prev,
+                [p.projectId]: { ...prev[p.projectId], ...s, index_status: "indexing" } as ProjectInfo,
+              }));
+              continue;
+            }
+            api.reindex(p.projectId, p.localPath).catch((err: unknown) => Sentry.captureException(err, { tags: { component: 'space-workspace' } }));
+          } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
         }
       }
     };
     load();
-  }, [api, space.projects]);
+  }, [api, stableProjects]);
 
   // ── Live status broadcasts from main ─────────────────────────
   useEffect(() => {
     if (!api?.onStatusUpdate) return;
     const unsub = api.onStatusUpdate((data: any) => {
       if (!data?.projectId) return;
-      if (!space.projects.find((p) => p.projectId === data.projectId)) return;
+      if (!stableProjects.find((p) => p.projectId === data.projectId)) return;
       if (data.status) setProjectStatuses((prev) => ({
         ...prev,
         [data.projectId]: { ...prev[data.projectId], index_status: data.status } as ProjectInfo,
       }));
     });
     return () => unsub?.();
-  }, [api, space.projects]);
+  }, [api, stableProjects]);
 
   // ── Optimization stream ──────────────────────────────────────
+  // These listeners stay alive for the lifetime of the component so they
+  // handle every generation (first prompt, edits, regenerations). On
+  // unmount the cleanup tears them down — UNLESS a stream is in flight,
+  // in which case the completion listener is intentionally leaked so it
+  // can persist the response to localStorage even after the component is
+  // gone (the main-process buffer handles resume on remount).
   useEffect(() => {
     if (!electronAPI) return;
 
@@ -422,15 +448,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       }
     });
 
-    // The completion listener is intentionally self-removing so it survives
-    // component unmount. This ensures the AI response is always saved even
-    // when the user navigates away before (or during) streaming.
-    const c2Ref = { current: undefined as (() => void) | undefined };
+    const c2Unsub = { current: undefined as (() => void) | undefined };
     const completionHandler = (d: any) => {
+      console.log('[SW:complete] fired, source:', d.source, 'isStreaming:', isStreamingRef.current, 'mounted:', mountedRef.current);
       if (d.source !== 'space' || !isStreamingRef.current) return;
-      // Remove self immediately — prevents double-fire on re-registration.
-      c2Ref.current?.();
-      c2Ref.current = undefined;
 
       lastAccumulatedRef.current = '';
       isStreamingRef.current = false;
@@ -438,11 +459,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const content = d.optimized || '';
 
       if (mountedRef.current) {
-        // Component is alive — use the normal animation path.
         handleFinalMessage({ id: crypto.randomUUID(), role: 'assistant', content, timestamp: new Date() });
       } else {
-        // Component is gone — persist the response directly so it's there
-        // when the user comes back, regardless of whether ProjectsView is mounted.
+        // Component is gone — persist directly so the data survives.
         if (!content) return;
         const msg: SpaceMessage = {
           id: crypto.randomUUID(),
@@ -457,27 +476,59 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           messages: [...spaceRef.current.messages, msg],
           lastUsedAt: Date.now(),
         };
-        // Update React state (no-op if ProjectsView also unmounted, but harmless).
         onUpdateSpaceRef.current(updated);
-        // Write to localStorage so the data survives full tab navigation.
         const uid = userIdRef.current;
         const snapshot = loadSpaces(uid);
         saveSpaces(snapshot.map(s => s.id === updated.id ? updated : s), uid);
+        // Leak is done — clean up so we don't double-fire if the user
+        // navigates back and the effect re-runs.
+        c2Unsub.current?.();
+        c2Unsub.current = undefined;
       }
     };
-    c2Ref.current = electronAPI.onOptimizationComplete?.(completionHandler);
+    c2Unsub.current = electronAPI.onOptimizationComplete?.(completionHandler);
 
     const c3 = electronAPI.onOptimizationError?.((d: any) => {
+      console.log('[SW:error] fired, source:', d.source, 'isStreaming:', isStreamingRef.current);
       if (d.source !== 'space' || !isStreamingRef.current) return;
-      c2Ref.current?.(); c2Ref.current = undefined;
       lastAccumulatedRef.current = '';
       isStreamingRef.current = false;
       resetStreaming();
       setIsGenerating(false);
+
+      // Replace the placeholder in the tree with the error message so it
+      // shows on the active path. Without this the dangling placeholder
+      // corrupts navigation and the error message is invisible.
+      const errorId = crypto.randomUUID();
+      const placeholder = pendingPlaceholderRef.current;
+      const parentUserId = pendingAssistantParentRef.current;
+      const groupId = pendingAssistantGroupIdRef.current || crypto.randomUUID();
+      const versionIndex = pendingAssistantVersionIdxRef.current;
+
+      pendingPlaceholderRef.current = null;
+      pendingAssistantParentRef.current = null;
+      pendingAssistantGroupIdRef.current = null;
+      pendingAssistantVersionIdxRef.current = 0;
+
+      const tree = messageTreeRef.current;
+      if (placeholder) {
+        tree.replaceId(placeholder, errorId);
+      } else if (parentUserId) {
+        tree.addChild(parentUserId, errorId);
+      }
+
       const cur = spaceRef.current;
       onUpdateSpaceRef.current({
         ...cur,
-        messages: [...cur.messages, { id: crypto.randomUUID(), role: 'assistant' as const, content: "Something went wrong. Please try again.", timestamp: Date.now() }],
+        messages: [...cur.messages, {
+          id: errorId,
+          role: 'assistant' as const,
+          content: d.error || "Something went wrong. Please try again.",
+          timestamp: Date.now(),
+          groupId,
+          versionIndex,
+          isError: true,
+        }],
         lastUsedAt: Date.now(),
       });
     });
@@ -485,14 +536,68 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     return () => {
       c1?.();
       c3?.();
-      // Only remove the completion listener if a stream is NOT in flight.
-      // If streaming is still active, leave it alive — it will self-remove
-      // once the response arrives and save it even after unmount.
+      // Keep the completion listener alive if a stream is in flight —
+      // it will persist the response after unmount. Otherwise tear it down.
       if (!isStreamingRef.current) {
-        c2Ref.current?.();
+        c2Unsub.current?.();
       }
     };
   }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
+
+  // ── Mid-stream resume on mount ───────────────────────────────
+  // Queries the main-process buffer for any active or recently-completed
+  // stream. Two cases:
+  //   A) Stream still in progress → resumeStreaming() to show partial
+  //      content and continue the typewriter animation.
+  //   B) Stream completed while we were unmounted → save the finished
+  //      message directly (the optimization-complete event was missed).
+  //
+  // In both cases we must re-wire the message tree so the assistant
+  // message ends up on the active path (the pending refs were lost
+  // when the component unmounted).
+  useEffect(() => {
+    const spaces = (window as any).electronAPI?.spaces;
+    if (!spaces?.getActiveStream) return;
+
+    spaces.getActiveStream(space.id).then((state: { accumulated: string; isComplete: boolean } | null) => {
+      if (!state || !state.accumulated) return;
+
+      // Find the last user message — this is the parent node the assistant
+      // reply must attach to in the version tree.
+      const msgs = spaceRef.current.messages;
+      const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+      if (!lastUser) return;
+
+      // Create a placeholder and wire it into the tree, mirroring handleSubmit.
+      const placeholderId = `placeholder-${crypto.randomUUID()}`;
+      const tree = messageTreeRef.current;
+      tree.addChild(lastUser.id, placeholderId);
+
+      pendingPlaceholderRef.current = placeholderId;
+      pendingAssistantParentRef.current = lastUser.id;
+      pendingAssistantGroupIdRef.current = crypto.randomUUID();
+      pendingAssistantVersionIdxRef.current = 0;
+
+      if (state.isComplete) {
+        // Case B: stream finished while away — persist immediately
+        const finalMessage = {
+          id: 'completed-' + Date.now(),
+          role: 'assistant' as const,
+          content: state.accumulated,
+          timestamp: new Date(),
+        };
+        handleStreamingComplete(finalMessage);
+        return;
+      }
+
+      // Case A: stream still in progress — resume animation
+      isStreamingRef.current = true;
+      lastAccumulatedRef.current = state.accumulated;
+      setIsGenerating(true);
+      resumeStreaming(state.accumulated);
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [space.id]);
 
   // ── Voice transcription IPC ──────────────────────────────────
   // Mirrors ChatView so the Spaces composer feels identical to the new-chat
@@ -526,8 +631,15 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     });
   }, [electronAPI]);
 
-  // ── Auto-scroll + textarea autosize ──────────────────────────
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [space.messages.length, streamingMessage?.content]);
+  // ── Scroll controller (mirrors ChatView behavior) ──────────
+  const { handleScroll, scrollToBottom, showScrollButton } = useScrollController(
+    scrollRef,
+    {
+      isStreaming: !!streamingMessage,
+      messageCount: space.messages.length,
+      streamingTrigger: streamingMessage?.content,
+    },
+  );
 
   const autoResize = useCallback(() => {
     const ta = inputRef.current; if (!ta) return;
@@ -630,9 +742,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       tailoredPrompt = buildTailoredPrompt(rawQuery, allRanked, allRelated);
     }
     lastAccumulatedRef.current = '';
+    console.log('[SW:runOpt] retrieval done, calling startStreaming + optimizePrompt');
     startStreaming();
-    electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
-  }, [codeIntelMode, space.projects, api, electronAPI, startStreaming, handleStreamingComplete]);
+    electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space", space.id);
+  }, [codeIntelMode, space.id, space.projects, api, electronAPI, startStreaming, handleStreamingComplete]);
 
   const handleSubmit = useCallback(async () => {
     const query = input.trim();
@@ -825,6 +938,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // that's about to be optimized so the active path immediately stops
   // showing the previous assistant reply.
   const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    console.log('[SW:edit] messageId:', messageId, 'isGenerating:', isGenerating);
     if (isGenerating || space.projects.length === 0) return;
     const original = space.messages.find((m) => m.id === messageId);
     if (!original || original.role !== "user") return;
@@ -878,6 +992,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // Crucially does NOT delete the previous version (the old behavior did);
   // both versions are kept and the user can flip between them with the arrows.
   const handleRegenerate = useCallback((assistantMessageId: string) => {
+    console.log('[SW:regen] assistantMessageId:', assistantMessageId, 'isGenerating:', isGenerating);
     if (isGenerating || space.projects.length === 0) return;
     const assistantMsg = space.messages.find((m) => m.id === assistantMessageId);
     if (!assistantMsg) return;
@@ -988,25 +1103,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         {/* Bottom toolbar — same skeleton as ChatView, minus Plus / Pro Mode */}
         <div className="flex items-center justify-between px-3 py-2.5">
           <div className="flex items-center gap-2 pl-1">
-            {/* Folder context pill — replaces the now-removed Pro Mode pill */}
-            {hasProject && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg bg-muted/40 border border-border/30 text-[11px] font-medium text-muted-foreground/80 select-none">
-                    <FolderOpen size={11} weight="duotone" className="text-emerald" />
-                    <span className="max-w-[140px] truncate">{project!.name}</span>
-                    {indexStatus === "indexing" ? (
-                      <IndexingProgressBar className="ml-0.5" />
-                    ) : (
-                      <span className={cn("w-1.5 h-1.5 rounded-full ml-0.5", meta.dot)} />
-                    )}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="top" className="text-xs">
-                  Codebase context · {meta.label.toLowerCase()}
-                </TooltipContent>
-              </Tooltip>
-            )}
             {hasProject && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1197,8 +1293,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
               {/* ── Header: space name + (when attached) live folder chip ── */}
               <div className="px-3.5 pt-3.5 pb-3 border-b border-border/15 bg-muted/20">
                 <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-emerald/10 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-                    <Sparkle size={13} weight="duotone" className="text-emerald" />
+                  <div className="w-7 h-7 rounded-lg bg-muted/40 border border-border/30 flex items-center justify-center flex-shrink-0">
+                    <Gear size={13} weight="duotone" className="text-muted-foreground" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-[12.5px] font-semibold text-foreground tracking-tight truncate">
@@ -1355,103 +1451,76 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         // shadows, no floating decorative icons. Content is centred
         // both axes inside the now-correctly-full-width workspace.
         <div className="flex-1 flex items-center justify-center px-8">
-          <div className="flex flex-col items-center text-center">
-            <div className="w-16 h-16 rounded-2xl bg-emerald/10 border border-emerald/20 flex items-center justify-center mb-5">
-              <FolderPlus size={30} weight="duotone" className="text-emerald" />
-            </div>
-            <h2 className="text-[22px] font-semibold text-foreground tracking-tight">
+          <div className="flex flex-col items-center text-center max-w-sm">
+            <FolderPlus size={32} weight="duotone" className="text-muted-foreground/40 mb-4" />
+            <h2 className="text-lg font-semibold text-foreground tracking-tight">
               Attach a project folder
             </h2>
-            <p className="text-[13.5px] text-muted-foreground/70 mt-2.5 max-w-md leading-relaxed">
-              Folders added to <span className="font-semibold text-foreground/85">{space.name}</span> are
-              watched, indexed, and kept in sync — every prompt comes back
-              tailored to your codebase.
+            <p className="text-[13px] text-muted-foreground/60 mt-1.5 leading-relaxed">
+              Your codebase will be indexed and kept in sync so every prompt
+              is grounded in real code.
             </p>
             <Button
-              className="mt-6 h-10 px-5 text-[13px] font-semibold gap-2 bg-emerald hover:bg-emerald/90 text-white rounded-xl"
+              variant="outline"
+              className="mt-5 h-9 px-4 text-[12.5px] font-medium gap-2 rounded-lg"
               onClick={handleAddFolder}
               disabled={addingFolder}
             >
               {addingFolder ? <CircleNotch size={14} className="animate-spin" /> : <FolderOpen size={14} weight="bold" />}
               Select folder
             </Button>
-            <div className="flex items-center gap-5 mt-7 text-[11px] text-muted-foreground/55">
-              <span className="flex items-center gap-1.5">
-                <Sparkle size={12} weight="duotone" className="text-emerald/70" />
-                Always indexed
-              </span>
-              <span className="flex items-center gap-1.5">
-                <GitBranch size={12} weight="duotone" className="text-emerald/70" />
-                Branch-aware
-              </span>
-              <span className="flex items-center gap-1.5">
-                <Clock size={12} weight="duotone" className="text-emerald/70" />
-                Live watching
-              </span>
-            </div>
           </div>
         </div>
       ) : (
         // ─── Has project → conversation column ───
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex-1 overflow-y-auto" ref={scrollRef}>
+          <div className="flex-1 min-h-0 relative">
+          <div className="h-full overflow-y-auto scrollbar-none" ref={scrollRef} onScroll={handleScroll}>
             <div className="max-w-5xl mx-auto px-8 py-8">
-              {/* Space header — only shows when there's no chat history yet,
-                  so the conversation view stays clean. */}
               {space.messages.length === 0 && !isGenerating && (
-                <div className="flex flex-col items-center text-center pt-10 pb-10">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald/10 border border-emerald/20 flex items-center justify-center mb-4 shadow-glow-sm">
-                    <Sparkle size={22} weight="duotone" className="text-emerald" />
-                  </div>
-                  <h1 className="text-[22px] font-semibold text-foreground tracking-tight">{space.name}</h1>
-                  <p className="text-[13.5px] text-muted-foreground/60 mt-2 max-w-lg leading-relaxed">
-                    Ask anything about <span className="text-foreground/85 font-semibold">{project!.name}</span> and
-                    you'll get a precise, codebase-grounded prompt back.
+                <div className="pt-[10%] pb-10">
+                  <Logo size="w-10 h-10" className="mb-5" />
+                  <h1 className="text-[26px] font-bold text-foreground tracking-tight leading-none">
+                    {space.name}
+                  </h1>
+                  <p className="text-[13.5px] text-muted-foreground/60 mt-2.5 max-w-md leading-relaxed">
+                    Ask anything about <span className="text-foreground/80 font-medium">{project!.name}</span> — prompts
+                    are grounded in your codebase.
                   </p>
 
-                  {/* Project meta strip — moved above suggestions so it sits
-                      visually attached to the title block instead of dangling
-                      at the bottom of a wide empty area. */}
-                  <div className="flex items-center gap-2 mt-5 text-[10.5px] text-muted-foreground/55 font-medium flex-wrap justify-center">
-                    <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/20">
+                  <div className="flex items-center gap-3 mt-4 text-[11px] text-muted-foreground/50 font-medium">
+                    <span className="flex items-center gap-1.5">
                       <FolderOpen size={11} weight="duotone" />
                       {shortPath(project!.localPath)}
                     </span>
                     {(projectStatus?.current_branch || project!.branch) && (
-                      <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/20">
-                        <GitBranch size={10} weight="bold" />
-                        {projectStatus?.current_branch || project!.branch}
-                      </span>
+                      <>
+                        <span className="text-border">·</span>
+                        <span className="flex items-center gap-1">
+                          <GitBranch size={10} weight="bold" />
+                          {projectStatus?.current_branch || project!.branch}
+                        </span>
+                      </>
                     )}
-                    {projectStatus?.last_indexed_at && (
-                      <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/30 border border-border/20">
-                        <Clock size={10} />
-                        Indexed {relativeTime(projectStatus.last_indexed_at)}
-                      </span>
+                    {indexStatus !== "indexing" && (
+                      <>
+                        <span className="text-border">·</span>
+                        <span className={cn("flex items-center gap-1.5", meta.color)}>
+                          <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
+                          {meta.label}
+                        </span>
+                      </>
                     )}
-                    <span className={cn(
-                      "flex items-center gap-1.5 px-2 py-1 rounded-md ring-1",
-                      meta.color, meta.ring,
-                    )}>
-                      {indexStatus === "indexing" ? (
-                        <IndexingProgressBar />
-                      ) : (
-                        <span className={cn("w-1.5 h-1.5 rounded-full", meta.dot)} />
-                      )}
-                      {meta.label}
-                    </span>
                   </div>
 
-                  {/* Prominent full-width indeterminate bar when indexing.
-                      Anchored under the status strip in the empty state so
-                      the user immediately sees motion on first load of a
-                      new folder — prevents the "did it freeze?" panic. */}
                   {indexStatus === "indexing" && (
-                    <div className="mt-3 w-full max-w-sm mx-auto">
-                      <IndexingProgressBar variant="block" />
+                    <div className="flex items-center gap-3 mt-4">
+                      <IndexingProgressBar variant="block" className="w-32" />
+                      <span className="text-[11px] text-amber-500/70 font-medium animate-pulse">
+                        Scanning your codebase…
+                      </span>
                     </div>
                   )}
-
                 </div>
               )}
 
@@ -1523,6 +1592,22 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                 )}
               </div>
             </div>
+          </div>
+
+          {showScrollButton && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom()}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 w-8 h-8 rounded-full
+                         bg-background/90 backdrop-blur border border-border shadow-md
+                         flex items-center justify-center
+                         text-muted-foreground hover:text-foreground hover:bg-secondary
+                         transition-all duration-150"
+              aria-label="Scroll to bottom"
+            >
+              <ArrowDown size={16} weight="light" />
+            </button>
+          )}
           </div>
 
           {/* ── Composer ───────────────────────────────────── */}

@@ -362,6 +362,7 @@ function installCSP() {
             `font-src 'self' data:`,
             `connect-src 'self' https://${supabaseHost} wss://${supabaseHost} ${pythonHttpBase} ${pythonWsBase} https://*.sentry.io https://res.cloudinary.com`,
             `media-src 'self' blob:`,
+            `worker-src 'self' blob:`,
           ].join('; '),
         ],
       },

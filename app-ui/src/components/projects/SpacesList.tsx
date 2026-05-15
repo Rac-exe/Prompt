@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Plus, DotsThree, Trash, PencilSimple,
   Clock, MagnifyingGlass, Folder,
-  Sparkle, ChatCircleText, X,
+  FolderPlus, ChatCircleText, X, CircleNotch,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,8 @@ interface SpacesListProps {
   onCreateSpace: () => void;
   onRenameSpace: (id: string, name: string) => void;
   onDeleteSpace: (id: string) => void;
+  /** True while a space creation is in-flight (folder dialog open or backend processing). */
+  isCreating?: boolean;
 }
 
 // Visual treatment for the space's "summary" status. Green = ready,
@@ -266,19 +268,17 @@ const CreateSpaceModal = ({ open, onOpenChange, onCreate }: CreateSpaceModalProp
       <DialogContent
         className="bg-card border-border/40 rounded-2xl shadow-elevated max-w-md p-0 overflow-hidden gap-0"
       >
-        {/* Ambient header strip */}
-        <div className="relative px-6 pt-6 pb-4 border-b border-border/15">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_60%)]" />
-          <div className="relative flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald/12 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-              <Sparkle size={16} weight="duotone" className="text-emerald" />
+        <div className="px-6 pt-6 pb-4 border-b border-border/15">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-muted/40 border border-border/30 flex items-center justify-center flex-shrink-0">
+              <FolderPlus size={16} weight="duotone" className="text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
               <DialogTitle className="text-[15px] font-semibold text-foreground tracking-tight">
                 Create a new space
               </DialogTitle>
               <DialogDescription className="text-[12px] text-muted-foreground/65 mt-0.5 leading-relaxed">
-                Group prompts and a project folder into one focused workspace.
+                Group prompts and a project folder into one workspace.
               </DialogDescription>
             </div>
           </div>
@@ -345,6 +345,7 @@ const CreateSpaceModal = ({ open, onOpenChange, onCreate }: CreateSpaceModalProp
 export const SpacesList = ({
   spaces, projectStatusMap, onSelectSpace,
   onCreateSpace, onRenameSpace, onDeleteSpace,
+  isCreating = false,
 }: SpacesListProps) => {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -397,56 +398,49 @@ export const SpacesList = ({
   return (
     <>
       <div className="flex-1 flex flex-col h-full overflow-y-auto" style={{ contain: "layout paint" }}>
-        {/* ── Hero header ─────────────────────────────── */}
-        <div className="relative px-10 pt-9 pb-5">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.05),transparent_55%)]" />
-          <div className="relative flex items-start justify-between gap-6 flex-wrap">
+        {/* ── Header ──────────────────────────────────── */}
+        <div className="px-10 pt-9 pb-5">
+          <div className="flex items-center justify-between gap-6 flex-wrap">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-6 h-6 rounded-md bg-emerald/12 border border-emerald/20 flex items-center justify-center">
-                  <Sparkle size={11} weight="duotone" className="text-emerald" />
-                </div>
-                <h1 className="text-[19px] font-semibold text-foreground tracking-tight">Spaces</h1>
-                <span className="text-[10.5px] text-muted-foreground/40 font-medium ml-1">
-                  {spaces.length} {spaces.length === 1 ? "space" : "spaces"} · {totalProjects} {totalProjects === 1 ? "folder" : "folders"}
-                </span>
-              </div>
-              <p className="text-[12.5px] text-muted-foreground/60 leading-relaxed max-w-md">
-                Codebase-aware workspaces. Attach a folder, ask anything, and get
-                prompts tuned to your code.
+              <h1 className="text-[19px] font-semibold text-foreground tracking-tight">Spaces</h1>
+              <p className="text-[12px] text-muted-foreground/50 mt-0.5">
+                {spaces.length} {spaces.length === 1 ? "space" : "spaces"} · {totalProjects} {totalProjects === 1 ? "folder" : "folders"}
               </p>
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="relative flex items-center">
-                <MagnifyingGlass
-                  size={12}
-                  weight="bold"
-                  className="absolute left-2.5 text-muted-foreground/40 pointer-events-none"
-                />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search spaces"
-                  className="h-8 w-52 pl-7 pr-3 text-[12px] bg-card/40 border border-border/30 rounded-lg outline-none focus:border-border/60 focus:bg-card/60 transition-colors text-foreground placeholder:text-muted-foreground/40"
-                />
-                {search && (
-                  <button
-                    onClick={() => setSearch("")}
-                    className="absolute right-2 text-muted-foreground/40 hover:text-foreground"
-                    aria-label="Clear search"
-                  >
-                    <X size={10} weight="bold" />
-                  </button>
-                )}
-              </div>
+              {spaces.length > 4 && (
+                <div className="relative flex items-center">
+                  <MagnifyingGlass
+                    size={12}
+                    weight="bold"
+                    className="absolute left-2.5 text-muted-foreground/40 pointer-events-none"
+                  />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search"
+                    className="h-8 w-40 pl-7 pr-3 text-[12px] bg-card/40 border border-border/30 rounded-lg outline-none focus:border-border/60 focus:bg-card/60 transition-colors text-foreground placeholder:text-muted-foreground/40"
+                  />
+                  {search && (
+                    <button
+                      onClick={() => setSearch("")}
+                      className="absolute right-2 text-muted-foreground/40 hover:text-foreground"
+                      aria-label="Clear search"
+                    >
+                      <X size={10} weight="bold" />
+                    </button>
+                  )}
+                </div>
+              )}
               <Button
                 size="sm"
                 className="h-8 px-3 text-[12px] font-semibold gap-1.5 bg-foreground hover:bg-foreground/90 text-background rounded-lg"
                 onClick={onCreateSpace}
+                disabled={isCreating}
               >
-                <Plus size={12} weight="bold" />
+                {isCreating ? <CircleNotch size={12} className="animate-spin" /> : <Plus size={12} weight="bold" />}
                 New space
               </Button>
             </div>
@@ -465,6 +459,20 @@ export const SpacesList = ({
             // Tighter, denser grid. Cards are now ~half the previous footprint
             // so a typical user can see 6–10 spaces at a glance instead of 3.
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+              {isCreating && (
+                <div className="rounded-xl border border-border/30 bg-card/20 p-3.5 animate-pulse">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-muted/50" />
+                    <div className="flex-1 min-w-0 space-y-2 pt-0.5">
+                      <div className="h-3 w-24 rounded bg-muted/40" />
+                      <div className="h-2 w-14 rounded bg-muted/30" />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 mt-3 ml-[42px]">
+                    <div className="h-2 w-16 rounded bg-muted/30" />
+                  </div>
+                </div>
+              )}
               {filteredAndSorted.map((space) => (
                 <SpaceCard
                   key={space.id}
@@ -481,7 +489,6 @@ export const SpacesList = ({
                   renameInputRef={renameInputRef}
                 />
               ))}
-
             </div>
           )}
         </div>

@@ -11,7 +11,7 @@ import type { CodeIntelClient, ProjectInfo } from '../api/code-intel-client';
 import type { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import type { AppWindowManager } from '../windows/app-window-manager';
 import { isGitRepo, getBranchInfo, getGitRemoteUrl, parseGitHubUrl } from '../services/git-service';
-import { startWatching, stopWatching, performFullScan, stopAllWatchers, isWatching } from '../services/file-watcher';
+import { startWatching, stopWatching, performFullScan, stopAllWatchers, isWatching, type ScanSignal } from '../services/file-watcher';
 import { clearProjectCache } from '../database/local-project-cache';
 
 let _client: CodeIntelClient | null = null;
@@ -20,6 +20,17 @@ let _appWindowManager: AppWindowManager | null = null;
 
 let activeProjectId: string | null = null;
 let activeProjectBranch: string | null = null;
+
+const activeScans = new Map<string, ScanSignal>();
+
+function cancelActiveScan(projectId: string): void {
+  const signal = activeScans.get(projectId);
+  if (signal) {
+    signal.cancelled = true;
+    activeScans.delete(projectId);
+    console.log(`[ProjectHandlers] Cancelled active scan for ${projectId}`);
+  }
+}
 
 const STATE_FILE = path.join(app.getPath('userData'), 'active-project.json');
 
@@ -210,18 +221,20 @@ export function registerProjectHandlers(
 
     await setActiveProject(project.id, projectPath);
 
-    // Trigger initial full scan so the index isn't empty until the first file edit.
-    // performFullScan only QUEUES chunks on the backend (HTTP 202). Actual indexing
-    // happens async in the Python worker, so we must poll the service until it
-    // reports a terminal status before telling the renderer the project is ready.
     broadcastProjectStatus({ projectId: project.id, status: 'indexing' });
-    performFullScan(project.id, projectPath, _client!, defaultBranch)
+    const signal: ScanSignal = { cancelled: false };
+    activeScans.set(project.id, signal);
+    performFullScan(project.id, projectPath, _client!, defaultBranch, undefined, signal)
       .then(async (result) => {
+        activeScans.delete(project.id);
+        if (signal.cancelled) return;
         console.log(`[ProjectHandlers] Initial scan queued: ${result.totalFiles} files, ${result.totalChunks} chunks`);
         const finalStatus = await startStatusPoll(project.id);
         console.log(`[ProjectHandlers] Initial index settled: ${finalStatus}`);
       })
       .catch((e) => {
+        activeScans.delete(project.id);
+        if (signal.cancelled) return;
         console.error('[ProjectHandlers] Initial index failed:', e);
         Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'initial-index' }, extra: { projectId: project.id } });
         broadcastProjectStatus({ projectId: project.id, status: 'stale' });
@@ -234,6 +247,7 @@ export function registerProjectHandlers(
   ipcMain.handle('project:remove', async (_event, projectId: string) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
 
+    cancelActiveScan(projectId);
     stopWatching(projectId);
     clearStatusPoll(projectId);
     try {
@@ -281,9 +295,20 @@ export function registerProjectHandlers(
   ipcMain.handle('project:reindex', async (_event, projectId: string, localPath: string) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
 
+    if (activeScans.has(projectId)) {
+      console.log(`[ProjectHandlers] Scan already active for ${projectId}, skipping duplicate reindex`);
+      broadcastProjectStatus({ projectId, status: 'indexing' });
+      const finalStatus = await startStatusPoll(projectId);
+      return { totalFiles: 0, totalChunks: 0, finalStatus };
+    }
+
+    cancelActiveScan(projectId);
     clearProjectCache(projectId);
     clearStatusPoll(projectId);
     broadcastProjectStatus({ projectId, status: 'indexing' });
+
+    const signal: ScanSignal = { cancelled: false };
+    activeScans.set(projectId, signal);
 
     try {
       const isGit = await isGitRepo(localPath);
@@ -305,17 +330,20 @@ export function registerProjectHandlers(
             progress: { current, total },
           });
         },
+        signal,
       );
+
+      activeScans.delete(projectId);
+      if (signal.cancelled) return { totalFiles: 0, totalChunks: 0, finalStatus: 'cancelled' };
 
       console.log(`[ProjectHandlers] Reindex queued: ${result.totalFiles} files, ${result.totalChunks} chunks`);
 
-      // Wait for the backend worker to actually finish the queued batches —
-      // performFullScan only enqueues (HTTP 202). Without this, the renderer
-      // would flip to "Ready" while embeddings are still being computed.
       const finalStatus = await startStatusPoll(projectId);
       console.log(`[ProjectHandlers] Reindex settled: ${finalStatus}`);
       return { ...result, finalStatus };
     } catch (e) {
+      activeScans.delete(projectId);
+      if (signal.cancelled) return { totalFiles: 0, totalChunks: 0, finalStatus: 'cancelled' };
       console.error('[ProjectHandlers] Reindex failed:', e);
       Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'reindex' }, extra: { projectId } });
       broadcastProjectStatus({ projectId, status: 'stale' });
@@ -345,6 +373,10 @@ export function registerProjectHandlers(
 
   ipcMain.handle('project:is-watching', (_event, projectId: string) => {
     return isWatching(projectId);
+  });
+
+  ipcMain.handle('project:is-scanning', (_event, projectId: string) => {
+    return activeScans.has(projectId);
   });
 
   ipcMain.handle('project:retrieve', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => {
@@ -413,23 +445,32 @@ export function registerProjectHandlers(
           broadcastProjectStatus({ projectId, status: 'indexing' });
         }
 
+        if (activeScans.has(projectId)) {
+          console.log(`[ProjectHandlers] ensure-fresh: scan already active for ${projectId}, skipping`);
+          triggered++;
+          continue;
+        }
+
         const tStart = Date.now();
         console.log(
           `[ProjectHandlers] ensure-fresh: scanning ${projectId} ` +
             `(backend=${status}, mode=${isUnhealthy ? 'force-full' : 'hash-diff'})`,
         );
 
-        performFullScan(projectId, localPath, _client, branch)
+        const efSignal: ScanSignal = { cancelled: false };
+        activeScans.set(projectId, efSignal);
+
+        performFullScan(projectId, localPath, _client, branch, undefined, efSignal)
           .then(async (result) => {
+            activeScans.delete(projectId);
+            if (efSignal.cancelled) return;
+
             const elapsed = Date.now() - tStart;
             console.log(
               `[ProjectHandlers] ensure-fresh: ${projectId} scan done in ${elapsed}ms — ` +
                 `${result.totalFiles} changed file(s), ${result.totalChunks} chunk(s)`,
             );
 
-            // For a "ready" project, only show "Indexing" + start poll if
-            // the diff actually produced uploads. Otherwise the user sees
-            // a useless flash of "Indexing → Ready" on every launch.
             if (!isUnhealthy && result.totalChunks === 0) {
               return;
             }
@@ -439,6 +480,8 @@ export function registerProjectHandlers(
             console.log(`[ProjectHandlers] ensure-fresh: ${projectId} settled to ${finalStatus}`);
           })
           .catch((err) => {
+            activeScans.delete(projectId);
+            if (efSignal.cancelled) return;
             console.error(`[ProjectHandlers] ensure-fresh scan failed for ${projectId}:`, err);
             Sentry.captureException(err, { level: 'warning', tags: { component: 'project-handlers', op: 'ensure-fresh' }, extra: { projectId } });
             if (isUnhealthy) broadcastProjectStatus({ projectId, status: 'stale' });
@@ -537,6 +580,10 @@ export async function restoreActiveProject(): Promise<void> {
 }
 
 export function cleanupProjectHandlers(): void {
+  for (const signal of activeScans.values()) {
+    signal.cancelled = true;
+  }
+  activeScans.clear();
   for (const id of Array.from(activePolls.keys())) {
     clearStatusPoll(id);
   }

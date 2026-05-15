@@ -339,16 +339,20 @@ function buildCallGraph(chunks: ChunkData[]): CallGraphEdge[] {
   return edges;
 }
 
+export interface ScanSignal { cancelled: boolean; }
+
 export async function performFullScan(
   projectId: string,
   projectPath: string,
   client: CodeIntelClient,
   branch?: string,
   onProgress?: (current: number, total: number) => void,
+  signal?: ScanSignal,
 ): Promise<{ totalFiles: number; totalChunks: number }> {
   const allChunks: ChunkData[] = [];
   const callGraph: CallGraphEdge[] = [];
   const languageMap: Record<string, number> = {};
+  const pendingHashes = new Map<string, { hash: string; chunkCount: number }>();
   let totalFiles = 0;
 
   function collectFiles(dir: string): string[] {
@@ -357,7 +361,6 @@ export async function performFullScan(
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
-        const relativePath = path.relative(projectPath, fullPath);
 
         if (
           entry.name.startsWith('.') ||
@@ -389,6 +392,11 @@ export async function performFullScan(
   console.log(`[FileWatcher] Full scan: found ${total} parseable files in ${projectPath}`);
 
   for (let i = 0; i < files.length; i++) {
+    if (signal?.cancelled) {
+      console.log(`[FileWatcher] Scan cancelled for ${projectId} at file ${i}/${total}`);
+      return { totalFiles, totalChunks: allChunks.length };
+    }
+
     const filePath = files[i];
     const relativePath = path.relative(projectPath, filePath).replace(/\\/g, '/');
 
@@ -407,7 +415,7 @@ export async function performFullScan(
         allChunks.push(...chunks);
         const lang = chunks[0].language;
         languageMap[lang] = (languageMap[lang] || 0) + chunks.length;
-        setCachedHash(projectId, relativePath, fileHash, chunks.length);
+        pendingHashes.set(relativePath, { hash: fileHash, chunkCount: chunks.length });
         totalFiles++;
       }
     } catch (e) {
@@ -421,12 +429,22 @@ export async function performFullScan(
   }
 
   if (allChunks.length > 0) {
+    if (signal?.cancelled) {
+      console.log(`[FileWatcher] Scan cancelled for ${projectId} before ingest (${allChunks.length} chunks discarded)`);
+      return { totalFiles, totalChunks: allChunks.length };
+    }
+
     callGraph.push(...buildCallGraph(allChunks));
     console.log(`[FileWatcher] Built call graph: ${callGraph.length} edges from ${allChunks.length} chunks`);
 
     const batchSize = 500;
     const allChunkKeys = chunkKeys(allChunks);
     for (let i = 0; i < allChunks.length; i += batchSize) {
+      if (signal?.cancelled) {
+        console.log(`[FileWatcher] Scan cancelled for ${projectId} at ingest batch ${i}/${allChunks.length}`);
+        return { totalFiles, totalChunks: allChunks.length };
+      }
+
       const batch = allChunks.slice(i, i + batchSize);
       const isLastBatch = i + batchSize >= allChunks.length;
       await client.ingestSkeleton({
@@ -438,6 +456,18 @@ export async function performFullScan(
         cleanup_scope: isLastBatch ? 'project' : 'none',
         cleanup_keys: isLastBatch ? allChunkKeys : [],
       });
+
+      const committedFiles = new Set<string>();
+      for (const chunk of batch) {
+        committedFiles.add(chunk.file_path);
+      }
+      for (const filePath of committedFiles) {
+        const pending = pendingHashes.get(filePath);
+        if (pending) {
+          setCachedHash(projectId, filePath, pending.hash, pending.chunkCount);
+          pendingHashes.delete(filePath);
+        }
+      }
     }
   }
 
