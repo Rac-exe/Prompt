@@ -184,6 +184,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   messageTreeRef.current = messageTree;
 
   const handleStreamingComplete = useCallback((finalMessage: Message) => {
+    console.log('[SW:streamComplete] content length:', finalMessage.content.length, 'placeholder:', pendingPlaceholderRef.current, 'parent:', pendingAssistantParentRef.current);
     const finalId = finalMessage.id || crypto.randomUUID();
     const placeholder = pendingPlaceholderRef.current;
     const groupId = pendingAssistantGroupIdRef.current || crypto.randomUUID();
@@ -347,6 +348,12 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   }, [api, space.projects]);
 
   // ── Optimization stream ──────────────────────────────────────
+  // These listeners stay alive for the lifetime of the component so they
+  // handle every generation (first prompt, edits, regenerations). On
+  // unmount the cleanup tears them down — UNLESS a stream is in flight,
+  // in which case the completion listener is intentionally leaked so it
+  // can persist the response to localStorage even after the component is
+  // gone (the main-process buffer handles resume on remount).
   useEffect(() => {
     if (!electronAPI) return;
 
@@ -357,15 +364,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       }
     });
 
-    // The completion listener is intentionally self-removing so it survives
-    // component unmount. This ensures the AI response is always saved even
-    // when the user navigates away before (or during) streaming.
-    const c2Ref = { current: undefined as (() => void) | undefined };
+    const c2Unsub = { current: undefined as (() => void) | undefined };
     const completionHandler = (d: any) => {
+      console.log('[SW:complete] fired, source:', d.source, 'isStreaming:', isStreamingRef.current, 'mounted:', mountedRef.current);
       if (d.source !== 'space' || !isStreamingRef.current) return;
-      // Remove self immediately — prevents double-fire on re-registration.
-      c2Ref.current?.();
-      c2Ref.current = undefined;
 
       lastAccumulatedRef.current = '';
       isStreamingRef.current = false;
@@ -373,11 +375,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const content = d.optimized || '';
 
       if (mountedRef.current) {
-        // Component is alive — use the normal animation path.
         handleFinalMessage({ id: crypto.randomUUID(), role: 'assistant', content, timestamp: new Date() });
       } else {
-        // Component is gone — persist the response directly so it's there
-        // when the user comes back, regardless of whether ProjectsView is mounted.
+        // Component is gone — persist directly so the data survives.
         if (!content) return;
         const msg: SpaceMessage = {
           id: crypto.randomUUID(),
@@ -392,27 +392,59 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           messages: [...spaceRef.current.messages, msg],
           lastUsedAt: Date.now(),
         };
-        // Update React state (no-op if ProjectsView also unmounted, but harmless).
         onUpdateSpaceRef.current(updated);
-        // Write to localStorage so the data survives full tab navigation.
         const uid = userIdRef.current;
         const snapshot = loadSpaces(uid);
         saveSpaces(snapshot.map(s => s.id === updated.id ? updated : s), uid);
+        // Leak is done — clean up so we don't double-fire if the user
+        // navigates back and the effect re-runs.
+        c2Unsub.current?.();
+        c2Unsub.current = undefined;
       }
     };
-    c2Ref.current = electronAPI.onOptimizationComplete?.(completionHandler);
+    c2Unsub.current = electronAPI.onOptimizationComplete?.(completionHandler);
 
     const c3 = electronAPI.onOptimizationError?.((d: any) => {
+      console.log('[SW:error] fired, source:', d.source, 'isStreaming:', isStreamingRef.current);
       if (d.source !== 'space' || !isStreamingRef.current) return;
-      c2Ref.current?.(); c2Ref.current = undefined;
       lastAccumulatedRef.current = '';
       isStreamingRef.current = false;
       resetStreaming();
       setIsGenerating(false);
+
+      // Replace the placeholder in the tree with the error message so it
+      // shows on the active path. Without this the dangling placeholder
+      // corrupts navigation and the error message is invisible.
+      const errorId = crypto.randomUUID();
+      const placeholder = pendingPlaceholderRef.current;
+      const parentUserId = pendingAssistantParentRef.current;
+      const groupId = pendingAssistantGroupIdRef.current || crypto.randomUUID();
+      const versionIndex = pendingAssistantVersionIdxRef.current;
+
+      pendingPlaceholderRef.current = null;
+      pendingAssistantParentRef.current = null;
+      pendingAssistantGroupIdRef.current = null;
+      pendingAssistantVersionIdxRef.current = 0;
+
+      const tree = messageTreeRef.current;
+      if (placeholder) {
+        tree.replaceId(placeholder, errorId);
+      } else if (parentUserId) {
+        tree.addChild(parentUserId, errorId);
+      }
+
       const cur = spaceRef.current;
       onUpdateSpaceRef.current({
         ...cur,
-        messages: [...cur.messages, { id: crypto.randomUUID(), role: 'assistant' as const, content: "Something went wrong. Please try again.", timestamp: Date.now() }],
+        messages: [...cur.messages, {
+          id: errorId,
+          role: 'assistant' as const,
+          content: d.error || "Something went wrong. Please try again.",
+          timestamp: Date.now(),
+          groupId,
+          versionIndex,
+          isError: true,
+        }],
         lastUsedAt: Date.now(),
       });
     });
@@ -420,11 +452,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     return () => {
       c1?.();
       c3?.();
-      // Only remove the completion listener if a stream is NOT in flight.
-      // If streaming is still active, leave it alive — it will self-remove
-      // once the response arrives and save it even after unmount.
+      // Keep the completion listener alive if a stream is in flight —
+      // it will persist the response after unmount. Otherwise tear it down.
       if (!isStreamingRef.current) {
-        c2Ref.current?.();
+        c2Unsub.current?.();
       }
     };
   }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
@@ -535,6 +566,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
 
   // ── Handlers ─────────────────────────────────────────────────
   const runOptimization = useCallback(async (rawQuery: string) => {
+    console.log('[SW:runOpt] starting, isStreamingRef:', isStreamingRef.current);
     let tailoredPrompt = rawQuery;
     // Spaces are intentionally always project-aware now — the old "Context"
     // toggle was removed because the whole reason a Space exists is its
@@ -563,6 +595,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       tailoredPrompt = buildTailoredPrompt(rawQuery, allRanked, allRelated);
     }
     lastAccumulatedRef.current = '';
+    console.log('[SW:runOpt] retrieval done, calling startStreaming + optimizePrompt');
     startStreaming();
     electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space", space.id);
   }, [space.id, space.projects, api, electronAPI, startStreaming]);
@@ -753,6 +786,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // that's about to be optimized so the active path immediately stops
   // showing the previous assistant reply.
   const handleEditMessage = useCallback((messageId: string, newContent: string) => {
+    console.log('[SW:edit] messageId:', messageId, 'isGenerating:', isGenerating);
     if (isGenerating || space.projects.length === 0) return;
     const original = space.messages.find((m) => m.id === messageId);
     if (!original || original.role !== "user") return;
@@ -785,6 +819,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     pendingAssistantVersionIdxRef.current = 0;
 
     setIsGenerating(true);
+    isStreamingRef.current = true;
+    lastAccumulatedRef.current = '';
     runOptimization(newContent).catch((e: any) => {
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'edit' } });
       isStreamingRef.current = false;
@@ -802,6 +838,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // Crucially does NOT delete the previous version (the old behavior did);
   // both versions are kept and the user can flip between them with the arrows.
   const handleRegenerate = useCallback((assistantMessageId: string) => {
+    console.log('[SW:regen] assistantMessageId:', assistantMessageId, 'isGenerating:', isGenerating);
     if (isGenerating || space.projects.length === 0) return;
     const assistantMsg = space.messages.find((m) => m.id === assistantMessageId);
     if (!assistantMsg) return;
@@ -829,6 +866,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     pendingAssistantVersionIdxRef.current = versionIndex;
 
     setIsGenerating(true);
+    isStreamingRef.current = true;
+    lastAccumulatedRef.current = '';
     runOptimization(userMsg.content).catch((e: any) => {
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'regenerate' } });
       isStreamingRef.current = false;
