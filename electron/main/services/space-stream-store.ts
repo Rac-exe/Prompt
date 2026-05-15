@@ -101,8 +101,12 @@ export const spaceStreamStore = {
     if (entry) entry.takenOver = true;
   },
 
-  /** Remove all entries — called on user sign-out. */
-  clear(): void {
-    store.clear();
+  /** Remove a single entry, or all entries when called without args. */
+  clear(spaceId?: string): void {
+    if (spaceId) {
+      store.delete(spaceId);
+    } else {
+      store.clear();
+    }
   },
 };

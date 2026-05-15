@@ -294,7 +294,6 @@ export function registerChatHandlers(
 
             // Register space stream state so SpaceWorkspace can resume if it remounts mid-stream.
             if (source === 'space' && spaceId) {
-                console.log('[SpaceStreamStore] Registering stream for space:', spaceId);
                 spaceStreamStore.register(spaceId);
             }
 
@@ -1369,8 +1368,14 @@ export function registerChatHandlers(
     // ============================================
     ipcMain.handle('spaces:get-active-stream', (_event, spaceId: string) => {
         const state = spaceStreamStore.get(spaceId);
-        console.log('[SpaceStreamStore] get-active-stream for', spaceId, '→', state ? { accLen: state.accumulated.length, isComplete: state.isComplete, takenOver: state.takenOver } : null);
-        if (!state || state.isComplete) return null;
+        if (!state) return null;
+        // If the stream completed while the component was unmounted, return
+        // the finished content so the new mount can persist it. Clear the
+        // entry since the renderer will handle saving from here.
+        if (state.isComplete) {
+            spaceStreamStore.clear(spaceId);
+            return state;
+        }
         spaceStreamStore.markTakenOver(spaceId);
         return state;
     });

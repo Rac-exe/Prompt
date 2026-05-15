@@ -430,28 +430,57 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
 
   // ── Mid-stream resume on mount ───────────────────────────────
-  // When the user navigates away from a space while generation is in flight
-  // and then returns, this effect queries the main-process buffer and
-  // instantly shows the accumulated content via resumeStreaming(). New
-  // chunks continue flowing through the onOptimizationChunk listener
-  // (re-registered above), and completion/save follows the normal path.
-  // Mirrors the exact pattern used in Index.tsx for chat stream resumption.
+  // Queries the main-process buffer for any active or recently-completed
+  // stream. Two cases:
+  //   A) Stream still in progress → resumeStreaming() to show partial
+  //      content and continue the typewriter animation.
+  //   B) Stream completed while we were unmounted → save the finished
+  //      message directly (the optimization-complete event was missed).
+  //
+  // In both cases we must re-wire the message tree so the assistant
+  // message ends up on the active path (the pending refs were lost
+  // when the component unmounted).
   useEffect(() => {
     const spaces = (window as any).electronAPI?.spaces;
-    console.log('[SpaceWorkspace] Resume effect fired for space:', space.id, 'hasGetActiveStream:', !!spaces?.getActiveStream);
     if (!spaces?.getActiveStream) return;
 
     spaces.getActiveStream(space.id).then((state: { accumulated: string; isComplete: boolean } | null) => {
-      console.log('[SpaceWorkspace] getActiveStream result:', state ? { hasAccumulated: !!state.accumulated, accLen: state.accumulated?.length, isComplete: state.isComplete } : null);
-      if (!state || state.isComplete || !state.accumulated) return;
-      console.log('[SpaceWorkspace] Resuming stream with', state.accumulated.length, 'chars');
+      if (!state || !state.accumulated) return;
+
+      // Find the last user message — this is the parent node the assistant
+      // reply must attach to in the version tree.
+      const msgs = spaceRef.current.messages;
+      const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+      if (!lastUser) return;
+
+      // Create a placeholder and wire it into the tree, mirroring handleSubmit.
+      const placeholderId = `placeholder-${crypto.randomUUID()}`;
+      const tree = messageTreeRef.current;
+      tree.addChild(lastUser.id, placeholderId);
+
+      pendingPlaceholderRef.current = placeholderId;
+      pendingAssistantParentRef.current = lastUser.id;
+      pendingAssistantGroupIdRef.current = crypto.randomUUID();
+      pendingAssistantVersionIdxRef.current = 0;
+
+      if (state.isComplete) {
+        // Case B: stream finished while away — persist immediately
+        const finalMessage = {
+          id: 'completed-' + Date.now(),
+          role: 'assistant' as const,
+          content: state.accumulated,
+          timestamp: new Date(),
+        };
+        handleStreamingComplete(finalMessage);
+        return;
+      }
+
+      // Case A: stream still in progress — resume animation
       isStreamingRef.current = true;
       lastAccumulatedRef.current = state.accumulated;
       setIsGenerating(true);
       resumeStreaming(state.accumulated);
-    }).catch((err: unknown) => {
-      console.error('[SpaceWorkspace] getActiveStream failed:', err);
-    });
+    }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [space.id]);
 
