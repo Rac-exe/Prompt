@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/electron/main';
 import { logger } from '@sentry/core';
 import crypto from 'crypto';
 import FileType from 'file-type';
+import { spaceStreamStore } from '../services/space-stream-store';
 import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
@@ -251,7 +252,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
@@ -291,6 +292,12 @@ export function registerChatHandlers(
                 } catch { /* non-critical */ }
             }
 
+            // Register space stream state so SpaceWorkspace can resume if it remounts mid-stream.
+            if (source === 'space' && spaceId) {
+                console.log('[SpaceStreamStore] Registering stream for space:', spaceId);
+                spaceStreamStore.register(spaceId);
+            }
+
             // Use streaming optimization
             if (chatId) activeGenerations.set(chatId, { accumulated: '' });
             let optimizedText: string;
@@ -302,6 +309,9 @@ export function registerChatHandlers(
                     chatHistory,
                     (chunk, accumulated) => {
                         if (chatId) activeGenerations.set(chatId, { accumulated });
+                        if (source === 'space' && spaceId) {
+                            spaceStreamStore.update(spaceId, accumulated);
+                        }
                         if (appWindowManager) {
                             appWindowManager.send('optimization-chunk', { chatId: chatId || null, chunk, accumulated, source });
                         }
@@ -328,6 +338,11 @@ export function registerChatHandlers(
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
+                // Mark the space stream complete only on success — errors are
+                // handled in the outer catch which calls spaceStreamStore.error().
+                if (source === 'space' && spaceId) {
+                    spaceStreamStore.complete(spaceId);
+                }
             } finally {
                 if (chatId) activeGenerations.delete(chatId);
             }
@@ -381,6 +396,9 @@ export function registerChatHandlers(
         } catch (error) {
             Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
+            if (source === 'space' && spaceId) {
+                spaceStreamStore.error(spaceId);
+            }
             if (appWindowManager) {
                 appWindowManager.send('optimization-error', {
                     error: humanizeLlmError(error),
@@ -1339,6 +1357,22 @@ export function registerChatHandlers(
         return gen
             ? { isActive: true, accumulated: gen.accumulated }
             : { isActive: false, accumulated: '' };
+    });
+
+    // ============================================
+    // SPACES: Get active stream state for a space (for mid-stream remount resumption)
+    //
+    // Called by SpaceWorkspace on mount. If a generation is in flight for
+    // this space, returns the accumulated content so far and marks the stream
+    // as taken over — signalling the previous mount's self-removing completion
+    // handler to skip its localStorage persistence (the new mount will handle it).
+    // ============================================
+    ipcMain.handle('spaces:get-active-stream', (_event, spaceId: string) => {
+        const state = spaceStreamStore.get(spaceId);
+        console.log('[SpaceStreamStore] get-active-stream for', spaceId, '→', state ? { accLen: state.accumulated.length, isComplete: state.isComplete, takenOver: state.takenOver } : null);
+        if (!state || state.isComplete) return null;
+        spaceStreamStore.markTakenOver(spaceId);
+        return state;
     });
 
     // ============================================

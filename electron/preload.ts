@@ -552,8 +552,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string) => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source, spaceId);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);
@@ -1059,6 +1059,10 @@ const electronAPI = {
       ipcRenderer.on('spaces:apply-append', handler);
       return () => ipcRenderer.removeListener('spaces:apply-append', handler);
     },
+    /** Returns the in-progress stream state for a space if one is active,
+     *  or null if the space is idle. Used by SpaceWorkspace on mount to
+     *  resume rendering when the user navigates back mid-generation. */
+    getActiveStream: (spaceId: string) => ipcRenderer.invoke('spaces:get-active-stream', spaceId),
   },
 };
 
