@@ -95,9 +95,6 @@ export interface RetrievedChunk {
   concepts?: string[];
   similarity_score: number;
   relevance_reasoning?: string;
-  probable_line_start?: number;
-  probable_line_end?: number;
-  probable_line_source?: string;
   probable_issue?: string;
 }
 
@@ -259,7 +256,7 @@ export function buildTailoredPrompt(
     lines.push("Here are the most relevant parts of my codebase for this task:");
     lines.push("");
 
-    for (const chunk of chunks.slice(0, 8)) {
+    for (const chunk of chunks.slice(0, 20)) {
       const path = shortenPath(chunk.file_path);
       lines.push(
         `**${chunk.name}** (${chunk.chunk_type}) in \`${path}\` (lines ${chunk.start_line}-${chunk.end_line})`,

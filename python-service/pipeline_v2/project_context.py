@@ -24,7 +24,7 @@ logger = logging.getLogger("prmpt.project_context")
 CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
 
 MAX_BODY_PER_CHUNK = 2000
-MAX_PROBABLE_IN_CONTEXT = 8
+MAX_PROBABLE_IN_CONTEXT = 20
 MAX_RELATED_IN_CONTEXT = 8
 
 
@@ -40,7 +40,7 @@ def fetch_project_context(
     user_query: str,
     branch: str | None = None,
     auth_token: str | None = None,
-    limit: int = 10,
+    limit: int = 20,
     mode: str | None = None,
 ) -> ProjectContext | None:
     """
@@ -264,9 +264,6 @@ def _chunk_to_location_dict(chunk: dict) -> dict:
         "confidence_score": chunk.get("similarity_score", 0.0),
         "branch_diverged": chunk.get("branch_diverged", False),
         "relevance_reasoning": chunk.get("relevance_reasoning"),
-        "probable_line_start": chunk.get("probable_line_start"),
-        "probable_line_end": chunk.get("probable_line_end"),
-        "probable_line_source": chunk.get("probable_line_source"),
         "probable_issue": chunk.get("probable_issue"),
     }
 
@@ -318,11 +315,6 @@ def _format_probable_locations(
             purpose = loc.get("summary_purpose")
             if purpose:
                 lines.append(f"  Purpose: {purpose}")
-            if loc.get("probable_line_start") and loc.get("probable_line_end"):
-                src = loc.get("probable_line_source") or "pinpoint"
-                lines.append(
-                    f"  Likely lines: {loc.get('probable_line_start')}-{loc.get('probable_line_end')} ({src})"
-                )
             if loc.get("relevance_reasoning"):
                 lines.append(f"  Why retrieved: {loc.get('relevance_reasoning')}")
             if loc.get("probable_issue"):

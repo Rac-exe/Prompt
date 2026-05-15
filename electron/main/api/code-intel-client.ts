@@ -76,9 +76,6 @@ export interface RetrievedChunk {
   branch?: string;
   branch_diverged: boolean;
   relevance_reasoning?: string;
-  probable_line_start?: number;
-  probable_line_end?: number;
-  probable_line_source?: string;
   probable_issue?: string;
 }
 

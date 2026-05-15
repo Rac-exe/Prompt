@@ -35,7 +35,6 @@ from app.services.answer_generator import generate_answer
 from app.services.concepts import CONCEPT_KEYWORDS, detect_concepts_from_query
 from app.services.embedding import embed_structure_texts, embed_texts
 from app.services.feedback import record_search
-from app.services.line_pinpoint import apply_line_pinpoint
 from app.services.mode_router import ModeConfig, get_mode_config
 from app.services.query_analyzer import QueryAnalysis, decompose_query
 from app.services.query_preprocessor import QuerySignals, build_file_patterns, preprocess_query
@@ -173,13 +172,6 @@ async def retrieve_context_full(
             )
         else:
             logger.info("[REFINE] skipped_after_trigger no refined queries returned")
-
-    apply_line_pinpoint(ranked, query, signals, concepts)
-    logger.info(
-        "[PINPOINT] applied ranked=%d narrowed=%d",
-        len(ranked),
-        sum(1 for c in ranked if c.get("_probable_line_start") and c.get("_probable_line_end")),
-    )
 
     related = []
     if config.graph_expand and ranked:
@@ -554,9 +546,6 @@ def _to_retrieved_chunk(c: dict, score: float | None = None) -> RetrievedChunk:
         branch=c.get("branch"),
         branch_diverged=c.get("branch_diverged", False),
         relevance_reasoning=c.get("relevance_reasoning"),
-        probable_line_start=c.get("_probable_line_start") or c.get("probable_line_start"),
-        probable_line_end=c.get("_probable_line_end") or c.get("probable_line_end"),
-        probable_line_source=c.get("_probable_line_source") or c.get("probable_line_source"),
         probable_issue=c.get("_probable_issue") or c.get("probable_issue"),
     )
 

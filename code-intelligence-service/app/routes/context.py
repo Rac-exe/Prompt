@@ -42,9 +42,6 @@ def _to_probable(chunk: RetrievedChunk) -> ProbableLocation:
         branch=chunk.branch,
         branch_diverged=chunk.branch_diverged,
         relevance_reasoning=chunk.relevance_reasoning,
-        probable_line_start=chunk.probable_line_start,
-        probable_line_end=chunk.probable_line_end,
-        probable_line_source=chunk.probable_line_source,
         probable_issue=chunk.probable_issue,
     )
 

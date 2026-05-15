@@ -94,20 +94,21 @@ interface SpaceWorkspaceProps {
 
 type VoiceState = "idle" | "listening" | "processing";
 type CodeIntelMode = "find" | "ask" | "bug" | "optimize";
-const FIND_RESULT_LIMIT = 15;
+const RELEVANT_CHUNK_LIMIT = 20;
+const FIND_RESULT_LIMIT = 20;
 
 const CODE_INTEL_MODES: Array<{ value: CodeIntelMode; label: string; description: string }> = [
   { value: "optimize", label: "Optimize", description: "Generate an implementation prompt with code context" },
-  { value: "bug", label: "Bug", description: "Pinpoint likely files and lines before prompt generation" },
+  { value: "bug", label: "Bug", description: "Find likely files with exact indexed line ranges" },
   { value: "ask", label: "Ask", description: "Answer questions about the attached folder" },
-  { value: "find", label: "Find", description: "List matching files, symbols, and probable lines" },
+  { value: "find", label: "Find", description: "List matching files, symbols, and exact line ranges" },
 ];
 
 type CodeIntelLocation = RetrievedChunk | ContextLocation;
 
 function chunkLines(chunk: CodeIntelLocation): string {
-  const start = chunk.probable_line_start ?? chunk.start_line;
-  const end = chunk.probable_line_end ?? chunk.end_line;
+  const start = chunk.start_line;
+  const end = chunk.end_line;
   return start === end ? `line ${start}` : `lines ${start}-${end}`;
 }
 
@@ -593,7 +594,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           project_id: proj.projectId,
           query: rawQuery,
           branch: proj.branch || undefined,
-          limit: codeIntelMode === "find" ? 30 : 10,
+          limit: codeIntelMode === "find" ? 30 : RELEVANT_CHUNK_LIMIT,
           mode: codeIntelMode,
         });
         if (d.ranked_chunks) allRanked.push(...d.ranked_chunks);
@@ -609,7 +610,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       toast({ title: "No relevant code found", description: "Try reindexing your folder." });
     }
     allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
-    allRanked = allRanked.slice(0, codeIntelMode === "find" ? FIND_RESULT_LIMIT : 10);
+    allRanked = allRanked.slice(0, codeIntelMode === "find" ? FIND_RESULT_LIMIT : RELEVANT_CHUNK_LIMIT);
     allRelated = allRelated.slice(0, 5);
 
     if (codeIntelMode === "find") {

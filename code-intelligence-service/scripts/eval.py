@@ -9,7 +9,7 @@ service, and reports:
     ranked probable_locations?
   - MRR (mean reciprocal rank) on the first expected_file match.
   - Line IoU: intersection-over-union of the expected_line_range with
-    (probable_line_start..probable_line_end) on the first expected match.
+    the indexed chunk start_line..end_line on the first expected match.
   - Total rendered prompt tokens (tiktoken cl100k_base) of the
     [PROBABLE LOCATIONS] block that would be sent to the LLM.
   - Latency p50 / p95 per /api/context call.
@@ -62,7 +62,7 @@ except Exception:  # pragma: no cover - tiktoken optional
 
 MAX_BODY_PER_CHUNK = 2000
 MAX_BODY_PER_CHUNK_MEDIUM = 800
-MAX_PROBABLE_IN_CONTEXT = 8
+MAX_PROBABLE_IN_CONTEXT = 20
 MAX_RELATED_IN_CONTEXT = 8
 CONF_HIGH = 0.7
 CONF_MEDIUM = 0.4
@@ -71,13 +71,7 @@ CONF_MEDIUM = 0.4
 def _format_line_range(loc: dict) -> str:
     start = loc.get("start_line", 0)
     end = loc.get("end_line", 0)
-    pls = loc.get("probable_line_start")
-    ple = loc.get("probable_line_end")
-    src = loc.get("probable_line_source")
-    base = f"lines {start}-{end}"
-    if pls and ple and src:
-        return f"{base}, likely {pls}-{ple} [{src}]"
-    return base
+    return f"lines {start}-{end}"
 
 
 def render_probable_block(probable: list[dict], related: list[dict]) -> str:
@@ -175,12 +169,8 @@ def line_iou(expected: list[int] | None, predicted_first_match: dict | None) -> 
     if not expected or not predicted_first_match:
         return None
     exp_a, exp_b = int(expected[0]), int(expected[1])
-    # Prefer narrow window when available; else fall back to envelope.
-    pls = predicted_first_match.get("probable_line_start")
-    ple = predicted_first_match.get("probable_line_end")
-    if pls is None or ple is None:
-        pls = predicted_first_match.get("start_line")
-        ple = predicted_first_match.get("end_line")
+    pls = predicted_first_match.get("start_line")
+    ple = predicted_first_match.get("end_line")
     try:
         pred_a, pred_b = int(pls), int(ple)
     except (TypeError, ValueError):
@@ -245,7 +235,7 @@ def run_one(client: httpx.Client, url: str, case: dict, token: str | None) -> di
         "expected_files": case.get("expected_files", []),
         "predicted_files": [p.get("file_path") for p in probable],
         "predicted_lines": [
-            (p.get("start_line"), p.get("end_line"), p.get("probable_line_start"), p.get("probable_line_end"))
+            (p.get("start_line"), p.get("end_line"))
             for p in probable
         ],
         "recall@1":  file_recall_at_k(case.get("expected_files", []), probable, 1),
@@ -387,7 +377,6 @@ def main() -> int:
     # sees, which must match the deployed service for the label to be useful.
     flags = {
         "ENABLE_SUB_FUNCTION_CHUNKS": os.environ.get("ENABLE_SUB_FUNCTION_CHUNKS", "false"),
-        "ENABLE_LLM_PINPOINT": os.environ.get("ENABLE_LLM_PINPOINT", "false"),
     }
 
     print(f"# eval: {len(cases)} cases, url={args.url}, flags={flags}", file=sys.stderr)

@@ -126,9 +126,6 @@ class RetrievedChunk(BaseModel):
     branch: Optional[str] = None
     branch_diverged: bool = False
     relevance_reasoning: Optional[str] = None
-    probable_line_start: Optional[int] = None
-    probable_line_end: Optional[int] = None
-    probable_line_source: Optional[str] = None
     probable_issue: Optional[str] = None
 
 
@@ -165,9 +162,6 @@ class ProbableLocation(BaseModel):
     branch: Optional[str] = None
     branch_diverged: bool = False
     relevance_reasoning: Optional[str] = None
-    probable_line_start: Optional[int] = None
-    probable_line_end: Optional[int] = None
-    probable_line_source: Optional[str] = None
     probable_issue: Optional[str] = None
 
 

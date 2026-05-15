@@ -13,7 +13,6 @@ RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "openrouter/deepseek/deepseek-
 QUERY_REFINER_MODEL = os.environ.get("QUERY_REFINER_MODEL", "openrouter/deepseek/deepseek-chat")
 QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/openai/gpt-4o-mini")
 ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "openrouter/moonshotai/kimi-k2")
-LLM_PINPOINT_MODEL = os.environ.get("LLM_PINPOINT_MODEL", "openrouter/openai/gpt-4.1-nano")
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-large")
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1536"))
@@ -63,7 +62,3 @@ GRAPH_MAX_OPTIMIZE = int(os.environ.get("GRAPH_MAX_OPTIMIZE", "30"))
 
 ITERATIVE_REFINEMENT_THRESHOLD = float(os.environ.get("ITERATIVE_REFINEMENT_THRESHOLD", "0.5"))
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "2"))
-
-PINPOINT_WINDOW = int(os.environ.get("PINPOINT_WINDOW", "5"))
-LLM_PINPOINT_TOP_N = int(os.environ.get("LLM_PINPOINT_TOP_N", "5"))
-ENABLE_LLM_PINPOINT = os.environ.get("ENABLE_LLM_PINPOINT", "").lower() in ("1", "true", "yes")

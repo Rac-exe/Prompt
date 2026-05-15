@@ -1,6 +1,6 @@
 {
   "_doc": {
-    "purpose": "Hand-curated queries + expected answers for the /api/context retrieval evaluation. Metrics: File Recall@k, MRR, Line IoU (intersection-over-union on probable_line_start/end vs expected_line_range), prompt tokens, latency.",
+    "purpose": "Hand-curated queries + expected answers for the /api/context retrieval evaluation. Metrics: File Recall@k, MRR, Line IoU (intersection-over-union on indexed start_line/end_line vs expected_line_range), prompt tokens, latency.",
     "project_id_note": "Fill in real project_ids before running. Seed uses two placeholder projects: TEST_PROJECT_A (react/todo app), TEST_PROJECT_B (node/API service).",
     "fields": {
       "id":                    "stable test id for diffing",
