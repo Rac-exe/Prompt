@@ -263,6 +263,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
   const root = tree.rootNode;
   const chunks: ChunkData[] = [];
   const imports: string[] = [];
+  let chunkIndex = 0;
 
   const functionTypes = FUNCTION_NODE_TYPES[language] || [];
   const classTypes = CLASS_NODE_TYPES[language] || [];
@@ -286,6 +287,8 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
           start_line: node.startPosition.row + 1,
           end_line: node.endPosition.row + 1,
           chunk_type: 'class',
+          scope_type: 'class',
+          chunk_index: chunkIndex++,
           name,
           signature: undefined,
           language,
@@ -316,6 +319,9 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
           start_line: node.startPosition.row + 1,
           end_line: node.endPosition.row + 1,
           chunk_type: parentClass ? 'method' : 'function',
+          scope_type: parentClass ? 'method' : 'function',
+          chunk_index: chunkIndex++,
+          parent_scope_name: parentClass,
           name: fullName,
           signature: extractSignature(node, content),
           language,
@@ -344,6 +350,8 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
       start_line: 1,
       end_line: content.split('\n').length,
       chunk_type: 'file',
+      scope_type: 'file',
+      chunk_index: chunkIndex++,
       name: fileBaseName,
       signature: undefined,
       language,

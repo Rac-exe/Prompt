@@ -62,7 +62,14 @@ async def ingest_skeleton(
             from app.workers.arq_worker import enqueue_ingest
             chunks_data = [c.model_dump() for c in body.chunks]
             graph_data = [e.model_dump() for e in body.call_graph]
-            job_id = await enqueue_ingest(body.project_id, user_id, chunks_data, graph_data, body.branch)
+            job_id = await enqueue_ingest(
+                body.project_id,
+                user_id,
+                chunks_data,
+                graph_data,
+                body.branch,
+                body.language_map,
+            )
             logger.info(f"Ingest enqueued via arq: job_id={job_id}")
         except Exception as e:
             sentry_sdk.capture_exception(e)
@@ -95,6 +102,7 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
             user_id=user_id,
             chunks=body.chunks,
             branch=body.branch,
+            language_map=body.language_map,
         )
 
         if body.call_graph:

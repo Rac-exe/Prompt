@@ -347,9 +347,14 @@ export function registerProjectHandlers(
     return isWatching(projectId);
   });
 
-  ipcMain.handle('project:retrieve', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number }) => {
+  ipcMain.handle('project:retrieve', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
     return await _client.retrieve(params);
+  });
+
+  ipcMain.handle('project:context', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => {
+    if (!_client) throw new Error('Code intelligence client not initialized');
+    return await _client.context(params);
   });
 
   /**

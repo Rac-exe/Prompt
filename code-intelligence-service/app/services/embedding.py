@@ -12,7 +12,13 @@ import time
 import logging
 import litellm
 import sentry_sdk
-from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
+from app.config import (
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_MODEL,
+    OPENAI_API_KEY,
+    OPENROUTER_API_KEY,
+    STRUCTURE_EMBEDDING_DIMENSIONS,
+)
 
 logger = logging.getLogger("code-intel.embedding")
 
@@ -37,7 +43,7 @@ def _get_model_and_kwargs() -> tuple[str, dict]:
     )
 
 
-async def _embed_with_retry(texts: list[str]) -> list[list[float]]:
+async def _embed_with_retry(texts: list[str], dimensions: int = EMBEDDING_DIMENSIONS) -> list[list[float]]:
     """Call litellm.embedding with retries for transient provider failures."""
     model, kwargs = _get_model_and_kwargs()
     last_error: Exception | None = None
@@ -49,13 +55,13 @@ async def _embed_with_retry(texts: list[str]) -> list[list[float]]:
                 litellm.embedding,
                 model=model,
                 input=texts,
-                dimensions=EMBEDDING_DIMENSIONS,
+                dimensions=dimensions,
                 **kwargs,
             )
             elapsed = time.perf_counter() - t0
             logger.debug(
                 f"Embedding batch ok: {len(texts)} texts, "
-                f"dim={EMBEDDING_DIMENSIONS}, took {elapsed:.2f}s"
+                f"dim={dimensions}, took {elapsed:.2f}s"
             )
             return [d["embedding"] for d in response.data]
         except Exception as e:
@@ -96,7 +102,19 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
         batch = texts[i : i + batch_size]
         batch_num = (i // batch_size) + 1
         logger.debug(f"Embedding batch {batch_num}/{total_batches}: {len(batch)} texts")
-        all_embeddings.extend(await _embed_with_retry(batch))
+        all_embeddings.extend(await _embed_with_retry(batch, EMBEDDING_DIMENSIONS))
 
     logger.info(f"Batch embedding complete: {len(all_embeddings)} vectors produced")
+    return all_embeddings
+
+
+async def embed_structure_texts(texts: list[str]) -> list[list[float]]:
+    """Embed structural texts with the configured structure dimensions."""
+    if not texts:
+        return []
+    batch_size = 2048
+    all_embeddings: list[list[float]] = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        all_embeddings.extend(await _embed_with_retry(batch, STRUCTURE_EMBEDDING_DIMENSIONS))
     return all_embeddings

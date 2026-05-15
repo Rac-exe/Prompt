@@ -51,6 +51,7 @@ async def index_chunks_task(
     chunks_data: list[dict],
     call_graph_data: list[dict],
     branch: str | None = None,
+    language_map: dict[str, int] | None = None,
 ):
     """
     arq task: process a batch of code chunks for indexing.
@@ -67,6 +68,7 @@ async def index_chunks_task(
         user_id=user_id,
         chunks=chunks,
         branch=branch,
+        language_map=language_map or {},
     )
 
     if call_graph:
@@ -118,6 +120,7 @@ async def enqueue_ingest(
     chunks_data: list[dict],
     call_graph_data: list[dict],
     branch: str | None = None,
+    language_map: dict[str, int] | None = None,
 ):
     """Enqueue an indexing job to the Redis-backed arq queue."""
     pool = await get_pool()
@@ -128,6 +131,7 @@ async def enqueue_ingest(
         chunks_data,
         call_graph_data,
         branch,
+        language_map or {},
     )
     logger.info(f"[arq] Enqueued ingest job {job.job_id} for project {project_id}")
     return job.job_id

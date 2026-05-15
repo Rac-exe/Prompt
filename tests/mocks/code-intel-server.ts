@@ -17,8 +17,9 @@ app.get('/', (_req, res) => {
 });
 
 // Retrieve endpoint
-app.get('/api/retrieve', (_req, res) => {
+app.get('/api/retrieve', (req, res) => {
   res.json({
+    mode: req.query.mode || 'bug',
     ranked_chunks: [],
     related_chunks: [],
     branch_context: null,
@@ -30,22 +31,30 @@ app.get('/api/retrieve', (_req, res) => {
 // Context endpoint
 app.post('/api/context', (_req, res) => {
   res.json({
+    mode: req.body?.mode || 'bug',
     probable_locations: [],
     related_locations: [],
+    answer: null,
+    sources: [],
     intent: 'test',
     concepts: [],
     project_summary: null,
     branch_context: null,
+    search_id: 'mock-search-1',
   });
+});
+
+app.post('/api/feedback', (_req, res) => {
+  res.json({ status: 'recorded' });
 });
 
 // Projects CRUD
 app.post('/api/projects', (_req, res) => {
-  res.status(201).json({ id: 'mock-project-1', user_id: 'mock-user', name: 'Test Project', index_status: 'idle' });
+  res.status(201).json({ id: 'mock-project-1', user_id: 'mock-user', name: 'Test Project', index_status: 'stale' });
 });
 
 app.get('/api/projects', (_req, res) => {
-  res.json([{ id: 'mock-project-1', user_id: 'mock-user', name: 'Test Project', index_status: 'idle' }]);
+  res.json([{ id: 'mock-project-1', user_id: 'mock-user', name: 'Test Project', index_status: 'stale' }]);
 });
 
 // Sync

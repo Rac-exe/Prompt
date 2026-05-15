@@ -104,6 +104,7 @@ from app.routes.retrieve import router as retrieve_router
 from app.routes.context import router as context_router
 from app.routes.sync import router as sync_router
 from app.routes.webhooks import router as webhooks_router
+from app.routes.feedback import router as feedback_router
 
 app.include_router(projects_router, prefix="/api")
 app.include_router(ingest_router, prefix="/api")
@@ -111,6 +112,7 @@ app.include_router(retrieve_router, prefix="/api")
 app.include_router(context_router, prefix="/api")
 app.include_router(sync_router, prefix="/api")
 app.include_router(webhooks_router, prefix="/api")
+app.include_router(feedback_router, prefix="/api")
 
 
 @app.get("/health")
@@ -144,6 +146,7 @@ async def root():
             "ingest": "POST /api/index/ingest",
             "retrieve": "GET /api/retrieve",
             "context": "POST /api/context",
+            "feedback": "POST /api/feedback",
             "sync": "POST /api/sync",
             "webhooks": "POST /api/webhooks/github",
         },

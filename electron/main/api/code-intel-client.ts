@@ -24,6 +24,9 @@ export interface ChunkData {
   imports: string[];
   code_body?: string;
   is_exported?: boolean;
+  scope_type?: 'file' | 'class' | 'function' | 'method';
+  chunk_index?: number;
+  parent_scope_name?: string;
 }
 
 export interface CallGraphEdge {
@@ -58,17 +61,42 @@ export interface RetrievedChunk {
   signature?: string;
   language: string;
   semantic_summary?: string;
+  summary_purpose?: string;
   code_body?: string;
   concepts?: string[];
   similarity_score: number;
   branch?: string;
   branch_diverged: boolean;
+  relevance_reasoning?: string;
+  probable_line_start?: number;
+  probable_line_end?: number;
+  probable_line_source?: string;
+  probable_issue?: string;
 }
 
 export interface RetrieveResult {
   ranked_chunks: RetrievedChunk[];
   related_chunks: RetrievedChunk[];
   branch_context?: Record<string, any>;
+}
+
+export interface ContextLocation extends Omit<RetrievedChunk, 'id' | 'similarity_score'> {
+  id?: string;
+  confidence_score?: number;
+  similarity_score?: number;
+}
+
+export interface ContextResult {
+  mode: 'find' | 'ask' | 'bug' | 'optimize';
+  probable_locations: ContextLocation[];
+  related_locations: ContextLocation[];
+  answer?: string | null;
+  sources?: ContextLocation[];
+  intent?: string;
+  concepts?: string[];
+  project_summary?: string | null;
+  branch_context?: Record<string, any>;
+  search_id?: string | null;
 }
 
 export class CodeIntelClient {
@@ -152,11 +180,37 @@ export class CodeIntelClient {
     query: string;
     branch?: string;
     limit?: number;
+    mode?: 'find' | 'ask' | 'bug' | 'optimize';
   }): Promise<RetrieveResult> {
     return Sentry.startSpan({ name: 'codeIntel.retrieve', op: 'code-intel.search' }, async (span) => {
       span.setAttribute('project_id', params.project_id);
       const resp = await this.client.get('/api/retrieve', { params });
       Sentry.addBreadcrumb({ category: 'code-intel', message: 'Context retrieved', level: 'info', data: { project_id: params.project_id, chunks: resp.data?.ranked_chunks?.length ?? 0 } });
+      return resp.data;
+    });
+  }
+
+  async context(params: {
+    project_id: string;
+    query: string;
+    branch?: string;
+    limit?: number;
+    mode?: 'find' | 'ask' | 'bug' | 'optimize';
+  }): Promise<ContextResult> {
+    return Sentry.startSpan({ name: 'codeIntel.context', op: 'code-intel.context' }, async (span) => {
+      span.setAttribute('project_id', params.project_id);
+      span.setAttribute('mode', params.mode || 'bug');
+      const resp = await this.client.post('/api/context', params);
+      Sentry.addBreadcrumb({
+        category: 'code-intel',
+        message: 'Context retrieved',
+        level: 'info',
+        data: {
+          project_id: params.project_id,
+          mode: params.mode,
+          chunks: resp.data?.probable_locations?.length ?? 0,
+        },
+      });
       return resp.data;
     });
   }

@@ -107,18 +107,6 @@ async def decompose_query(query: str) -> QueryAnalysis:
         f"keyword_concepts={detected_concepts}, model={QUERY_DECOMPOSE_MODEL}"
     )
 
-    if word_count <= SIMPLE_QUERY_WORD_THRESHOLD and detected_concepts:
-        intent = _detect_intent_keyword(query)
-        logger.info(
-            f"[DECOMPOSE] FAST PATH activated: {word_count} words <= threshold, "
-            f"intent={intent}, concepts={detected_concepts} — skipping LLM call"
-        )
-        return QueryAnalysis(
-            intent=intent,
-            sub_queries=[query],
-            concepts=detected_concepts[:4],
-        )
-
     kwargs: dict = {
         "model": QUERY_DECOMPOSE_MODEL,
         "messages": [

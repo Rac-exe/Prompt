@@ -41,6 +41,7 @@ def fetch_project_context(
     branch: str | None = None,
     auth_token: str | None = None,
     limit: int = 10,
+    mode: str | None = None,
 ) -> ProjectContext | None:
     """
     Call the Code Intelligence Service to get probable locations.
@@ -65,7 +66,7 @@ def fetch_project_context(
         headers["Authorization"] = f"Bearer {auth_token}"
 
     logger.info("[PROJECT CTX] Trying /api/context endpoint first...")
-    result = _try_context_endpoint(project_id, user_query, branch, limit, headers)
+    result = _try_context_endpoint(project_id, user_query, branch, limit, headers, mode)
     if result is not None:
         logger.info(
             f"[PROJECT CTX] SUCCESS via /api/context: "
@@ -92,12 +93,14 @@ def _try_context_endpoint(
     branch: str | None,
     limit: int,
     headers: dict,
+    mode: str | None = None,
 ) -> ProjectContext | None:
     """Call POST /api/context for structured probable-location retrieval."""
     body = {
         "project_id": project_id,
         "query": user_query[:5000],
         "limit": limit,
+        "mode": mode or _infer_mode(user_query),
     }
     if branch:
         body["branch"] = branch
@@ -178,6 +181,7 @@ def _fallback_retrieve_endpoint(
         "project_id": project_id,
         "query": user_query[:5000],
         "limit": limit,
+        "mode": _infer_mode(user_query),
     }
     if branch:
         params["branch"] = branch
@@ -254,10 +258,16 @@ def _chunk_to_location_dict(chunk: dict) -> dict:
         "signature": chunk.get("signature"),
         "language": chunk.get("language", ""),
         "semantic_summary": chunk.get("semantic_summary"),
+        "summary_purpose": chunk.get("summary_purpose"),
         "code_body": chunk.get("code_body"),
         "concepts": chunk.get("concepts") or [],
         "confidence_score": chunk.get("similarity_score", 0.0),
         "branch_diverged": chunk.get("branch_diverged", False),
+        "relevance_reasoning": chunk.get("relevance_reasoning"),
+        "probable_line_start": chunk.get("probable_line_start"),
+        "probable_line_end": chunk.get("probable_line_end"),
+        "probable_line_source": chunk.get("probable_line_source"),
+        "probable_issue": chunk.get("probable_issue"),
     }
 
 
@@ -305,6 +315,18 @@ def _format_probable_locations(
             summary = loc.get("semantic_summary")
             if summary:
                 lines.append(f"  Summary: {summary}")
+            purpose = loc.get("summary_purpose")
+            if purpose:
+                lines.append(f"  Purpose: {purpose}")
+            if loc.get("probable_line_start") and loc.get("probable_line_end"):
+                src = loc.get("probable_line_source") or "pinpoint"
+                lines.append(
+                    f"  Likely lines: {loc.get('probable_line_start')}-{loc.get('probable_line_end')} ({src})"
+                )
+            if loc.get("relevance_reasoning"):
+                lines.append(f"  Why retrieved: {loc.get('relevance_reasoning')}")
+            if loc.get("probable_issue"):
+                lines.append(f"  Possible issue: {loc.get('probable_issue')}")
 
             if loc.get("branch_diverged"):
                 lines.append("  Note: modified in current branch")
@@ -372,3 +394,14 @@ def _format_probable_locations(
 
     lines.append("[END PROBABLE LOCATIONS]")
     return "\n".join(lines)
+
+
+def _infer_mode(query: str) -> str:
+    q = (query or "").lower()
+    if any(word in q for word in ("where is", "find ", "defined", "references", "uses ")):
+        return "find"
+    if any(word in q for word in ("bug", "broken", "error", "fix", "crash", "fails", "not working")):
+        return "bug"
+    if any(word in q for word in ("how does", "explain", "what is", "why does")):
+        return "ask"
+    return "optimize"

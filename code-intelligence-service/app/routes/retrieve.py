@@ -2,7 +2,7 @@ import logging
 import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import require_auth
-from app.db.models import RetrieveResponse
+from app.db.models import ModeEnum, RetrieveResponse
 from app.db import queries
 from app.services.search import retrieve_context
 from app.config import RETRIEVAL_DEFAULT_LIMIT, RETRIEVAL_MAX_LIMIT
@@ -17,6 +17,7 @@ async def retrieve(
     query: str = Query(..., min_length=1, max_length=10_000),
     branch: str | None = Query(default=None),
     limit: int = Query(default=RETRIEVAL_DEFAULT_LIMIT, ge=1, le=RETRIEVAL_MAX_LIMIT),
+    mode: ModeEnum = Query(default=ModeEnum.BUG),
     auth: dict = Depends(require_auth),
 ):
     """
@@ -54,6 +55,7 @@ async def retrieve(
             query=query,
             branch=branch,
             limit=limit,
+            mode=mode,
         )
 
         bodies_count = sum(1 for c in result.ranked_chunks if c.code_body)

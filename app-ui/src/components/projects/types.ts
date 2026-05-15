@@ -90,15 +90,40 @@ export interface RetrievedChunk {
   signature?: string;
   language: string;
   semantic_summary?: string;
+  summary_purpose?: string;
   code_body?: string;
   concepts?: string[];
   similarity_score: number;
+  relevance_reasoning?: string;
+  probable_line_start?: number;
+  probable_line_end?: number;
+  probable_line_source?: string;
+  probable_issue?: string;
+}
+
+export interface ContextLocation extends Omit<RetrievedChunk, 'id' | 'similarity_score'> {
+  id?: string;
+  confidence_score?: number;
+  similarity_score?: number;
 }
 
 export interface RetrieveResult {
   ranked_chunks: RetrievedChunk[];
   related_chunks: RetrievedChunk[];
   branch_context?: Record<string, any>;
+}
+
+export interface ContextResult {
+  mode: 'find' | 'ask' | 'bug' | 'optimize';
+  probable_locations: ContextLocation[];
+  related_locations: ContextLocation[];
+  answer?: string | null;
+  sources?: ContextLocation[];
+  intent?: string;
+  concepts?: string[];
+  project_summary?: string | null;
+  branch_context?: Record<string, any>;
+  search_id?: string | null;
 }
 
 // Spaces are stored per authenticated user. Previously a single global key

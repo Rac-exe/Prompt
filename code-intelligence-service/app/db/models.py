@@ -23,6 +23,16 @@ class RelationshipType(str, Enum):
     IMPORTS = "imports"
     INHERITS = "inherits"
     IMPLEMENTS = "implements"
+    PARENT_OF = "parent_of"
+    CHILD_OF = "child_of"
+    SIBLING_NEXT = "sibling_next"
+
+
+class ModeEnum(str, Enum):
+    FIND = "find"
+    ASK = "ask"
+    BUG = "bug"
+    OPTIMIZE = "optimize"
 
 
 class ProjectCreate(BaseModel):
@@ -62,6 +72,9 @@ class ChunkInput(BaseModel):
     imports: list[str] = Field(default_factory=list)
     code_body: Optional[str] = Field(default=None, max_length=5000)
     is_exported: bool = False
+    scope_type: Optional[str] = None
+    chunk_index: Optional[int] = None
+    parent_scope_name: Optional[str] = None
 
 
 class CallGraphEdge(BaseModel):
@@ -97,11 +110,18 @@ class RetrievedChunk(BaseModel):
     signature: Optional[str] = None
     language: str
     semantic_summary: Optional[str] = None
+    summary_code: Optional[str] = None
+    summary_purpose: Optional[str] = None
     code_body: Optional[str] = None
     concepts: list[str] = Field(default_factory=list)
     similarity_score: float
     branch: Optional[str] = None
     branch_diverged: bool = False
+    relevance_reasoning: Optional[str] = None
+    probable_line_start: Optional[int] = None
+    probable_line_end: Optional[int] = None
+    probable_line_source: Optional[str] = None
+    probable_issue: Optional[str] = None
 
 
 class RetrieveResponse(BaseModel):
@@ -115,6 +135,7 @@ class RetrieveResponse(BaseModel):
 class ContextRequest(BaseModel):
     project_id: str
     query: str = Field(..., min_length=1, max_length=10_000)
+    mode: ModeEnum = ModeEnum.BUG
     branch: Optional[str] = None
     limit: int = Field(default=10, ge=1, le=50)
 
@@ -128,21 +149,43 @@ class ProbableLocation(BaseModel):
     signature: Optional[str] = None
     language: str
     semantic_summary: Optional[str] = None
+    summary_purpose: Optional[str] = None
     code_body: Optional[str] = None
     concepts: list[str] = Field(default_factory=list)
     confidence_score: float
     is_exported: bool = False
     branch: Optional[str] = None
     branch_diverged: bool = False
+    relevance_reasoning: Optional[str] = None
+    probable_line_start: Optional[int] = None
+    probable_line_end: Optional[int] = None
+    probable_line_source: Optional[str] = None
+    probable_issue: Optional[str] = None
 
 
 class ContextResponse(BaseModel):
+    mode: ModeEnum = ModeEnum.BUG
     probable_locations: list[ProbableLocation] = Field(default_factory=list)
     related_locations: list[ProbableLocation] = Field(default_factory=list)
+    answer: Optional[str] = None
+    sources: list[ProbableLocation] = Field(default_factory=list)
     intent: str = "general"
     concepts: list[str] = Field(default_factory=list)
     project_summary: Optional[str] = None
     branch_context: Optional[dict] = None
+    search_id: Optional[str] = None
+
+
+class FeedbackRequest(BaseModel):
+    search_id: str
+    project_id: str
+    mode: ModeEnum = ModeEnum.BUG
+    selected_chunk_ids: list[str] = Field(default_factory=list)
+    was_useful: Optional[bool] = None
+
+
+class FeedbackResponse(BaseModel):
+    status: str = "recorded"
 
 
 class SyncRequest(BaseModel):

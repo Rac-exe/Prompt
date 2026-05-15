@@ -359,7 +359,8 @@ declare global {
         sync: (projectId?: string) => Promise<void>;
         toggleWatching: (projectId: string, localPath: string, enable: boolean) => Promise<{ watching: boolean }>;
         isWatching: (projectId: string) => Promise<boolean>;
-        retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => Promise<any>;
+        retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => Promise<any>;
+        context: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => Promise<any>;
         ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => Promise<{ triggered: number; total?: number }>;
         onStatusUpdate: (callback: (data: any) => void) => () => void;
         onOverlayStatus: (callback: (data: any) => void) => () => void;
@@ -1024,7 +1025,8 @@ const electronAPI = {
     sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
     toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
     isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
-    retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => ipcRenderer.invoke('project:retrieve', params),
+    retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => ipcRenderer.invoke('project:retrieve', params),
+    context: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => ipcRenderer.invoke('project:context', params),
     ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => ipcRenderer.invoke('project:ensure-fresh', projects),
     onStatusUpdate: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data);

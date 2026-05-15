@@ -130,11 +130,11 @@ def upsert_chunk(
 
 
 def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str], dict]:
-    """Fetch all (file_path, name) -> {content_hash, embedding} for a project in one query."""
+    """Fetch all (file_path, name) -> hash/embedding state for a project in one query."""
     client = get_client()
     result = (
         client.table("code_chunks")
-        .select("file_path,name,content_hash,embedding")
+        .select("file_path,name,content_hash,embedding,embedding_summary")
         .eq("project_id", project_id)
         .execute()
     )
@@ -271,7 +271,9 @@ def find_chunk_by_name(project_id: str, name: str, file_path: Optional[str] = No
 
 _CHUNK_SELECT_FIELDS = (
     "id,file_path,start_line,end_line,chunk_type,name,signature,"
-    "language,semantic_summary,code_body,concepts,branch,branch_diverged,is_exported"
+    "language,semantic_summary,summary_code,summary_purpose,code_body,concepts,"
+    "branch,branch_diverged,is_exported,relevance_reasoning,parent_id,"
+    "context_header,parent_summary"
 )
 
 
@@ -301,6 +303,37 @@ def vector_search(
     except Exception as e:
         logger.error(f"vector_search RPC failed for project {project_id}: {e}")
         return []
+
+
+def multi_vector_search(
+    project_id: str,
+    user_id: str,
+    query_embedding_summary: list[float],
+    query_embedding_structure: list[float],
+    limit: int = 10,
+    branch: Optional[str] = None,
+    summary_weight: float = 0.65,
+    structure_weight: float = 0.35,
+) -> list[dict]:
+    """Weighted summary+structure vector search via match_code_chunks_multi."""
+    client = get_client()
+    params = {
+        "query_embedding_summary": query_embedding_summary,
+        "query_embedding_structure": query_embedding_structure,
+        "match_count": limit,
+        "filter_project_id": project_id,
+        "filter_user_id": user_id,
+        "summary_weight": summary_weight,
+        "structure_weight": structure_weight,
+    }
+    if branch:
+        params["filter_branch"] = branch
+    try:
+        result = client.rpc("match_code_chunks_multi", params).execute()
+        return result.data or []
+    except Exception as e:
+        logger.warning(f"multi_vector_search RPC failed ({e}), falling back to legacy vector search")
+        return vector_search(project_id, user_id, query_embedding_summary, limit, branch)
 
 
 def concept_search(
@@ -355,7 +388,15 @@ def text_search(
 
 # ── Graph traversal ─────────────────────────────────────────────────────────
 
-EDGE_WEIGHTS = {"calls": 3, "imports": 2, "inherits": 1, "implements": 1}
+EDGE_WEIGHTS = {
+    "calls": 3,
+    "imports": 2,
+    "parent_of": 2,
+    "child_of": 2,
+    "sibling_next": 1,
+    "inherits": 1,
+    "implements": 1,
+}
 
 
 def get_related_chunks(chunk_ids: list[str], project_id: str) -> list[dict]:

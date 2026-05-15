@@ -1,228 +1,60 @@
 """
-Hybrid retrieval engine: query preprocessing → decomposition → batch embedding →
-multi-query vector search + full-text search + concept search + file-path search →
-source-weighted RRF → query-aware rerank → filtered graph expansion → dedup →
-observation tracking.
+Mode-aware retrieval engine.
 """
 
+from __future__ import annotations
+
 import math
-import re
-import time
+import asyncio
+import json
 import logging
-import sentry_sdk
+import re
+from dataclasses import dataclass, field
 from typing import Optional
-from app.services.embedding import embed_text, embed_texts
-from app.services.query_analyzer import decompose_query
-from app.services.query_preprocessor import preprocess_query, build_file_patterns, QuerySignals
+
+import litellm
+import sentry_sdk
+
+from app.config import (
+    ITERATIVE_REFINEMENT_THRESHOLD,
+    MAX_ITERATIONS,
+    OPENROUTER_API_KEY,
+    QUERY_REFINER_MODEL,
+)
+from app.db.models import ModeEnum, RetrievedChunk, RetrieveResponse
 from app.db.queries import (
-    vector_search,
-    text_search,
     concept_search,
     file_path_search,
-    get_related_chunks_multihop,
     get_branch_context,
+    get_related_chunks_multihop,
     increment_observation_counts,
+    multi_vector_search,
+    text_search,
 )
-from app.db.models import RetrievedChunk, RetrieveResponse
-from app.config import GRAPH_SIMILARITY_THRESHOLD
+from app.services.answer_generator import generate_answer
+from app.services.concepts import CONCEPT_KEYWORDS
+from app.services.embedding import embed_structure_texts, embed_texts
+from app.services.feedback import record_search
+from app.services.line_pinpoint import apply_line_pinpoint
+from app.services.mode_router import ModeConfig, get_mode_config
+from app.services.query_analyzer import QueryAnalysis, decompose_query
+from app.services.query_preprocessor import QuerySignals, build_file_patterns, preprocess_query
+from app.services.reranker import rerank_chunks
 
 logger = logging.getLogger("code-intel.search")
 
 
-# ── Concept detection ───────────────────────────────────────────────────────
-
-CONCEPT_KEYWORDS: dict[str, list[str]] = {
-    "state-management": ["state", "store", "redux", "toggle", "setter", "getter", "usestate", "dispatch", "context"],
-    "auth": ["auth", "login", "signup", "password", "token", "session", "jwt", "oauth", "credential"],
-    "routing": ["route", "router", "navigate", "path", "url", "redirect", "endpoint"],
-    "database": ["database", "db", "query", "model", "schema", "migration", "mongoose", "sql", "mongo", "prisma"],
-    "API": ["api", "endpoint", "request", "response", "rest", "graphql", "controller", "handler"],
-    "error-handling": ["error", "exception", "catch", "throw", "handler", "retry", "fallback"],
-    "validation": ["valid", "validate", "schema", "sanitize", "check", "constraint", "zod", "joi"],
-    "data-fetching": ["fetch", "get", "load", "retrieve", "download", "http", "axios", "httpx"],
-    "caching": ["cache", "memoize", "store", "invalidate", "ttl", "redis"],
-    "middleware": ["middleware", "interceptor", "pipe", "guard", "filter"],
-    "file-io": ["file", "read", "write", "stream", "upload", "download", "fs"],
-    "security": ["security", "encrypt", "hash", "cors", "csrf", "xss"],
-    "UI-rendering": ["render", "component", "view", "template", "dom", "jsx", "tsx"],
-    "config": ["config", "env", "settings", "options", "preference"],
-    "logging": ["log", "logger", "debug", "trace", "monitor"],
-    "testing": ["test", "spec", "mock", "assert", "expect", "jest", "mocha"],
-    "concurrency": ["async", "await", "promise", "thread", "worker", "parallel", "concurrent"],
-    "search": ["search", "find", "filter", "query", "index", "match"],
-    "payments": ["payment", "stripe", "checkout", "billing", "invoice", "charge"],
-    "notifications": ["notification", "email", "sms", "push", "alert", "webhook"],
-}
-
-MAX_CONCEPT_KEYWORDS_PER = 3
-
-
-def _detect_concepts(query: str) -> list[str]:
-    query_lower = query.lower()
-    query_words = set(re.findall(r"\w+", query_lower))
-    matched = []
-    for concept, keywords in CONCEPT_KEYWORDS.items():
-        if any(kw in query_words for kw in keywords):
-            matched.append(concept)
-    return matched
-
-
-def _split_identifiers(text: str) -> str:
-    result = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    result = result.replace("_", " ").replace(".", " ")
-    return result
-
-
-def _expand_query(query: str, detected_concepts: list[str]) -> str:
-    split_query = _split_identifiers(query)
-    words = set(re.findall(r"\w+", split_query.lower()))
-    words.update(re.findall(r"\w+", query.lower()))
-
-    for concept in detected_concepts:
-        kws = CONCEPT_KEYWORDS.get(concept, [])
-        words.update(kws[:MAX_CONCEPT_KEYWORDS_PER])
-
-    return " or ".join(sorted(words))
-
-
-# ── Source-weighted Reciprocal Rank Fusion ───────────────────────────────────
-
-def _reciprocal_rank_fusion(
-    *result_lists: list[dict],
-    weights: list[float] | None = None,
-    k: int = 60,
-) -> list[dict]:
-    """
-    Merge multiple ranked result lists using source-weighted RRF.
-    score(d) = Σ  weight_i / (k + rank_i(d))   for each list i where d appears.
-    """
-    scores: dict[str, float] = {}
-    chunks_by_id: dict[str, dict] = {}
-
-    if weights is None:
-        weights = [1.0] * len(result_lists)
-    while len(weights) < len(result_lists):
-        weights.append(1.0)
-
-    for list_idx, results in enumerate(result_lists):
-        w = weights[list_idx]
-        for rank, chunk in enumerate(results):
-            cid = chunk["id"]
-            scores[cid] = scores.get(cid, 0.0) + w / (k + rank + 1)
-            if cid not in chunks_by_id:
-                chunks_by_id[cid] = chunk
-
-    sorted_ids = sorted(scores, key=lambda x: scores[x], reverse=True)
-    for cid in sorted_ids:
-        chunks_by_id[cid]["rrf_score"] = scores[cid]
-
-    return [chunks_by_id[cid] for cid in sorted_ids]
-
-
-# ── Query-aware reranking ────────────────────────────────────────────────────
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
-
-
-def _rerank(
-    chunks: list[dict],
-    branch: Optional[str] = None,
-    query_concepts: Optional[list[str]] = None,
-    query_embedding: Optional[list[float]] = None,
-    file_path_boost_ids: Optional[set[str]] = None,
-) -> list[dict]:
-    """
-    Re-rank fused candidates using:
-    score = rrf_score * obs_factor * branch_weight * concept_boost
-            * export_boost * query_sim_boost * file_match_boost
-    """
-    for chunk in chunks:
-        base = chunk.get("rrf_score", chunk.get("similarity", 0.0))
-        obs = chunk.get("observation_count", 0)
-        branch_weight = 1.0
-
-        if branch and chunk.get("branch") == branch:
-            branch_weight = 1.3
-        if chunk.get("branch_diverged"):
-            branch_weight *= 1.2
-
-        concept_boost = 1.0
-        if query_concepts and chunk.get("concepts"):
-            overlap = len(set(chunk["concepts"]) & set(query_concepts))
-            if overlap:
-                concept_boost = 1.0 + 0.15 * overlap
-
-        export_boost = 1.2 if chunk.get("is_exported") else 1.0
-        obs_factor = min(math.log(2 + obs), 2.0)
-
-        query_sim_boost = 1.0
-        if query_embedding and chunk.get("embedding"):
-            sim = _cosine_similarity(query_embedding, chunk["embedding"])
-            query_sim_boost = 1.0 + max(0, sim) * 0.3
-
-        file_match_boost = 1.0
-        if file_path_boost_ids and chunk.get("id") in file_path_boost_ids:
-            file_match_boost = 1.5
-
-        chunk["final_score"] = (
-            base * obs_factor * branch_weight * concept_boost
-            * export_boost * query_sim_boost * file_match_boost
-        )
-
-    chunks.sort(key=lambda c: c.get("final_score", 0), reverse=True)
-
-    if chunks:
-        top = chunks[0]
-        logger.info(
-            f"[RERANK] Top chunk after reranking: {top.get('name')} "
-            f"(rrf={top.get('rrf_score', 0):.4f}, final={top.get('final_score', 0):.4f}), "
-            f"used_query_sim={'yes' if query_embedding else 'no'}, "
-            f"file_boost_ids={len(file_path_boost_ids) if file_path_boost_ids else 0}"
-        )
-
-    return chunks
-
-
-# ── Graph expansion filtering ────────────────────────────────────────────────
-
-def _filter_related_by_similarity(
-    related: list[dict],
-    query_embedding: list[float] | None,
-    threshold: float = GRAPH_SIMILARITY_THRESHOLD,
-) -> list[dict]:
-    """Only keep graph-expanded chunks above similarity threshold to the query."""
-    if not query_embedding or not related:
-        return related
-    filtered = []
-    for chunk in related:
-        if chunk.get("embedding"):
-            sim = _cosine_similarity(query_embedding, chunk["embedding"])
-            if sim >= threshold:
-                chunk["_graph_similarity"] = sim
-                filtered.append(chunk)
-        else:
-            filtered.append(chunk)
-    dropped = len(related) - len(filtered)
-    logger.info(
-        f"[GRAPH FILTER] {len(related)} → {len(filtered)} "
-        f"(dropped {dropped}, threshold={threshold})"
-    )
-    return filtered
-
-
-# ── Main retrieval entry-point ──────────────────────────────────────────────
-
-# Source weights: vector > concept > text > file-path
-_VECTOR_WEIGHT = 1.5
-_CONCEPT_WEIGHT = 1.2
-_TEXT_WEIGHT = 1.0
-_FILE_PATH_WEIGHT = 1.8
+@dataclass
+class FullSearchResult:
+    ranked_chunks: list[dict]
+    related_chunks: list[dict]
+    branch_context: Optional[dict]
+    query_intent: str = "general"
+    query_concepts: list[str] = field(default_factory=list)
+    mode: ModeEnum = ModeEnum.BUG
+    answer: str | None = None
+    source_ids: list[str] = field(default_factory=list)
+    search_id: str | None = None
 
 
 async def retrieve_context(
@@ -232,200 +64,416 @@ async def retrieve_context(
     branch: Optional[str] = None,
     limit: int = 10,
     signals: Optional[QuerySignals] = None,
+    mode: ModeEnum | str = ModeEnum.BUG,
 ) -> RetrieveResponse:
-    t_start = time.perf_counter()
-
-    logger.info(
-        f"[project={project_id}] Retrieval started: "
-        f"query={query[:100]!r}, branch={branch}, limit={limit}"
+    full = await retrieve_context_full(project_id, user_id, query, branch, limit, signals, mode)
+    return RetrieveResponse(
+        ranked_chunks=[_to_retrieved_chunk(c) for c in full.ranked_chunks],
+        related_chunks=[_to_retrieved_chunk(c, score=0.0) for c in full.related_chunks],
+        branch_context=full.branch_context,
+        query_intent=full.query_intent,
+        query_concepts=full.query_concepts,
     )
 
-    if signals is None:
-        signals = preprocess_query(query)
 
-    t_decompose = time.perf_counter()
-    analysis = await decompose_query(query)
-    query_concepts = analysis.concepts or _detect_concepts(query)
-    sub_queries = analysis.sub_queries
-
+async def retrieve_context_full(
+    project_id: str,
+    user_id: str,
+    query: str,
+    branch: Optional[str] = None,
+    limit: int = 10,
+    signals: Optional[QuerySignals] = None,
+    mode: ModeEnum | str = ModeEnum.BUG,
+    project_summary: str | None = None,
+) -> FullSearchResult:
+    mode_enum = mode if isinstance(mode, ModeEnum) else ModeEnum(mode)
+    config = get_mode_config(mode_enum)
+    signals = signals or preprocess_query(query)
     logger.info(
-        f"[project={project_id}] Query decomposed in "
-        f"{time.perf_counter() - t_decompose:.3f}s: "
-        f"intent={analysis.intent}, sub_queries={len(sub_queries)}, "
-        f"concepts={query_concepts}"
+        "[RETRIEVE] start project=%s mode=%s limit=%s branch=%s vector=%s rerank=%s refine=%s graph=%s",
+        project_id,
+        mode_enum.value,
+        limit,
+        branch,
+        config.vector_search,
+        config.rerank,
+        config.refine,
+        config.graph_expand,
+    )
+    analysis = await _analyze_query(query, config)
+    concepts = analysis.concepts or _detect_concepts(query)
+    sub_queries = analysis.sub_queries or [query]
+    logger.info(
+        "[RETRIEVE] analysis intent=%s sub_queries=%s concepts=%s",
+        analysis.intent,
+        sub_queries,
+        concepts,
     )
 
-    # ── Batch embed all sub-queries in a single call ─────────────────────
-    t_embed = time.perf_counter()
-    logger.info(
-        f"[project={project_id}] [BATCH EMBED] Embedding {len(sub_queries)} sub-queries "
-        f"in a single batch call (instead of {len(sub_queries)} serial calls)"
+    candidates, query_embedding = await _broad_recall(
+        project_id, user_id, query, sub_queries, concepts, signals, branch, config
     )
-    all_embeddings = await embed_texts(sub_queries)
     logger.info(
-        f"[project={project_id}] [BATCH EMBED] Complete: "
-        f"{len(all_embeddings)} vectors in {time.perf_counter() - t_embed:.3f}s"
+        "[RETRIEVE] broad_recall lists=%d candidates=%d query_embedding=%s",
+        len(candidates),
+        sum(len(c) for c in candidates),
+        "yes" if query_embedding else "no",
     )
 
-    query_embedding = all_embeddings[0] if all_embeddings else None
+    ranked = await _rank_candidates(candidates, query, mode_enum, config, limit)
+    logger.info(
+        "[RETRIEVE] ranked_after_first_pass=%d top=%s score=%.4f",
+        len(ranked),
+        ranked[0].get("name") if ranked else None,
+        _score(ranked[0]) if ranked else 0.0,
+    )
 
-    # ── Multi-source search ──────────────────────────────────────────────
-    t_search = time.perf_counter()
-    overfetch = limit * 2
+    if config.refine and await _should_refine(query, ranked, mode_enum):
+        refined_queries = await _refine_sub_queries(query, ranked[:3], mode_enum)
+        if refined_queries:
+            logger.info(
+                "[REFINE] Running second-pass recall: mode=%s, queries=%s",
+                mode_enum.value,
+                refined_queries,
+            )
+            refined_candidates, _ = await _broad_recall(
+                project_id,
+                user_id,
+                query,
+                refined_queries,
+                concepts,
+                signals,
+                branch,
+                config,
+            )
+            ranked = await _rank_candidates(
+                [[*ranked], *refined_candidates],
+                query,
+                mode_enum,
+                config,
+                limit,
+            )
+            logger.info(
+                "[REFINE] second_pass_complete ranked=%d top=%s score=%.4f",
+                len(ranked),
+                ranked[0].get("name") if ranked else None,
+                _score(ranked[0]) if ranked else 0.0,
+            )
+        else:
+            logger.info("[REFINE] skipped_after_trigger no refined queries returned")
 
-    result_lists: list[list[dict]] = []
-    result_weights: list[float] = []
+    apply_line_pinpoint(ranked, query, signals, concepts)
+    logger.info(
+        "[PINPOINT] applied ranked=%d narrowed=%d",
+        len(ranked),
+        sum(1 for c in ranked if c.get("_probable_line_start") and c.get("_probable_line_end")),
+    )
 
-    for sq_idx, (sq, emb) in enumerate(zip(sub_queries, all_embeddings)):
-        vec_results = vector_search(
-            project_id=project_id,
-            user_id=user_id,
-            query_embedding=emb,
-            limit=overfetch,
-            branch=branch,
+    related = []
+    if config.graph_expand and ranked:
+        seed_ids = [str(c["id"]) for c in ranked[: config.graph_seeds]]
+        related = get_related_chunks_multihop(
+            seed_ids,
+            project_id,
+            max_depth=config.graph_depth,
+            max_total=config.graph_max,
         )
+        ranked_ids = {c["id"] for c in ranked}
+        related = [r for r in related if r["id"] not in ranked_ids]
+        if related and config.rerank:
+            related = await rerank_chunks(query, related, mode_enum, min(len(related), config.graph_max))
         logger.info(
-            f"[project={project_id}] [SEARCH] sub_query[{sq_idx}] vector: "
-            f"{len(vec_results)} results (weight={_VECTOR_WEIGHT}x)"
+            "[GRAPH] expanded seeds=%d related=%d depth=%d max=%d",
+            len(seed_ids),
+            len(related),
+            config.graph_depth,
+            config.graph_max,
         )
-        result_lists.append(vec_results)
-        result_weights.append(_VECTOR_WEIGHT)
+    else:
+        logger.info("[GRAPH] skipped graph_expand=%s ranked=%d", config.graph_expand, len(ranked))
 
-        expanded = _expand_query(sq, query_concepts)
-        txt_results = text_search(
-            project_id=project_id,
-            user_id=user_id,
-            query=expanded,
-            limit=overfetch,
+    top_ids = [str(c["id"]) for c in ranked[:5] if c.get("id")]
+    increment_observation_counts(top_ids)
+    search_id = record_search(
+        project_id,
+        user_id,
+        query,
+        mode_enum.value,
+        [str(c["id"]) for c in ranked if c.get("id")],
+        query_embedding,
+    )
+
+    answer = None
+    source_ids: list[str] = []
+    if config.generate_answer:
+        answer, source_ids = await generate_answer(query, ranked, project_summary)
+        logger.info(
+            "[ANSWER] generated=%s sources=%d",
+            "yes" if answer else "no",
+            len(source_ids),
         )
-        if txt_results:
-            logger.info(
-                f"[project={project_id}] [SEARCH] sub_query[{sq_idx}] text: "
-                f"{len(txt_results)} results (weight={_TEXT_WEIGHT}x)"
+
+    logger.info(
+        "[RETRIEVE] complete project=%s mode=%s ranked=%d related=%d search_id=%s",
+        project_id,
+        mode_enum.value,
+        min(len(ranked), limit),
+        len(related),
+        search_id,
+    )
+
+    return FullSearchResult(
+        ranked_chunks=ranked[:limit],
+        related_chunks=related,
+        branch_context=get_branch_context(project_id, branch),
+        query_intent=analysis.intent,
+        query_concepts=concepts,
+        mode=mode_enum,
+        answer=answer,
+        source_ids=source_ids,
+        search_id=search_id,
+    )
+
+
+async def _rank_candidates(
+    candidates: list[list[dict]],
+    query: str,
+    mode: ModeEnum,
+    config: ModeConfig,
+    limit: int,
+) -> list[dict]:
+    fused = _reciprocal_rank_fusion(*candidates) if len(candidates) > 1 else (candidates[0] if candidates else [])
+    logger.info(
+        "[RANK] fused lists=%d unique=%d mode=%s",
+        len(candidates),
+        len(fused),
+        mode.value,
+    )
+    for c in fused:
+        c["final_score"] = c.get("final_score", c.get("rrf_score", c.get("similarity", c.get("rank", 0))))
+
+    ranked = fused
+    rank_limit = max(limit, config.rerank_limit if mode != ModeEnum.FIND else limit)
+    if config.rerank:
+        ranked = await rerank_chunks(query, ranked, mode, rank_limit)
+        logger.info("[RANK] rerank applied limit=%d returned=%d", rank_limit, len(ranked))
+    else:
+        logger.info("[RANK] rerank skipped")
+    if config.mmr:
+        ranked = _mmr(ranked, config.mmr_lambda, rank_limit)
+        logger.info("[RANK] mmr applied lambda=%.2f returned=%d", config.mmr_lambda, len(ranked))
+    else:
+        logger.info("[RANK] mmr skipped")
+    return ranked[:rank_limit]
+
+
+async def _should_refine(query: str, ranked: list[dict], mode: ModeEnum) -> bool:
+    if mode == ModeEnum.FIND or not ranked:
+        return False
+
+    top_score = ranked[0].get("final_score", ranked[0].get("similarity_score", ranked[0].get("similarity", 0)))
+    try:
+        top_score = float(top_score)
+    except (TypeError, ValueError):
+        top_score = 0.0
+
+    if top_score < ITERATIVE_REFINEMENT_THRESHOLD:
+        logger.info("[REFINE] Triggered by low confidence: %.3f", top_score)
+        return True
+
+    # Complex multi-entity queries often need a second pass even if the first
+    # result looks plausible, because the first pass can over-focus on one entity.
+    words = query.split()
+    separators = query.count(" and ") + query.count(" or ") + query.count(",")
+    if len(words) > 30 and separators >= 2:
+        logger.info("[REFINE] Triggered by complex query: words=%d separators=%d", len(words), separators)
+        return True
+
+    return False
+
+
+async def _refine_sub_queries(query: str, top_chunks: list[dict], mode: ModeEnum) -> list[str]:
+    context = []
+    for chunk in top_chunks:
+        context.append({
+            "file_path": chunk.get("file_path"),
+            "name": chunk.get("name"),
+            "summary": chunk.get("summary_code") or chunk.get("semantic_summary"),
+            "purpose": chunk.get("summary_purpose"),
+            "reason": chunk.get("relevance_reasoning"),
+        })
+
+    kwargs: dict = {
+        "model": QUERY_REFINER_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You refine code search queries. Given the original query and top initial results, "
+                    "return strict JSON: {\"sub_queries\": [\"...\"]}. Include 1-2 additional searches "
+                    "that cover missing files, data flow, ownership checks, callers, or integration points. "
+                    "Do not repeat the original query."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "mode": mode.value,
+                    "query": query[:3000],
+                    "top_results": context,
+                }),
+            },
+        ],
+        "max_tokens": 240,
+        "temperature": 0.1,
+    }
+    if OPENROUTER_API_KEY and "openrouter" in QUERY_REFINER_MODEL.lower():
+        kwargs["api_key"] = OPENROUTER_API_KEY
+
+    try:
+        response = await asyncio.to_thread(litellm.completion, **kwargs)
+        raw = (response.choices[0].message.content or "").strip()
+        data = json.loads(_strip_json_fence(raw))
+        sub_queries = data.get("sub_queries", [])
+        if not isinstance(sub_queries, list):
+            return []
+        original = query.strip().lower()
+        cleaned = []
+        for sq in sub_queries:
+            if not isinstance(sq, str):
+                continue
+            sq = sq.strip()
+            if sq and sq.lower() != original:
+                cleaned.append(sq[:500])
+        return cleaned[:MAX_ITERATIONS]
+    except Exception as e:
+        logger.warning("[REFINE] Query refinement failed: %s", e)
+        sentry_sdk.capture_exception(e)
+        return []
+
+
+def _strip_json_fence(raw: str) -> str:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+async def _analyze_query(query: str, config: ModeConfig) -> QueryAnalysis:
+    if not config.decompose:
+        return QueryAnalysis(intent=config.mode.value, sub_queries=[query], concepts=_detect_concepts(query))
+    return await decompose_query(query)
+
+
+async def _broad_recall(
+    project_id: str,
+    user_id: str,
+    query: str,
+    sub_queries: list[str],
+    concepts: list[str],
+    signals: QuerySignals,
+    branch: str | None,
+    config: ModeConfig,
+) -> tuple[list[list[dict]], list[float] | None]:
+    lists: list[list[dict]] = []
+    query_embedding: list[float] | None = None
+    limit = config.broad_limit
+
+    if config.vector_search:
+        summary_embeddings = await embed_texts(sub_queries)
+        structure_embeddings = await embed_structure_texts([_structure_query(q, concepts) for q in sub_queries])
+        query_embedding = summary_embeddings[0] if summary_embeddings else None
+        for summary_emb, struct_emb in zip(summary_embeddings, structure_embeddings):
+            results = multi_vector_search(
+                project_id,
+                user_id,
+                summary_emb,
+                struct_emb,
+                limit=limit,
+                branch=branch,
             )
-            result_lists.append(txt_results)
-            result_weights.append(_TEXT_WEIGHT)
-
-    if query_concepts:
-        concept_results = concept_search(
-            project_id=project_id,
-            user_id=user_id,
-            concepts=query_concepts,
-            limit=overfetch,
+            if results:
+                lists.append(results)
+        logger.info(
+            "[RECALL] vector sub_queries=%d lists_now=%d",
+            len(sub_queries),
+            len(lists),
         )
-        if concept_results:
-            logger.info(
-                f"[project={project_id}] [SEARCH] concept: "
-                f"{len(concept_results)} results for {query_concepts} (weight={_CONCEPT_WEIGHT}x)"
-            )
-            result_lists.append(concept_results)
-            result_weights.append(_CONCEPT_WEIGHT)
+    else:
+        logger.info("[RECALL] vector skipped mode=%s", config.mode.value)
 
-    # ── File-path search from preprocessor signals ───────────────────────
-    file_path_boost_ids: set[str] = set()
+    for sq in sub_queries:
+        expanded = _expand_query(sq, concepts)
+        results = text_search(project_id, user_id, expanded, limit=limit)
+        if results:
+            lists.append(results)
+    logger.info("[RECALL] text complete sub_queries=%d lists_now=%d", len(sub_queries), len(lists))
+
+    if concepts:
+        results = concept_search(project_id, user_id, concepts, limit=limit)
+        if results:
+            lists.append(results)
+        logger.info("[RECALL] concept concepts=%s results=%d", concepts, len(results) if results else 0)
+    else:
+        logger.info("[RECALL] concept skipped no concepts")
+
     file_patterns = build_file_patterns(signals)
     if file_patterns:
-        fp_results = file_path_search(
-            project_id=project_id,
-            user_id=user_id,
-            file_patterns=file_patterns,
-            limit=overfetch,
-        )
-        if fp_results:
-            file_path_boost_ids = {r["id"] for r in fp_results}
-            result_lists.append(fp_results)
-            result_weights.append(_FILE_PATH_WEIGHT)
-            logger.info(
-                f"[project={project_id}] File-path search: "
-                f"{len(fp_results)} chunks for patterns={file_patterns}"
-            )
-
-    total_candidates = sum(len(rl) for rl in result_lists)
-    logger.info(
-        f"[project={project_id}] Multi-query search: "
-        f"{len(result_lists)} result lists, {total_candidates} total candidates, "
-        f"took {time.perf_counter() - t_search:.3f}s"
-    )
-
-    # ── Source-weighted RRF ──────────────────────────────────────────────
-    if len(result_lists) > 1:
-        fused = _reciprocal_rank_fusion(*result_lists, weights=result_weights)
-        logger.info(
-            f"[project={project_id}] Weighted RRF: "
-            f"{len(fused)} unique from {len(result_lists)} lists"
-        )
-    elif result_lists:
-        fused = result_lists[0]
-        for rank, c in enumerate(fused):
-            c["rrf_score"] = c.get("similarity", 0.0)
+        results = file_path_search(project_id, user_id, file_patterns, limit=limit)
+        if results:
+            lists.append(results)
+        logger.info("[RECALL] filepath patterns=%s results=%d", file_patterns, len(results) if results else 0)
     else:
-        fused = []
+        logger.info("[RECALL] filepath skipped no file patterns")
 
-    # ── Query-aware reranking ────────────────────────────────────────────
-    ranked = _rerank(
-        fused,
-        branch=branch,
-        query_concepts=query_concepts,
-        query_embedding=query_embedding,
-        file_path_boost_ids=file_path_boost_ids,
-    )[:limit]
+    return lists, query_embedding
 
-    if ranked:
-        top = ranked[0]
-        has_body = sum(1 for c in ranked if c.get("code_body"))
-        has_concepts = sum(1 for c in ranked if c.get("concepts"))
-        logger.info(
-            f"[project={project_id}] Top result: {top.get('name')} "
-            f"(score={top.get('final_score', 0):.4f}), "
-            f"{has_body}/{len(ranked)} with code bodies, "
-            f"{has_concepts}/{len(ranked)} with concepts"
-        )
 
-    ranked_chunks = [_to_retrieved_chunk(c) for c in ranked]
+def _score(chunk: dict) -> float:
+    if not chunk:
+        return 0.0
+    try:
+        return float(chunk.get("final_score", chunk.get("similarity_score", chunk.get("similarity", 0))) or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
-    # ── Filtered graph expansion ─────────────────────────────────────────
-    top_ids = [c.id for c in ranked_chunks[:5]]
-    t_graph = time.perf_counter()
-    related_raw = get_related_chunks_multihop(top_ids, project_id)
 
-    related_raw = _filter_related_by_similarity(
-        related_raw, query_embedding, GRAPH_SIMILARITY_THRESHOLD,
-    )
+def _reciprocal_rank_fusion(*result_lists: list[dict], k: int = 60) -> list[dict]:
+    scores: dict[str, float] = {}
+    chunks: dict[str, dict] = {}
+    for result_list in result_lists:
+        for rank, chunk in enumerate(result_list):
+            cid = str(chunk["id"])
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
+            chunks.setdefault(cid, chunk)
+    ordered = sorted(scores, key=lambda cid: scores[cid], reverse=True)
+    for cid in ordered:
+        chunks[cid]["rrf_score"] = scores[cid]
+    return [chunks[cid] for cid in ordered]
 
-    # ── Deduplication: remove related chunks already in ranked ───────────
-    ranked_ids = {c.id for c in ranked_chunks}
-    related_raw = [r for r in related_raw if r["id"] not in ranked_ids]
 
-    related_chunks = [_to_retrieved_chunk(r, score=0.0) for r in related_raw]
-    logger.info(
-        f"[project={project_id}] Graph expansion: "
-        f"{len(related_chunks)} related (filtered+deduped) from {len(top_ids)} seeds, "
-        f"took {time.perf_counter() - t_graph:.3f}s"
-    )
-
-    increment_observation_counts(top_ids)
-
-    branch_ctx = get_branch_context(project_id, branch)
-
-    total = time.perf_counter() - t_start
-    logger.info(
-        f"[project={project_id}] Retrieval complete: "
-        f"{len(ranked_chunks)} ranked + {len(related_chunks)} related, "
-        f"total={total:.3f}s"
-    )
-
-    return RetrieveResponse(
-        ranked_chunks=ranked_chunks,
-        related_chunks=related_chunks,
-        branch_context=branch_ctx,
-        query_intent=analysis.intent,
-        query_concepts=query_concepts,
-    )
+def _mmr(chunks: list[dict], lambda_param: float, limit: int) -> list[dict]:
+    selected: list[dict] = []
+    remaining = list(chunks)
+    file_counts: dict[str, int] = {}
+    while remaining and len(selected) < limit:
+        for chunk in remaining:
+            file_path = chunk.get("file_path", "")
+            count = file_counts.get(file_path, 0)
+            score = chunk.get("final_score", chunk.get("rrf_score", chunk.get("similarity", 0)))
+            chunk["mmr_score"] = score if count < 2 else score * (1 - lambda_param)
+        best = max(remaining, key=lambda c: c.get("mmr_score", 0))
+        selected.append(best)
+        remaining.remove(best)
+        file_counts[best.get("file_path", "")] = file_counts.get(best.get("file_path", ""), 0) + 1
+    return selected
 
 
 def _to_retrieved_chunk(c: dict, score: float | None = None) -> RetrievedChunk:
     return RetrievedChunk(
-        id=c["id"],
+        id=str(c["id"]),
         file_path=c["file_path"],
         start_line=c["start_line"],
         end_line=c["end_line"],
@@ -433,10 +481,44 @@ def _to_retrieved_chunk(c: dict, score: float | None = None) -> RetrievedChunk:
         name=c["name"],
         signature=c.get("signature"),
         language=c.get("language", ""),
-        semantic_summary=c.get("semantic_summary"),
+        semantic_summary=c.get("summary_code") or c.get("semantic_summary"),
+        summary_code=c.get("summary_code"),
+        summary_purpose=c.get("summary_purpose"),
         code_body=c.get("code_body"),
         concepts=c.get("concepts") or [],
-        similarity_score=score if score is not None else c.get("final_score", c.get("similarity", 0)),
+        similarity_score=score if score is not None else c.get("final_score", c.get("similarity", c.get("rrf_score", 0))),
         branch=c.get("branch"),
         branch_diverged=c.get("branch_diverged", False),
+        relevance_reasoning=c.get("relevance_reasoning"),
+        probable_line_start=c.get("_probable_line_start") or c.get("probable_line_start"),
+        probable_line_end=c.get("_probable_line_end") or c.get("probable_line_end"),
+        probable_line_source=c.get("_probable_line_source") or c.get("probable_line_source"),
+        probable_issue=c.get("_probable_issue") or c.get("probable_issue"),
     )
+
+
+def _detect_concepts(query: str) -> list[str]:
+    query_words = set(re.findall(r"\w+", query.lower()))
+    return [
+        concept
+        for concept, keywords in CONCEPT_KEYWORDS.items()
+        if any(keyword in query_words for keyword in keywords)
+    ]
+
+
+def _expand_query(query: str, concepts: list[str]) -> str:
+    words = set(re.findall(r"\w+", _split_identifiers(query).lower()))
+    for concept in concepts:
+        words.update(CONCEPT_KEYWORDS.get(concept, [])[:4])
+    return " or ".join(sorted(words)) if words else query
+
+
+def _split_identifiers(text: str) -> str:
+    return re.sub(r"([a-z])([A-Z])", r"\1 \2", text).replace("_", " ").replace(".", " ")
+
+
+def _structure_query(query: str, concepts: list[str]) -> str:
+    parts = [query, _split_identifiers(query)]
+    if concepts:
+        parts.append(" ".join(concepts))
+    return "\n".join(parts)

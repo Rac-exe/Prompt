@@ -26,7 +26,7 @@ import { MessageBubble, type Message } from "@/components/chat/MessageBubble";
 import { VersionNavigator } from "@/components/chat/VersionNavigator";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
 import { useMessageTree, type VersionInfo } from "@/hooks/useMessageTree";
-import type { Space, SpaceProject, SpaceMessage, RetrieveResult } from "./types";
+import type { Space, SpaceProject, SpaceMessage, RetrieveResult, ContextResult, RetrievedChunk, ContextLocation } from "./types";
 import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE, loadSpaces, saveSpaces } from "./types";
 import { useAuth } from "@/context/AuthContext";
 import { IndexingProgressBar } from "./IndexingProgressBar";
@@ -93,10 +93,80 @@ interface SpaceWorkspaceProps {
 }
 
 type VoiceState = "idle" | "listening" | "processing";
+type CodeIntelMode = "find" | "ask" | "bug" | "optimize";
+
+const CODE_INTEL_MODES: Array<{ value: CodeIntelMode; label: string; description: string }> = [
+  { value: "optimize", label: "Optimize", description: "Generate an implementation prompt with code context" },
+  { value: "bug", label: "Bug", description: "Pinpoint likely files and lines before prompt generation" },
+  { value: "ask", label: "Ask", description: "Answer questions about the attached folder" },
+  { value: "find", label: "Find", description: "List matching files, symbols, and probable lines" },
+];
+
+type CodeIntelLocation = RetrievedChunk | ContextLocation;
+
+function chunkLines(chunk: CodeIntelLocation): string {
+  const start = chunk.probable_line_start ?? chunk.start_line;
+  const end = chunk.probable_line_end ?? chunk.end_line;
+  return start === end ? `line ${start}` : `lines ${start}-${end}`;
+}
+
+function chunkScore(chunk: CodeIntelLocation): number | undefined {
+  const raw = (chunk as any).similarity_score ?? (chunk as any).confidence_score;
+  return typeof raw === "number" ? raw : undefined;
+}
+
+function formatChunkSummary(chunk: CodeIntelLocation, idx: number): string[] {
+  const lines: string[] = [];
+  const score = chunkScore(chunk);
+  lines.push(
+    `${idx}. **${chunk.name || "Code location"}** in \`${shortPath(chunk.file_path)}\` (${chunkLines(chunk)})${score !== undefined ? ` · ${(score * 100).toFixed(0)}%` : ""}`,
+  );
+  if (chunk.probable_issue) lines.push(`   - Issue: ${chunk.probable_issue}`);
+  if (chunk.semantic_summary) lines.push(`   - What it does: ${chunk.semantic_summary}`);
+  if (chunk.summary_purpose) lines.push(`   - Why it matters: ${chunk.summary_purpose}`);
+  if (chunk.relevance_reasoning) lines.push(`   - Relevance: ${chunk.relevance_reasoning}`);
+  if (chunk.concepts?.length) lines.push(`   - Concepts: ${chunk.concepts.slice(0, 5).join(", ")}`);
+  return lines;
+}
+
+function formatFindResponse(query: string, chunks: CodeIntelLocation[], relatedChunks: CodeIntelLocation[]): string {
+  const lines: string[] = [`## Find Results`, "", `Query: ${query}`, ""];
+  if (chunks.length === 0) {
+    lines.push("No matching code locations were found in the attached folder.");
+    return lines.join("\n");
+  }
+
+  lines.push("Most likely locations:");
+  lines.push("");
+  chunks.slice(0, 10).forEach((chunk, idx) => lines.push(...formatChunkSummary(chunk, idx + 1), ""));
+
+  if (relatedChunks.length > 0) {
+    lines.push("## Related Code");
+    lines.push("");
+    relatedChunks.slice(0, 5).forEach((chunk, idx) => {
+      lines.push(`${idx + 1}. **${chunk.name || "Related location"}** in \`${shortPath(chunk.file_path)}\` (${chunkLines(chunk)})`);
+    });
+  }
+
+  return lines.join("\n").trim();
+}
+
+function formatAskResponse(query: string, context: ContextResult, fallbackChunks: CodeIntelLocation[]): string {
+  const lines: string[] = [`## Answer`, ""];
+  lines.push((context.answer || "I could not generate a direct answer from the indexed code context.").trim());
+  const sources = (context.sources?.length ? context.sources : context.probable_locations?.length ? context.probable_locations : fallbackChunks) || [];
+  if (sources.length > 0) {
+    lines.push("", "## Sources", "");
+    sources.slice(0, 8).forEach((chunk, idx) => lines.push(...formatChunkSummary(chunk, idx + 1), ""));
+  }
+  lines.push("", `Query: ${query}`);
+  return lines.join("\n").trim();
+}
 
 export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: SpaceWorkspaceProps) => {
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [codeIntelMode, setCodeIntelMode] = useState<CodeIntelMode>("optimize");
   const [addingFolder, setAddingFolder] = useState(false);
   const [reindexingId, setReindexingId] = useState<string | null>(null);
   const [projectStatuses, setProjectStatuses] = useState<Record<string, ProjectInfo>>({});
@@ -466,6 +536,50 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
 
   // ── Handlers ─────────────────────────────────────────────────
   const runOptimization = useCallback(async (rawQuery: string) => {
+    if (codeIntelMode === "ask") {
+      let combinedContext: ContextResult | null = null;
+      let fallbackChunks: CodeIntelLocation[] = [];
+      let fails = 0;
+
+      for (const proj of space.projects) {
+        try {
+          const d: ContextResult = await (api as any).context({
+            project_id: proj.projectId,
+            query: rawQuery,
+            branch: proj.branch || undefined,
+            limit: 10,
+            mode: "ask",
+          });
+          combinedContext = {
+            ...d,
+            probable_locations: [...(combinedContext?.probable_locations || []), ...(d.probable_locations || [])],
+            related_locations: [...(combinedContext?.related_locations || []), ...(d.related_locations || [])],
+            sources: [...(combinedContext?.sources || []), ...(d.sources || [])],
+            answer: combinedContext?.answer ? `${combinedContext.answer}\n\n${d.answer || ""}`.trim() : d.answer,
+          };
+          fallbackChunks.push(...(d.probable_locations || []));
+        } catch (e) {
+          Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'ask-context' } });
+          fails++;
+        }
+      }
+
+      if (!combinedContext) {
+        if (space.projects.length > 0 && fails === space.projects.length) {
+          toast({ title: "Code intelligence unavailable", description: "Could not answer from project context.", variant: "destructive" });
+        }
+        throw new Error("Code intelligence context unavailable");
+      }
+
+      handleStreamingComplete({
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: formatAskResponse(rawQuery, combinedContext, fallbackChunks),
+        timestamp: new Date(),
+      });
+      return;
+    }
+
     let tailoredPrompt = rawQuery;
     // Spaces are intentionally always project-aware now — the old "Context"
     // toggle was removed because the whole reason a Space exists is its
@@ -474,7 +588,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
     for (const proj of space.projects) {
       try {
-        const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query: rawQuery, branch: proj.branch || undefined, limit: 10 });
+        const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query: rawQuery, branch: proj.branch || undefined, limit: 10, mode: codeIntelMode });
         if (d.ranked_chunks) allRanked.push(...d.ranked_chunks);
         if (d.related_chunks) allRelated.push(...d.related_chunks);
       } catch (e) {
@@ -490,13 +604,27 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
     allRanked = allRanked.slice(0, 10);
     allRelated = allRelated.slice(0, 5);
+
+    if (codeIntelMode === "find") {
+      if (space.projects.length > 0 && fails === space.projects.length) {
+        throw new Error("Code intelligence retrieval unavailable");
+      }
+      handleStreamingComplete({
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: formatFindResponse(rawQuery, allRanked, allRelated),
+        timestamp: new Date(),
+      });
+      return;
+    }
+
     if (space.projects.length > 0) {
       tailoredPrompt = buildTailoredPrompt(rawQuery, allRanked, allRelated);
     }
     lastAccumulatedRef.current = '';
     startStreaming();
     electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
-  }, [space.projects, api, electronAPI, startStreaming]);
+  }, [codeIntelMode, space.projects, api, electronAPI, startStreaming, handleStreamingComplete]);
 
   const handleSubmit = useCallback(async () => {
     const query = input.trim();
@@ -509,8 +637,11 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       setVoiceState("idle");
     }
     setIsGenerating(true);
-    isStreamingRef.current = true; // Set before any async work so the completion
-    lastAccumulatedRef.current = ''; // listener survives navigation during retrieval.
+    // Only the prompt-generation modes produce optimizer stream events. Find
+    // and Ask answer directly from code intelligence to avoid stale optimizer
+    // completions touching the Spaces thread.
+    isStreamingRef.current = codeIntelMode === "bug" || codeIntelMode === "optimize";
+    lastAccumulatedRef.current = '';
     setInput("");
 
     // Generate IDs / version metadata up-front so the user message and the
@@ -528,7 +659,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       groupId: userGroupId,
       versionIndex: 0,
     };
-    onUpdateSpace({ ...space, messages: [...space.messages, userMsg], lastUsedAt: Date.now() });
+    const nextSpace = { ...space, messages: [...space.messages, userMsg], lastUsedAt: Date.now() };
+    spaceRef.current = nextSpace;
+    onUpdateSpace(nextSpace);
 
     // Tree wiring: append user as the next leaf of the active path, then
     // pre-seed a placeholder node for the assistant so the version arrows /
@@ -555,7 +688,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantVersionIdxRef.current = 0;
       toast({ title: "Failed to process", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     }
-  }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI, messageTree]);
+  }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI, messageTree, codeIntelMode]);
 
   const handleStopGeneration = useCallback(() => { stopStreaming(); electronAPI?.stopGeneration?.(); }, [stopStreaming, electronAPI]);
 
@@ -708,7 +841,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       groupId,
       versionIndex,
     };
-    onUpdateSpace({ ...space, messages: [...space.messages, newUserMsg], lastUsedAt: Date.now() });
+    const nextSpace = { ...space, messages: [...space.messages, newUserMsg], lastUsedAt: Date.now() };
+    spaceRef.current = nextSpace;
+    onUpdateSpace(nextSpace);
 
     pendingPlaceholderRef.current = placeholderAssistantId;
     pendingAssistantParentRef.current = newUserId;
@@ -716,6 +851,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     pendingAssistantVersionIdxRef.current = 0;
 
     setIsGenerating(true);
+    isStreamingRef.current = codeIntelMode === "bug" || codeIntelMode === "optimize";
+    lastAccumulatedRef.current = '';
     runOptimization(newContent).catch((e: any) => {
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'edit' } });
       isStreamingRef.current = false;
@@ -727,7 +864,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantVersionIdxRef.current = 0;
       toast({ title: "Couldn't edit message", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     });
-  }, [isGenerating, space, onUpdateSpace, runOptimization, resetStreaming, messageTree]);
+  }, [isGenerating, space, onUpdateSpace, runOptimization, resetStreaming, messageTree, codeIntelMode]);
 
   // ── Versioning: regenerate an assistant message (sibling assistant branch) ──
   // Crucially does NOT delete the previous version (the old behavior did);
@@ -760,6 +897,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     pendingAssistantVersionIdxRef.current = versionIndex;
 
     setIsGenerating(true);
+    isStreamingRef.current = codeIntelMode === "bug" || codeIntelMode === "optimize";
+    lastAccumulatedRef.current = '';
     runOptimization(userMsg.content).catch((e: any) => {
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'regenerate' } });
       isStreamingRef.current = false;
@@ -771,7 +910,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       pendingAssistantVersionIdxRef.current = 0;
       toast({ title: "Couldn't regenerate", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     });
-  }, [isGenerating, space, runOptimization, resetStreaming, messageTree]);
+  }, [isGenerating, space, runOptimization, resetStreaming, messageTree, codeIntelMode]);
 
   const handleNavigateVersion = useCallback(
     (parentId: string, direction: "prev" | "next") => {
@@ -786,6 +925,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const meta = STATUS_META[indexStatus] ?? STATUS_META.stale;
   const hasProject = !!project;
   const canSend = input.trim().length > 0 && !isGenerating && hasProject;
+  const selectedMode = CODE_INTEL_MODES.find((mode) => mode.value === codeIntelMode) ?? CODE_INTEL_MODES[0];
 
   // ════════════════════════════════════════════════════════════
   // ── Composer (matches ChatView aesthetic, sans Pro Mode / attach) ──
@@ -817,6 +957,12 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                 ? "Attach a folder to start prompting…"
                 : voiceState === "processing"
                 ? "Transcribing your voice…"
+                : codeIntelMode === "find"
+                ? "Find a symbol, file, concept, or line…"
+                : codeIntelMode === "ask"
+                ? "Ask a question about this folder…"
+                : codeIntelMode === "bug"
+                ? "Describe the bug you want to investigate…"
                 : "Describe what you want to build…"
             }
             disabled={!hasProject || voiceState === "processing"}
@@ -852,6 +998,48 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                   Codebase context · {meta.label.toLowerCase()}
                 </TooltipContent>
               </Tooltip>
+            )}
+            {hasProject && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    disabled={isGenerating}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-[11px] font-medium transition-colors",
+                      "bg-emerald/8 border-emerald/20 text-emerald hover:bg-emerald/12",
+                      isGenerating && "opacity-50 pointer-events-none",
+                    )}
+                    title="Code intelligence mode"
+                  >
+                    <ChatCircleText size={12} weight="duotone" />
+                    {selectedMode.label}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-64 rounded-xl border-border/40 bg-popover/95 p-1.5">
+                  <DropdownMenuLabel className="px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/55">
+                    Code Intelligence Mode
+                  </DropdownMenuLabel>
+                  {CODE_INTEL_MODES.map((mode) => (
+                    <DropdownMenuItem
+                      key={mode.value}
+                      onSelect={() => setCodeIntelMode(mode.value)}
+                      className="px-2 py-2 gap-2.5 cursor-pointer rounded-lg focus:bg-muted/50"
+                    >
+                      <span
+                        className={cn(
+                          "mt-0.5 h-2 w-2 rounded-full flex-shrink-0",
+                          mode.value === codeIntelMode ? "bg-emerald" : "bg-muted-foreground/25",
+                        )}
+                      />
+                      <span className="flex flex-col gap-0.5">
+                        <span className="text-[12px] font-medium text-foreground">{mode.label}</span>
+                        <span className="text-[11px] leading-snug text-muted-foreground/65">{mode.description}</span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {voiceState === "listening" && (
               <div className="flex items-center gap-1.5 ml-1 animate-fade-in">
@@ -908,7 +1096,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                     ? "bg-foreground text-background hover:bg-foreground/90"
                     : "bg-muted text-muted-foreground/40 cursor-not-allowed",
                 )}
-                title="Optimize prompt (Enter)"
+                title={`${selectedMode.label} (Enter)`}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M5 10l7-7m0 0l7 7m-7-7v18" />
@@ -1305,7 +1493,13 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald/60 animate-bounce" style={{ animationDelay: "300ms" }} />
                     </div>
                     <span className="text-[11.5px] text-muted-foreground/55 font-medium">
-                      Optimizing with codebase context…
+                      {codeIntelMode === "find"
+                        ? "Searching the attached folder…"
+                        : codeIntelMode === "ask"
+                        ? "Answering from codebase context…"
+                        : codeIntelMode === "bug"
+                        ? "Pinpointing likely bug locations…"
+                        : "Optimizing with codebase context…"}
                     </span>
                   </div>
                 )}

@@ -1,106 +1,110 @@
 """
-Async indexing worker — processes chunks from the ingest queue.
-Pipeline: filter unchanged → batch summarize → batch embed → batch upsert
+Async indexing worker.
+
+Pipeline: filter unchanged -> enrich context -> batch summarize -> multi-vector
+embed -> batch upsert -> stale cleanup -> project summary.
 """
 
+from __future__ import annotations
+
 import asyncio
-import time
 import logging
-import sentry_sdk
+import time
 from datetime import datetime, timezone
+
+import sentry_sdk
+
+from app.config import SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
 from app.db.models import ChunkInput
 from app.db.queries import (
-    get_existing_chunk_hashes, upsert_chunks_batch,
-    update_project_status, cleanup_stale_chunks,
+    cleanup_stale_chunks,
+    get_existing_chunk_hashes,
+    update_project_status,
+    upsert_chunks_batch,
 )
-from app.services.summarizer import (
-    summarize_chunk_batch, ChunkSummaryInput, SummaryResult,
-)
-from app.services.embedding import embed_texts
-from app.config import SUMMARIZER_CONCURRENCY, MAX_CODE_BODY_LEN, SUMMARIZER_BATCH_SIZE
+from app.services.context_builder import EnrichedChunk, build_enriched_chunks
+from app.services.embedding import embed_structure_texts, embed_texts
+from app.services.project_summary import generate_project_summary
+from app.services.summarizer import ChunkSummaryInput, SummaryResult, summarize_chunk_batch
 
 logger = logging.getLogger("code-intel.worker.index")
 
-EMBED_BODY_LIMIT = 600
 
-
-def _build_embedding_text(chunk: ChunkInput, summary: SummaryResult) -> str:
-    """Build embedding input with semantic signal first, reduced code body."""
-    parts = [summary.summary]
-    if summary.concepts:
-        parts.append(f"Concepts: {', '.join(summary.concepts)}")
-    parts.append(chunk.name)
-    if chunk.signature:
-        parts.append(chunk.signature)
-    if chunk.code_body:
-        parts.append(chunk.code_body[:EMBED_BODY_LIMIT])
-    return "\n".join(parts)
-
-
-def _filter_unchanged(
-    project_id: str,
-    chunks: list[ChunkInput],
-) -> list[ChunkInput]:
-    """Return only chunks whose content_hash differs from the DB copy."""
+def _filter_unchanged(project_id: str, chunks: list[ChunkInput]) -> list[ChunkInput]:
     existing = get_existing_chunk_hashes(project_id)
     new: list[ChunkInput] = []
     for chunk in chunks:
         cached = existing.get((chunk.file_path, chunk.name))
-        if cached and cached["content_hash"] == chunk.content_hash and cached.get("embedding") is not None:
+        has_new_embedding = bool(cached and (cached.get("embedding_summary") or cached.get("embedding")))
+        if cached and cached["content_hash"] == chunk.content_hash and has_new_embedding:
             continue
         new.append(chunk)
     return new
 
 
-async def _summarize_batched(chunks: list[ChunkInput]) -> list[SummaryResult]:
-    """Run LLM summarization in batches of SUMMARIZER_BATCH_SIZE, with concurrency control."""
+async def _summarize_batched(enriched: list[EnrichedChunk]) -> list[SummaryResult]:
     sem = asyncio.Semaphore(SUMMARIZER_CONCURRENCY)
-    batch_size = SUMMARIZER_BATCH_SIZE
-
     inputs = [
         ChunkSummaryInput(
-            name=c.name, signature=c.signature, callees=c.callees,
-            docstring=c.docstring, language=c.language, code_body=c.code_body,
+            name=item.chunk.name,
+            signature=item.chunk.signature,
+            callees=item.chunk.callees,
+            docstring=item.chunk.docstring,
+            language=item.chunk.language,
+            code_body=item.chunk.code_body,
+            context_header=item.context_header,
+            context_before=item.context_before,
+            context_after=item.context_after,
+            parent_summary=item.parent_summary,
+            sibling_names=item.sibling_names,
         )
-        for c in chunks
+        for item in enriched
     ]
+    batches = [inputs[i:i + SUMMARIZER_BATCH_SIZE] for i in range(0, len(inputs), SUMMARIZER_BATCH_SIZE)]
 
-    batches = [inputs[i:i + batch_size] for i in range(0, len(inputs), batch_size)]
-    logger.info(
-        f"Starting batch summarization: {len(chunks)} chunks in {len(batches)} batches "
-        f"(batch_size={batch_size}, concurrency={SUMMARIZER_CONCURRENCY})"
-    )
-
-    async def _one_batch(batch: list[ChunkSummaryInput]) -> list[SummaryResult]:
+    async def _one(batch: list[ChunkSummaryInput]) -> list[SummaryResult]:
         async with sem:
             return await asyncio.to_thread(summarize_chunk_batch, batch)
 
-    t0 = time.perf_counter()
-    batch_results = await asyncio.gather(
-        *[_one_batch(b) for b in batches],
-        return_exceptions=True,
-    )
-
+    results = await asyncio.gather(*[_one(batch) for batch in batches], return_exceptions=True)
     final: list[SummaryResult] = []
-    failures = 0
-    for i, result in enumerate(batch_results):
+    for i, result in enumerate(results):
         if isinstance(result, BaseException):
-            logger.error(f"Batch {i} summarization failed: {result}")
-            failures += len(batches[i])
-            final.extend(
-                SummaryResult(summary=c.name, concepts=[]) for c in batches[i]
-            )
+            logger.error(f"Summarizer batch {i} failed: {result}")
+            final.extend(SummaryResult(summary_code=c.name) for c in batches[i])
         else:
             final.extend(result)
-
-    elapsed = time.perf_counter() - t0
-    with_concepts = sum(1 for s in final if s.concepts)
-    logger.info(
-        f"Summarization complete: {len(chunks)} chunks in {elapsed:.1f}s "
-        f"({failures} failures, {with_concepts} with concepts, "
-        f"{len(batches)} LLM calls instead of {len(chunks)})"
-    )
     return final
+
+
+def _summary_embedding_text(chunk: ChunkInput, summary: SummaryResult) -> str:
+    parts = [summary.summary_code]
+    if summary.summary_purpose:
+        parts.append(f"Purpose: {summary.summary_purpose}")
+    if summary.concepts:
+        parts.append(f"Concepts: {', '.join(summary.concepts)}")
+    return "\n".join(parts)
+
+
+def _structure_embedding_text(item: EnrichedChunk, summary: SummaryResult) -> str:
+    chunk = item.chunk
+    parts = [
+        chunk.file_path,
+        chunk.name,
+        chunk.chunk_type.value,
+        chunk.language,
+    ]
+    if chunk.signature:
+        parts.append(chunk.signature)
+    if chunk.parent_scope_name:
+        parts.append(f"Parent: {chunk.parent_scope_name}")
+    if item.context_header:
+        parts.append(f"Imports/context: {item.context_header[:1000]}")
+    if item.sibling_names:
+        parts.append(f"Siblings: {', '.join(item.sibling_names[:20])}")
+    if summary.concepts:
+        parts.append(f"Concepts: {', '.join(summary.concepts)}")
+    return "\n".join(parts)
 
 
 async def process_ingest_batch(
@@ -108,75 +112,76 @@ async def process_ingest_batch(
     user_id: str,
     chunks: list[ChunkInput],
     branch: str | None = None,
+    language_map: dict[str, int] | None = None,
 ):
-    """Process a full ingest batch with batch summarization, batch embedding, and batch upsert."""
     t_start = time.perf_counter()
     update_project_status(project_id, "indexing")
 
-    has_bodies = sum(1 for c in chunks if c.code_body)
     logger.info(
-        f"[project={project_id}] Ingest started: {len(chunks)} chunks received "
-        f"({has_bodies} with code bodies), branch={branch}"
+        f"[project={project_id}] Ingest started: chunks={len(chunks)}, branch={branch}, "
+        f"languages={language_map or {}}"
     )
 
     new_chunks = _filter_unchanged(project_id, chunks)
     skipped = len(chunks) - len(new_chunks)
     logger.info(
-        f"[project={project_id}] Hash filter: {len(new_chunks)} new, {skipped} unchanged"
+        f"[project={project_id}] Hash filter: new={len(new_chunks)}, skipped={skipped}"
     )
-
     if not new_chunks:
         valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
         stale_count = cleanup_stale_chunks(project_id, valid_keys)
-        if stale_count:
-            logger.info(f"[project={project_id}] Cleaned up {stale_count} stale chunks")
-
+        _generate_summary(project_id, language_map or {}, chunks)
         now = datetime.now(timezone.utc).isoformat()
         update_project_status(project_id, "ready", last_indexed_at=now)
         logger.info(
-            f"[project={project_id}] Ingest complete: "
-            f"0 processed, {skipped} skipped (all unchanged), "
-            f"{stale_count} stale removed, took {time.perf_counter() - t_start:.1f}s"
+            f"[project={project_id}] Ingest complete: all unchanged, skipped={skipped}, stale={stale_count}"
         )
         return
 
-    summaries = await _summarize_batched(new_chunks)
-
-    for i, (c, s) in enumerate(zip(new_chunks[:3], summaries[:3])):
-        logger.info(
-            f"[project={project_id}] [SAMPLE SUMMARY {i+1}] "
-            f"{c.name} → \"{s.summary[:80]}\" concepts={s.concepts}"
-        )
-    if len(new_chunks) > 3:
-        logger.info(
-            f"[project={project_id}] ... and {len(new_chunks) - 3} more summaries"
-        )
-
-    embed_inputs = [_build_embedding_text(c, s) for c, s in zip(new_chunks, summaries)]
-    avg_len = sum(len(e) for e in embed_inputs) // max(len(embed_inputs), 1)
+    enriched = build_enriched_chunks(new_chunks)
     logger.info(
-        f"[project={project_id}] Starting batch embedding for {len(embed_inputs)} chunks "
-        f"(avg embed text={avg_len} chars)"
+        f"[project={project_id}] Context enrichment: enriched={len(enriched)}, "
+        f"with_headers={sum(1 for e in enriched if e.context_header)}, "
+        f"with_siblings={sum(1 for e in enriched if e.sibling_names)}"
     )
-    t_embed = time.perf_counter()
+    summaries = await _summarize_batched(enriched)
+    logger.info(
+        f"[project={project_id}] Summaries generated: count={len(summaries)}, "
+        f"with_purpose={sum(1 for s in summaries if s.summary_purpose)}, "
+        f"with_concepts={sum(1 for s in summaries if s.concepts)}"
+    )
+
+    summary_texts = [
+        _summary_embedding_text(item.chunk, summary)
+        for item, summary in zip(enriched, summaries)
+    ]
+    structure_texts = [
+        _structure_embedding_text(item, summary)
+        for item, summary in zip(enriched, summaries)
+    ]
+
     try:
-        embeddings = await embed_texts(embed_inputs)
         logger.info(
-            f"[project={project_id}] Batch embedding complete: "
-            f"{len(embeddings)} vectors in {time.perf_counter() - t_embed:.1f}s"
+            f"[project={project_id}] Embedding start: summary_texts={len(summary_texts)}, "
+            f"structure_texts={len(structure_texts)}"
+        )
+        embedding_summary = await embed_texts(summary_texts)
+        embedding_structure = await embed_structure_texts(structure_texts)
+        logger.info(
+            f"[project={project_id}] Embedding complete: summary_vectors={len(embedding_summary)}, "
+            f"structure_vectors={len(embedding_structure)}"
         )
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        logger.error(
-            f"[project={project_id}] Batch embedding failed: {e}",
-            exc_info=True,
-        )
-        now = datetime.now(timezone.utc).isoformat()
-        update_project_status(project_id, "error", last_indexed_at=now)
+        logger.error(f"[project={project_id}] Embedding failed: {e}", exc_info=True)
+        update_project_status(project_id, "error", last_indexed_at=datetime.now(timezone.utc).isoformat())
         return
 
     rows = []
-    for chunk, summary_result, embedding in zip(new_chunks, summaries, embeddings):
+    for item, summary, summary_vec, structure_vec in zip(
+        enriched, summaries, embedding_summary, embedding_structure
+    ):
+        chunk = item.chunk
         rows.append({
             "project_id": project_id,
             "user_id": user_id,
@@ -184,45 +189,58 @@ async def process_ingest_batch(
             "start_line": chunk.start_line,
             "end_line": chunk.end_line,
             "chunk_type": chunk.chunk_type.value,
+            "scope_type": chunk.scope_type or chunk.chunk_type.value,
+            "chunk_index": chunk.chunk_index,
+            "parent_scope_name": chunk.parent_scope_name,
             "name": chunk.name,
             "signature": chunk.signature,
             "language": chunk.language,
-            "semantic_summary": summary_result.summary,
-            "embedding": embedding,
+            "semantic_summary": summary.summary_code,
+            "summary_code": summary.summary_code,
+            "summary_purpose": summary.summary_purpose,
+            "embedding_summary": summary_vec,
+            "embedding_structure": structure_vec,
+            # Keep legacy embedding populated for old RPCs/fallbacks until fully retired.
+            "embedding": summary_vec,
             "content_hash": chunk.content_hash,
             "branch": branch,
             "branch_diverged": False,
             "code_body": chunk.code_body,
-            "concepts": summary_result.concepts,
+            "concepts": summary.concepts,
             "is_exported": chunk.is_exported,
+            "context_header": item.context_header,
+            "context_before": item.context_before,
+            "context_after": item.context_after,
+            "parent_summary": item.parent_summary,
         })
 
-    t_upsert = time.perf_counter()
     processed = upsert_chunks_batch(rows)
     errors = len(rows) - processed
     logger.info(
-        f"[project={project_id}] Batch upsert complete: "
-        f"{processed} upserted, {errors} errors, took {time.perf_counter() - t_upsert:.1f}s"
+        f"[project={project_id}] Upsert complete: rows={len(rows)}, processed={processed}, errors={errors}"
     )
-
     valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
     stale_count = cleanup_stale_chunks(project_id, valid_keys)
-    if stale_count:
-        logger.info(f"[project={project_id}] Cleaned up {stale_count} stale chunks")
+    logger.info(f"[project={project_id}] Stale cleanup complete: stale={stale_count}")
 
+    _generate_summary(project_id, language_map or {}, [*chunks])
+
+    final_status = "error" if processed == 0 and errors else "partial" if errors else "ready"
     now = datetime.now(timezone.utc).isoformat()
-    if errors > 0 and processed == 0:
-        final_status = "error"
-    elif errors > 0:
-        final_status = "partial"
-    else:
-        final_status = "ready"
-
     update_project_status(project_id, final_status, last_indexed_at=now)
-    total_elapsed = time.perf_counter() - t_start
-
     logger.info(
         f"[project={project_id}] Ingest complete: status={final_status}, "
-        f"{processed} processed, {skipped} skipped, {errors} errors, "
-        f"{stale_count} stale removed, took {total_elapsed:.1f}s total"
+        f"processed={processed}, skipped={skipped}, errors={errors}, stale={stale_count}, "
+        f"elapsed={time.perf_counter() - t_start:.1f}s"
     )
+
+
+def _generate_summary(project_id: str, language_map: dict[str, int], chunks: list[ChunkInput]):
+    try:
+        generate_project_summary(
+            project_id,
+            language_map,
+            [c.model_dump() for c in chunks],
+        )
+    except Exception as e:
+        logger.warning(f"[project={project_id}] Project summary generation failed: {e}")
