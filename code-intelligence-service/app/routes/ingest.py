@@ -40,7 +40,8 @@ async def ingest_skeleton(
         f"Ingest received: project={body.project_id}, user={user_id}, "
         f"chunks={len(body.chunks)} ({has_bodies} with code bodies), "
         f"edges={len(body.call_graph)}, languages={languages}, "
-        f"branch={body.branch}"
+        f"branch={body.branch}, cleanup_scope={body.cleanup_scope}, "
+        f"cleanup_keys={len(body.cleanup_keys)}"
     )
 
     if body.branch:
@@ -69,6 +70,8 @@ async def ingest_skeleton(
                 graph_data,
                 body.branch,
                 body.language_map,
+                body.cleanup_scope,
+                [key.model_dump() for key in body.cleanup_keys],
             )
             logger.info(f"Ingest enqueued via arq: job_id={job_id}")
         except Exception as e:
@@ -103,6 +106,8 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
             chunks=body.chunks,
             branch=body.branch,
             language_map=body.language_map,
+            cleanup_scope=body.cleanup_scope,
+            cleanup_keys=body.cleanup_keys,
         )
 
         if body.call_graph:

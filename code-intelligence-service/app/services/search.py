@@ -32,7 +32,7 @@ from app.db.queries import (
     text_search,
 )
 from app.services.answer_generator import generate_answer
-from app.services.concepts import CONCEPT_KEYWORDS
+from app.services.concepts import CONCEPT_KEYWORDS, detect_concepts_from_query
 from app.services.embedding import embed_structure_texts, embed_texts
 from app.services.feedback import record_search
 from app.services.line_pinpoint import apply_line_pinpoint
@@ -42,6 +42,16 @@ from app.services.query_preprocessor import QuerySignals, build_file_patterns, p
 from app.services.reranker import rerank_chunks
 
 logger = logging.getLogger("code-intel.search")
+
+_FIND_STOP_WORDS = {
+    "where", "what", "which", "when", "why", "how", "find", "show",
+    "list", "happening", "happen", "happens", "used", "using", "usage",
+    "workflow", "workflows", "code", "base", "codebase", "there", "here",
+    "the", "and", "or", "is", "are", "can", "could", "would", "should",
+    "i", "me", "my", "a", "an", "to", "of", "in", "on", "for", "with",
+}
+
+_FIND_GENERIC_CONCEPTS = {"search"}
 
 
 @dataclass
@@ -102,6 +112,8 @@ async def retrieve_context_full(
     )
     analysis = await _analyze_query(query, config)
     concepts = analysis.concepts or _detect_concepts(query)
+    if mode_enum == ModeEnum.FIND:
+        concepts = _normalize_find_concepts(query, concepts)
     sub_queries = analysis.sub_queries or [query]
     logger.info(
         "[RETRIEVE] analysis intent=%s sub_queries=%s concepts=%s",
@@ -254,6 +266,10 @@ async def _rank_candidates(
 
     ranked = fused
     rank_limit = max(limit, config.rerank_limit if mode != ModeEnum.FIND else limit)
+    if mode == ModeEnum.FIND:
+        ranked = _rank_find_candidates(fused, query, _normalize_find_concepts(query, _detect_concepts(query)), rank_limit)
+        logger.info("[RANK] find ranking applied limit=%d returned=%d", rank_limit, len(ranked))
+        return ranked[:rank_limit]
     if config.rerank:
         ranked = await rerank_chunks(query, ranked, mode, rank_limit)
         logger.info("[RANK] rerank applied limit=%d returned=%d", rank_limit, len(ranked))
@@ -382,30 +398,38 @@ async def _broad_recall(
     limit = config.broad_limit
 
     if config.vector_search:
-        summary_embeddings = await embed_texts(sub_queries)
-        structure_embeddings = await embed_structure_texts([_structure_query(q, concepts) for q in sub_queries])
-        query_embedding = summary_embeddings[0] if summary_embeddings else None
-        for summary_emb, struct_emb in zip(summary_embeddings, structure_embeddings):
-            results = multi_vector_search(
-                project_id,
-                user_id,
-                summary_emb,
-                struct_emb,
-                limit=limit,
-                branch=branch,
+        try:
+            summary_embeddings = await embed_texts(sub_queries)
+            structure_embeddings = await embed_structure_texts([_structure_query(q, concepts) for q in sub_queries])
+            query_embedding = summary_embeddings[0] if summary_embeddings else None
+            for summary_emb, struct_emb in zip(summary_embeddings, structure_embeddings):
+                results = multi_vector_search(
+                    project_id,
+                    user_id,
+                    summary_emb,
+                    struct_emb,
+                    limit=limit,
+                    branch=branch,
+                )
+                if results:
+                    lists.append(results)
+            logger.info(
+                "[RECALL] vector sub_queries=%d lists_now=%d",
+                len(sub_queries),
+                len(lists),
             )
-            if results:
-                lists.append(results)
-        logger.info(
-            "[RECALL] vector sub_queries=%d lists_now=%d",
-            len(sub_queries),
-            len(lists),
-        )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.warning(
+                "[RECALL] vector skipped after embedding failure; "
+                "falling back to lexical/concept recall: %s",
+                str(e)[:240],
+            )
     else:
         logger.info("[RECALL] vector skipped mode=%s", config.mode.value)
 
     for sq in sub_queries:
-        expanded = _expand_query(sq, concepts)
+        expanded = _expand_query(sq, concepts, config.mode)
         results = text_search(project_id, user_id, expanded, limit=limit)
         if results:
             lists.append(results)
@@ -454,6 +478,46 @@ def _reciprocal_rank_fusion(*result_lists: list[dict], k: int = 60) -> list[dict
     return [chunks[cid] for cid in ordered]
 
 
+def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], limit: int) -> list[dict]:
+    terms = _find_terms(query)
+    token_terms = {"token", "tokens", "access", "refresh", "jwt", "bearer", "cookie", "cookies"}
+    auth_terms = {
+        "auth", "authentication", "authorize", "authorization", "login", "logout",
+        "session", "user", "google", "oauth", "middleware",
+    }
+
+    for chunk in chunks:
+        haystack = _chunk_search_text(chunk)
+        path_name = f"{chunk.get('file_path', '')} {chunk.get('name', '')}".lower()
+        concepts_set = {str(c) for c in (chunk.get("concepts") or [])}
+
+        lexical_hits = sum(1 for term in terms if term in haystack)
+        exact_signal_hits = sum(1 for term in token_terms | auth_terms if term in terms and term in haystack)
+        concept_hits = len(concepts_set.intersection(concepts))
+
+        boost = lexical_hits * 0.05 + exact_signal_hits * 0.12 + concept_hits * 0.15
+        if "auth" in concepts and any(term in path_name for term in auth_terms | token_terms):
+            boost += 0.35
+        if any(term in terms for term in token_terms) and any(term in haystack for term in token_terms):
+            boost += 0.30
+        if any(term in path_name for term in ("auth", "login", "user", "token", "middleware", "google")):
+            boost += 0.20
+
+        base = _score(chunk)
+        chunk["find_score"] = min(base + boost, 1.0)
+        chunk["final_score"] = chunk["find_score"]
+        if exact_signal_hits or concept_hits:
+            reasons = []
+            if exact_signal_hits:
+                reasons.append("matches requested auth/token terms")
+            if concept_hits:
+                reasons.append(f"shares concepts: {', '.join(sorted(concepts_set.intersection(concepts)))}")
+            chunk["relevance_reasoning"] = "; ".join(reasons)
+
+    ranked = sorted(chunks, key=lambda c: c.get("find_score", 0), reverse=True)
+    return ranked[:limit]
+
+
 def _mmr(chunks: list[dict], lambda_param: float, limit: int) -> list[dict]:
     selected: list[dict] = []
     remaining = list(chunks)
@@ -498,16 +562,19 @@ def _to_retrieved_chunk(c: dict, score: float | None = None) -> RetrievedChunk:
 
 
 def _detect_concepts(query: str) -> list[str]:
-    query_words = set(re.findall(r"\w+", query.lower()))
-    return [
-        concept
-        for concept, keywords in CONCEPT_KEYWORDS.items()
-        if any(keyword in query_words for keyword in keywords)
-    ]
+    return detect_concepts_from_query(query)
 
 
-def _expand_query(query: str, concepts: list[str]) -> str:
+def _normalize_find_concepts(query: str, concepts: list[str]) -> list[str]:
+    normalized = list(dict.fromkeys([*concepts, *_detect_concepts(query)]))
+    specific = [c for c in normalized if c not in _FIND_GENERIC_CONCEPTS]
+    return specific or normalized
+
+
+def _expand_query(query: str, concepts: list[str], mode: ModeEnum = ModeEnum.BUG) -> str:
     words = set(re.findall(r"\w+", _split_identifiers(query).lower()))
+    if mode == ModeEnum.FIND:
+        words = _find_terms(query)
     for concept in concepts:
         words.update(CONCEPT_KEYWORDS.get(concept, [])[:4])
     return " or ".join(sorted(words)) if words else query
@@ -515,6 +582,35 @@ def _expand_query(query: str, concepts: list[str]) -> str:
 
 def _split_identifiers(text: str) -> str:
     return re.sub(r"([a-z])([A-Z])", r"\1 \2", text).replace("_", " ").replace(".", " ")
+
+
+def _word_variants(text: str) -> set[str]:
+    words = set(re.findall(r"\w+", _split_identifiers(text).lower()))
+    variants = set(words)
+    for word in words:
+        if word.endswith("s") and len(word) > 3:
+            variants.add(word[:-1])
+    return variants
+
+
+def _find_terms(query: str) -> set[str]:
+    return {
+        word for word in _word_variants(query)
+        if len(word) >= 3 and word not in _FIND_STOP_WORDS
+    }
+
+
+def _chunk_search_text(chunk: dict) -> str:
+    parts = [
+        chunk.get("file_path"),
+        chunk.get("name"),
+        chunk.get("signature"),
+        chunk.get("summary_code") or chunk.get("semantic_summary"),
+        chunk.get("summary_purpose"),
+        " ".join(chunk.get("concepts") or []),
+        (chunk.get("code_body") or "")[:2500],
+    ]
+    return _split_identifiers("\n".join(str(p) for p in parts if p)).lower()
 
 
 def _structure_query(query: str, concepts: list[str]) -> str:

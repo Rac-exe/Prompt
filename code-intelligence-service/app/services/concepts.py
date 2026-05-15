@@ -17,6 +17,7 @@ analyzer filtered them out, making such chunks unreachable).
 """
 
 import logging
+import re
 
 logger = logging.getLogger("code-intel.concepts")
 
@@ -60,7 +61,12 @@ VALID_INTENTS: frozenset[str] = frozenset({
 
 CONCEPT_KEYWORDS: dict[str, list[str]] = {
     "state-management": ["state", "store", "redux", "toggle", "setter", "getter", "usestate", "dispatch", "context", "zustand"],
-    "auth": ["auth", "login", "signup", "password", "token", "session", "jwt", "oauth", "credential"],
+    "auth": [
+        "auth", "authentication", "authorize", "authorization",
+        "login", "logout", "signup", "password", "token", "tokens",
+        "access", "refresh", "session", "jwt", "bearer", "cookie",
+        "cookies", "oauth", "credential",
+    ],
     "routing": ["route", "router", "navigate", "path", "url", "redirect", "endpoint"],
     "database": ["database", "db", "query", "model", "schema", "migration", "mongoose", "sql", "mongo", "prisma"],
     "API": ["api", "endpoint", "request", "response", "rest", "graphql", "controller", "handler"],
@@ -95,6 +101,40 @@ INTENT_KEYWORDS: dict[str, list[str]] = {
     "refactor": ["refactor", "clean", "restructure", "reorganize", "simplify"],
     "architecture": ["architecture", "design", "pattern", "structure", "organize"],
 }
+
+
+def keyword_matches_query(keyword: str, query_lower: str, query_words: set[str]) -> bool:
+    kw = keyword.lower()
+    if not kw:
+        return False
+    if " " in kw or "'" in kw:
+        return kw in query_lower
+    if kw in query_words:
+        return True
+    if len(kw) >= 4 and any(kw in word for word in query_words):
+        return True
+    if kw.endswith("y") and f"{kw[:-1]}ies" in query_words:
+        return True
+    return f"{kw}s" in query_words or f"{kw}es" in query_words
+
+
+def detect_concepts_from_query(query: str) -> list[str]:
+    query_lower = (query or "").lower()
+    query_words = set(re.findall(r"\w+", query_lower))
+    matched: list[str] = []
+    for concept, keywords in CONCEPT_KEYWORDS.items():
+        if any(keyword_matches_query(keyword, query_lower, query_words) for keyword in keywords):
+            matched.append(concept)
+    return matched
+
+
+def detect_intent_from_query(query: str) -> str:
+    query_lower = (query or "").lower()
+    query_words = set(re.findall(r"\w+", query_lower))
+    for intent, keywords in INTENT_KEYWORDS.items():
+        if any(keyword_matches_query(keyword, query_lower, query_words) for keyword in keywords):
+            return intent
+    return "general"
 
 
 def log_vocabulary_state() -> None:

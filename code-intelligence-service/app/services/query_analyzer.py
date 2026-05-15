@@ -8,13 +8,18 @@ Includes a fast path for simple queries that skips the LLM call.
 
 import asyncio
 import json
-import re
 import logging
 import litellm
 import sentry_sdk
 from dataclasses import dataclass, field
 
 from app.config import QUERY_DECOMPOSE_MODEL, OPENROUTER_API_KEY, SIMPLE_QUERY_WORD_THRESHOLD
+from app.services.concepts import (
+    VALID_CONCEPTS_SET as CANONICAL_VALID_CONCEPTS,
+    VALID_INTENTS as CANONICAL_VALID_INTENTS,
+    detect_concepts_from_query,
+    detect_intent_from_query,
+)
 
 logger = logging.getLogger("code-intel.query_analyzer")
 
@@ -34,63 +39,17 @@ class QueryAnalysis:
     concepts: list[str] = field(default_factory=list)
 
 
-VALID_CONCEPTS = {
-    "state-management", "routing", "auth", "data-fetching", "error-handling",
-    "UI-rendering", "validation", "caching", "database", "API", "file-io",
-    "config", "middleware", "testing", "logging", "security", "payments",
-    "notifications", "concurrency", "search",
-}
+VALID_CONCEPTS = CANONICAL_VALID_CONCEPTS
 
-VALID_INTENTS = {"bug", "architecture", "performance", "feature", "refactor", "general"}
-
-CONCEPT_KEYWORDS: dict[str, list[str]] = {
-    "state-management": ["state", "store", "redux", "toggle", "setter", "getter", "usestate", "dispatch", "context", "zustand"],
-    "auth": ["auth", "login", "signup", "password", "token", "session", "jwt", "oauth", "credential"],
-    "routing": ["route", "router", "navigate", "path", "url", "redirect", "endpoint"],
-    "database": ["database", "db", "query", "model", "schema", "migration", "mongoose", "sql", "mongo", "prisma"],
-    "API": ["api", "endpoint", "request", "response", "rest", "graphql", "controller", "handler"],
-    "error-handling": ["error", "exception", "catch", "throw", "handler", "retry", "fallback"],
-    "validation": ["valid", "validate", "schema", "sanitize", "check", "constraint", "zod", "joi"],
-    "data-fetching": ["fetch", "get", "load", "retrieve", "download", "http", "axios", "httpx"],
-    "caching": ["cache", "memoize", "store", "invalidate", "ttl", "redis"],
-    "middleware": ["middleware", "interceptor", "pipe", "guard", "filter"],
-    "file-io": ["file", "read", "write", "stream", "upload", "download", "fs"],
-    "security": ["security", "encrypt", "hash", "cors", "csrf", "xss"],
-    "UI-rendering": ["render", "component", "view", "template", "dom", "jsx", "tsx"],
-    "config": ["config", "env", "settings", "options", "preference"],
-    "logging": ["log", "logger", "debug", "trace", "monitor"],
-    "testing": ["test", "spec", "mock", "assert", "expect", "jest", "mocha"],
-    "concurrency": ["async", "await", "promise", "thread", "worker", "parallel", "concurrent"],
-    "search": ["search", "find", "filter", "query", "index", "match"],
-    "payments": ["payment", "stripe", "checkout", "billing", "invoice", "charge"],
-    "notifications": ["notification", "email", "sms", "push", "alert", "webhook"],
-}
-
-INTENT_KEYWORDS: dict[str, list[str]] = {
-    "bug": ["bug", "broken", "error", "fix", "crash", "fail", "wrong", "issue", "doesn't work", "not working"],
-    "performance": ["slow", "performance", "optimize", "fast", "speed", "latency", "memory", "leak"],
-    "feature": ["add", "create", "implement", "build", "new feature", "support"],
-    "refactor": ["refactor", "clean", "restructure", "reorganize", "simplify"],
-    "architecture": ["architecture", "design", "pattern", "structure", "organize"],
-}
+VALID_INTENTS = CANONICAL_VALID_INTENTS
 
 
 def _detect_concepts_keyword(query: str) -> list[str]:
-    query_lower = query.lower()
-    query_words = set(re.findall(r"\w+", query_lower))
-    matched = []
-    for concept, keywords in CONCEPT_KEYWORDS.items():
-        if any(kw in query_words for kw in keywords):
-            matched.append(concept)
-    return matched
+    return detect_concepts_from_query(query)
 
 
 def _detect_intent_keyword(query: str) -> str:
-    query_lower = query.lower()
-    for intent, keywords in INTENT_KEYWORDS.items():
-        if any(kw in query_lower for kw in keywords):
-            return intent
-    return "general"
+    return detect_intent_from_query(query)
 
 
 async def decompose_query(query: str) -> QueryAnalysis:

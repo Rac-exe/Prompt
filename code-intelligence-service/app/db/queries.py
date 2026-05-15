@@ -233,6 +233,36 @@ def cleanup_stale_chunks(project_id: str, valid_keys: set[tuple[str, str, str]])
     return len(stale_ids)
 
 
+def cleanup_stale_chunks_for_files(
+    project_id: str,
+    file_paths: set[str],
+    valid_keys: set[tuple[str, str, str]],
+) -> int:
+    """Delete stale chunks only within files included in a partial ingest."""
+    if not file_paths:
+        return 0
+    client = get_client()
+    result = (
+        client.table("code_chunks")
+        .select("id,file_path,name,chunk_type")
+        .eq("project_id", project_id)
+        .in_("file_path", list(file_paths))
+        .execute()
+    )
+    stale_ids = [
+        row["id"] for row in (result.data or [])
+        if (row["file_path"], row["name"], row["chunk_type"]) not in valid_keys
+    ]
+    if not stale_ids:
+        return 0
+    for i in range(0, len(stale_ids), 100):
+        batch = stale_ids[i:i + 100]
+        client.table("code_relationships").delete().in_("from_chunk_id", batch).execute()
+        client.table("code_relationships").delete().in_("to_chunk_id", batch).execute()
+        client.table("code_chunks").delete().in_("id", batch).execute()
+    return len(stale_ids)
+
+
 def delete_chunks_for_file(project_id: str, file_path: str):
     client = get_client()
     client.table("code_chunks").delete().eq("project_id", project_id).eq("file_path", file_path).execute()

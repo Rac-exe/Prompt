@@ -11,7 +11,7 @@ import * as Sentry from '@sentry/electron/main';
 import type { FSWatcher } from 'chokidar';
 import { getLanguageForFile, parseFile } from './code-parser';
 import { getCachedHash, setCachedHash, clearFileCache } from '../database/local-project-cache';
-import type { CodeIntelClient, ChunkData, CallGraphEdge } from '../api/code-intel-client';
+import type { CodeIntelClient, ChunkData, CallGraphEdge, ChunkKey } from '../api/code-intel-client';
 
 let chokidar: typeof import('chokidar') | null = null;
 
@@ -144,6 +144,8 @@ async function handleFileChange(
       call_graph: buildCallGraph(chunks),
       language_map: { [language]: chunks.length },
       branch,
+      cleanup_scope: 'file',
+      cleanup_keys: chunkKeys(chunks),
     });
     const tIngestDone = Date.now();
 
@@ -423,17 +425,29 @@ export async function performFullScan(
     console.log(`[FileWatcher] Built call graph: ${callGraph.length} edges from ${allChunks.length} chunks`);
 
     const batchSize = 500;
+    const allChunkKeys = chunkKeys(allChunks);
     for (let i = 0; i < allChunks.length; i += batchSize) {
       const batch = allChunks.slice(i, i + batchSize);
+      const isLastBatch = i + batchSize >= allChunks.length;
       await client.ingestSkeleton({
         project_id: projectId,
         chunks: batch,
         call_graph: i === 0 ? callGraph : [],
         language_map: i === 0 ? languageMap : {},
         branch,
+        cleanup_scope: isLastBatch ? 'project' : 'none',
+        cleanup_keys: isLastBatch ? allChunkKeys : [],
       });
     }
   }
 
   return { totalFiles, totalChunks: allChunks.length };
+}
+
+function chunkKeys(chunks: ChunkData[]): ChunkKey[] {
+  return chunks.map((chunk) => ({
+    file_path: chunk.file_path,
+    name: chunk.name,
+    chunk_type: chunk.chunk_type,
+  }));
 }

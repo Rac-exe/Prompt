@@ -42,7 +42,7 @@ SIMPLE_QUERY_WORD_THRESHOLD = 20
 GRAPH_SIMILARITY_THRESHOLD = 0.25
 
 # ── Mode-specific retrieval tuning ─────────────────────────────────────────
-FIND_BROAD_LIMIT = int(os.environ.get("FIND_BROAD_LIMIT", "20"))
+FIND_BROAD_LIMIT = int(os.environ.get("FIND_BROAD_LIMIT", "50"))
 ASK_BROAD_LIMIT = int(os.environ.get("ASK_BROAD_LIMIT", "30"))
 BUG_BROAD_LIMIT = int(os.environ.get("BUG_BROAD_LIMIT", "50"))
 OPTIMIZE_BROAD_LIMIT = int(os.environ.get("OPTIMIZE_BROAD_LIMIT", "60"))

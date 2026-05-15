@@ -15,9 +15,10 @@ from datetime import datetime, timezone
 import sentry_sdk
 
 from app.config import SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
-from app.db.models import ChunkInput
+from app.db.models import ChunkInput, ChunkKey
 from app.db.queries import (
     cleanup_stale_chunks,
+    cleanup_stale_chunks_for_files,
     get_existing_chunk_hashes,
     update_project_status,
     upsert_chunks_batch,
@@ -113,13 +114,16 @@ async def process_ingest_batch(
     chunks: list[ChunkInput],
     branch: str | None = None,
     language_map: dict[str, int] | None = None,
+    cleanup_scope: str = "none",
+    cleanup_keys: list[ChunkKey] | None = None,
 ):
     t_start = time.perf_counter()
     update_project_status(project_id, "indexing")
 
     logger.info(
         f"[project={project_id}] Ingest started: chunks={len(chunks)}, branch={branch}, "
-        f"languages={language_map or {}}"
+        f"languages={language_map or {}}, cleanup_scope={cleanup_scope}, "
+        f"cleanup_keys={len(cleanup_keys or [])}"
     )
 
     new_chunks = _filter_unchanged(project_id, chunks)
@@ -128,8 +132,7 @@ async def process_ingest_batch(
         f"[project={project_id}] Hash filter: new={len(new_chunks)}, skipped={skipped}"
     )
     if not new_chunks:
-        valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
-        stale_count = cleanup_stale_chunks(project_id, valid_keys)
+        stale_count = _cleanup_if_project_snapshot(project_id, cleanup_scope, cleanup_keys)
         _generate_summary(project_id, language_map or {}, chunks)
         now = datetime.now(timezone.utc).isoformat()
         update_project_status(project_id, "ready", last_indexed_at=now)
@@ -219,9 +222,11 @@ async def process_ingest_batch(
     logger.info(
         f"[project={project_id}] Upsert complete: rows={len(rows)}, processed={processed}, errors={errors}"
     )
-    valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
-    stale_count = cleanup_stale_chunks(project_id, valid_keys)
-    logger.info(f"[project={project_id}] Stale cleanup complete: stale={stale_count}")
+    stale_count = _cleanup_if_project_snapshot(project_id, cleanup_scope, cleanup_keys)
+    logger.info(
+        f"[project={project_id}] Stale cleanup complete: "
+        f"scope={cleanup_scope}, stale={stale_count}"
+    )
 
     _generate_summary(project_id, language_map or {}, [*chunks])
 
@@ -244,3 +249,39 @@ def _generate_summary(project_id: str, language_map: dict[str, int], chunks: lis
         )
     except Exception as e:
         logger.warning(f"[project={project_id}] Project summary generation failed: {e}")
+
+
+def _cleanup_if_project_snapshot(
+    project_id: str,
+    cleanup_scope: str,
+    cleanup_keys: list[ChunkKey] | None,
+) -> int:
+    if cleanup_scope == "file":
+        if not cleanup_keys:
+            logger.warning(
+                f"[project={project_id}] File stale cleanup skipped: missing cleanup_keys"
+            )
+            return 0
+        valid_keys = {
+            (key.file_path, key.name, key.chunk_type.value)
+            for key in cleanup_keys
+        }
+        file_paths = {key.file_path for key in cleanup_keys}
+        return cleanup_stale_chunks_for_files(project_id, file_paths, valid_keys)
+
+    if cleanup_scope != "project":
+        logger.info(
+            f"[project={project_id}] Stale cleanup skipped: cleanup_scope={cleanup_scope}"
+        )
+        return 0
+    if not cleanup_keys:
+        logger.warning(
+            f"[project={project_id}] Stale cleanup skipped: project snapshot missing cleanup_keys"
+        )
+        return 0
+
+    valid_keys = {
+        (key.file_path, key.name, key.chunk_type.value)
+        for key in cleanup_keys
+    }
+    return cleanup_stale_chunks(project_id, valid_keys)

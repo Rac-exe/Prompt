@@ -94,6 +94,7 @@ interface SpaceWorkspaceProps {
 
 type VoiceState = "idle" | "listening" | "processing";
 type CodeIntelMode = "find" | "ask" | "bug" | "optimize";
+const FIND_RESULT_LIMIT = 15;
 
 const CODE_INTEL_MODES: Array<{ value: CodeIntelMode; label: string; description: string }> = [
   { value: "optimize", label: "Optimize", description: "Generate an implementation prompt with code context" },
@@ -138,7 +139,7 @@ function formatFindResponse(query: string, chunks: CodeIntelLocation[], relatedC
 
   lines.push("Most likely locations:");
   lines.push("");
-  chunks.slice(0, 10).forEach((chunk, idx) => lines.push(...formatChunkSummary(chunk, idx + 1), ""));
+  chunks.slice(0, FIND_RESULT_LIMIT).forEach((chunk, idx) => lines.push(...formatChunkSummary(chunk, idx + 1), ""));
 
   if (relatedChunks.length > 0) {
     lines.push("## Related Code");
@@ -588,7 +589,13 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
     for (const proj of space.projects) {
       try {
-        const d: RetrieveResult = await api.retrieve({ project_id: proj.projectId, query: rawQuery, branch: proj.branch || undefined, limit: 10, mode: codeIntelMode });
+        const d: RetrieveResult = await api.retrieve({
+          project_id: proj.projectId,
+          query: rawQuery,
+          branch: proj.branch || undefined,
+          limit: codeIntelMode === "find" ? 30 : 10,
+          mode: codeIntelMode,
+        });
         if (d.ranked_chunks) allRanked.push(...d.ranked_chunks);
         if (d.related_chunks) allRelated.push(...d.related_chunks);
       } catch (e) {
@@ -602,7 +609,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       toast({ title: "No relevant code found", description: "Try reindexing your folder." });
     }
     allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
-    allRanked = allRanked.slice(0, 10);
+    allRanked = allRanked.slice(0, codeIntelMode === "find" ? FIND_RESULT_LIMIT : 10);
     allRelated = allRelated.slice(0, 5);
 
     if (codeIntelMode === "find") {

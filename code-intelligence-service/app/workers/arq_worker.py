@@ -12,7 +12,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from arq import create_pool
 from arq.connections import RedisSettings
 from app.config import REDIS_URL
-from app.db.models import ChunkInput, CallGraphEdge
+from app.db.models import ChunkInput, CallGraphEdge, ChunkKey
 from app.workers.index_worker import process_ingest_batch
 from app.services.graph import process_call_graph
 from app.db.queries import update_project_status
@@ -52,6 +52,8 @@ async def index_chunks_task(
     call_graph_data: list[dict],
     branch: str | None = None,
     language_map: dict[str, int] | None = None,
+    cleanup_scope: str = "none",
+    cleanup_keys_data: list[dict] | None = None,
 ):
     """
     arq task: process a batch of code chunks for indexing.
@@ -62,6 +64,7 @@ async def index_chunks_task(
 
     chunks = [ChunkInput(**c) for c in chunks_data]
     call_graph = [CallGraphEdge(**e) for e in call_graph_data]
+    cleanup_keys = [ChunkKey(**k) for k in (cleanup_keys_data or [])]
 
     await process_ingest_batch(
         project_id=project_id,
@@ -69,6 +72,8 @@ async def index_chunks_task(
         chunks=chunks,
         branch=branch,
         language_map=language_map or {},
+        cleanup_scope=cleanup_scope,
+        cleanup_keys=cleanup_keys,
     )
 
     if call_graph:
@@ -121,6 +126,8 @@ async def enqueue_ingest(
     call_graph_data: list[dict],
     branch: str | None = None,
     language_map: dict[str, int] | None = None,
+    cleanup_scope: str = "none",
+    cleanup_keys_data: list[dict] | None = None,
 ):
     """Enqueue an indexing job to the Redis-backed arq queue."""
     pool = await get_pool()
@@ -132,6 +139,8 @@ async def enqueue_ingest(
         call_graph_data,
         branch,
         language_map or {},
+        cleanup_scope,
+        cleanup_keys_data or [],
     )
     logger.info(f"[arq] Enqueued ingest job {job.job_id} for project {project_id}")
     return job.job_id

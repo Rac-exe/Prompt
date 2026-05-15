@@ -8,6 +8,8 @@ export interface IngestPayload {
   call_graph: CallGraphEdge[];
   language_map: Record<string, number>;
   branch?: string;
+  cleanup_scope?: 'none' | 'file' | 'project';
+  cleanup_keys?: ChunkKey[];
 }
 
 export interface ChunkData {
@@ -35,6 +37,12 @@ export interface CallGraphEdge {
   to_name: string;
   to_file: string;
   relationship_type: 'calls' | 'imports' | 'inherits' | 'implements';
+}
+
+export interface ChunkKey {
+  file_path: string;
+  name: string;
+  chunk_type: ChunkData['chunk_type'];
 }
 
 export interface ProjectInfo {

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
 from enum import Enum
 
 
@@ -85,12 +85,20 @@ class CallGraphEdge(BaseModel):
     relationship_type: RelationshipType = RelationshipType.CALLS
 
 
+class ChunkKey(BaseModel):
+    file_path: str
+    name: str
+    chunk_type: ChunkType
+
+
 class IngestRequest(BaseModel):
     project_id: str
     chunks: list[ChunkInput] = Field(..., max_length=10_000)
     call_graph: list[CallGraphEdge] = Field(default_factory=list)
     language_map: dict[str, int] = Field(default_factory=dict)
     branch: Optional[str] = None
+    cleanup_scope: Literal["none", "file", "project"] = "none"
+    cleanup_keys: list[ChunkKey] = Field(default_factory=list)
 
 
 class RetrieveRequest(BaseModel):
