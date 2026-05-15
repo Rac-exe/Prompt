@@ -6,7 +6,7 @@ import {
   FolderOpen, FolderPlus, FolderMinus,
   Trash, Clock, Square, CaretLeft,
   Microphone, MicrophoneSlash,
-  WarningCircle, Gear, ChatCircleText,
+  WarningCircle, Gear, ChatCircleText, ArrowDown,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +25,7 @@ import { friendlyError } from "@/lib/ipc-error";
 import { MessageBubble, type Message } from "@/components/chat/MessageBubble";
 import { VersionNavigator } from "@/components/chat/VersionNavigator";
 import { useSmoothStreaming } from "@/hooks/useSmoothStreaming";
+import { useScrollController } from "@/hooks/useScrollController";
 import { useMessageTree, type VersionInfo } from "@/hooks/useMessageTree";
 import type { Space, SpaceProject, SpaceMessage, RetrieveResult } from "./types";
 import { buildTailoredPrompt, MAX_PROJECTS_PER_SPACE, loadSpaces, saveSpaces } from "./types";
@@ -226,7 +227,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     isStreamingRef.current = false;
   }, []);
 
-  const { streamingMessage, startStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
+  const { streamingMessage, startStreaming, resumeStreaming, handleChunk, handleFinalMessage, stopStreaming, resetStreaming } = useSmoothStreaming({
     onStreamingComplete: handleStreamingComplete,
   });
 
@@ -428,6 +429,32 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     };
   }, [electronAPI, space.id, handleChunk, handleFinalMessage, resetStreaming]);
 
+  // ── Mid-stream resume on mount ───────────────────────────────
+  // When the user navigates away from a space while generation is in flight
+  // and then returns, this effect queries the main-process buffer and
+  // instantly shows the accumulated content via resumeStreaming(). New
+  // chunks continue flowing through the onOptimizationChunk listener
+  // (re-registered above), and completion/save follows the normal path.
+  // Mirrors the exact pattern used in Index.tsx for chat stream resumption.
+  useEffect(() => {
+    const spaces = (window as any).electronAPI?.spaces;
+    console.log('[SpaceWorkspace] Resume effect fired for space:', space.id, 'hasGetActiveStream:', !!spaces?.getActiveStream);
+    if (!spaces?.getActiveStream) return;
+
+    spaces.getActiveStream(space.id).then((state: { accumulated: string; isComplete: boolean } | null) => {
+      console.log('[SpaceWorkspace] getActiveStream result:', state ? { hasAccumulated: !!state.accumulated, accLen: state.accumulated?.length, isComplete: state.isComplete } : null);
+      if (!state || state.isComplete || !state.accumulated) return;
+      console.log('[SpaceWorkspace] Resuming stream with', state.accumulated.length, 'chars');
+      isStreamingRef.current = true;
+      lastAccumulatedRef.current = state.accumulated;
+      setIsGenerating(true);
+      resumeStreaming(state.accumulated);
+    }).catch((err: unknown) => {
+      console.error('[SpaceWorkspace] getActiveStream failed:', err);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [space.id]);
+
   // ── Voice transcription IPC ──────────────────────────────────
   // Mirrors ChatView so the Spaces composer feels identical to the new-chat
   // composer. Transcription drops directly into the textarea state.
@@ -460,8 +487,15 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     });
   }, [electronAPI]);
 
-  // ── Auto-scroll + textarea autosize ──────────────────────────
-  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [space.messages.length, streamingMessage?.content]);
+  // ── Scroll controller (mirrors ChatView behavior) ──────────
+  const { handleScroll, scrollToBottom, showScrollButton } = useScrollController(
+    scrollRef,
+    {
+      isStreaming: !!streamingMessage,
+      messageCount: space.messages.length,
+      streamingTrigger: streamingMessage?.content,
+    },
+  );
 
   const autoResize = useCallback(() => {
     const ta = inputRef.current; if (!ta) return;
@@ -501,8 +535,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     }
     lastAccumulatedRef.current = '';
     startStreaming();
-    electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space");
-  }, [space.projects, api, electronAPI, startStreaming]);
+    electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space", space.id);
+  }, [space.id, space.projects, api, electronAPI, startStreaming]);
 
   const handleSubmit = useCallback(async () => {
     const query = input.trim();
@@ -1204,7 +1238,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       ) : (
         // ─── Has project → conversation column ───
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex-1 overflow-y-auto" ref={scrollRef}>
+          <div className="flex-1 min-h-0 relative">
+          <div className="h-full overflow-y-auto scrollbar-none" ref={scrollRef} onScroll={handleScroll}>
             <div className="max-w-5xl mx-auto px-8 py-8">
               {/* Space header — only shows when there's no chat history yet,
                   so the conversation view stays clean. */}
@@ -1327,6 +1362,22 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                 )}
               </div>
             </div>
+          </div>
+
+          {showScrollButton && (
+            <button
+              type="button"
+              onClick={() => scrollToBottom()}
+              className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 w-8 h-8 rounded-full
+                         bg-background/90 backdrop-blur border border-border shadow-md
+                         flex items-center justify-center
+                         text-muted-foreground hover:text-foreground hover:bg-secondary
+                         transition-all duration-150"
+              aria-label="Scroll to bottom"
+            >
+              <ArrowDown size={16} weight="light" />
+            </button>
+          )}
           </div>
 
           {/* ── Composer ───────────────────────────────────── */}
