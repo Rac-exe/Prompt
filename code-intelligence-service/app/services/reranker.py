@@ -53,6 +53,7 @@ async def rerank_chunks(query: str, chunks: list[dict], mode: ModeEnum, limit: i
 async def _score_with_llm(query: str, chunks: list[dict], mode: ModeEnum) -> list[dict] | None:
     system = (
         PROMPTS.get(mode, PROMPTS[ModeEnum.ASK])
+        + "\nIf provided, structure_similarity is a 0-1 signal for signature/name/file-structure fit."
         + "\nReturn strict JSON array: [{\"id\":\"chunk id\", \"score\": 1-10, \"reasoning\":\"short reason\"}]."
     )
     payload = []
@@ -66,6 +67,7 @@ async def _score_with_llm(query: str, chunks: list[dict], mode: ModeEnum) -> lis
             "summary": c.get("summary_code") or c.get("semantic_summary"),
             "purpose": c.get("summary_purpose"),
             "concepts": c.get("concepts") or [],
+            "structure_similarity": c.get("structure_similarity"),
             "code": (c.get("code_body") or "")[:1200],
         })
     kwargs: dict = {

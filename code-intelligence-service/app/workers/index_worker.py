@@ -35,9 +35,8 @@ def _filter_unchanged(project_id: str, chunks: list[ChunkInput]) -> list[ChunkIn
     existing = get_existing_chunk_hashes(project_id)
     new: list[ChunkInput] = []
     for chunk in chunks:
-        cached = existing.get((chunk.file_path, chunk.name))
-        has_new_embedding = bool(cached and (cached.get("embedding_summary") or cached.get("embedding")))
-        if cached and cached["content_hash"] == chunk.content_hash and has_new_embedding:
+        cached = existing.get((chunk.file_path, chunk.name, chunk.chunk_type.value))
+        if cached and cached["content_hash"] == chunk.content_hash:
             continue
         new.append(chunk)
     return new

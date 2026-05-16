@@ -26,10 +26,12 @@ from app.db.queries import (
     concept_search,
     file_path_search,
     get_branch_context,
+    get_chunk_structure_embeddings,
     get_related_chunks_multihop,
+    hydrate_chunks_by_ids,
     increment_observation_counts,
-    multi_vector_search,
     text_search,
+    vector_search,
 )
 from app.services.answer_generator import generate_answer
 from app.services.concepts import CONCEPT_KEYWORDS, detect_concepts_from_query
@@ -131,7 +133,7 @@ async def retrieve_context_full(
         "yes" if query_embedding else "no",
     )
 
-    ranked = await _rank_candidates(candidates, query, mode_enum, config, limit)
+    ranked = await _rank_candidates(candidates, query, mode_enum, config, limit, project_id, user_id, concepts)
     logger.info(
         "[RETRIEVE] ranked_after_first_pass=%d top=%s score=%.4f",
         len(ranked),
@@ -163,6 +165,9 @@ async def retrieve_context_full(
                 mode_enum,
                 config,
                 limit,
+                project_id,
+                user_id,
+                concepts,
             )
             logger.info(
                 "[REFINE] second_pass_complete ranked=%d top=%s score=%.4f",
@@ -172,6 +177,8 @@ async def retrieve_context_full(
             )
         else:
             logger.info("[REFINE] skipped_after_trigger no refined queries returned")
+
+    ranked = _hydrate_ranked_chunks(ranked, project_id, user_id, limit)
 
     related = []
     if config.graph_expand and ranked:
@@ -245,6 +252,9 @@ async def _rank_candidates(
     mode: ModeEnum,
     config: ModeConfig,
     limit: int,
+    project_id: str,
+    user_id: str,
+    concepts: list[str],
 ) -> list[dict]:
     fused = _reciprocal_rank_fusion(*candidates) if len(candidates) > 1 else (candidates[0] if candidates else [])
     logger.info(
@@ -263,6 +273,8 @@ async def _rank_candidates(
         logger.info("[RANK] find ranking applied limit=%d returned=%d", rank_limit, len(ranked))
         return ranked[:rank_limit]
     if config.rerank:
+        ranked = _hydrate_ranked_chunks(fused, project_id, user_id, min(len(fused), 60))
+        ranked = await _attach_structure_similarity(ranked, query, concepts, project_id, user_id)
         ranked = await rerank_chunks(query, ranked, mode, rank_limit)
         logger.info("[RANK] rerank applied limit=%d returned=%d", rank_limit, len(ranked))
     else:
@@ -392,14 +404,12 @@ async def _broad_recall(
     if config.vector_search:
         try:
             summary_embeddings = await embed_texts(sub_queries)
-            structure_embeddings = await embed_structure_texts([_structure_query(q, concepts) for q in sub_queries])
             query_embedding = summary_embeddings[0] if summary_embeddings else None
-            for summary_emb, struct_emb in zip(summary_embeddings, structure_embeddings):
-                results = multi_vector_search(
+            for summary_emb in summary_embeddings:
+                results = vector_search(
                     project_id,
                     user_id,
                     summary_emb,
-                    struct_emb,
                     limit=limit,
                     branch=branch,
                 )
@@ -445,6 +455,94 @@ async def _broad_recall(
         logger.info("[RECALL] filepath skipped no file patterns")
 
     return lists, query_embedding
+
+
+def _hydrate_ranked_chunks(
+    chunks: list[dict],
+    project_id: str,
+    user_id: str,
+    limit: int,
+) -> list[dict]:
+    """Fetch heavy columns for the small set that survived broad recall."""
+    if not chunks or limit <= 0:
+        return chunks
+    hydrate_count = min(len(chunks), limit)
+    chunk_ids = [str(c["id"]) for c in chunks[:hydrate_count] if c.get("id")]
+    hydrated = hydrate_chunks_by_ids(chunk_ids, project_id, user_id)
+    hydrated_by_id = {str(c["id"]): c for c in hydrated}
+
+    merged: list[dict] = []
+    for chunk in chunks:
+        full = hydrated_by_id.get(str(chunk.get("id")))
+        if full:
+            merged_chunk = {**full, **chunk}
+            for heavy_key in ("code_body", "context_header", "parent_summary"):
+                if full.get(heavy_key) is not None:
+                    merged_chunk[heavy_key] = full.get(heavy_key)
+            merged.append(merged_chunk)
+        else:
+            merged.append(chunk)
+    return merged
+
+
+async def _attach_structure_similarity(
+    chunks: list[dict],
+    query: str,
+    concepts: list[str],
+    project_id: str,
+    user_id: str,
+) -> list[dict]:
+    if not chunks:
+        return chunks
+    try:
+        query_vectors = await embed_structure_texts([_structure_query(query, concepts)])
+        query_vector = query_vectors[0] if query_vectors else None
+        if not query_vector:
+            return chunks
+
+        chunk_ids = [str(c["id"]) for c in chunks[:60] if c.get("id")]
+        structure_embeddings = get_chunk_structure_embeddings(chunk_ids, project_id, user_id)
+        for chunk in chunks:
+            raw_vector = structure_embeddings.get(str(chunk.get("id")))
+            chunk_vector = _parse_vector(raw_vector)
+            if chunk_vector:
+                chunk["structure_similarity"] = _cosine_similarity(query_vector, chunk_vector)
+    except Exception as e:
+        logger.warning("[RANK] structure similarity skipped: %s", e)
+        sentry_sdk.capture_exception(e)
+    return chunks
+
+
+def _parse_vector(value: object) -> list[float] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        try:
+            return [float(v) for v in value]
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        if not text:
+            return []
+        try:
+            return [float(part) for part in text.split(",")]
+        except ValueError:
+            return None
+    return None
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return max(0.0, min(1.0, dot / (norm_a * norm_b)))
 
 
 def _score(chunk: dict) -> float:

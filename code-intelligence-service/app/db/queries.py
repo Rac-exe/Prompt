@@ -5,9 +5,15 @@ for vector/text search and standard table operations for CRUD.
 """
 
 import logging
+import time
 from typing import Optional
 from app.db.supabase_client import get_client
-from app.config import GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, UPSERT_BATCH_SIZE
+from app.config import (
+    GRAPH_MAX_DEPTH,
+    GRAPH_MAX_RELATED,
+    UPSERT_BATCH_PAUSE_SECONDS,
+    UPSERT_BATCH_SIZE,
+)
 
 logger = logging.getLogger("code-intel.queries")
 
@@ -58,6 +64,7 @@ def get_projects_for_user(user_id: str) -> list[dict]:
         .select("*")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
+        .limit(100)
         .execute()
     )
     return result.data or []
@@ -129,18 +136,18 @@ def upsert_chunk(
     return result.data[0] if result.data else {}
 
 
-def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str], dict]:
-    """Fetch all (file_path, name) -> hash/embedding state for a project in one query."""
+def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str, str], dict]:
+    """Fetch lightweight chunk identity/hash data for project-level dedupe."""
     client = get_client()
     result = (
         client.table("code_chunks")
-        .select("file_path,name,content_hash,embedding,embedding_summary")
+        .select("file_path,name,chunk_type,content_hash")
         .eq("project_id", project_id)
         .execute()
     )
-    lookup: dict[tuple[str, str], dict] = {}
+    lookup: dict[tuple[str, str, str], dict] = {}
     for row in (result.data or []):
-        key = (row["file_path"], row["name"])
+        key = (row["file_path"], row["name"], row["chunk_type"])
         lookup[key] = row
     return lookup
 
@@ -175,6 +182,8 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_
                 f"[BATCH UPSERT] Batch {batch_num}/{total_batches}: "
                 f"{len(batch)} rows OK (total processed={processed})"
             )
+            if UPSERT_BATCH_PAUSE_SECONDS > 0 and batch_num < total_batches:
+                time.sleep(UPSERT_BATCH_PAUSE_SECONDS)
         except Exception as e:
             if _is_fk_violation(e):
                 project_id = batch[0].get("project_id", "unknown") if batch else "unknown"
@@ -203,6 +212,8 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_
                         break
                     logger.error(f"[BATCH UPSERT] Single fallback failed for {row.get('name')}: {inner_e}")
             else:
+                if UPSERT_BATCH_PAUSE_SECONDS > 0 and batch_num < total_batches:
+                    time.sleep(UPSERT_BATCH_PAUSE_SECONDS)
                 continue
             break
     logger.info(f"[BATCH UPSERT] Complete: {processed}/{len(chunks_data)} rows processed")
@@ -330,6 +341,56 @@ _CHUNK_SELECT_FIELDS = (
     "context_header,parent_summary"
 )
 
+_CHUNK_LITE_SELECT_FIELDS = (
+    "id,file_path,start_line,end_line,chunk_type,name,signature,"
+    "language,semantic_summary,summary_code,summary_purpose,concepts,"
+    "branch,branch_diverged,is_exported,relevance_reasoning,parent_id,"
+    "scope_type,observation_count"
+)
+
+
+def hydrate_chunks_by_ids(chunk_ids: list[str], project_id: str, user_id: Optional[str] = None) -> list[dict]:
+    """Fetch full chunk bodies for the final small result set after lite recall."""
+    if not chunk_ids:
+        return []
+    client = get_client()
+    query = (
+        client.table("code_chunks")
+        .select(_CHUNK_SELECT_FIELDS)
+        .eq("project_id", project_id)
+        .in_("id", chunk_ids)
+    )
+    if user_id:
+        query = query.eq("user_id", user_id)
+    result = query.execute()
+    by_id = {str(row["id"]): row for row in (result.data or [])}
+    return [by_id[cid] for cid in chunk_ids if cid in by_id]
+
+
+def get_chunk_structure_embeddings(
+    chunk_ids: list[str],
+    project_id: str,
+    user_id: Optional[str] = None,
+) -> dict[str, object]:
+    """Fetch structure vectors only for the small reranker candidate set."""
+    if not chunk_ids:
+        return {}
+    client = get_client()
+    query = (
+        client.table("code_chunks")
+        .select("id,embedding_structure")
+        .eq("project_id", project_id)
+        .in_("id", chunk_ids)
+    )
+    if user_id:
+        query = query.eq("user_id", user_id)
+    result = query.execute()
+    return {
+        str(row["id"]): row.get("embedding_structure")
+        for row in (result.data or [])
+        if row.get("embedding_structure") is not None
+    }
+
 
 def vector_search(
     project_id: str,
@@ -338,7 +399,7 @@ def vector_search(
     limit: int = 10,
     branch: Optional[str] = None,
 ) -> list[dict]:
-    """Cosine similarity search via the match_code_chunks RPC."""
+    """Cosine similarity search via the lite match_code_chunks RPC."""
     client = get_client()
     params = {
         "query_embedding": query_embedding,
@@ -350,44 +411,18 @@ def vector_search(
         params["filter_branch"] = branch
 
     try:
-        result = client.rpc("match_code_chunks", params).execute()
+        result = client.rpc("match_code_chunks_lite", params).execute()
         rows = result.data or []
         logger.debug(f"vector_search: {len(rows)} results for project {project_id}")
         return rows
     except Exception as e:
-        logger.error(f"vector_search RPC failed for project {project_id}: {e}")
-        return []
-
-
-def multi_vector_search(
-    project_id: str,
-    user_id: str,
-    query_embedding_summary: list[float],
-    query_embedding_structure: list[float],
-    limit: int = 10,
-    branch: Optional[str] = None,
-    summary_weight: float = 0.65,
-    structure_weight: float = 0.35,
-) -> list[dict]:
-    """Weighted summary+structure vector search via match_code_chunks_multi."""
-    client = get_client()
-    params = {
-        "query_embedding_summary": query_embedding_summary,
-        "query_embedding_structure": query_embedding_structure,
-        "match_count": limit,
-        "filter_project_id": project_id,
-        "filter_user_id": user_id,
-        "summary_weight": summary_weight,
-        "structure_weight": structure_weight,
-    }
-    if branch:
-        params["filter_branch"] = branch
-    try:
-        result = client.rpc("match_code_chunks_multi", params).execute()
-        return result.data or []
-    except Exception as e:
-        logger.warning(f"multi_vector_search RPC failed ({e}), falling back to legacy vector search")
-        return vector_search(project_id, user_id, query_embedding_summary, limit, branch)
+        logger.warning(f"vector_search lite RPC failed ({e}), falling back to full RPC")
+        try:
+            result = client.rpc("match_code_chunks", params).execute()
+            return result.data or []
+        except Exception as fallback_e:
+            logger.error(f"vector_search RPC failed for project {project_id}: {fallback_e}")
+            return []
 
 
 def concept_search(
@@ -396,7 +431,7 @@ def concept_search(
     concepts: list[str],
     limit: int = 10,
 ) -> list[dict]:
-    """Concept-overlap search via the search_by_concepts RPC (uses GIN index)."""
+    """Concept-overlap search via the lite search_by_concepts RPC (uses GIN index)."""
     if not concepts:
         return []
     client = get_client()
@@ -407,13 +442,18 @@ def concept_search(
         "filter_user_id": user_id,
     }
     try:
-        result = client.rpc("search_by_concepts", params).execute()
+        result = client.rpc("search_by_concepts_lite", params).execute()
         rows = result.data or []
         logger.debug(f"concept_search: {len(rows)} results for concepts={concepts}")
         return rows
     except Exception as e:
-        logger.error(f"concept_search RPC failed for project {project_id}: {e}")
-        return []
+        logger.warning(f"concept_search lite RPC failed ({e}), falling back to full RPC")
+        try:
+            result = client.rpc("search_by_concepts", params).execute()
+            return result.data or []
+        except Exception as fallback_e:
+            logger.error(f"concept_search RPC failed for project {project_id}: {fallback_e}")
+            return []
 
 
 def text_search(
@@ -422,7 +462,7 @@ def text_search(
     query: str,
     limit: int = 10,
 ) -> list[dict]:
-    """Full-text keyword search via the search_code_chunks_text RPC."""
+    """Full-text keyword search via the lite search_code_chunks_text RPC."""
     client = get_client()
     params = {
         "search_query": query,
@@ -431,13 +471,18 @@ def text_search(
         "filter_user_id": user_id,
     }
     try:
-        result = client.rpc("search_code_chunks_text", params).execute()
+        result = client.rpc("search_code_chunks_text_lite", params).execute()
         rows = result.data or []
         logger.debug(f"text_search: {len(rows)} results for query={query[:60]!r}")
         return rows
     except Exception as e:
-        logger.error(f"text_search RPC failed for project {project_id}: {e}")
-        return []
+        logger.warning(f"text_search lite RPC failed ({e}), falling back to full RPC")
+        try:
+            result = client.rpc("search_code_chunks_text", params).execute()
+            return result.data or []
+        except Exception as fallback_e:
+            logger.error(f"text_search RPC failed for project {project_id}: {fallback_e}")
+            return []
 
 
 # ── Graph traversal ─────────────────────────────────────────────────────────
@@ -618,6 +663,7 @@ def get_all_github_projects() -> list[dict]:
         .select("id,user_id,github_repo_owner,github_repo_name,default_branch,current_branch")
         .not_.is_("github_repo_owner", "null")
         .not_.is_("github_repo_name", "null")
+        .limit(100)
         .execute()
     )
     return result.data or []
@@ -631,12 +677,12 @@ def file_path_search(
     file_patterns: list[str],
     limit: int = 20,
 ) -> list[dict]:
-    """Search chunks by file path patterns using the search_chunks_by_file_paths RPC."""
+    """Search chunks by file path patterns using the lite search_chunks_by_file_paths RPC."""
     if not file_patterns:
         return []
     client = get_client()
     try:
-        result = client.rpc("search_chunks_by_file_paths", {
+        result = client.rpc("search_chunks_by_file_paths_lite", {
             "p_project_id": project_id,
             "p_user_id": user_id,
             "p_file_patterns": file_patterns,
@@ -646,11 +692,21 @@ def file_path_search(
         logger.debug(f"file_path_search: {len(rows)} results for patterns={file_patterns}")
         return rows
     except Exception as e:
-        logger.warning(f"file_path_search RPC failed ({e}), using fallback ILIKE query")
+        logger.warning(f"file_path_search lite RPC failed ({e}), trying full RPC")
+        try:
+            result = client.rpc("search_chunks_by_file_paths", {
+                "p_project_id": project_id,
+                "p_user_id": user_id,
+                "p_file_patterns": file_patterns,
+                "p_limit": limit,
+            }).execute()
+            return result.data or []
+        except Exception as fallback_e:
+            logger.warning(f"file_path_search full RPC failed ({fallback_e}), using fallback ILIKE query")
         try:
             query = (
                 client.table("code_chunks")
-                .select(_CHUNK_SELECT_FIELDS)
+                .select(_CHUNK_LITE_SELECT_FIELDS)
                 .eq("project_id", project_id)
                 .eq("user_id", user_id)
                 .limit(limit)
