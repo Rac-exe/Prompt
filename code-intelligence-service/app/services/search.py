@@ -44,6 +44,8 @@ from app.services.reranker import rerank_chunks
 
 logger = logging.getLogger("code-intel.search")
 
+MIN_RESPONSE_RELEVANCE = 0.10
+
 _FIND_STOP_WORDS = {
     "where", "what", "which", "when", "why", "how", "find", "show",
     "list", "happening", "happen", "happens", "used", "using", "usage",
@@ -134,11 +136,13 @@ async def retrieve_context_full(
     )
 
     ranked = await _rank_candidates(candidates, query, mode_enum, config, limit, project_id, user_id, concepts)
+    ranked = _filter_response_relevance(ranked)
     logger.info(
-        "[RETRIEVE] ranked_after_first_pass=%d top=%s score=%.4f",
+        "[RETRIEVE] ranked_after_first_pass=%d top=%s score=%.4f min_response_relevance=%.2f",
         len(ranked),
         ranked[0].get("name") if ranked else None,
         _score(ranked[0]) if ranked else 0.0,
+        MIN_RESPONSE_RELEVANCE,
     )
 
     if config.refine and await _should_refine(query, ranked, mode_enum):
@@ -169,6 +173,7 @@ async def retrieve_context_full(
                 user_id,
                 concepts,
             )
+            ranked = _filter_response_relevance(ranked)
             logger.info(
                 "[REFINE] second_pass_complete ranked=%d top=%s score=%.4f",
                 len(ranked),
@@ -446,6 +451,11 @@ async def _broad_recall(
         logger.info("[RECALL] concept skipped no concepts")
 
     file_patterns = build_file_patterns(signals)
+    if config.mode == ModeEnum.FIND:
+        for term in sorted(_find_terms(query) - _FIND_GENERIC_TERMS):
+            if len(term) >= 4:
+                file_patterns.append(f"%{term}%")
+        file_patterns = list(dict.fromkeys(file_patterns))[:10]
     if file_patterns:
         results = file_path_search(project_id, user_id, file_patterns, limit=limit)
         if results:
@@ -455,6 +465,10 @@ async def _broad_recall(
         logger.info("[RECALL] filepath skipped no file patterns")
 
     return lists, query_embedding
+
+
+def _filter_response_relevance(chunks: list[dict]) -> list[dict]:
+    return [chunk for chunk in chunks if _score(chunk) > MIN_RESPONSE_RELEVANCE]
 
 
 def _hydrate_ranked_chunks(
@@ -570,6 +584,7 @@ def _reciprocal_rank_fusion(*result_lists: list[dict], k: int = 60) -> list[dict
 
 def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], limit: int) -> list[dict]:
     terms = _find_terms(query)
+    specific_terms = terms - _FIND_GENERIC_TERMS
     token_terms = {"token", "tokens", "access", "refresh", "jwt", "bearer", "cookie", "cookies"}
     auth_terms = {
         "auth", "authentication", "authorize", "authorization", "login", "logout",
@@ -579,13 +594,29 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
     for chunk in chunks:
         haystack = _chunk_search_text(chunk)
         path_name = f"{chunk.get('file_path', '')} {chunk.get('name', '')}".lower()
+        signature = _split_identifiers(str(chunk.get("signature") or "")).lower()
+        code_body = _split_identifiers(str(chunk.get("code_body") or "")[:2500]).lower()
         concepts_set = {str(c) for c in (chunk.get("concepts") or [])}
 
         lexical_hits = sum(1 for term in terms if term in haystack)
+        path_hits = sum(1 for term in specific_terms if term in path_name)
+        signature_hits = sum(1 for term in specific_terms if term in signature)
+        body_hits = sum(1 for term in specific_terms if term in code_body)
         exact_signal_hits = sum(1 for term in token_terms | auth_terms if term in terms and term in haystack)
         concept_hits = len(concepts_set.intersection(concepts))
 
-        boost = lexical_hits * 0.05 + exact_signal_hits * 0.12 + concept_hits * 0.15
+        boost = (
+            lexical_hits * 0.05
+            + path_hits * 0.35
+            + signature_hits * 0.20
+            + body_hits * 0.12
+            + exact_signal_hits * 0.12
+            + concept_hits * 0.15
+        )
+        if "config" in terms and ".config" in (chunk.get("code_body") or "").lower():
+            boost += 0.30
+        if specific_terms and not (path_hits or signature_hits or body_hits):
+            boost -= 0.20
         if "auth" in concepts and any(term in path_name for term in auth_terms | token_terms):
             boost += 0.35
         if any(term in terms for term in token_terms) and any(term in haystack for term in token_terms):
@@ -594,10 +625,16 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
             boost += 0.20
 
         base = _score(chunk)
-        chunk["find_score"] = min(base + boost, 1.0)
+        chunk["find_score"] = max(0.0, min(base + boost, 1.0))
         chunk["final_score"] = chunk["find_score"]
-        if exact_signal_hits or concept_hits:
+        if path_hits or signature_hits or body_hits or exact_signal_hits or concept_hits:
             reasons = []
+            if path_hits:
+                reasons.append("matches requested terms in file path/name")
+            if signature_hits:
+                reasons.append("matches requested terms in signature")
+            if body_hits:
+                reasons.append("matches requested terms in code")
             if exact_signal_hits:
                 reasons.append("matches requested auth/token terms")
             if concept_hits:
@@ -685,6 +722,12 @@ def _find_terms(query: str) -> set[str]:
         word for word in _word_variants(query)
         if len(word) >= 3 and word not in _FIND_STOP_WORDS
     }
+
+
+_FIND_GENERIC_TERMS = {
+    "config", "configs", "configuration", "configure", "configured",
+    "located", "location", "where", "file", "files", "code",
+}
 
 
 def _chunk_search_text(chunk: dict) -> str:

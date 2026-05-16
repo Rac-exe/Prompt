@@ -26,7 +26,7 @@ export interface ChunkData {
   imports: string[];
   code_body?: string;
   is_exported?: boolean;
-  scope_type?: 'file' | 'class' | 'function' | 'method';
+  scope_type?: 'file' | 'class' | 'function' | 'method' | 'config';
   chunk_index?: number;
   parent_scope_name?: string;
 }

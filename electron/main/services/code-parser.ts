@@ -250,6 +250,52 @@ function collectCallees(node: any): string[] {
   return Array.from(callees).slice(0, 50);
 }
 
+function hasAncestorOfType(node: any, types: string[]): boolean {
+  let current = node.parent;
+  while (current) {
+    if (types.includes(current.type)) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function findTopLevelConfigCalls(root: any, language: string): any[] {
+  const functionTypes = FUNCTION_NODE_TYPES[language] || [];
+  const classTypes = CLASS_NODE_TYPES[language] || [];
+  const boundaryTypes = [...functionTypes, ...classTypes];
+  const calls: any[] = [];
+
+  function walk(node: any) {
+    if (node.type === 'call_expression' || node.type === 'call') {
+      const fn = node.childForFieldName('function') || node.firstChild;
+      const fnText = fn?.text || '';
+      if (
+        fnText.endsWith('.config') &&
+        !hasAncestorOfType(node, boundaryTypes)
+      ) {
+        calls.push(node.parent?.type === 'expression_statement' ? node.parent : node);
+        return;
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i));
+    }
+  }
+
+  walk(root);
+  return calls;
+}
+
+function configCallName(node: any): string {
+  const call = node.type === 'call_expression' || node.type === 'call'
+    ? node
+    : Array.from({ length: node.childCount }, (_, i) => node.child(i))
+        .find((child: any) => child.type === 'call_expression' || child.type === 'call');
+  const fn = call?.childForFieldName('function') || call?.firstChild;
+  return fn?.text || 'module.config';
+}
+
 export async function parseFile(filePath: string, content: string): Promise<ChunkData[]> {
   const lang = getLanguageForFile(filePath);
   if (!lang) return [];
@@ -263,7 +309,7 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
   const root = tree.rootNode;
   const chunks: ChunkData[] = [];
   const imports: string[] = [];
-  let chunkIndex = 0;
+  let chunkIndex = 1;
 
   const functionTypes = FUNCTION_NODE_TYPES[language] || [];
   const classTypes = CLASS_NODE_TYPES[language] || [];
@@ -278,6 +324,26 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
     }
   }
   walkForImports(root);
+
+  for (const node of findTopLevelConfigCalls(root, language)) {
+    chunks.push({
+      file_path: filePath,
+      start_line: node.startPosition.row + 1,
+      end_line: node.endPosition.row + 1,
+      chunk_type: 'function',
+      scope_type: 'config',
+      chunk_index: chunkIndex++,
+      name: configCallName(node),
+      signature: undefined,
+      language,
+      docstring: undefined,
+      content_hash: computeContentHash(node.text),
+      callees: collectCallees(node),
+      imports,
+      code_body: node.text.slice(0, 3000),
+      is_exported: false,
+    });
+  }
 
   function walkForChunks(node: any, parentClass?: string) {
     if (classTypes.includes(node.type)) {
@@ -343,26 +409,24 @@ export async function parseFile(filePath: string, content: string): Promise<Chun
 
   walkForChunks(root);
 
-  if (chunks.length === 0) {
-    const fileBaseName = path.basename(filePath, path.extname(filePath));
-    chunks.push({
-      file_path: filePath,
-      start_line: 1,
-      end_line: content.split('\n').length,
-      chunk_type: 'file',
-      scope_type: 'file',
-      chunk_index: chunkIndex++,
-      name: fileBaseName,
-      signature: undefined,
-      language,
-      docstring: undefined,
-      content_hash: computeContentHash(content),
-      callees: [],
-      imports,
-      code_body: content.slice(0, 3000),
-      is_exported: false,
-    });
-  }
+  const fileBaseName = path.basename(filePath, path.extname(filePath));
+  chunks.unshift({
+    file_path: filePath,
+    start_line: 1,
+    end_line: content.split('\n').length,
+    chunk_type: 'file',
+    scope_type: 'file',
+    chunk_index: 0,
+    name: fileBaseName,
+    signature: undefined,
+    language,
+    docstring: undefined,
+    content_hash: computeContentHash(content),
+    callees: collectCallees(root),
+    imports,
+    code_body: content.slice(0, 3000),
+    is_exported: false,
+  });
 
   return chunks;
 }
