@@ -85,7 +85,16 @@ export interface ElectronAPI {
   signOut: () => void;
 
   // Chat
-  optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string) => void;
+  optimizePrompt: (
+    text: string,
+    isRegenerate?: boolean,
+    chatId?: string,
+    mode?: string,
+    source?: 'chat' | 'space',
+    spaceId?: string,
+    projectId?: string,
+    projectBranch?: string,
+  ) => void;
   saveToChat: (originalText: string, optimizedText: string) => void;
   loadChats: () => void;
   onChatsLoaded: (callback: (data: { chats: any[] }) => void) => void;

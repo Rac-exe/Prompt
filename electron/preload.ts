@@ -180,7 +180,16 @@ declare global {
       // ============================================
       // APP WINDOW API
       // ============================================
-      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string, source?: 'chat' | 'space') => void;
+      optimizePrompt: (
+        text: string,
+        isRegenerate?: boolean,
+        chatId?: string,
+        mode?: string,
+        source?: 'chat' | 'space',
+        spaceId?: string,
+        projectId?: string,
+        projectBranch?: string,
+      ) => void;
       saveToChat: (originalText: string, optimizedText: string) => void;
       requestUserData: () => void;
       onUserDataLoaded: (callback: (user: any) => void) => void;
@@ -553,8 +562,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string) => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source, spaceId);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string, projectId?: string, projectBranch?: string) => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source, spaceId, projectId, projectBranch);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);

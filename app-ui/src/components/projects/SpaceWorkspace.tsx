@@ -741,10 +741,20 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     if (space.projects.length > 0) {
       tailoredPrompt = buildTailoredPrompt(rawQuery, allRanked, allRelated);
     }
+    const primaryProject = space.projects[0];
     lastAccumulatedRef.current = '';
     console.log('[SW:runOpt] retrieval done, calling startStreaming + optimizePrompt');
     startStreaming();
-    electronAPI?.optimizePrompt?.(tailoredPrompt, false, undefined, "thinking", "space", space.id);
+    electronAPI?.optimizePrompt?.(
+      tailoredPrompt,
+      false,
+      undefined,
+      "thinking",
+      "space",
+      space.id,
+      primaryProject?.projectId,
+      primaryProject?.branch,
+    );
   }, [codeIntelMode, space.id, space.projects, api, electronAPI, startStreaming, handleStreamingComplete]);
 
   const handleSubmit = useCallback(async () => {

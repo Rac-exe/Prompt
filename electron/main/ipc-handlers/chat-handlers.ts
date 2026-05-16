@@ -252,7 +252,7 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
-    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string) => {
+    ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string, projectId?: string, projectBranch?: string) => {
         Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
@@ -322,18 +322,8 @@ export function registerChatHandlers(
                     null,
                     null,
                     false,
-                    // Space mode: the renderer (SpaceWorkspace) has already
-                    // run retrieval against the *correct* space-scoped
-                    // project_id(s) and embedded the resulting chunks into
-                    // `promptText` via buildTailoredPrompt. Passing the
-                    // global `getActiveProjectId()` here would trigger a
-                    // SECOND retrieval inside the Python optimizer against
-                    // whichever folder was last "active" globally — which
-                    // is often a different space's folder, leaking its
-                    // code into the prompt. Skip the server-side retrieval
-                    // entirely in space mode.
-                    source === 'space' ? null : getActiveProjectId(),
-                    source === 'space' ? null : getActiveProjectBranch(),
+                    source === 'space' ? (projectId || null) : getActiveProjectId(),
+                    source === 'space' ? (projectBranch || null) : getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
