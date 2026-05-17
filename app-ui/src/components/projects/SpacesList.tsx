@@ -119,24 +119,24 @@ const SpaceCard = memo(function SpaceCard({
     <div
       onClick={() => !isRenaming && onSelect(space.id)}
       className={cn(
-        "group relative rounded-xl border border-border/40 bg-card/30",
-        "hover:border-border/70 hover:bg-card/55",
-        "p-3.5 cursor-pointer transition-all duration-150",
+        "group relative rounded-[20px] border border-border/50 bg-surface/40 backdrop-blur-sm",
+        "hover:border-emerald/40 hover:bg-surface/80 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06),0_0_0_1px_hsl(var(--accent)/0.1)]",
+        "p-4 cursor-pointer transition-all duration-300 transform hover:-translate-y-0.5",
       )}
     >
-      <div className="flex items-start gap-2.5">
-        {/* Tight monogram tile — no gradient, just a subtle tinted square */}
+      <div className="flex items-start gap-3">
+        {/* Modern monogram tile with subtle gradient and glow */}
         <div
           className={cn(
-            "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
-            "bg-muted/40 text-foreground/80 text-[11px] font-bold tracking-tight",
-            "border border-border/30",
+            "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
+            "bg-gradient-to-br from-emerald/10 to-transparent text-emerald font-bold tracking-tight shadow-inner",
+            "border border-emerald/20 group-hover:border-emerald/40 group-hover:from-emerald/20 transition-all",
           )}
         >
           {letters}
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pt-0.5">
           {isRenaming ? (
             <div onClick={(e) => e.stopPropagation()}>
               <Input
@@ -148,7 +148,7 @@ const SpaceCard = memo(function SpaceCard({
                   if (e.key === "Escape") onCancelRename();
                 }}
                 onBlur={onCommitRename}
-                className="h-7 text-[13px] font-semibold bg-background/70 border-border/50 rounded-md"
+                className="h-8 text-[13px] font-semibold bg-surface border-emerald/40 rounded-lg shadow-sm focus-visible:ring-1 focus-visible:ring-emerald/40"
                 maxLength={40}
               />
             </div>
@@ -207,15 +207,17 @@ const SpaceCard = memo(function SpaceCard({
         </div>
       </div>
 
-      {/* Stats row — compact, no chunky pills */}
-      <div className="flex items-center gap-3 text-[10.5px] text-muted-foreground/55 font-medium mt-2.5 ml-[42px]">
-        <span className="flex items-center gap-1">
-          <Folder size={10} weight="duotone" />
-          {projectCount === 0 ? "No folder" : projectCount === 1 ? "1 folder" : `${projectCount} folders`}
-        </span>
+      {/* Stats row — modern pills */}
+      <div className="flex items-center gap-2 text-[10.5px] font-medium mt-3.5 ml-[52px]">
+        {projectCount !== 1 && (
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 text-muted-foreground/80 group-hover:bg-muted/60 transition-colors">
+            <Folder size={11} weight="duotone" />
+            {projectCount === 0 ? "No folder" : `${projectCount} folders`}
+          </span>
+        )}
         {messageCount > 0 && (
-          <span className="flex items-center gap-1">
-            <ChatCircleText size={10} weight="duotone" />
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald/10 text-emerald-foreground/80 group-hover:bg-emerald/20 transition-colors">
+            <ChatCircleText size={11} weight="duotone" />
             {messageCount}
           </span>
         )}
@@ -266,7 +268,7 @@ const CreateSpaceModal = ({ open, onOpenChange, onCreate }: CreateSpaceModalProp
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="bg-card border-border/40 rounded-2xl shadow-elevated max-w-md p-0 overflow-hidden gap-0"
+        className="bg-surface/95 backdrop-blur-xl border-border/50 rounded-[24px] shadow-2xl max-w-md p-0 overflow-hidden gap-0"
       >
         <div className="px-6 pt-6 pb-4 border-b border-border/15">
           <div className="flex items-start gap-3">
@@ -458,21 +460,7 @@ export const SpacesList = ({
           ) : (
             // Tighter, denser grid. Cards are now ~half the previous footprint
             // so a typical user can see 6–10 spaces at a glance instead of 3.
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
-              {isCreating && (
-                <div className="rounded-xl border border-border/30 bg-card/20 p-3.5 animate-pulse">
-                  <div className="flex items-start gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-muted/50" />
-                    <div className="flex-1 min-w-0 space-y-2 pt-0.5">
-                      <div className="h-3 w-24 rounded bg-muted/40" />
-                      <div className="h-2 w-14 rounded bg-muted/30" />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 mt-3 ml-[42px]">
-                    <div className="h-2 w-16 rounded bg-muted/30" />
-                  </div>
-                </div>
-              )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredAndSorted.map((space) => (
                 <SpaceCard
                   key={space.id}

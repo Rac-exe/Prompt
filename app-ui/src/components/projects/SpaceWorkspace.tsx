@@ -99,11 +99,11 @@ type CodeIntelMode = "find" | "ask" | "bug" | "optimize";
 const RELEVANT_CHUNK_LIMIT = 20;
 const FIND_RESULT_LIMIT = 20;
 
-const CODE_INTEL_MODES: Array<{ value: CodeIntelMode; label: string; description: string }> = [
-  { value: "optimize", label: "Optimize", description: "Generate an implementation prompt with code context" },
-  { value: "bug", label: "Bug", description: "Find likely files with exact indexed line ranges" },
-  { value: "ask", label: "Ask", description: "Answer questions about the attached folder" },
-  { value: "find", label: "Find", description: "List matching files, symbols, and exact line ranges" },
+const CODE_INTEL_MODES: Array<{ value: CodeIntelMode; label: string; description: string; icon: React.ReactNode }> = [
+  { value: "optimize", label: "Optimize", description: "Generate an implementation prompt with code context", icon: <Code size={14} weight="duotone" /> },
+  { value: "bug", label: "Bug", description: "Find likely files with exact indexed line ranges", icon: <WarningCircle size={14} weight="duotone" /> },
+  { value: "ask", label: "Ask", description: "Answer questions about the attached folder", icon: <ChatCircleText size={14} weight="duotone" /> },
+  { value: "find", label: "Find", description: "List matching files, symbols, and exact line ranges", icon: <FolderOpen size={14} weight="duotone" /> },
 ];
 
 type CodeIntelLocation = RetrievedChunk | ContextLocation;
@@ -185,6 +185,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const watchStartedRef = useRef<Set<string>>(new Set());
   const spaceRef = useRef(space);
   const onUpdateSpaceRef = useRef(onUpdateSpace);
+  const activeGenerationIdRef = useRef<string | null>(null);
   // Tracks the latest accumulated text from the backend so we can persist it
   // if the user navigates away before the stream finishes.
   const lastAccumulatedRef = useRef<string>('');
@@ -649,13 +650,14 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   useEffect(() => { autoResize(); }, [input, autoResize]);
 
   // ── Handlers ─────────────────────────────────────────────────
-  const runOptimization = useCallback(async (rawQuery: string) => {
+  const runOptimization = useCallback(async (rawQuery: string, generationId: string) => {
     if (codeIntelMode === "ask") {
       let combinedContext: ContextResult | null = null;
       let fallbackChunks: CodeIntelLocation[] = [];
       let fails = 0;
 
       for (const proj of space.projects) {
+        if (activeGenerationIdRef.current !== generationId) return;
         try {
           const d: ContextResult = await (api as any).context({
             project_id: proj.projectId,
@@ -664,6 +666,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
             limit: 10,
             mode: "ask",
           });
+          if (activeGenerationIdRef.current !== generationId) return;
           combinedContext = {
             ...d,
             probable_locations: [...(combinedContext?.probable_locations || []), ...(d.probable_locations || [])],
@@ -677,6 +680,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           fails++;
         }
       }
+
+      if (activeGenerationIdRef.current !== generationId) return;
 
       if (!combinedContext) {
         if (space.projects.length > 0 && fails === space.projects.length) {
@@ -701,6 +706,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     // raw prompt rather than blocking the user.
     let allRanked: any[] = [], allRelated: any[] = [], fails = 0;
     for (const proj of space.projects) {
+      if (activeGenerationIdRef.current !== generationId) return;
       try {
         const d: RetrieveResult = await api.retrieve({
           project_id: proj.projectId,
@@ -709,6 +715,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           limit: codeIntelMode === "find" ? 30 : RELEVANT_CHUNK_LIMIT,
           mode: codeIntelMode,
         });
+        if (activeGenerationIdRef.current !== generationId) return;
         if (d.ranked_chunks) allRanked.push(...d.ranked_chunks);
         if (d.related_chunks) allRelated.push(...d.related_chunks);
       } catch (e) {
@@ -716,10 +723,13 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         fails++;
       }
     }
+    
+    if (activeGenerationIdRef.current !== generationId) return;
+
     if (space.projects.length > 0 && fails === space.projects.length) {
       toast({ title: "Code intelligence unavailable", description: "Sending prompt without project context.", variant: "destructive" });
     } else if (space.projects.length > 0 && allRanked.length === 0 && fails === 0) {
-      toast({ title: "No relevant code found", description: "Try reindexing your folder." });
+      toast({ title: "No relevant code found", description: "Try resyncing your folder." });
     }
     allRanked.sort((a, b) => b.similarity_score - a.similarity_score);
     allRanked = allRanked.slice(0, codeIntelMode === "find" ? FIND_RESULT_LIMIT : RELEVANT_CHUNK_LIMIT);
@@ -775,6 +785,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     lastAccumulatedRef.current = '';
     setInput("");
 
+    const generationId = crypto.randomUUID();
+    activeGenerationIdRef.current = generationId;
+
     // Generate IDs / version metadata up-front so the user message and the
     // (yet-to-arrive) assistant message can be wired into the tree atomically.
     const userId = crypto.randomUUID();
@@ -808,8 +821,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     pendingAssistantVersionIdxRef.current = 0;
 
     try {
-      await runOptimization(query);
+      await runOptimization(query, generationId);
     } catch (e: any) {
+      if (activeGenerationIdRef.current !== generationId) return;
       Sentry.captureException(e, { tags: { component: 'space-workspace' } });
       setIsGenerating(false);
       isStreamingRef.current = false;
@@ -821,7 +835,50 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     }
   }, [input, isGenerating, space, onUpdateSpace, runOptimization, voiceState, electronAPI, messageTree, codeIntelMode]);
 
-  const handleStopGeneration = useCallback(() => { stopStreaming(); electronAPI?.stopGeneration?.(); }, [stopStreaming, electronAPI]);
+  const handleStopGeneration = useCallback(() => { 
+    activeGenerationIdRef.current = null;
+    stopStreaming(); 
+    electronAPI?.stopGeneration?.(); 
+
+    // For non-streaming modes like "ask" and "find", we need to manually clear the UI loading state
+    // since there won't be an onOptimizationError/onOptimizationComplete event to trigger the cleanup
+    if (!isStreamingRef.current && pendingPlaceholderRef.current) {
+      setIsGenerating(false);
+      
+      const errorId = crypto.randomUUID();
+      const placeholder = pendingPlaceholderRef.current;
+      const parentUserId = pendingAssistantParentRef.current;
+      const groupId = pendingAssistantGroupIdRef.current || crypto.randomUUID();
+      const versionIndex = pendingAssistantVersionIdxRef.current;
+
+      pendingPlaceholderRef.current = null;
+      pendingAssistantParentRef.current = null;
+      pendingAssistantGroupIdRef.current = null;
+      pendingAssistantVersionIdxRef.current = 0;
+
+      const tree = messageTreeRef.current;
+      if (placeholder) {
+        tree.replaceId(placeholder, errorId);
+      } else if (parentUserId) {
+        tree.addChild(parentUserId, errorId);
+      }
+
+      const cur = spaceRef.current;
+      onUpdateSpaceRef.current({
+        ...cur,
+        messages: [...cur.messages, {
+          id: errorId,
+          role: 'assistant' as const,
+          content: "Generation stopped.",
+          timestamp: Date.now(),
+          groupId,
+          versionIndex,
+          isError: true,
+        }],
+        lastUsedAt: Date.now(),
+      });
+    }
+  }, [stopStreaming, electronAPI]);
 
   const toggleVoice = useCallback(() => {
     if (!electronAPI) return;
@@ -908,7 +965,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const finalStatus = (r as any)?.finalStatus || "ready";
       const isOk = finalStatus === "ready" || finalStatus === "partial";
       toast({
-        title: isOk ? "Re-index complete" : "Re-index finished with issues",
+        title: isOk ? "Resync complete" : "Resync finished with issues",
         description: `${r.totalFiles} files, ${r.totalChunks} chunks · status: ${finalStatus}`,
         variant: isOk ? "default" : "destructive",
       });
@@ -916,7 +973,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s }));
     } catch (e: any) {
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'reindex' } });
-      toast({ title: "Re-index failed", description: friendlyError(e, "Something went wrong while indexing. Please restart the app and try again."), variant: "destructive" });
+      toast({ title: "Resync failed", description: friendlyError(e, "Something went wrong while indexing. Please restart the app and try again."), variant: "destructive" });
     } finally {
       setReindexingId(null);
     }
@@ -985,7 +1042,12 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     setIsGenerating(true);
     isStreamingRef.current = codeIntelMode === "bug" || codeIntelMode === "optimize";
     lastAccumulatedRef.current = '';
-    runOptimization(newContent).catch((e: any) => {
+
+    const generationId = crypto.randomUUID();
+    activeGenerationIdRef.current = generationId;
+
+    runOptimization(newContent, generationId).catch((e: any) => {
+      if (activeGenerationIdRef.current !== generationId) return;
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'edit' } });
       isStreamingRef.current = false;
       resetStreaming();
@@ -1032,7 +1094,12 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
     setIsGenerating(true);
     isStreamingRef.current = codeIntelMode === "bug" || codeIntelMode === "optimize";
     lastAccumulatedRef.current = '';
-    runOptimization(userMsg.content).catch((e: any) => {
+
+    const generationId = crypto.randomUUID();
+    activeGenerationIdRef.current = generationId;
+
+    runOptimization(userMsg.content, generationId).catch((e: any) => {
+      if (activeGenerationIdRef.current !== generationId) return;
       Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'regenerate' } });
       isStreamingRef.current = false;
       resetStreaming();
@@ -1063,24 +1130,46 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // ════════════════════════════════════════════════════════════
   // ── Composer (matches ChatView aesthetic, sans Pro Mode / attach) ──
   // ════════════════════════════════════════════════════════════
-  // Wider container than ChatView (which is max-w-4xl) — Spaces is a
-  // focused workspace, so we let the prompt box breathe across the window
-  // instead of leaving a dead column on the right.
   const composer = (
     <div className="w-full max-w-5xl mx-auto">
       <div
         className={cn(
-          "relative flex flex-col bg-surface border rounded-2xl transition-all overflow-hidden",
-          "border-border focus-within:border-emerald/40 focus-within:shadow-[0_0_0_1px_hsl(var(--accent)/0.1)]",
+          "relative flex flex-col bg-surface border border-border/60 rounded-[20px] transition-all overflow-hidden shadow-sm hover:shadow-md",
+          "focus-within:border-emerald/40 focus-within:shadow-[0_4px_24px_rgba(0,0,0,0.04),0_0_0_1px_hsl(var(--accent)/0.1)] focus-within:bg-surface/80 backdrop-blur-xl",
         )}
       >
         <div className="relative">
           <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              
+              // Slash command mode switching
+              if (val.startsWith('/')) {
+                const slashMatch = val.match(/^\/(\w+)\s/);
+                if (slashMatch) {
+                  const cmd = slashMatch[1].toLowerCase();
+                  const matchedMode = CODE_INTEL_MODES.find(
+                    (m) => m.value === cmd || m.label.toLowerCase() === cmd
+                  );
+                  if (matchedMode) {
+                    setCodeIntelMode(matchedMode.value);
+                    setInput(val.substring(slashMatch[0].length));
+                    return;
+                  }
+                }
+              }
+              
+              setInput(val);
+            }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Tab" && e.shiftKey) {
+                e.preventDefault();
+                const currentIndex = CODE_INTEL_MODES.findIndex(m => m.value === codeIntelMode);
+                const nextIndex = (currentIndex + 1) % CODE_INTEL_MODES.length;
+                setCodeIntelMode(CODE_INTEL_MODES[nextIndex].value);
+              } else if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 handleSubmit();
               }
@@ -1110,7 +1199,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           />
         </div>
 
-        {/* Bottom toolbar — same skeleton as ChatView, minus Plus / Pro Mode */}
         <div className="flex items-center justify-between px-3 py-2.5">
           <div className="flex items-center gap-2 pl-1">
             {hasProject && (
@@ -1126,29 +1214,36 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                     )}
                     title="Code intelligence mode"
                   >
-                    <ChatCircleText size={12} weight="duotone" />
+                    {selectedMode.icon}
                     {selectedMode.label}
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-64 rounded-xl border-border/40 bg-popover/95 p-1.5">
-                  <DropdownMenuLabel className="px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/55">
-                    Code Intelligence Mode
+                <DropdownMenuContent align="start" className="w-[300px] rounded-xl border-border/40 bg-popover/95 p-1.5 shadow-elevated">
+                  <DropdownMenuLabel className="px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/55 flex items-center justify-between">
+                    <span>Mode</span>
+                    <span className="text-[9px] bg-muted/50 px-1.5 py-0.5 rounded text-muted-foreground">Type /</span>
                   </DropdownMenuLabel>
                   {CODE_INTEL_MODES.map((mode) => (
                     <DropdownMenuItem
                       key={mode.value}
                       onSelect={() => setCodeIntelMode(mode.value)}
-                      className="px-2 py-2 gap-2.5 cursor-pointer rounded-lg focus:bg-muted/50"
+                      className={cn(
+                        "px-2 py-2.5 gap-3 cursor-pointer rounded-lg transition-colors group",
+                        mode.value === codeIntelMode ? "bg-emerald/10 text-emerald-foreground" : "hover:bg-muted/50"
+                      )}
                     >
-                      <span
-                        className={cn(
-                          "mt-0.5 h-2 w-2 rounded-full flex-shrink-0",
-                          mode.value === codeIntelMode ? "bg-emerald" : "bg-muted-foreground/25",
-                        )}
-                      />
-                      <span className="flex flex-col gap-0.5">
-                        <span className="text-[12px] font-medium text-foreground">{mode.label}</span>
-                        <span className="text-[11px] leading-snug text-muted-foreground/65">{mode.description}</span>
+                      <div className={cn(
+                        "flex items-center justify-center w-7 h-7 rounded-md bg-background shadow-sm border border-border/40 transition-colors flex-shrink-0",
+                        mode.value === codeIntelMode ? "text-emerald border-emerald/20" : "text-muted-foreground group-hover:text-foreground"
+                      )}>
+                        {mode.icon}
+                      </div>
+                      <span className="flex flex-col gap-0.5 flex-1 min-w-0">
+                        <span className={cn(
+                          "text-[12px] font-medium transition-colors",
+                          mode.value === codeIntelMode ? "text-emerald" : "text-foreground"
+                        )}>{mode.label}</span>
+                        <span className="text-[10px] leading-snug text-muted-foreground/65 break-words whitespace-normal">{mode.description}</span>
                       </span>
                     </DropdownMenuItem>
                   ))}
@@ -1170,7 +1265,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           </div>
 
           <div className="flex items-center gap-1">
-            {/* Voice */}
             <button
               type="button"
               onClick={toggleVoice}
@@ -1189,12 +1283,11 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                <Microphone size={16} weight="light" />}
             </button>
 
-            {/* Send / Stop */}
             {isGenerating ? (
               <button
                 type="button"
                 onClick={handleStopGeneration}
-                className="w-8 h-8 rounded-full flex items-center justify-center transition-all bg-foreground text-background hover:bg-foreground/80"
+                className="w-8 h-8 rounded-full flex items-center justify-center transition-all bg-foreground text-background hover:bg-foreground/80 shadow-sm hover:scale-105"
                 title="Stop generation"
               >
                 <Square size={12} weight="fill" />
@@ -1205,9 +1298,9 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                 onClick={handleSubmit}
                 disabled={!canSend}
                 className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center transition-all",
+                  "w-8 h-8 rounded-full flex items-center justify-center transition-all shadow-sm",
                   canSend
-                    ? "bg-foreground text-background hover:bg-foreground/90"
+                    ? "bg-foreground text-background hover:bg-foreground/90 hover:scale-105"
                     : "bg-muted text-muted-foreground/40 cursor-not-allowed",
                 )}
                 title={`${selectedMode.label} (Enter)`}
@@ -1298,7 +1391,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
             <DropdownMenuContent
               align="end"
               sideOffset={8}
-              className="w-72 rounded-2xl shadow-elevated border-border/40 p-0 overflow-hidden"
+              className="w-72 rounded-2xl shadow-elevated border-border/40 bg-popover/95 backdrop-blur-xl p-0 overflow-hidden"
             >
               {/* ── Header: space name + (when attached) live folder chip ── */}
               <div className="px-3.5 pt-3.5 pb-3 border-b border-border/15 bg-muted/20">
@@ -1369,10 +1462,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-[12px] font-medium text-foreground">Re-index folder</div>
+                        <div className="text-[12px] font-medium text-foreground">Resync folder</div>
                         <div className="text-[10.5px] text-muted-foreground/55 leading-tight">
                           {reindexingId === project!.projectId
-                            ? "Reindexing in progress…"
+                            ? "Resyncing in progress…"
                             : projectStatus?.last_indexed_at
                               ? `Last run ${relativeTime(projectStatus.last_indexed_at)}`
                               : "Never indexed"}
@@ -1390,7 +1483,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                       <div className="min-w-0 flex-1">
                         <div className="text-[12px] font-medium">Remove folder</div>
                         <div className="text-[10.5px] text-destructive/65 leading-tight">
-                          Detach &amp; wipe its index
+                          Detach and delete folder info
                         </div>
                       </div>
                     </DropdownMenuItem>
@@ -1439,7 +1532,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
                       <div className="text-[10.5px] text-destructive/65 leading-tight">
                         {space.messages.length === 0
                           ? "No messages yet"
-                          : `Delete all ${space.messages.length} message${space.messages.length === 1 ? "" : "s"}`}
+                          : "Delete all messages"}
                       </div>
                     </div>
                     {space.messages.length > 0 && (

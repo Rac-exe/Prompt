@@ -104,6 +104,27 @@ export interface ContextResult {
   search_id?: string | null;
 }
 
+function sanitizeAxiosError(err: unknown): Error {
+  if (!axios.isAxiosError(err)) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+
+  const method = err.config?.method?.toUpperCase() || 'REQUEST';
+  const url = err.config?.url || 'unknown-url';
+  const status = err.response?.status;
+  const code = err.code;
+  const detail = typeof err.response?.data === 'string'
+    ? err.response.data.slice(0, 300)
+    : err.response?.data?.detail || err.response?.statusText || err.message;
+
+  const safe = new Error(
+    `Code intelligence ${method} ${url} failed${status ? ` with status ${status}` : ''}${code ? ` (${code})` : ''}: ${detail}`,
+  );
+  safe.name = 'CodeIntelRequestError';
+  safe.stack = err.stack;
+  return safe;
+}
+
 export class CodeIntelClient {
   private client: AxiosInstance;
   private baseUrl: string;
@@ -124,6 +145,11 @@ export class CodeIntelClient {
       }
       return config;
     });
+
+    this.client.interceptors.response.use(
+      (response) => response,
+      (error) => Promise.reject(sanitizeAxiosError(error)),
+    );
   }
 
   async healthCheck(): Promise<boolean> {
@@ -134,7 +160,7 @@ export class CodeIntelClient {
       return healthy;
     } catch (err) {
       Sentry.setTag('code_intel.healthy', 'false');
-      Sentry.captureException(err, { level: 'warning', tags: { component: 'code-intel-client', op: 'healthCheck' } });
+      Sentry.captureException(sanitizeAxiosError(err), { level: 'warning', tags: { component: 'code-intel-client', op: 'healthCheck' } });
       return false;
     }
   }
