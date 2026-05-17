@@ -84,9 +84,6 @@ export class AppWindowManager {
 
     this.window.once('ready-to-show', () => {
       this.isLoaded = true;
-      if (!app.isPackaged) {
-        this.window?.webContents.openDevTools({ mode: 'detach' });
-      }
     });
 
     // Lock pinch / gesture zoom to 1x — defence in depth alongside the
