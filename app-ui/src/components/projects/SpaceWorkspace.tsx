@@ -6,7 +6,7 @@ import {
   FolderOpen, FolderPlus, FolderMinus,
   Trash, Clock, Square, CaretLeft,
   Microphone, MicrophoneSlash,
-  WarningCircle, Gear, ChatCircleText, ArrowDown, Code,
+  WarningCircle, Gear, ChatCircleText, ArrowDown, Code, CaretUp,
 } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { Button } from "@/components/ui/button";
@@ -177,6 +177,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const [removeTarget, setRemoveTarget] = useState<SpaceProject | null>(null);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
   const voiceActiveRef = useRef(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1127,11 +1128,55 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const canSend = input.trim().length > 0 && !isGenerating && hasProject;
   const selectedMode = CODE_INTEL_MODES.find((mode) => mode.value === codeIntelMode) ?? CODE_INTEL_MODES[0];
 
+  const slashQuery = input.startsWith('/') ? input.slice(1).toLowerCase() : null;
+  const filteredModes = slashQuery !== null 
+    ? CODE_INTEL_MODES.filter(m => m.label.toLowerCase().includes(slashQuery) || m.value.includes(slashQuery))
+    : [];
+
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQuery]);
+
   // ════════════════════════════════════════════════════════════
   // ── Composer (matches ChatView aesthetic, sans Pro Mode / attach) ──
   // ════════════════════════════════════════════════════════════
   const composer = (
-    <div className="w-full max-w-5xl mx-auto">
+    <div className="w-full max-w-5xl mx-auto relative">
+      {slashQuery !== null && filteredModes.length > 0 && (
+        <div className="absolute left-4 bottom-[calc(100%+8px)] z-50 w-64 rounded-xl border border-border/40 bg-popover/95 backdrop-blur-xl p-1.5 shadow-elevated animate-in fade-in slide-in-from-bottom-2">
+          <div className="px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/55 flex items-center justify-between">
+            <span>Select Mode</span>
+          </div>
+          {filteredModes.map((mode, idx) => (
+            <div
+              key={mode.value}
+              onClick={() => {
+                setCodeIntelMode(mode.value);
+                setInput("");
+                inputRef.current?.focus();
+              }}
+              className={cn(
+                "flex items-center px-2 py-2.5 gap-3 cursor-pointer rounded-lg transition-colors group",
+                idx === slashIndex ? "bg-emerald/10 text-emerald-foreground" : "hover:bg-muted/50"
+              )}
+            >
+              <div className={cn(
+                "flex items-center justify-center w-7 h-7 rounded-md bg-background shadow-sm border border-border/40 transition-colors flex-shrink-0",
+                idx === slashIndex ? "text-emerald border-emerald/20" : "text-muted-foreground group-hover:text-foreground"
+              )}>
+                {mode.icon}
+              </div>
+              <span className="flex flex-col gap-0.5 flex-1 min-w-0">
+                <span className={cn(
+                  "text-[12px] font-medium transition-colors",
+                  idx === slashIndex ? "text-emerald" : "text-foreground"
+                )}>{mode.label}</span>
+              </span>
+              <span className="text-[9px] font-medium text-muted-foreground/40 bg-muted/30 px-1.5 py-0.5 rounded">/{mode.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div
         className={cn(
           "relative flex flex-col bg-surface border border-border/60 rounded-[20px] transition-all overflow-hidden shadow-sm hover:shadow-md",
@@ -1164,6 +1209,25 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
               setInput(val);
             }}
             onKeyDown={(e) => {
+              if (slashQuery !== null && filteredModes.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex(i => (i + 1) % filteredModes.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex(i => (i - 1 + filteredModes.length) % filteredModes.length);
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  setCodeIntelMode(filteredModes[slashIndex].value);
+                  setInput("");
+                  return;
+                }
+              }
+
               if (e.key === "Tab" && e.shiftKey) {
                 e.preventDefault();
                 const currentIndex = CODE_INTEL_MODES.findIndex(m => m.value === codeIntelMode);
@@ -1202,53 +1266,65 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         <div className="flex items-center justify-between px-3 py-2.5">
           <div className="flex items-center gap-2 pl-1">
             {hasProject && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    disabled={isGenerating}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-[11px] font-medium transition-colors",
-                      "bg-emerald/8 border-emerald/20 text-emerald hover:bg-emerald/12",
-                      isGenerating && "opacity-50 pointer-events-none",
-                    )}
-                    title="Code intelligence mode"
-                  >
-                    {selectedMode.icon}
-                    {selectedMode.label}
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-[300px] rounded-xl border-border/40 bg-popover/95 p-1.5 shadow-elevated">
-                  <DropdownMenuLabel className="px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/55 flex items-center justify-between">
-                    <span>Mode</span>
-                    <span className="text-[9px] bg-muted/50 px-1.5 py-0.5 rounded text-muted-foreground">Type /</span>
-                  </DropdownMenuLabel>
-                  {CODE_INTEL_MODES.map((mode) => (
-                    <DropdownMenuItem
-                      key={mode.value}
-                      onSelect={() => setCodeIntelMode(mode.value)}
+              <div className="flex items-center gap-2 pl-1">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      disabled={isGenerating}
                       className={cn(
-                        "px-2 py-2.5 gap-3 cursor-pointer rounded-lg transition-colors group",
-                        mode.value === codeIntelMode ? "bg-emerald/10 text-emerald-foreground" : "hover:bg-muted/50"
+                        "inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-[11px] font-medium transition-colors",
+                        "bg-emerald/8 border-emerald/20 text-emerald hover:bg-emerald/12",
+                        isGenerating && "opacity-50 pointer-events-none",
                       )}
+                      title="Code intelligence mode"
                     >
-                      <div className={cn(
-                        "flex items-center justify-center w-7 h-7 rounded-md bg-background shadow-sm border border-border/40 transition-colors flex-shrink-0",
-                        mode.value === codeIntelMode ? "text-emerald border-emerald/20" : "text-muted-foreground group-hover:text-foreground"
-                      )}>
-                        {mode.icon}
-                      </div>
-                      <span className="flex flex-col gap-0.5 flex-1 min-w-0">
-                        <span className={cn(
-                          "text-[12px] font-medium transition-colors",
-                          mode.value === codeIntelMode ? "text-emerald" : "text-foreground"
-                        )}>{mode.label}</span>
-                        <span className="text-[10px] leading-snug text-muted-foreground/65 break-words whitespace-normal">{mode.description}</span>
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                      {selectedMode.icon}
+                      {selectedMode.label}
+                      <CaretUp size={10} weight="bold" className="ml-0.5 opacity-50" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-[300px] rounded-xl border-border/40 bg-popover/95 p-1.5 shadow-elevated">
+                    <DropdownMenuLabel className="px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground/55 flex items-center justify-between">
+                      <span>Mode</span>
+                      <span className="text-[9px] bg-muted/50 px-1.5 py-0.5 rounded text-muted-foreground">Type /</span>
+                    </DropdownMenuLabel>
+                    {CODE_INTEL_MODES.map((mode) => (
+                      <DropdownMenuItem
+                        key={mode.value}
+                        onSelect={() => setCodeIntelMode(mode.value)}
+                        className={cn(
+                          "px-2 py-2.5 gap-3 cursor-pointer rounded-lg transition-colors group",
+                          mode.value === codeIntelMode ? "bg-emerald/10 text-emerald-foreground" : "hover:bg-muted/50"
+                        )}
+                      >
+                        <div className={cn(
+                          "flex items-center justify-center w-7 h-7 rounded-md bg-background shadow-sm border border-border/40 transition-colors flex-shrink-0",
+                          mode.value === codeIntelMode ? "text-emerald border-emerald/20" : "text-muted-foreground group-hover:text-foreground"
+                        )}>
+                          {mode.icon}
+                        </div>
+                        <span className="flex flex-col gap-0.5 flex-1 min-w-0">
+                          <span className={cn(
+                            "text-[12px] font-medium transition-colors",
+                            mode.value === codeIntelMode ? "text-emerald" : "text-foreground"
+                          )}>{mode.label}</span>
+                          <span className="text-[10px] leading-snug text-muted-foreground/65 break-words whitespace-normal">{mode.description}</span>
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Shift + Tab hint */}
+                <div className="hidden sm:flex items-center gap-1 text-[9px] font-medium text-muted-foreground/40 select-none pointer-events-none">
+                  <span>Switch</span>
+                  <div className="flex items-center gap-0.5">
+                    <kbd className="h-[18px] px-1 rounded bg-muted/40 border border-border/40 flex items-center justify-center font-sans">⇧</kbd>
+                    <kbd className="h-[18px] px-1 rounded bg-muted/40 border border-border/40 flex items-center justify-center font-sans">Tab</kbd>
+                  </div>
+                </div>
+              </div>
             )}
             {voiceState === "listening" && (
               <div className="flex items-center gap-1.5 ml-1 animate-fade-in">
