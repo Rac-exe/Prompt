@@ -143,6 +143,7 @@ class ContextRequest(BaseModel):
     mode: ModeEnum = ModeEnum.BUG
     branch: Optional[str] = None
     limit: int = Field(default=10, ge=1, le=50)
+    variant: Optional[str] = Field(default=None, description="Named pipeline variant for A/B testing (e.g. 'no_refine', 'deep_graph')")
 
 
 class ProbableLocation(BaseModel):
@@ -176,6 +177,25 @@ class ContextResponse(BaseModel):
     project_summary: Optional[str] = None
     branch_context: Optional[dict] = None
     search_id: Optional[str] = None
+
+
+class Community(BaseModel):
+    """A Leiden community cluster with its LLM-generated architecture report."""
+    id: Optional[str] = None
+    project_id: str
+    level: int = 0
+    label: Optional[str] = None
+    summary: Optional[str] = None
+    member_count: int = 0
+
+
+class CommunityReport(BaseModel):
+    """A community report as returned by match_community_reports RPC."""
+    id: str
+    label: Optional[str] = None
+    summary: Optional[str] = None
+    member_count: int = 0
+    similarity: float = 0.0
 
 
 class FeedbackRequest(BaseModel):

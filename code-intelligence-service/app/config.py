@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -38,8 +40,8 @@ UPSERT_BATCH_SIZE = 50
 UPSERT_BATCH_PAUSE_SECONDS = float(os.environ.get("UPSERT_BATCH_PAUSE_SECONDS", "0.15"))
 GRAPH_MAX_DEPTH = 2
 GRAPH_MAX_RELATED = 20
-SIMPLE_QUERY_WORD_THRESHOLD = 20
 GRAPH_SIMILARITY_THRESHOLD = 0.25
+CACHE_TTL_SECONDS = float(os.environ.get("CACHE_TTL_SECONDS", "60"))
 
 # ── Mode-specific retrieval tuning ─────────────────────────────────────────
 FIND_BROAD_LIMIT = int(os.environ.get("FIND_BROAD_LIMIT", "50"))
@@ -63,3 +65,72 @@ GRAPH_MAX_OPTIMIZE = int(os.environ.get("GRAPH_MAX_OPTIMIZE", "30"))
 
 ITERATIVE_REFINEMENT_THRESHOLD = float(os.environ.get("ITERATIVE_REFINEMENT_THRESHOLD", "0.5"))
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "2"))
+STRUCTURE_SIMILARITY_WEIGHT = float(os.environ.get("STRUCTURE_SIMILARITY_WEIGHT", "0.25"))
+
+# ── FIND mode scoring weights ────────────────────────────────────────────────
+FIND_BOOST_LEXICAL = float(os.environ.get("FIND_BOOST_LEXICAL", "0.05"))
+FIND_BOOST_PATH = float(os.environ.get("FIND_BOOST_PATH", "0.35"))
+FIND_BOOST_SIGNATURE = float(os.environ.get("FIND_BOOST_SIGNATURE", "0.20"))
+FIND_BOOST_BODY = float(os.environ.get("FIND_BOOST_BODY", "0.12"))
+FIND_BOOST_SIGNAL = float(os.environ.get("FIND_BOOST_SIGNAL", "0.12"))
+FIND_BOOST_CONCEPT = float(os.environ.get("FIND_BOOST_CONCEPT", "0.15"))
+FIND_PENALTY_MISS = float(os.environ.get("FIND_PENALTY_MISS", "-0.20"))
+FIND_DOMAIN_SIGNAL_TERMS: frozenset[str] = frozenset(
+    os.environ.get(
+        "FIND_DOMAIN_SIGNAL_TERMS",
+        "token,tokens,access,refresh,jwt,bearer,cookie,cookies,"
+        "auth,authentication,authorize,authorization,login,logout,"
+        "session,user,google,oauth,middleware",
+    ).split(",")
+)
+
+# ── Pipeline fingerprint ────────────────────────────────────────────────────
+# Auto-computed from all retrieval-quality-affecting settings so every search
+# is tagged with the exact config that produced it.  When any value changes and
+# the service restarts, the fingerprint changes — results land in a new bucket
+# automatically, with no manual version bumping required.
+#
+# Override with PIPELINE_VERSION env var for a human-readable label
+# (e.g. "v2-deep-graph").  The final tag used in logging and DB writes is
+# PIPELINE_TAG = PIPELINE_VERSION if set, else f"{APP_VERSION}-{fingerprint}".
+_FINGERPRINT_INPUTS: dict = {
+    "broad": [FIND_BROAD_LIMIT, ASK_BROAD_LIMIT, BUG_BROAD_LIMIT, OPTIMIZE_BROAD_LIMIT],
+    "rerank": [ASK_RERANK_LIMIT, BUG_RERANK_LIMIT, OPTIMIZE_RERANK_LIMIT],
+    "mmr": [MMR_LAMBDA, MMR_ASK_LAMBDA, MMR_OPTIMIZE_LAMBDA],
+    "graph": [GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, GRAPH_SEEDS_BUG, GRAPH_SEEDS_ASK,
+              GRAPH_SEEDS_OPTIMIZE, GRAPH_DEPTH_OPTIMIZE, GRAPH_MAX_OPTIMIZE],
+    "refinement": [ITERATIVE_REFINEMENT_THRESHOLD, MAX_ITERATIONS],
+    "structure_weight": STRUCTURE_SIMILARITY_WEIGHT,
+    "find_boosts": [FIND_BOOST_LEXICAL, FIND_BOOST_PATH, FIND_BOOST_SIGNATURE,
+                    FIND_BOOST_BODY, FIND_BOOST_SIGNAL, FIND_BOOST_CONCEPT, FIND_PENALTY_MISS],
+    "models": [RERANKER_MODEL, QUERY_DECOMPOSE_MODEL, QUERY_REFINER_MODEL, SUMMARIZER_MODEL],
+    "embedding": [EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, STRUCTURE_EMBEDDING_DIMENSIONS],
+}
+PIPELINE_FINGERPRINT: str = hashlib.md5(
+    json.dumps(_FINGERPRINT_INPUTS, sort_keys=True).encode()
+).hexdigest()[:8]
+
+PIPELINE_VERSION: str = os.environ.get("PIPELINE_VERSION", "")
+PIPELINE_TAG: str = PIPELINE_VERSION if PIPELINE_VERSION else f"{APP_VERSION}-{PIPELINE_FINGERPRINT}"
+
+# ── Graph / Knowledge-graph pipeline ────────────────────────────────────────
+# Set GRAPH_BUILDER_ENABLED=true to activate PageRank + Leiden + community
+# reports + concept embeddings after every ingest.  Defaults to false so
+# existing deployments are unaffected until the schema migration has been run.
+GRAPH_BUILDER_ENABLED: bool = os.environ.get("GRAPH_BUILDER_ENABLED", "false").lower() == "true"
+COMMUNITY_MODEL: str = os.environ.get("COMMUNITY_MODEL", SUMMARIZER_MODEL)
+CONCEPT_PHRASE_PER_CHUNK: int = int(os.environ.get("CONCEPT_PHRASE_PER_CHUNK", "3"))
+RELATIONSHIP_EMBED_TOP_N: int = int(os.environ.get("RELATIONSHIP_EMBED_TOP_N", "50"))
+FIND_PAGERANK_WEIGHT: float = float(os.environ.get("FIND_PAGERANK_WEIGHT", "0.3"))
+COMMUNITY_REPORT_CACHE_TTL: float = float(os.environ.get("COMMUNITY_REPORT_CACHE_TTL", "300"))
+
+# ── Pipeline variants for A/B testing ───────────────────────────────────────
+# Each variant is a dict of ModeConfig field overrides applied on top of the
+# base mode config.  Callers opt in by passing ?variant=<name>.  Results are
+# logged in retrieval_searches for offline comparison via eval.py.
+PIPELINE_VARIANTS: dict[str, dict] = {
+    "no_refine": {"refine": False},
+    "no_rerank": {"rerank": False},
+    "deep_graph": {"graph_depth": 4, "graph_seeds": 6, "graph_max": 40},
+    "wide_recall": {"broad_limit": 80},
+}

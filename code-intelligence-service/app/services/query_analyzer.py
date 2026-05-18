@@ -13,7 +13,7 @@ import litellm
 import sentry_sdk
 from dataclasses import dataclass, field
 
-from app.config import QUERY_DECOMPOSE_MODEL, OPENROUTER_API_KEY, SIMPLE_QUERY_WORD_THRESHOLD
+from app.config import QUERY_DECOMPOSE_MODEL, OPENROUTER_API_KEY
 from app.services.concepts import (
     VALID_CONCEPTS_SET as CANONICAL_VALID_CONCEPTS,
     VALID_INTENTS as CANONICAL_VALID_INTENTS,
@@ -54,15 +54,12 @@ def _detect_intent_keyword(query: str) -> str:
 
 async def decompose_query(query: str) -> QueryAnalysis:
     """
-    Decompose a user query into sub-queries, concepts, and intent.
-    Uses a fast path for simple queries to skip the LLM call.
+    Decompose a user query into sub-queries, concepts, and intent via LLM.
     """
-    word_count = len(query.split())
     detected_concepts = _detect_concepts_keyword(query)
 
     logger.info(
-        f"[DECOMPOSE] Query received: {word_count} words, "
-        f"threshold={SIMPLE_QUERY_WORD_THRESHOLD}, "
+        f"[DECOMPOSE] Query received: {len(query.split())} words, "
         f"keyword_concepts={detected_concepts}, model={QUERY_DECOMPOSE_MODEL}"
     )
 

@@ -28,6 +28,7 @@ def record_search(
     mode: str,
     retrieved_chunk_ids: list[str],
     query_embedding: list[float] | None = None,
+    variant: str | None = None,
 ) -> str:
     search_id = str(uuid.uuid4())
     client = get_client()
@@ -41,6 +42,8 @@ def record_search(
     }
     if query_embedding:
         data["query_embedding"] = query_embedding
+    if variant:
+        data["variant"] = variant
     try:
         client.table("retrieval_searches").insert(data).execute()
     except Exception as e:

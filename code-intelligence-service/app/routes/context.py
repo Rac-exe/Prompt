@@ -73,7 +73,7 @@ async def get_context(
         f"Context request: project={request.project_id}, user={user_id}, "
         f"query={request.query[:80]!r}, mode={request.mode.value}, "
         f"branch={request.branch}, limit={request.limit}, "
-        f"index_status={project.get('index_status')}"
+        f"variant={request.variant}, index_status={project.get('index_status')}"
     )
 
     try:
@@ -95,6 +95,7 @@ async def get_context(
             signals=signals,
             mode=request.mode,
             project_summary=project_summary,
+            variant=request.variant,
         )
         logger.info(
             f"[CONTEXT] Step 2 — Retrieval: {time.perf_counter() - t_step:.3f}s, "

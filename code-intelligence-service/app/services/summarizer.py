@@ -12,37 +12,36 @@ import litellm
 import sentry_sdk
 
 from app.config import (
+    CONCEPT_PHRASE_PER_CHUNK,
+    GRAPH_BUILDER_ENABLED,
     MAX_CODE_BODY_LEN,
     OPENROUTER_API_KEY,
     SUMMARY_MAX_TOKENS,
     SUMMARIZER_MODEL,
 )
+from app.services.concepts import VALID_CONCEPTS, VALID_CONCEPTS_SET as _VALID_CONCEPTS_SET
 
 logger = logging.getLogger("code-intel.summarizer")
 
-VALID_CONCEPTS = [
-    "state-management", "routing", "auth", "data-fetching", "error-handling",
-    "UI-rendering", "validation", "caching", "database", "API", "file-io",
-    "config", "middleware", "testing", "logging", "security", "payments",
-    "notifications", "scheduling", "serialization", "concurrency", "CLI",
-    "build-tooling", "internationalization", "analytics", "search",
-]
-_VALID_CONCEPTS_SET = set(VALID_CONCEPTS)
+_CONCEPT_LIST = ", ".join(VALID_CONCEPTS)
 
-BATCH_SUMMARIZE_SYSTEM_PROMPT = """You are a code analysis engine. You will receive multiple code elements, each labeled with a numeric ID.
+_CONCEPT_PHRASE_INSTRUCTION = f"""
+4. "concept_phrases": exactly {CONCEPT_PHRASE_PER_CHUNK} short free-form semantic phrases describing what this code does, suitable for semantic embedding search. Do NOT use the concept list above — write natural language phrases.
+   Examples: "JWT bearer token verification", "Express authentication middleware", "database connection pool management"
+""" if GRAPH_BUILDER_ENABLED else ""
+
+_CONCEPT_PHRASE_SCHEMA = ', "concept_phrases": ["...", ...]' if GRAPH_BUILDER_ENABLED else ""
+
+BATCH_SUMMARIZE_SYSTEM_PROMPT = f"""You are a code analysis engine. You will receive multiple code elements, each labeled with a numeric ID.
 
 For EACH element, produce:
 1. "summary_code": 1-2 concise sentences describing exactly what the code does, including key side effects.
 2. "summary_purpose": 1 sentence explaining why this code exists and what role it plays in the architecture.
 3. "concepts": 3-6 domain concept tags from this list:
-   state-management, routing, auth, data-fetching, error-handling,
-   UI-rendering, validation, caching, database, API, file-io,
-   config, middleware, testing, logging, security, payments,
-   notifications, scheduling, serialization, concurrency, CLI,
-   build-tooling, internationalization, analytics, search
-
+   {_CONCEPT_LIST}
+{_CONCEPT_PHRASE_INSTRUCTION}
 Use the surrounding context when provided. Return ONLY a valid JSON array:
-[{"id": 1, "summary_code": "...", "summary_purpose": "...", "concepts": [...]}, ...]
+[{{"id": 1, "summary_code": "...", "summary_purpose": "...", "concepts": [...]{_CONCEPT_PHRASE_SCHEMA}}}, ...]
 No markdown, no explanation."""
 
 
@@ -51,6 +50,10 @@ class SummaryResult:
     summary_code: str
     summary_purpose: str = ""
     concepts: list[str] = field(default_factory=list)
+    # Free-form semantic phrases for concept embedding (only populated when
+    # GRAPH_BUILDER_ENABLED=true).  Not stored in code_chunks.concepts — kept
+    # separate so the fixed-vocab tags remain available for fast keyword matching.
+    concept_phrases: list[str] = field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -161,10 +164,16 @@ def _parse_batch_response(raw: str, chunks: list[ChunkSummaryInput]) -> list[Sum
             continue
         raw_concepts = item.get("concepts") or []
         concepts = [c for c in raw_concepts if c in _VALID_CONCEPTS_SET][:6]
+        raw_phrases = item.get("concept_phrases") or []
+        concept_phrases = [
+            str(p).strip()[:200] for p in raw_phrases
+            if isinstance(p, str) and p.strip()
+        ][:CONCEPT_PHRASE_PER_CHUNK]
         by_id[item_id] = SummaryResult(
             summary_code=summary_code[:500],
             summary_purpose=summary_purpose[:350],
             concepts=concepts,
+            concept_phrases=concept_phrases,
         )
 
     results = []

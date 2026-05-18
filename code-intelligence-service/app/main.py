@@ -34,6 +34,8 @@ from app.config import (
     QUERY_DECOMPOSE_MODEL,
     SUMMARIZER_CONCURRENCY, GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED,
     RETRIEVAL_DEFAULT_LIMIT,
+    PIPELINE_TAG, PIPELINE_FINGERPRINT,
+    GRAPH_BUILDER_ENABLED, CONCEPT_PHRASE_PER_CHUNK, FIND_PAGERANK_WEIGHT,
 )
 
 log_level = logging.INFO
@@ -70,14 +72,25 @@ app = FastAPI(title="Prmpt Code Intelligence Service", version=APP_VERSION)
 app.add_middleware(RequestIDMiddleware)
 
 logger.info(
-    "Code Intelligence Service starting — env=%s, version=%s, "
+    "Code Intelligence Service starting — env=%s, version=%s, pipeline_tag=%s (fingerprint=%s), "
     "embed_model=%s (dim=%s), summarizer=%s, decomposer=%s, "
     "concurrency=%d, graph_depth=%d, graph_max_related=%d, retrieval_limit=%d",
-    APP_ENV, APP_VERSION,
+    APP_ENV, APP_VERSION, PIPELINE_TAG, PIPELINE_FINGERPRINT,
     EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
     QUERY_DECOMPOSE_MODEL, SUMMARIZER_CONCURRENCY,
     GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, RETRIEVAL_DEFAULT_LIMIT,
 )
+logger.info(
+    "Knowledge graph pipeline — GRAPH_BUILDER_ENABLED=%s | "
+    "concept_phrases_per_chunk=%d | find_pagerank_weight=%.2f | "
+    "search_paths: FIND=local ASK=global BUG=drift OPTIMIZE=local_centrality",
+    GRAPH_BUILDER_ENABLED, CONCEPT_PHRASE_PER_CHUNK, FIND_PAGERANK_WEIGHT,
+)
+if not GRAPH_BUILDER_ENABLED:
+    logger.warning(
+        "GRAPH_BUILDER_ENABLED=false — graph pipeline is OFF. "
+        "Set GRAPH_BUILDER_ENABLED=true in .env and re-index to activate."
+    )
 
 limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
 app.state.limiter = limiter
@@ -105,6 +118,8 @@ from app.routes.context import router as context_router
 from app.routes.sync import router as sync_router
 from app.routes.webhooks import router as webhooks_router
 from app.routes.feedback import router as feedback_router
+from app.routes.pipeline import router as pipeline_router
+from app.routes.graph_viz import router as graph_viz_router
 
 app.include_router(projects_router, prefix="/api")
 app.include_router(ingest_router, prefix="/api")
@@ -113,6 +128,8 @@ app.include_router(context_router, prefix="/api")
 app.include_router(sync_router, prefix="/api")
 app.include_router(webhooks_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
+app.include_router(pipeline_router, prefix="/api")
+app.include_router(graph_viz_router, prefix="/api")
 
 
 @app.get("/health")
@@ -141,6 +158,7 @@ async def root():
     return {
         "service": "Prmpt Code Intelligence Service",
         "version": APP_VERSION,
+        "pipeline_tag": PIPELINE_TAG,
         "endpoints": {
             "projects": "POST/GET /api/projects",
             "ingest": "POST /api/index/ingest",
@@ -149,6 +167,9 @@ async def root():
             "feedback": "POST /api/feedback",
             "sync": "POST /api/sync",
             "webhooks": "POST /api/webhooks/github",
+            "pipeline_status": "GET /api/pipeline/status",
+            "pipeline_compare": "GET /api/pipeline/compare",
+            "graph_data": "GET /api/graph/data/{project_id}",
         },
     }
 

@@ -9,11 +9,13 @@ import time
 from typing import Optional
 from app.db.supabase_client import get_client
 from app.config import (
+    CACHE_TTL_SECONDS,
     GRAPH_MAX_DEPTH,
     GRAPH_MAX_RELATED,
     UPSERT_BATCH_PAUSE_SECONDS,
     UPSERT_BATCH_SIZE,
 )
+from app.services import cache as _cache
 
 logger = logging.getLogger("code-intel.queries")
 
@@ -137,18 +139,31 @@ def upsert_chunk(
 
 
 def get_existing_chunk_hashes(project_id: str) -> dict[tuple[str, str, str], dict]:
-    """Fetch lightweight chunk identity/hash data for project-level dedupe."""
+    """Fetch lightweight chunk identity/hash data for project-level dedupe.
+
+    Paginates in PAGE_SIZE batches to avoid PostgREST's default 1000-row cap
+    which would silently truncate large projects and cause unchanged chunks to
+    be re-indexed on every ingest.
+    """
     client = get_client()
-    result = (
-        client.table("code_chunks")
-        .select("file_path,name,chunk_type,content_hash")
-        .eq("project_id", project_id)
-        .execute()
-    )
     lookup: dict[tuple[str, str, str], dict] = {}
-    for row in (result.data or []):
-        key = (row["file_path"], row["name"], row["chunk_type"])
-        lookup[key] = row
+    page_size = 1000
+    offset = 0
+    while True:
+        result = (
+            client.table("code_chunks")
+            .select("file_path,name,chunk_type,content_hash")
+            .eq("project_id", project_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        for row in rows:
+            key = (row["file_path"], row["name"], row["chunk_type"])
+            lookup[key] = row
+        if len(rows) < page_size:
+            break
+        offset += page_size
     return lookup
 
 
@@ -194,28 +209,34 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = UPSERT_BATCH_
                 break
             logger.error(
                 f"[BATCH UPSERT] Batch {batch_num}/{total_batches} failed ({e}), "
-                f"falling back to individual upserts for {len(batch)} rows"
+                f"retrying in sub-batches of 10 for {len(batch)} rows"
             )
-            for row in batch:
+            retry_batch_size = 10
+            aborted = False
+            for j in range(0, len(batch), retry_batch_size):
+                retry_batch = batch[j:j + retry_batch_size]
                 try:
                     client.table("code_chunks").upsert(
-                        row, on_conflict="project_id,file_path,name,chunk_type"
+                        retry_batch, on_conflict="project_id,file_path,name,chunk_type"
                     ).execute()
-                    processed += 1
+                    processed += len(retry_batch)
                 except Exception as inner_e:
                     if _is_fk_violation(inner_e):
-                        project_id = row.get("project_id", "unknown")
+                        project_id = retry_batch[0].get("project_id", "unknown") if retry_batch else "unknown"
                         logger.warning(
                             f"[BATCH UPSERT] Project {project_id} deleted, "
                             f"aborting remaining rows"
                         )
+                        aborted = True
                         break
-                    logger.error(f"[BATCH UPSERT] Single fallback failed for {row.get('name')}: {inner_e}")
-            else:
-                if UPSERT_BATCH_PAUSE_SECONDS > 0 and batch_num < total_batches:
-                    time.sleep(UPSERT_BATCH_PAUSE_SECONDS)
-                continue
-            break
+                    logger.error(
+                        f"[BATCH UPSERT] Sub-batch retry failed "
+                        f"({retry_batch[0].get('name', '?')}..): {inner_e}"
+                    )
+            if aborted:
+                break
+            if UPSERT_BATCH_PAUSE_SECONDS > 0 and batch_num < total_batches:
+                time.sleep(UPSERT_BATCH_PAUSE_SECONDS)
     logger.info(f"[BATCH UPSERT] Complete: {processed}/{len(chunks_data)} rows processed")
     return processed
 
@@ -330,6 +351,68 @@ def find_chunk_by_name(project_id: str, name: str, file_path: Optional[str] = No
         query = query.eq("file_path", file_path)
     result = query.limit(1).execute()
     return result.data[0] if result.data else None
+
+
+def find_chunks_by_names(
+    project_id: str,
+    names: list[str],
+) -> dict[str, list[dict]]:
+    """Batch-fetch chunks by name for the whole project.
+
+    Returns a dict mapping name → list of matching rows (there may be multiple
+    chunks with the same name in different files).  Callers should disambiguate
+    using file_path when available.
+    """
+    if not names:
+        return {}
+    client = get_client()
+    unique_names = list(dict.fromkeys(names))
+    result = (
+        client.table("code_chunks")
+        .select("id,name,file_path")
+        .eq("project_id", project_id)
+        .in_("name", unique_names)
+        .execute()
+    )
+    lookup: dict[str, list[dict]] = {}
+    for row in (result.data or []):
+        lookup.setdefault(row["name"], []).append(row)
+    return lookup
+
+
+def find_chunks_by_file_paths(
+    project_id: str,
+    file_paths: list[str],
+) -> dict[str, list[dict]]:
+    """Batch-fetch chunks whose file_path matches any of the given paths.
+
+    Returns a dict mapping file_path → list of matching rows.
+    """
+    if not file_paths:
+        return {}
+    client = get_client()
+    unique_paths = list(dict.fromkeys(file_paths))
+    result = (
+        client.table("code_chunks")
+        .select("id,name,file_path,is_exported")
+        .eq("project_id", project_id)
+        .in_("file_path", unique_paths)
+        .execute()
+    )
+    lookup: dict[str, list[dict]] = {}
+    for row in (result.data or []):
+        lookup.setdefault(row["file_path"], []).append(row)
+    return lookup
+
+
+def upsert_relationships_batch(rows: list[dict]) -> None:
+    """Batch upsert a list of code_relationships rows in one call."""
+    if not rows:
+        return
+    client = get_client()
+    client.table("code_relationships").upsert(
+        rows, on_conflict="from_chunk_id,to_chunk_id,relationship_type"
+    ).execute()
 
 
 # ── Vector search ───────────────────────────────────────────────────────────
@@ -611,6 +694,10 @@ def increment_observation_counts(chunk_ids: list[str]):
 def get_branch_context(project_id: str, branch: Optional[str] = None) -> Optional[dict]:
     if not branch:
         return None
+    cache_key = f"branch_context:{project_id}:{branch}"
+    cached = _cache.get(cache_key, CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
     client = get_client()
     result = (
         client.table("project_branches")
@@ -620,7 +707,10 @@ def get_branch_context(project_id: str, branch: Optional[str] = None) -> Optiona
         .limit(1)
         .execute()
     )
-    return result.data[0] if result.data else None
+    ctx = result.data[0] if result.data else None
+    if ctx is not None:
+        _cache.set(cache_key, ctx)
+    return ctx
 
 
 def upsert_branch(
@@ -704,18 +794,246 @@ def file_path_search(
         except Exception as fallback_e:
             logger.warning(f"file_path_search full RPC failed ({fallback_e}), using fallback ILIKE query")
         try:
-            query = (
-                client.table("code_chunks")
-                .select(_CHUNK_LITE_SELECT_FIELDS)
-                .eq("project_id", project_id)
-                .eq("user_id", user_id)
-                .limit(limit)
-            )
-            for pattern in file_patterns[:3]:
-                query = query.ilike("file_path", pattern)
-            result = query.execute()
-            return result.data or []
+            # PostgREST stacks .ilike() calls as AND, not OR.
+            # Issue one query per pattern and union the results in Python.
+            seen: set = set()
+            merged: list[dict] = []
+            for pattern in file_patterns[:5]:
+                rows = (
+                    client.table("code_chunks")
+                    .select(_CHUNK_LITE_SELECT_FIELDS)
+                    .eq("project_id", project_id)
+                    .eq("user_id", user_id)
+                    .ilike("file_path", pattern)
+                    .limit(limit)
+                    .execute()
+                ).data or []
+                for row in rows:
+                    if row["id"] not in seen:
+                        seen.add(row["id"])
+                        merged.append(row)
+            return merged[:limit]
         except Exception:
+            return []
+
+
+# ── Graph data writeback ─────────────────────────────────────────────────────
+
+def upsert_communities(project_id: str, community_rows: list[dict]) -> dict[str, str]:
+    """
+    Upsert community rows and return a label → UUID mapping for chunk writeback.
+
+    Each row must have: project_id, label, summary, summary_embedding,
+    member_count, level.
+    """
+    if not community_rows:
+        return {}
+    client = get_client()
+    label_to_id: dict[str, str] = {}
+    try:
+        result = client.table("communities").upsert(
+            community_rows, on_conflict="project_id,label"
+        ).execute()
+        for row in (result.data or []):
+            if row.get("label") and row.get("id"):
+                label_to_id[row["label"]] = str(row["id"])
+    except Exception as e:
+        logger.warning("[COMMUNITIES] Upsert failed (%s), trying insert individually", e)
+        for row in community_rows:
+            try:
+                result = client.table("communities").upsert(
+                    row, on_conflict="project_id,label"
+                ).execute()
+                if result.data and result.data[0].get("id"):
+                    label_to_id[row["label"]] = str(result.data[0]["id"])
+            except Exception as inner_e:
+                logger.error("[COMMUNITIES] Individual upsert failed for %r: %s", row.get("label"), inner_e)
+    return label_to_id
+
+
+def get_all_project_chunk_ids(project_id: str) -> list[dict]:
+    """Return all (id, name, file_path, chunk_type) rows for a project — used by graph builder."""
+    client = get_client()
+    all_rows: list[dict] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        result = (
+            client.table("code_chunks")
+            .select("id,name,file_path,chunk_type,summary_code,semantic_summary")
+            .eq("project_id", project_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return all_rows
+
+
+def get_all_project_relationships(project_id: str) -> list[dict]:
+    """Return all relationship rows for a project — used by graph builder."""
+    client = get_client()
+    all_rows: list[dict] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        result = (
+            client.table("code_relationships")
+            .select("id,from_chunk_id,to_chunk_id,relationship_type")
+            .eq("project_id", project_id)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        rows = result.data or []
+        all_rows.extend(rows)
+        if len(rows) < page_size:
+            break
+        offset += page_size
+    return all_rows
+
+
+def update_chunks_graph_data(
+    chunk_graph_rows: list[dict],
+    batch_size: int = 50,
+) -> int:
+    """
+    Write back pagerank_score, centrality_score, community_id, and
+    concept_embedding_1/2/3 to code_chunks.
+
+    Each row must have: id, pagerank_score, centrality_score, community_id.
+    Optionally: concept_embedding_1, concept_embedding_2, concept_embedding_3.
+    """
+    if not chunk_graph_rows:
+        return 0
+    client = get_client()
+    processed = 0
+    for i in range(0, len(chunk_graph_rows), batch_size):
+        batch = chunk_graph_rows[i:i + batch_size]
+        for row in batch:
+            chunk_id = str(row.get("id", ""))
+            if not chunk_id:
+                continue
+            update_data: dict = {
+                "pagerank_score": row.get("pagerank_score", 0.0),
+                "centrality_score": row.get("centrality_score", 0.0),
+            }
+            if row.get("community_id"):
+                update_data["community_id"] = row["community_id"]
+            if row.get("concept_embedding_1"):
+                update_data["concept_embedding_1"] = row["concept_embedding_1"]
+            if row.get("concept_embedding_2"):
+                update_data["concept_embedding_2"] = row["concept_embedding_2"]
+            if row.get("concept_embedding_3"):
+                update_data["concept_embedding_3"] = row["concept_embedding_3"]
+            try:
+                client.table("code_chunks").update(update_data).eq("id", chunk_id).execute()
+                processed += 1
+            except Exception as e:
+                logger.warning("[GRAPH_DATA] Failed to update chunk %s: %s", chunk_id, e)
+    logger.info("[GRAPH_DATA] Updated %d/%d chunks with graph data", processed, len(chunk_graph_rows))
+    return processed
+
+
+def update_relationship_embeddings(
+    rel_rows: list[dict],
+    batch_size: int = 50,
+) -> int:
+    """
+    Write relationship_summary and relationship_embedding back to code_relationships.
+
+    Each row must have: from_chunk_id, to_chunk_id, relationship_type,
+    relationship_summary, relationship_embedding.
+    """
+    if not rel_rows:
+        return 0
+    client = get_client()
+    processed = 0
+    for row in rel_rows:
+        try:
+            client.table("code_relationships").update({
+                "relationship_summary": row["relationship_summary"],
+                "relationship_embedding": row["relationship_embedding"],
+            }).eq("from_chunk_id", row["from_chunk_id"]).eq(
+                "to_chunk_id", row["to_chunk_id"]
+            ).eq("relationship_type", row["relationship_type"]).execute()
+            processed += 1
+        except Exception as e:
+            logger.warning("[REL_EMBED] Failed to update relationship: %s", e)
+    logger.info("[REL_EMBED] Updated %d/%d relationships with embeddings", processed, len(rel_rows))
+    return processed
+
+
+# ── Graph-aware retrieval RPCs ────────────────────────────────────────────────
+
+def match_community_reports(
+    project_id: str,
+    query_embedding: list[float],
+    match_count: int = 5,
+) -> list[dict]:
+    """Search community reports by semantic similarity — Global Search."""
+    client = get_client()
+    try:
+        result = client.rpc("match_community_reports", {
+            "query_embedding": query_embedding,
+            "filter_project_id": project_id,
+            "match_count": match_count,
+        }).execute()
+        return result.data or []
+    except Exception as e:
+        logger.warning("[COMMUNITY_MATCH] RPC failed: %s", e)
+        return []
+
+
+def match_concept_embeddings(
+    project_id: str,
+    query_embedding: list[float],
+    match_count: int = 20,
+) -> list[dict]:
+    """Search chunks by semantic concept embeddings — Local Search anchor discovery."""
+    client = get_client()
+    try:
+        result = client.rpc("match_concept_embeddings", {
+            "query_embedding": query_embedding,
+            "filter_project_id": project_id,
+            "match_count": match_count,
+        }).execute()
+        return result.data or []
+    except Exception as e:
+        logger.warning("[CONCEPT_EMBED_MATCH] RPC failed: %s", e)
+        return []
+
+
+def get_community_members_ranked(
+    community_id: str,
+    limit: int = 20,
+) -> list[dict]:
+    """Fetch community members ordered by PageRank — used in Local/Global Search."""
+    client = get_client()
+    try:
+        result = client.rpc("get_community_members", {
+            "p_community_id": community_id,
+            "p_limit": limit,
+        }).execute()
+        return result.data or []
+    except Exception as e:
+        logger.warning("[COMMUNITY_MEMBERS] RPC failed for community %s: %s", community_id, e)
+        # Fallback: direct table query
+        try:
+            result = (
+                client.table("code_chunks")
+                .select("id,name,file_path,start_line,end_line,chunk_type,language,"
+                        "summary_code,summary_purpose,concepts,pagerank_score,is_exported")
+                .eq("community_id", community_id)
+                .order("pagerank_score", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return result.data or []
+        except Exception as inner_e:
+            logger.error("[COMMUNITY_MEMBERS] Fallback also failed: %s", inner_e)
             return []
 
 
@@ -734,7 +1052,11 @@ def update_project_summary(project_id: str, summary: str, tech_stack: dict | Non
 
 
 def get_project_summary(project_id: str) -> Optional[str]:
-    """Retrieve the stored project summary."""
+    """Retrieve the stored project summary (cached for CACHE_TTL_SECONDS)."""
+    cache_key = f"project_summary:{project_id}"
+    cached = _cache.get(cache_key, CACHE_TTL_SECONDS)
+    if cached is not None:
+        return cached
     client = get_client()
     try:
         result = (
@@ -745,7 +1067,9 @@ def get_project_summary(project_id: str) -> Optional[str]:
             .execute()
         )
         if result.data:
-            return result.data[0].get("project_summary")
+            summary = result.data[0].get("project_summary")
+            _cache.set(cache_key, summary)
+            return summary
     except Exception as e:
         logger.warning(f"Failed to get project summary: {e}")
     return None

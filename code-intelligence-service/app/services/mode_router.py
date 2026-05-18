@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import logging
 from dataclasses import dataclass
 from app.config import (
     ASK_BROAD_LIMIT,
@@ -17,8 +19,11 @@ from app.config import (
     MMR_OPTIMIZE_LAMBDA,
     OPTIMIZE_BROAD_LIMIT,
     OPTIMIZE_RERANK_LIMIT,
+    PIPELINE_VARIANTS,
 )
 from app.db.models import ModeEnum
+
+logger = logging.getLogger("code-intel.mode_router")
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,13 @@ class ModeConfig:
     graph_max: int
     refine: bool
     generate_answer: bool
+    # Graph-aware search path — used when GRAPH_BUILDER_ENABLED=true.
+    # "flat"             — existing vector + text + concept + filepath recall (default)
+    # "local"            — anchor discovery → community scope → PageRank rank
+    # "global"           — community report matching → top member chunks
+    # "drift"            — PRIMER (global) → FOLLOW-UP (local × n) → MERGE
+    # "local_centrality" — local search with subgraph centrality ranking
+    search_path: str = "flat"
 
 
 MODE_CONFIGS = {
@@ -55,6 +67,12 @@ MODE_CONFIGS = {
         graph_max=0,
         refine=False,
         generate_answer=False,
+        # FIND uses the flat path: multi-channel recall → _rank_find_candidates.
+        # That scorer already applies FIND_PAGERANK_WEIGHT so graph data is used.
+        # Community/local search requires populated concept embeddings (from a full
+        # re-index with GRAPH_BUILDER_ENABLED) and is better suited for structural
+        # exploration, not symbol-level lookup.
+        search_path="flat",
     ),
     ModeEnum.ASK: ModeConfig(
         mode=ModeEnum.ASK,
@@ -71,6 +89,7 @@ MODE_CONFIGS = {
         graph_max=20,
         refine=True,
         generate_answer=True,
+        search_path="global",
     ),
     ModeEnum.BUG: ModeConfig(
         mode=ModeEnum.BUG,
@@ -87,6 +106,7 @@ MODE_CONFIGS = {
         graph_max=20,
         refine=True,
         generate_answer=False,
+        search_path="drift",
     ),
     ModeEnum.OPTIMIZE: ModeConfig(
         mode=ModeEnum.OPTIMIZE,
@@ -103,13 +123,27 @@ MODE_CONFIGS = {
         graph_max=GRAPH_MAX_OPTIMIZE,
         refine=True,
         generate_answer=False,
+        search_path="local_centrality",
     ),
 }
 
 
-def get_mode_config(mode: ModeEnum | str | None) -> ModeConfig:
+def get_mode_config(mode: ModeEnum | str | None, variant: str | None = None) -> ModeConfig:
     if mode is None:
-        return MODE_CONFIGS[ModeEnum.BUG]
+        mode = ModeEnum.BUG
     if not isinstance(mode, ModeEnum):
         mode = ModeEnum(mode)
-    return MODE_CONFIGS[mode]
+    base = MODE_CONFIGS[mode]
+    if not variant:
+        return base
+    overrides = PIPELINE_VARIANTS.get(variant)
+    if not overrides:
+        logger.warning("[MODE] Unknown variant %r, ignoring", variant)
+        return base
+    try:
+        config = dataclasses.replace(base, **overrides)
+        logger.info("[MODE] Variant %r applied to mode %s: %s", variant, mode.value, overrides)
+        return config
+    except TypeError as e:
+        logger.warning("[MODE] Invalid variant overrides for %r: %s", variant, e)
+        return base

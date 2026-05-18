@@ -4,7 +4,6 @@ Mode-aware retrieval engine.
 
 from __future__ import annotations
 
-import math
 import asyncio
 import json
 import logging
@@ -12,14 +11,28 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+import numpy as np
+
 import litellm
 import sentry_sdk
 
 from app.config import (
+    FIND_BOOST_BODY,
+    FIND_BOOST_CONCEPT,
+    FIND_BOOST_LEXICAL,
+    FIND_BOOST_PATH,
+    FIND_BOOST_SIGNAL,
+    FIND_BOOST_SIGNATURE,
+    FIND_DOMAIN_SIGNAL_TERMS,
+    FIND_PAGERANK_WEIGHT,
+    FIND_PENALTY_MISS,
+    GRAPH_BUILDER_ENABLED,
     ITERATIVE_REFINEMENT_THRESHOLD,
     MAX_ITERATIONS,
     OPENROUTER_API_KEY,
+    PIPELINE_TAG,
     QUERY_REFINER_MODEL,
+    STRUCTURE_SIMILARITY_WEIGHT,
 )
 from app.db.models import ModeEnum, RetrievedChunk, RetrieveResponse
 from app.db.queries import (
@@ -27,12 +40,16 @@ from app.db.queries import (
     file_path_search,
     get_branch_context,
     get_chunk_structure_embeddings,
+    get_community_members_ranked,
     get_related_chunks_multihop,
     hydrate_chunks_by_ids,
     increment_observation_counts,
+    match_community_reports,
+    match_concept_embeddings,
     text_search,
     vector_search,
 )
+from app.services.community import format_community_context, get_cached_community_reports, set_cached_community_reports
 from app.services.answer_generator import generate_answer
 from app.services.concepts import CONCEPT_KEYWORDS, detect_concepts_from_query
 from app.services.embedding import embed_structure_texts, embed_texts
@@ -78,8 +95,9 @@ async def retrieve_context(
     limit: int = 10,
     signals: Optional[QuerySignals] = None,
     mode: ModeEnum | str = ModeEnum.BUG,
+    variant: str | None = None,
 ) -> RetrieveResponse:
-    full = await retrieve_context_full(project_id, user_id, query, branch, limit, signals, mode)
+    full = await retrieve_context_full(project_id, user_id, query, branch, limit, signals, mode, variant=variant)
     return RetrieveResponse(
         ranked_chunks=[_to_retrieved_chunk(c) for c in full.ranked_chunks],
         related_chunks=[_to_retrieved_chunk(c, score=0.0) for c in full.related_chunks],
@@ -98,9 +116,10 @@ async def retrieve_context_full(
     signals: Optional[QuerySignals] = None,
     mode: ModeEnum | str = ModeEnum.BUG,
     project_summary: str | None = None,
+    variant: str | None = None,
 ) -> FullSearchResult:
     mode_enum = mode if isinstance(mode, ModeEnum) else ModeEnum(mode)
-    config = get_mode_config(mode_enum)
+    config = get_mode_config(mode_enum, variant)
     signals = signals or preprocess_query(query)
     logger.info(
         "[RETRIEVE] start project=%s mode=%s limit=%s branch=%s vector=%s rerank=%s refine=%s graph=%s",
@@ -125,6 +144,33 @@ async def retrieve_context_full(
         concepts,
     )
 
+    # ── Graph-aware retrieval paths (GRAPH_BUILDER_ENABLED=true) ─────────────
+    if GRAPH_BUILDER_ENABLED and config.search_path != "flat":
+        try:
+            graph_result = await _dispatch_graph_search(
+                project_id=project_id,
+                query=query,
+                mode_enum=mode_enum,
+                config=config,
+                concepts=concepts,
+                limit=limit,
+                branch=branch,
+                signals=signals,
+                user_id=user_id,
+                project_summary=project_summary,
+                variant=variant,
+                analysis=analysis,
+            )
+            if graph_result is not None:
+                return graph_result
+            # Fall through to flat retrieval if graph search returned nothing
+            logger.info("[RETRIEVE] Graph search returned no results, falling back to flat")
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.warning(
+                "[RETRIEVE] Graph search failed (%s), falling back to flat retrieval", e
+            )
+
     candidates, query_embedding = await _broad_recall(
         project_id, user_id, query, sub_queries, concepts, signals, branch, config
     )
@@ -145,7 +191,7 @@ async def retrieve_context_full(
         MIN_RESPONSE_RELEVANCE,
     )
 
-    if config.refine and await _should_refine(query, ranked, mode_enum):
+    if config.refine and _should_refine(query, ranked, mode_enum):
         refined_queries = await _refine_sub_queries(query, ranked[:3], mode_enum)
         if refined_queries:
             logger.info(
@@ -217,6 +263,7 @@ async def retrieve_context_full(
         mode_enum.value,
         [str(c["id"]) for c in ranked if c.get("id")],
         query_embedding,
+        variant=variant or PIPELINE_TAG,
     )
 
     answer = None
@@ -241,6 +288,521 @@ async def retrieve_context_full(
     return FullSearchResult(
         ranked_chunks=ranked[:limit],
         related_chunks=related,
+        branch_context=get_branch_context(project_id, branch),
+        query_intent=analysis.intent,
+        query_concepts=concepts,
+        mode=mode_enum,
+        answer=answer,
+        source_ids=source_ids,
+        search_id=search_id,
+    )
+
+
+# ── Graph-aware search paths ─────────────────────────────────────────────────
+
+async def _local_search(
+    project_id: str,
+    query: str,
+    query_embedding: list[float],
+    mode_config,
+    concepts: list[str],
+    limit: int,
+) -> list[dict]:
+    """
+    Local Search: anchor discovery → community scope → PageRank ranking.
+
+    1. Find anchor chunks via concept embedding similarity + name exact-match.
+    2. Identify which communities the anchors belong to.
+    3. Retrieve all community members (PageRank-ordered by DB RPC).
+    4. Merge anchors + members, apply Personalized PageRank boost on name-match.
+    5. Return top-ranked list.
+    """
+    import time as _time
+    t0 = _time.perf_counter()
+    logger.info("[LOCAL_SEARCH] ► Start: project=%s query=%r", project_id, query[:60])
+
+    # Step 1: concept embedding search for anchors
+    concept_anchors = await asyncio.to_thread(
+        match_concept_embeddings, project_id, query_embedding, 15
+    )
+    logger.info(
+        "[LOCAL_SEARCH]   concept_anchors=%d (%.0fms)",
+        len(concept_anchors), (_time.perf_counter() - t0) * 1000,
+    )
+
+    # Step 2: also run standard vector search for anchors
+    t1 = _time.perf_counter()
+    vector_anchors = await asyncio.to_thread(
+        vector_search, project_id, "", query_embedding, 10
+    )
+    logger.info(
+        "[LOCAL_SEARCH]   vector_anchors=%d (%.0fms)",
+        len(vector_anchors), (_time.perf_counter() - t1) * 1000,
+    )
+
+    # Merge anchors by ID, concept match takes precedence for scoring
+    seen: dict[str, dict] = {}
+    for chunk in concept_anchors:
+        cid = str(chunk.get("id", ""))
+        if cid:
+            chunk["_is_concept_anchor"] = True
+            seen[cid] = chunk
+    for chunk in vector_anchors:
+        cid = str(chunk.get("id", ""))
+        if cid and cid not in seen:
+            seen[cid] = chunk
+
+    anchors = list(seen.values())
+    logger.info(
+        "[LOCAL_SEARCH]   merged anchors=%d (concept=%d vector=%d)",
+        len(anchors), len(concept_anchors), len(vector_anchors),
+    )
+
+    # Step 3: collect unique community IDs from anchors
+    community_ids: list[str] = list(dict.fromkeys(
+        str(a["community_id"]) for a in anchors
+        if a.get("community_id")
+    ))
+    logger.info("[LOCAL_SEARCH]   communities_from_anchors=%d ids=%s", len(community_ids), community_ids[:3])
+
+    # Step 4: fetch all community members, ranked by PageRank
+    t1 = _time.perf_counter()
+    community_chunks: list[dict] = []
+    for comm_id in community_ids[:3]:   # cap at 3 communities
+        members = await asyncio.to_thread(
+            get_community_members_ranked, comm_id, mode_config.broad_limit
+        )
+        community_chunks.extend(members)
+        logger.info("[LOCAL_SEARCH]   community=%s members_fetched=%d", comm_id, len(members))
+
+    logger.info(
+        "[LOCAL_SEARCH]   total community members fetched=%d (%.0fms)",
+        len(community_chunks), (_time.perf_counter() - t1) * 1000,
+    )
+
+    # Merge anchors + community chunks (anchors first to preserve relevance signals)
+    all_chunks: dict[str, dict] = {}
+    for chunk in community_chunks:
+        cid = str(chunk.get("id", ""))
+        if cid:
+            all_chunks[cid] = chunk
+    for chunk in anchors:
+        cid = str(chunk.get("id", ""))
+        if cid:
+            existing = all_chunks.get(cid, {})
+            all_chunks[cid] = {**existing, **chunk}
+
+    if not all_chunks:
+        logger.info("[LOCAL_SEARCH] ◄ No chunks found — returning empty")
+        return []
+
+    # Step 5: Personalized PageRank — boost chunks whose name matches query terms
+    query_terms = _find_terms(query)
+    result_chunks = list(all_chunks.values())
+    name_boosted = 0
+    for chunk in result_chunks:
+        pr = float(chunk.get("pagerank_score") or 0.0)
+        name_lower = (chunk.get("name") or "").lower()
+        name_match = any(term in name_lower for term in query_terms)
+        # Personalized boost: if the name matches the query, double the PageRank weight
+        personalized_pr = pr * 2.0 if name_match else pr
+        if name_match:
+            name_boosted += 1
+        concept_sim = float(chunk.get("concept_similarity") or 0.0)
+        vec_sim = float(chunk.get("similarity") or 0.0)
+        chunk["final_score"] = max(personalized_pr, concept_sim, vec_sim)
+
+    result_chunks.sort(key=lambda c: c.get("final_score", 0), reverse=True)
+    top_results = result_chunks[:limit]
+
+    logger.info(
+        "[LOCAL_SEARCH] ◄ Done: total_pool=%d name_boosted=%d returning=%d elapsed=%.0fms | "
+        "top3: %s",
+        len(result_chunks), name_boosted, len(top_results),
+        (_time.perf_counter() - t0) * 1000,
+        ", ".join(
+            f"{c.get('name','?')}({c.get('final_score', 0):.3f})" for c in top_results[:3]
+        ),
+    )
+    return top_results
+
+
+async def _global_search(
+    project_id: str,
+    query: str,
+    query_embedding: list[float],
+    limit: int,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Global Search: match community reports by embedding → return reports + member chunks.
+
+    Returns:
+        (community_reports, member_chunks)
+        community_reports — list of CommunityReport dicts with summary text
+        member_chunks     — top PageRank members from matched communities
+    """
+    import time as _time
+    t0 = _time.perf_counter()
+    logger.info("[GLOBAL_SEARCH] ► Start: project=%s query=%r", project_id, query[:60])
+
+    # Check cache first
+    cached = get_cached_community_reports(project_id)
+    if cached is not None:
+        community_reports = cached
+        logger.info("[GLOBAL_SEARCH]   community_reports from cache: %d", len(community_reports))
+    else:
+        community_reports = await asyncio.to_thread(
+            match_community_reports, project_id, query_embedding, 5
+        )
+        set_cached_community_reports(project_id, community_reports)
+        logger.info(
+            "[GLOBAL_SEARCH]   community_reports from DB: %d (%.0fms)",
+            len(community_reports), (_time.perf_counter() - t0) * 1000,
+        )
+
+    if not community_reports:
+        logger.info("[GLOBAL_SEARCH] ◄ No community reports found — returning empty")
+        return [], []
+
+    for report in community_reports[:3]:
+        logger.info(
+            "[GLOBAL_SEARCH]   report label=%r similarity=%.3f summary_preview=%r",
+            report.get("label", "?"),
+            report.get("similarity", 0.0),
+            (report.get("summary") or "")[:100],
+        )
+
+    # Fetch member chunks from top 2 matching communities
+    member_chunks: list[dict] = []
+    for report in community_reports[:2]:
+        comm_id = str(report.get("id", ""))
+        if not comm_id:
+            continue
+        members = await asyncio.to_thread(
+            get_community_members_ranked, comm_id, max(limit // 2, 5)
+        )
+        member_chunks.extend(members)
+        logger.info(
+            "[GLOBAL_SEARCH]   community=%s label=%r fetched=%d members",
+            comm_id, report.get("label", "?"), len(members),
+        )
+
+    # Deduplicate
+    seen_ids: set[str] = set()
+    unique_members: list[dict] = []
+    for chunk in member_chunks:
+        cid = str(chunk.get("id", ""))
+        if cid and cid not in seen_ids:
+            seen_ids.add(cid)
+            unique_members.append(chunk)
+
+    logger.info(
+        "[GLOBAL_SEARCH] ◄ Done: reports=%d member_chunks=%d elapsed=%.0fms",
+        len(community_reports), len(unique_members),
+        (_time.perf_counter() - t0) * 1000,
+    )
+    return community_reports, unique_members
+
+
+async def _drift_search(
+    project_id: str,
+    query: str,
+    query_embedding: list[float],
+    mode_config,
+    concepts: list[str],
+    limit: int,
+) -> tuple[list[dict], str | None]:
+    """
+    DRIFT Search for BUG mode: Primer (global context) → Follow-up (local × n) → Merge.
+
+    PRIMER:
+      - Retrieve top community reports.
+      - Feed community context to LLM to get: broad answer + 2-3 follow-up questions.
+
+    FOLLOW-UP:
+      - Run _local_search for each follow-up question in parallel.
+
+    MERGE:
+      - Combine all retrieved chunks, deduplicate, sort by PageRank.
+      - Attach community context string for the answer generator.
+
+    Returns:
+        (ranked_chunks, community_context_string)
+    """
+    import time as _time
+    t0 = _time.perf_counter()
+    logger.info("[DRIFT_SEARCH] ► Start: project=%s query=%r", project_id, query[:60])
+
+    # PRIMER: global community context
+    community_reports, primer_members = await _global_search(
+        project_id, query, query_embedding, limit
+    )
+    logger.info(
+        "[DRIFT_SEARCH]   PRIMER: reports=%d primer_members=%d (%.0fms)",
+        len(community_reports), len(primer_members),
+        (_time.perf_counter() - t0) * 1000,
+    )
+
+    community_context = format_community_context(community_reports, max_reports=2)
+
+    # Generate follow-up questions from community context
+    follow_up_queries: list[str] = []
+    if community_reports:
+        try:
+            t1 = _time.perf_counter()
+            follow_up_queries = await _generate_drift_followups(
+                query, community_context, primer_members[:3]
+            )
+            logger.info(
+                "[DRIFT_SEARCH]   Follow-up Qs generated: %d in %.0fms",
+                len(follow_up_queries), (_time.perf_counter() - t1) * 1000,
+            )
+        except Exception as e:
+            logger.warning("[DRIFT_SEARCH] Follow-up generation failed: %s", e)
+            sentry_sdk.capture_exception(e)
+
+    if not follow_up_queries:
+        follow_up_queries = [query]
+        logger.info("[DRIFT_SEARCH]   No follow-ups generated — using original query as fallback")
+
+    for i, fq in enumerate(follow_up_queries):
+        logger.info("[DRIFT_SEARCH]   follow_up[%d]: %r", i, fq[:80])
+
+    # FOLLOW-UP: embed and run local search for each question in parallel
+    try:
+        followup_embeddings = await embed_texts([query] + follow_up_queries)
+        logger.info("[DRIFT_SEARCH]   Embedded %d follow-up queries", len(followup_embeddings))
+    except Exception as e:
+        logger.warning("[DRIFT_SEARCH] Follow-up embedding failed: %s", e)
+        sentry_sdk.capture_exception(e)
+        followup_embeddings = [query_embedding] * (1 + len(follow_up_queries))
+
+    local_tasks = []
+    all_fqs = [query] + follow_up_queries
+    for i, fq in enumerate(all_fqs):
+        emb = followup_embeddings[i] if i < len(followup_embeddings) else query_embedding
+        local_tasks.append(
+            _local_search(project_id, fq, emb, mode_config, concepts, limit // 2)
+        )
+
+    t1 = _time.perf_counter()
+    local_results = await asyncio.gather(*local_tasks, return_exceptions=True)
+    logger.info(
+        "[DRIFT_SEARCH]   Follow-up local searches done: %d tasks in %.0fms",
+        len(local_tasks), (_time.perf_counter() - t1) * 1000,
+    )
+
+    # MERGE: deduplicate + PageRank order
+    merged: dict[str, dict] = {}
+    per_query_counts: list[int] = []
+    for i, result in enumerate(local_results):
+        if isinstance(result, BaseException):
+            logger.warning("[DRIFT_SEARCH] Local search[%d] failed: %s", i, result)
+            per_query_counts.append(0)
+            continue
+        count = 0
+        for chunk in result:
+            cid = str(chunk.get("id", ""))
+            if cid and cid not in merged:
+                merged[cid] = chunk
+                count += 1
+        per_query_counts.append(count)
+
+    logger.info(
+        "[DRIFT_SEARCH]   Per-query new chunks: %s",
+        ", ".join(f"Q{i}={n}" for i, n in enumerate(per_query_counts)),
+    )
+
+    # Include primer members (may have chunks not in local results)
+    primer_added = 0
+    for chunk in primer_members:
+        cid = str(chunk.get("id", ""))
+        if cid and cid not in merged:
+            chunk["final_score"] = float(chunk.get("pagerank_score") or 0.0)
+            merged[cid] = chunk
+            primer_added += 1
+
+    ranked = sorted(merged.values(), key=lambda c: c.get("final_score", 0), reverse=True)
+    final = ranked[:limit]
+
+    logger.info(
+        "[DRIFT_SEARCH] ◄ Done: merged_pool=%d primer_added=%d returning=%d elapsed=%.0fms | "
+        "top3: %s",
+        len(merged), primer_added, len(final),
+        (_time.perf_counter() - t0) * 1000,
+        ", ".join(
+            f"{c.get('name','?')}({c.get('final_score',0):.3f})" for c in final[:3]
+        ),
+    )
+    return final, community_context
+
+
+async def _generate_drift_followups(
+    query: str,
+    community_context: str,
+    top_chunks: list[dict],
+) -> list[str]:
+    """
+    Use the LLM to generate 2-3 follow-up questions for DRIFT search.
+    These questions drill into the specific code paths relevant to the bug.
+    """
+    chunk_summaries = [
+        f"- {c.get('name', '?')} ({c.get('file_path', '?')}): "
+        f"{(c.get('summary_code') or c.get('semantic_summary') or '')[:100]}"
+        for c in top_chunks[:3]
+    ]
+
+    kwargs: dict = {
+        "model": QUERY_REFINER_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You help diagnose code bugs by generating targeted follow-up search queries. "
+                    "Given the original query, relevant subsystem context, and initial results, "
+                    "generate 2-3 focused follow-up questions that would help find the root cause. "
+                    "Focus on: data flow, error paths, shared state, and execution order. "
+                    "Return strict JSON: {\"follow_ups\": [\"...\", ...]}"
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "query": query[:1000],
+                    "subsystem_context": community_context[:800],
+                    "initial_results": chunk_summaries,
+                }),
+            },
+        ],
+        "max_tokens": 300,
+        "temperature": 0.1,
+    }
+    if OPENROUTER_API_KEY and "openrouter" in QUERY_REFINER_MODEL.lower():
+        kwargs["api_key"] = OPENROUTER_API_KEY
+
+    response = await asyncio.to_thread(litellm.completion, **kwargs)
+    raw = (response.choices[0].message.content or "").strip()
+    data = json.loads(_strip_json_fence(raw))
+    follow_ups = data.get("follow_ups", [])
+    if not isinstance(follow_ups, list):
+        return []
+    return [str(fq).strip()[:500] for fq in follow_ups if isinstance(fq, str)][:3]
+
+
+async def _dispatch_graph_search(
+    project_id: str,
+    query: str,
+    mode_enum: ModeEnum,
+    config,
+    concepts: list[str],
+    limit: int,
+    branch: Optional[str],
+    signals,
+    user_id: str,
+    project_summary: str | None,
+    variant: str | None,
+    analysis,
+) -> Optional[FullSearchResult]:
+    """
+    Route to the appropriate graph search path and build a FullSearchResult.
+    Returns None if no results found (caller falls back to flat retrieval).
+    """
+    # Embed the query once
+    try:
+        embeddings = await embed_texts([query])
+        query_embedding = embeddings[0] if embeddings else None
+    except Exception as e:
+        logger.warning("[GRAPH_DISPATCH] Embedding failed: %s", e)
+        return None
+
+    if not query_embedding:
+        return None
+
+    ranked: list[dict] = []
+    community_context: str | None = None
+    search_path = config.search_path
+
+    if search_path == "local" or search_path == "local_centrality":
+        ranked = await _local_search(
+            project_id, query, query_embedding, config, concepts, limit * 2
+        )
+
+    elif search_path == "global":
+        community_reports, member_chunks = await _global_search(
+            project_id, query, query_embedding, limit * 2
+        )
+        ranked = member_chunks
+        if community_reports:
+            community_context = format_community_context(community_reports, max_reports=2)
+
+    elif search_path == "drift":
+        ranked, community_context = await _drift_search(
+            project_id, query, query_embedding, config, concepts, limit * 2
+        )
+
+    if not ranked:
+        logger.info("[GRAPH_DISPATCH] path=%s returned no ranked chunks — falling back", search_path)
+        return None
+
+    # Quality gate: if the top result has no meaningful score, the graph search
+    # didn't produce useful results (e.g. concept embeddings not yet populated).
+    # Return None so the caller falls back to flat retrieval.
+    top_score = _score(ranked[0]) if ranked else 0.0
+    if top_score < MIN_RESPONSE_RELEVANCE:
+        logger.info(
+            "[GRAPH_DISPATCH] path=%s top_score=%.4f below threshold=%.2f — falling back to flat",
+            search_path, top_score, MIN_RESPONSE_RELEVANCE,
+        )
+        return None
+
+    # Hydrate chunks that don't have code_body yet
+    chunk_ids_needing_hydration = [
+        str(c["id"]) for c in ranked if c.get("id") and not c.get("code_body")
+    ]
+    if chunk_ids_needing_hydration:
+        hydrated = hydrate_chunks_by_ids(
+            chunk_ids_needing_hydration[:limit], project_id, user_id
+        )
+        hydrated_by_id = {str(h["id"]): h for h in hydrated}
+        ranked = [
+            {**hydrated_by_id.get(str(c.get("id", "")), {}), **c}
+            if not c.get("code_body") else c
+            for c in ranked
+        ]
+
+    ranked = _filter_response_relevance(ranked) or ranked[:limit]
+    ranked = ranked[:limit]
+
+    top_ids = [str(c["id"]) for c in ranked[:5] if c.get("id")]
+    increment_observation_counts(top_ids)
+
+    search_id = record_search(
+        project_id,
+        user_id,
+        query,
+        mode_enum.value,
+        [str(c["id"]) for c in ranked if c.get("id")],
+        query_embedding,
+        variant=variant or PIPELINE_TAG,
+    )
+
+    answer = None
+    source_ids: list[str] = []
+    if config.generate_answer:
+        # Inject community context into project_summary for richer answers
+        effective_summary = project_summary
+        if community_context:
+            effective_summary = f"{community_context}\n\n{project_summary or ''}".strip()
+        answer, source_ids = await generate_answer(query, ranked, effective_summary)
+
+    logger.info(
+        "[GRAPH_DISPATCH] path=%s ranked=%d search_id=%s",
+        search_path, len(ranked), search_id,
+    )
+
+    return FullSearchResult(
+        ranked_chunks=ranked,
+        related_chunks=[],
         branch_context=get_branch_context(project_id, branch),
         query_intent=analysis.intent,
         query_concepts=concepts,
@@ -281,6 +843,7 @@ async def _rank_candidates(
         ranked = _hydrate_ranked_chunks(fused, project_id, user_id, min(len(fused), 60))
         ranked = await _attach_structure_similarity(ranked, query, concepts, project_id, user_id)
         ranked = await rerank_chunks(query, ranked, mode, rank_limit)
+        ranked = _blend_structure_similarity(ranked)
         logger.info("[RANK] rerank applied limit=%d returned=%d", rank_limit, len(ranked))
     else:
         logger.info("[RANK] rerank skipped")
@@ -292,7 +855,7 @@ async def _rank_candidates(
     return ranked[:rank_limit]
 
 
-async def _should_refine(query: str, ranked: list[dict], mode: ModeEnum) -> bool:
+def _should_refine(query: str, ranked: list[dict], mode: ModeEnum) -> bool:
     if mode == ModeEnum.FIND or not ranked:
         return False
 
@@ -319,8 +882,10 @@ async def _should_refine(query: str, ranked: list[dict], mode: ModeEnum) -> bool
 
 async def _refine_sub_queries(query: str, top_chunks: list[dict], mode: ModeEnum) -> list[str]:
     context = []
-    for chunk in top_chunks:
+    for idx, chunk in enumerate(top_chunks):
         context.append({
+            "rank": idx + 1,
+            "score": round(_score(chunk), 3),
             "file_path": chunk.get("file_path"),
             "name": chunk.get("name"),
             "summary": chunk.get("summary_code") or chunk.get("semantic_summary"),
@@ -410,15 +975,21 @@ async def _broad_recall(
         try:
             summary_embeddings = await embed_texts(sub_queries)
             query_embedding = summary_embeddings[0] if summary_embeddings else None
-            for summary_emb in summary_embeddings:
-                results = vector_search(
-                    project_id,
-                    user_id,
-                    summary_emb,
-                    limit=limit,
-                    branch=branch,
+
+            async def _one_vector_search(emb: list[float]) -> list[dict]:
+                return await asyncio.to_thread(
+                    vector_search, project_id, user_id, emb, limit, branch
                 )
-                if results:
+
+            results_list = await asyncio.gather(
+                *[_one_vector_search(e) for e in summary_embeddings],
+                return_exceptions=True,
+            )
+            for results in results_list:
+                if isinstance(results, BaseException):
+                    logger.warning("[RECALL] vector search task failed: %s", results)
+                    sentry_sdk.capture_exception(results)
+                elif results:
                     lists.append(results)
             logger.info(
                 "[RECALL] vector sub_queries=%d lists_now=%d",
@@ -527,6 +1098,25 @@ async def _attach_structure_similarity(
     return chunks
 
 
+def _blend_structure_similarity(chunks: list[dict]) -> list[dict]:
+    """Blend rerank_score and structure_similarity into a deterministic final_score."""
+    for chunk in chunks:
+        rerank_score = chunk.get("rerank_score")
+        if rerank_score is None:
+            continue
+        structure_sim = chunk.get("structure_similarity", 0.0)
+        try:
+            rerank_score = float(rerank_score)
+            structure_sim = float(structure_sim)
+        except (TypeError, ValueError):
+            continue
+        chunk["final_score"] = (
+            (1.0 - STRUCTURE_SIMILARITY_WEIGHT) * rerank_score
+            + STRUCTURE_SIMILARITY_WEIGHT * structure_sim
+        )
+    return chunks
+
+
 def _parse_vector(value: object) -> list[float] | None:
     if value is None:
         return None
@@ -551,12 +1141,12 @@ def _parse_vector(value: object) -> list[float] | None:
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(y * y for y in b))
-    if norm_a == 0 or norm_b == 0:
+    va = np.array(a, dtype=np.float32)
+    vb = np.array(b, dtype=np.float32)
+    denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
+    if denom == 0.0:
         return 0.0
-    return max(0.0, min(1.0, dot / (norm_a * norm_b)))
+    return float(max(0.0, min(1.0, np.dot(va, vb) / denom)))
 
 
 def _score(chunk: dict) -> float:
@@ -585,11 +1175,8 @@ def _reciprocal_rank_fusion(*result_lists: list[dict], k: int = 60) -> list[dict
 def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], limit: int) -> list[dict]:
     terms = _find_terms(query)
     specific_terms = terms - _FIND_GENERIC_TERMS
-    token_terms = {"token", "tokens", "access", "refresh", "jwt", "bearer", "cookie", "cookies"}
-    auth_terms = {
-        "auth", "authentication", "authorize", "authorization", "login", "logout",
-        "session", "user", "google", "oauth", "middleware",
-    }
+    # Domain signal terms that qualify for the signal-hit boost (configurable via env)
+    query_signal_terms = terms & FIND_DOMAIN_SIGNAL_TERMS
 
     for chunk in chunks:
         haystack = _chunk_search_text(chunk)
@@ -602,27 +1189,30 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
         path_hits = sum(1 for term in specific_terms if term in path_name)
         signature_hits = sum(1 for term in specific_terms if term in signature)
         body_hits = sum(1 for term in specific_terms if term in code_body)
-        exact_signal_hits = sum(1 for term in token_terms | auth_terms if term in terms and term in haystack)
+        # Signal hits: query contained a domain-signal term AND the chunk text also contains it
+        exact_signal_hits = sum(
+            1 for term in query_signal_terms if term in haystack
+        )
         concept_hits = len(concepts_set.intersection(concepts))
 
+        # PageRank boost: implementers naturally have more incoming edges than callers.
+        # When GRAPH_BUILDER_ENABLED, this is the primary signal distinguishing
+        # "this IS the function" from "this USES the function".
+        pagerank = float(chunk.get("pagerank_score") or 0.0)
+
         boost = (
-            lexical_hits * 0.05
-            + path_hits * 0.35
-            + signature_hits * 0.20
-            + body_hits * 0.12
-            + exact_signal_hits * 0.12
-            + concept_hits * 0.15
+            lexical_hits * FIND_BOOST_LEXICAL
+            + path_hits * FIND_BOOST_PATH
+            + signature_hits * FIND_BOOST_SIGNATURE
+            + body_hits * FIND_BOOST_BODY
+            + exact_signal_hits * FIND_BOOST_SIGNAL
+            + concept_hits * FIND_BOOST_CONCEPT
+            + pagerank * FIND_PAGERANK_WEIGHT
         )
         if "config" in terms and ".config" in (chunk.get("code_body") or "").lower():
             boost += 0.30
         if specific_terms and not (path_hits or signature_hits or body_hits):
-            boost -= 0.20
-        if "auth" in concepts and any(term in path_name for term in auth_terms | token_terms):
-            boost += 0.35
-        if any(term in terms for term in token_terms) and any(term in haystack for term in token_terms):
-            boost += 0.30
-        if any(term in path_name for term in ("auth", "login", "user", "token", "middleware", "google")):
-            boost += 0.20
+            boost += FIND_PENALTY_MISS
 
         base = _score(chunk)
         chunk["find_score"] = max(0.0, min(base + boost, 1.0))
@@ -636,7 +1226,7 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
             if body_hits:
                 reasons.append("matches requested terms in code")
             if exact_signal_hits:
-                reasons.append("matches requested auth/token terms")
+                reasons.append("matches requested signal terms")
             if concept_hits:
                 reasons.append(f"shares concepts: {', '.join(sorted(concepts_set.intersection(concepts)))}")
             chunk["relevance_reasoning"] = "; ".join(reasons)
