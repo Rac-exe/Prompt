@@ -75,6 +75,7 @@ FIND_BOOST_BODY = float(os.environ.get("FIND_BOOST_BODY", "0.12"))
 FIND_BOOST_SIGNAL = float(os.environ.get("FIND_BOOST_SIGNAL", "0.12"))
 FIND_BOOST_CONCEPT = float(os.environ.get("FIND_BOOST_CONCEPT", "0.15"))
 FIND_PENALTY_MISS = float(os.environ.get("FIND_PENALTY_MISS", "-0.20"))
+FIND_MIN_SCORE = float(os.environ.get("FIND_MIN_SCORE", "0.40"))
 FIND_DOMAIN_SIGNAL_TERMS: frozenset[str] = frozenset(
     os.environ.get(
         "FIND_DOMAIN_SIGNAL_TERMS",

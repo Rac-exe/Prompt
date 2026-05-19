@@ -24,6 +24,7 @@ from app.config import (
     FIND_BOOST_SIGNAL,
     FIND_BOOST_SIGNATURE,
     FIND_DOMAIN_SIGNAL_TERMS,
+    FIND_MIN_SCORE,
     FIND_PAGERANK_WEIGHT,
     FIND_PENALTY_MISS,
     GRAPH_BUILDER_ENABLED,
@@ -837,7 +838,12 @@ async def _rank_candidates(
     rank_limit = max(limit, config.rerank_limit if mode != ModeEnum.FIND else limit)
     if mode == ModeEnum.FIND:
         ranked = _rank_find_candidates(fused, query, _normalize_find_concepts(query, _detect_concepts(query)), rank_limit)
-        logger.info("[RANK] find ranking applied limit=%d returned=%d", rank_limit, len(ranked))
+        before = len(ranked)
+        ranked = [c for c in ranked if c.get("find_score", 0) >= FIND_MIN_SCORE]
+        logger.info(
+            "[RANK] find ranking applied limit=%d before_filter=%d after_filter=%d threshold=%.2f",
+            rank_limit, before, len(ranked), FIND_MIN_SCORE,
+        )
         return ranked[:rank_limit]
     if config.rerank:
         ranked = _hydrate_ranked_chunks(fused, project_id, user_id, min(len(fused), 60))
