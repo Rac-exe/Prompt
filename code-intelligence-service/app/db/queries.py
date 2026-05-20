@@ -8,6 +8,7 @@ import logging
 import time
 from typing import Optional
 from app.db.supabase_client import get_client
+from app.db import local_store as _local_store
 from app.config import (
     CACHE_TTL_SECONDS,
     GRAPH_MAX_DEPTH,
@@ -43,7 +44,9 @@ def upsert_project(
         "github_repo_name": github_repo_name,
     }
     result = client.table("projects").insert(data).execute()
-    return result.data[0] if result.data else {}
+    project = result.data[0] if result.data else {}
+    _local_store.sync_project(project)
+    return project
 
 
 def get_project(project_id: str, user_id: str) -> Optional[dict]:
@@ -56,7 +59,11 @@ def get_project(project_id: str, user_id: str) -> Optional[dict]:
         .limit(1)
         .execute()
     )
-    return result.data[0] if result.data else None
+    project = result.data[0] if result.data else None
+    if project:
+        _local_store.sync_project(project)
+        return project
+    return _local_store.get_local_project(project_id)
 
 
 def get_projects_for_user(user_id: str) -> list[dict]:
@@ -69,7 +76,10 @@ def get_projects_for_user(user_id: str) -> list[dict]:
         .limit(100)
         .execute()
     )
-    return result.data or []
+    projects = result.data or []
+    for project in projects:
+        _local_store.sync_project(project)
+    return projects
 
 
 def update_project_status(project_id: str, status: str, last_indexed_at: Optional[str] = None):
@@ -77,14 +87,16 @@ def update_project_status(project_id: str, status: str, last_indexed_at: Optiona
     data: dict = {"index_status": status}
     if last_indexed_at:
         data["last_indexed_at"] = last_indexed_at
-    client.table("projects").update(data).eq("id", project_id).execute()
+    try:
+        client.table("projects").update(data).eq("id", project_id).execute()
+    except Exception as e:
+        logger.warning("Failed to update remote project status for %s: %s", project_id, e)
+    _local_store.update_project_status(project_id, status, last_indexed_at)
 
 
 def delete_project(project_id: str, user_id: str):
     client = get_client()
-    client.table("code_relationships").delete().eq("project_id", project_id).execute()
-    client.table("code_chunks").delete().eq("project_id", project_id).execute()
-    client.table("project_branches").delete().eq("project_id", project_id).execute()
+    _local_store.delete_project_index(project_id)
     client.table("projects").delete().eq("id", project_id).eq("user_id", user_id).execute()
 
 
@@ -1049,6 +1061,7 @@ def update_project_summary(project_id: str, summary: str, tech_stack: dict | Non
         client.table("projects").update(data).eq("id", project_id).execute()
     except Exception as e:
         logger.warning(f"Failed to update project summary: {e}")
+    _local_store.update_project_summary(project_id, summary, tech_stack)
 
 
 def get_project_summary(project_id: str) -> Optional[str]:
@@ -1072,4 +1085,43 @@ def get_project_summary(project_id: str) -> Optional[str]:
             return summary
     except Exception as e:
         logger.warning(f"Failed to get project summary: {e}")
-    return None
+    return _local_store.get_project_summary(project_id)
+
+
+# ── Phase 1 local code-intel backend overrides ───────────────────────────────
+#
+# Keep project auth/registry reads on Supabase, but disconnect the heavy
+# code-intel data plane (chunks, relationships, graph data, search telemetry)
+# from Supabase tables/RPCs. These assignments preserve the existing public
+# query function names used throughout search.py, graph.py, and index_worker.py.
+
+get_existing_chunk_hashes = _local_store.get_existing_chunk_hashes
+upsert_chunks_batch = _local_store.upsert_chunks_batch
+cleanup_stale_chunks = _local_store.cleanup_stale_chunks
+cleanup_stale_chunks_for_files = _local_store.cleanup_stale_chunks_for_files
+delete_chunks_for_file = _local_store.delete_chunks_for_file
+upsert_relationship = _local_store.upsert_relationship
+find_chunk_by_name = _local_store.find_chunk_by_name
+find_chunks_by_names = _local_store.find_chunks_by_names
+find_chunks_by_file_paths = _local_store.find_chunks_by_file_paths
+upsert_relationships_batch = _local_store.upsert_relationships_batch
+hydrate_chunks_by_ids = _local_store.hydrate_chunks_by_ids
+get_chunk_structure_embeddings = _local_store.get_chunk_structure_embeddings
+vector_search = _local_store.vector_search
+concept_search = _local_store.concept_search
+text_search = _local_store.text_search
+get_related_chunks = _local_store.get_related_chunks
+get_related_chunks_multihop = _local_store.get_related_chunks_multihop
+increment_observation_counts = _local_store.increment_observation_counts
+get_branch_context = _local_store.get_branch_context
+upsert_branch = _local_store.upsert_branch
+flag_diverged_chunks = _local_store.flag_diverged_chunks
+file_path_search = _local_store.file_path_search
+upsert_communities = _local_store.upsert_communities
+get_all_project_chunk_ids = _local_store.get_all_project_chunk_ids
+get_all_project_relationships = _local_store.get_all_project_relationships
+update_chunks_graph_data = _local_store.update_chunks_graph_data
+update_relationship_embeddings = _local_store.update_relationship_embeddings
+match_community_reports = _local_store.match_community_reports
+match_concept_embeddings = _local_store.match_concept_embeddings
+get_community_members_ranked = _local_store.get_community_members_ranked

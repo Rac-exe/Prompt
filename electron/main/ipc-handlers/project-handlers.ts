@@ -12,7 +12,7 @@ import type { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import type { AppWindowManager } from '../windows/app-window-manager';
 import { isGitRepo, getBranchInfo, getGitRemoteUrl, parseGitHubUrl } from '../services/git-service';
 import { startWatching, stopWatching, performFullScan, stopAllWatchers, isWatching, type ScanSignal } from '../services/file-watcher';
-import { clearProjectCache } from '../database/local-project-cache';
+import { clearProjectIndexData, deleteProjectIndex } from '../database/code-intel-local-store';
 
 let _client: CodeIntelClient | null = null;
 let _overlayManager: OverlayWindowManager | null = null;
@@ -262,7 +262,7 @@ export function registerProjectHandlers(
       }
       console.warn(`[ProjectHandlers] Project ${projectId} already removed on backend (404) — purging local state`);
     }
-    clearProjectCache(projectId);
+    deleteProjectIndex(projectId);
 
     if (activeProjectId === projectId) {
       activeProjectId = null;
@@ -303,7 +303,7 @@ export function registerProjectHandlers(
     }
 
     cancelActiveScan(projectId);
-    clearProjectCache(projectId);
+    clearProjectIndexData(projectId);
     clearStatusPoll(projectId);
     broadcastProjectStatus({ projectId, status: 'indexing' });
 
@@ -381,6 +381,9 @@ export function registerProjectHandlers(
 
   ipcMain.handle('project:retrieve', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
+    if (params.mode === 'find') {
+      await ensureFreshBeforeFind(params.project_id);
+    }
     return await _client.retrieve(params);
   });
 
@@ -441,7 +444,7 @@ export function registerProjectHandlers(
         const isUnhealthy = status === 'stale' || status === 'indexing' || status === 'error';
 
         if (isUnhealthy) {
-          clearProjectCache(projectId);
+          clearProjectIndexData(projectId);
           broadcastProjectStatus({ projectId, status: 'indexing' });
         }
 
@@ -501,6 +504,42 @@ export function registerProjectHandlers(
     console.log(`[ProjectHandlers] ensure-fresh: scheduled ${triggered}/${projects.length} hash-diff scans`);
     return { triggered, total: projects.length };
   });
+}
+
+async function ensureFreshBeforeFind(projectId: string): Promise<void> {
+  if (!_client || activeScans.has(projectId)) {
+    return;
+  }
+
+  try {
+    const project = await _client.getProject(projectId);
+    const localPath = project?.local_path;
+    if (!localPath) return;
+
+    let branch: string | undefined;
+    try {
+      if (await isGitRepo(localPath)) {
+        const branchInfo = await getBranchInfo(localPath);
+        branch = branchInfo.currentBranch;
+      }
+    } catch {}
+
+    const signal: ScanSignal = { cancelled: false };
+    activeScans.set(projectId, signal);
+    const result = await performFullScan(projectId, localPath, _client, branch, undefined, signal);
+    activeScans.delete(projectId);
+    if (signal.cancelled || result.totalChunks === 0) return;
+
+    broadcastProjectStatus({ projectId, status: 'indexing' });
+    await startStatusPoll(projectId);
+  } catch (e) {
+    activeScans.delete(projectId);
+    Sentry.captureException(e, {
+      level: 'warning',
+      tags: { component: 'project-handlers', op: 'ensure-fresh-before-find' },
+      extra: { projectId },
+    });
+  }
 }
 
 async function setActiveProject(projectId: string, localPath?: string): Promise<void> {

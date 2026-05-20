@@ -97,6 +97,21 @@ export function deleteProjectIndex(projectId: string): void {
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
+export function clearProjectIndexData(projectId: string): void {
+  const db = getProjectIndexDb(projectId);
+  if (!db) return;
+  const clear = db.transaction(() => {
+    db.prepare('DELETE FROM chunks_fts').run();
+    db.prepare('DELETE FROM code_relationships').run();
+    db.prepare('DELETE FROM communities').run();
+    db.prepare('DELETE FROM retrieval_searches').run();
+    db.prepare('DELETE FROM retrieval_feedback').run();
+    db.prepare('DELETE FROM code_chunks').run();
+    db.prepare('DELETE FROM file_cache WHERE project_id = ?').run(projectId);
+  });
+  clear();
+}
+
 function ensureSchema(db: any): void {
   db.exec(`
     PRAGMA user_version = ${CODE_INTEL_SCHEMA_VERSION};

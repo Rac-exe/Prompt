@@ -19,6 +19,7 @@ from app.config import (
     OPENROUTER_API_KEY,
     STRUCTURE_EMBEDDING_DIMENSIONS,
 )
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.embedding")
 
@@ -45,6 +46,25 @@ def _get_model_and_kwargs() -> tuple[str, dict]:
 
 async def _embed_with_retry(texts: list[str], dimensions: int = EMBEDDING_DIMENSIONS) -> list[list[float]]:
     """Call litellm.embedding with retries for transient provider failures."""
+    if prmpt_ai_client.is_configured():
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await prmpt_ai_client.embed_texts(texts, EMBEDDING_MODEL, dimensions)
+            except Exception as e:
+                last_error = e
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Prmpt AI proxy embedding attempt %d/%d failed (%s), retrying in %.1fs",
+                    attempt + 1, MAX_RETRIES, str(e)[:120], delay,
+                )
+                sentry_sdk.capture_exception(e)
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(delay)
+        raise RuntimeError(
+            f"Proxy embedding failed after {MAX_RETRIES} attempts: {last_error}"
+        ) from last_error
+
     model, kwargs = _get_model_and_kwargs()
     last_error: Exception | None = None
 

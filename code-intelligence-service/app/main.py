@@ -63,6 +63,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         import uuid
         req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        db_root = request.headers.get("x-prmpt-code-intel-root")
+        if db_root:
+            from app.db.local_store import set_runtime_db_root
+            set_runtime_db_root(db_root)
         response: StarletteResponse = await call_next(request)
         response.headers["X-Request-ID"] = req_id
         return response
@@ -139,17 +143,24 @@ async def health():
 
 @app.get("/health/ready")
 async def health_ready():
-    from app.db.supabase_client import get_client
     checks: dict = {}
+    from app.db.local_store import get_db_root
     try:
-        client = get_client()
-        checks["supabase"] = client is not None
+        db_root = get_db_root()
+        checks["local_sqlite"] = db_root.exists() and os.access(db_root, os.W_OK)
+        checks["db_root"] = str(db_root)
     except Exception as e:
-        checks["supabase"] = False
+        checks["local_sqlite"] = False
         sentry_sdk.capture_exception(e)
-    from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY
-    checks["embedding_key"] = bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
-    all_ok = checks.get("supabase") and checks.get("embedding_key")
+    try:
+        from app.db.supabase_client import get_client
+        checks["supabase_auth_registry"] = get_client() is not None
+    except Exception as e:
+        checks["supabase_auth_registry"] = False
+        sentry_sdk.capture_exception(e)
+    from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY, PRMPT_AI_PROXY_URL
+    checks["ai_provider"] = bool(PRMPT_AI_PROXY_URL) or bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
+    all_ok = checks.get("local_sqlite") and checks.get("supabase_auth_registry") and checks.get("ai_provider")
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 

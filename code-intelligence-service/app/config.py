@@ -8,6 +8,9 @@ SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+PRMPT_AI_PROXY_URL = os.environ.get("PRMPT_AI_PROXY_URL", "")
+PRMPT_AI_PROXY_TOKEN = os.environ.get("PRMPT_AI_PROXY_TOKEN", "")
+CODE_INTEL_DB_ROOT = os.environ.get("CODE_INTEL_DB_ROOT", "")
 
 # ── LLM Models ──────────────────────────────────────────────────────────────
 SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/deepseek/deepseek-chat")

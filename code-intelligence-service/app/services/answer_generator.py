@@ -7,6 +7,7 @@ import litellm
 import sentry_sdk
 
 from app.config import ANSWER_MODEL, OPENROUTER_API_KEY
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.answer")
 
@@ -37,8 +38,11 @@ async def generate_answer(
     if OPENROUTER_API_KEY and "openrouter" in ANSWER_MODEL.lower():
         kwargs["api_key"] = OPENROUTER_API_KEY
     try:
-        response = await asyncio.to_thread(litellm.completion, **kwargs)
-        answer = (response.choices[0].message.content or "").strip()
+        if prmpt_ai_client.is_configured():
+            answer = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+        else:
+            response = await asyncio.to_thread(litellm.completion, **kwargs)
+            answer = (response.choices[0].message.content or "").strip()
         return answer or None, [str(c["id"]) for c in chunks[:8] if c.get("id")]
     except Exception as e:
         logger.warning(f"Answer generation failed: {e}")

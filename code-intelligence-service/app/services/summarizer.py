@@ -20,6 +20,7 @@ from app.config import (
     SUMMARIZER_MODEL,
 )
 from app.services.concepts import VALID_CONCEPTS, VALID_CONCEPTS_SET as _VALID_CONCEPTS_SET
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.summarizer")
 
@@ -121,8 +122,11 @@ def summarize_chunk_batch(chunks: list[ChunkSummaryInput]) -> list[SummaryResult
     kwargs["max_tokens"] = min(max(SUMMARY_MAX_TOKENS * len(chunks), 300), 3000)
 
     try:
-        response = litellm.completion(**kwargs)
-        raw = (response.choices[0].message.content or "").strip()
+        if prmpt_ai_client.is_configured():
+            raw = prmpt_ai_client.completion(**kwargs).strip()
+        else:
+            response = litellm.completion(**kwargs)
+            raw = (response.choices[0].message.content or "").strip()
         parsed = _parse_batch_response(raw, chunks)
         if parsed:
             return parsed

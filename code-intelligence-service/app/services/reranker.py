@@ -9,6 +9,7 @@ import sentry_sdk
 
 from app.config import OPENROUTER_API_KEY, RERANKER_MODEL
 from app.db.models import ModeEnum
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.reranker")
 
@@ -82,8 +83,11 @@ async def _score_with_llm(query: str, chunks: list[dict], mode: ModeEnum) -> lis
     if OPENROUTER_API_KEY and "openrouter" in RERANKER_MODEL.lower():
         kwargs["api_key"] = OPENROUTER_API_KEY
     try:
-        response = await asyncio.to_thread(litellm.completion, **kwargs)
-        raw = (response.choices[0].message.content or "").strip()
+        if prmpt_ai_client.is_configured():
+            raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+        else:
+            response = await asyncio.to_thread(litellm.completion, **kwargs)
+            raw = (response.choices[0].message.content or "").strip()
         cleaned = _strip_fence(raw)
         data = json.loads(cleaned)
         return data if isinstance(data, list) else None

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header
 from typing import Optional
 from app.auth import require_auth
 from app.db import queries
-from app.db.supabase_client import get_client
+from app.db import local_store
 from app.config import CACHE_TTL_SECONDS, APP_ENV
 from app.services import cache as _cache
 
@@ -19,79 +19,47 @@ router = APIRouter(tags=["graph"])
 
 
 def _get_graph_data(project_id: str) -> dict:
-    """Fetch nodes, edges, and communities for a project from Supabase."""
+    """Fetch nodes, edges, and communities for a project from local SQLite."""
     cache_key = f"graph_viz:{project_id}"
     cached = _cache.get(cache_key, CACHE_TTL_SECONDS * 2)  # longer TTL — graph rarely changes
     if cached is not None:
         return cached
 
-    client = get_client()
-
-    # Fetch all chunks (nodes) — try with graph columns first, fall back to base columns
-    all_chunks: list[dict] = []
-    page_size = 1000
-    offset = 0
-    _chunk_select = (
-        "id,name,file_path,chunk_type,language,"
-        "pagerank_score,centrality_score,community_id,"
-        "summary_code,is_exported"
-    )
-    _chunk_select_fallback = "id,name,file_path,chunk_type,language,summary_code,is_exported"
-    while True:
-        try:
-            result = (
-                client.table("code_chunks")
-                .select(_chunk_select)
-                .eq("project_id", project_id)
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
-        except Exception:
-            result = (
-                client.table("code_chunks")
-                .select(_chunk_select_fallback)
-                .eq("project_id", project_id)
-                .range(offset, offset + page_size - 1)
-                .execute()
-            )
-        rows = result.data or []
-        all_chunks.extend(rows)
-        if len(rows) < page_size:
-            break
-        offset += page_size
-
-    # Fetch all relationships (edges)
-    all_rels: list[dict] = []
-    offset = 0
-    while True:
-        result = (
-            client.table("code_relationships")
-            .select("from_chunk_id,to_chunk_id,relationship_type,relationship_summary")
-            .eq("project_id", project_id)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        rows = result.data or []
-        all_rels.extend(rows)
-        if len(rows) < page_size:
-            break
-        offset += page_size
-
-    # Fetch communities (may fail if the migration grants haven't been applied yet)
-    communities = []
-    try:
-        comm_result = (
-            client.table("communities")
-            .select("id,label,summary,member_count,level")
-            .eq("project_id", project_id)
-            .execute()
-        )
-        communities = comm_result.data or []
-    except Exception as comm_err:
-        logger.warning(
-            "[GRAPH_VIZ] Could not load communities for project %s (run migration grants): %s",
-            project_id, comm_err,
-        )
+    with local_store.connect(project_id) as conn:
+        all_chunks = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, name, file_path, chunk_type, language, pagerank_score,
+                       centrality_score, community_id, summary_code, is_exported
+                FROM code_chunks
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+        ]
+        all_rels = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT from_chunk_id, to_chunk_id, relationship_type, relationship_summary
+                FROM code_relationships
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+        ]
+        communities = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, label, summary, member_count, level
+                FROM communities
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchall()
+        ]
 
     # Build community ID → label/color index map
     comm_label_map: dict[str, str] = {
@@ -226,9 +194,7 @@ async def get_graph_data(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
     else:
-        client = get_client()
-        result = client.table("projects").select("id,index_status").eq("id", project_id).limit(1).execute()
-        project = result.data[0] if result.data else None
+        project = queries.get_project(project_id, "dev") or local_store.get_local_project(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 

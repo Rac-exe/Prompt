@@ -443,6 +443,7 @@ async def _run_graph_pipeline(
             community_uuid = label_to_uuid.get(cgd.community_label)
             concept_vecs = concept_embeddings_map.get(cgd.chunk_id, [None, None, None])
             row: dict = {
+                "project_id": project_id,
                 "id": cgd.chunk_id,
                 "pagerank_score": cgd.pagerank_score,
                 "centrality_score": cgd.centrality_score,
@@ -474,6 +475,7 @@ async def _run_graph_pipeline(
         t_step = time.perf_counter()
         rel_write_rows = [
             {
+                "project_id": project_id,
                 "from_chunk_id": r.from_chunk_id,
                 "to_chunk_id": r.to_chunk_id,
                 "relationship_type": r.relationship_type,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from app.db.supabase_client import get_client
+from app.db import local_store
 
 logger = logging.getLogger("code-intel.feedback")
 
@@ -30,25 +30,19 @@ def record_search(
     query_embedding: list[float] | None = None,
     variant: str | None = None,
 ) -> str:
-    search_id = str(uuid.uuid4())
-    client = get_client()
-    data = {
-        "id": search_id,
-        "project_id": project_id,
-        "user_id": normalize_user_id(user_id),
-        "query_text": query_text,
-        "mode": mode,
-        "retrieved_chunk_ids": retrieved_chunk_ids,
-    }
-    if query_embedding:
-        data["query_embedding"] = query_embedding
-    if variant:
-        data["variant"] = variant
     try:
-        client.table("retrieval_searches").insert(data).execute()
+        return local_store.record_search(
+            project_id=project_id,
+            user_id=normalize_user_id(user_id) or "",
+            query_text=query_text,
+            mode=mode,
+            retrieved_chunk_ids=retrieved_chunk_ids,
+            query_embedding=query_embedding,
+            variant=variant,
+        )
     except Exception as e:
         logger.warning(f"Failed to record retrieval search: {e}")
-    return search_id
+        return str(uuid.uuid4())
 
 
 def record_feedback(
@@ -59,16 +53,14 @@ def record_feedback(
     selected_chunk_ids: list[str],
     was_useful: bool | None,
 ):
-    client = get_client()
-    data = {
-        "search_id": search_id,
-        "project_id": project_id,
-        "user_id": normalize_user_id(user_id),
-        "mode": mode,
-        "selected_chunk_ids": selected_chunk_ids,
-        "was_useful": was_useful,
-    }
     try:
-        client.table("retrieval_feedback").insert(data).execute()
+        local_store.record_feedback(
+            search_id=search_id,
+            project_id=project_id,
+            user_id=normalize_user_id(user_id) or "",
+            mode=mode,
+            selected_chunk_ids=selected_chunk_ids,
+            was_useful=was_useful,
+        )
     except Exception as e:
         logger.warning(f"Failed to record retrieval feedback: {e}")

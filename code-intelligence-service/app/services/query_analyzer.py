@@ -20,6 +20,7 @@ from app.services.concepts import (
     detect_concepts_from_query,
     detect_intent_from_query,
 )
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.query_analyzer")
 
@@ -82,10 +83,14 @@ async def decompose_query(query: str) -> QueryAnalysis:
         )
         import time as _time
         t0 = _time.perf_counter()
-        response = await asyncio.to_thread(litellm.completion, **kwargs)
+        if prmpt_ai_client.is_configured():
+            raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+            usage = None
+        else:
+            response = await asyncio.to_thread(litellm.completion, **kwargs)
+            raw = (response.choices[0].message.content or "").strip()
+            usage = response.usage
         elapsed_ms = int((_time.perf_counter() - t0) * 1000)
-        raw = (response.choices[0].message.content or "").strip()
-        usage = response.usage
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
         logger.info(

@@ -30,6 +30,7 @@ from app.config import (
     SUMMARIZER_MODEL,
     SUMMARY_MAX_TOKENS,
 )
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.graph_builder")
 
@@ -262,8 +263,11 @@ async def _generate_community_reports(
         kwargs["max_tokens"] = min(300 * len(batch_ids), 3000)
 
         try:
-            response = await asyncio.to_thread(litellm.completion, **kwargs)
-            raw = (response.choices[0].message.content or "").strip()
+            if prmpt_ai_client.is_configured():
+                raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+            else:
+                response = await asyncio.to_thread(litellm.completion, **kwargs)
+                raw = (response.choices[0].message.content or "").strip()
             data = json.loads(_strip_fence(raw))
             if isinstance(data, list):
                 for entry in data:
@@ -326,8 +330,11 @@ async def _generate_relationship_summaries(
         kwargs["max_tokens"] = min(80 * len(edges), 2000)
 
         try:
-            response = await asyncio.to_thread(litellm.completion, **kwargs)
-            raw = (response.choices[0].message.content or "").strip()
+            if prmpt_ai_client.is_configured():
+                raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+            else:
+                response = await asyncio.to_thread(litellm.completion, **kwargs)
+                raw = (response.choices[0].message.content or "").strip()
             data = json.loads(_strip_fence(raw))
             summaries_by_idx: dict[int, str] = {}
             if isinstance(data, list):

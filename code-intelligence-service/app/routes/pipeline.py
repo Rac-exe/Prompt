@@ -46,7 +46,7 @@ from app.config import (
     STRUCTURE_SIMILARITY_WEIGHT,
     SUMMARIZER_MODEL,
 )
-from app.db.supabase_client import get_client
+from app.db import local_store
 
 logger = logging.getLogger("code-intel.routes.pipeline")
 router = APIRouter(tags=["pipeline"])
@@ -133,36 +133,14 @@ async def pipeline_compare(
     Use /api/pipeline/status to see the current tag and all historical tags
     visible in retrieval_searches.
     """
-    client = get_client()
     user_id = auth.get("sub")
 
     try:
-        res_a = (
-            client.table("retrieval_searches")
-            .select("id,query_text,mode,retrieved_chunk_ids,created_at")
-            .eq("project_id", project_id)
-            .eq("user_id", user_id)
-            .eq("variant", tag_a)
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        res_b = (
-            client.table("retrieval_searches")
-            .select("id,query_text,mode,retrieved_chunk_ids,created_at")
-            .eq("project_id", project_id)
-            .eq("user_id", user_id)
-            .eq("variant", tag_b)
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
+        rows_a = local_store.get_searches_by_variant(project_id, user_id, tag_a, limit)
+        rows_b = local_store.get_searches_by_variant(project_id, user_id, tag_b, limit)
     except Exception as e:
         logger.warning("pipeline_compare DB query failed: %s", e)
         return {"error": str(e), "tag_a": tag_a, "tag_b": tag_b, "matches": []}
-
-    rows_a = res_a.data or []
-    rows_b = res_b.data or []
 
     # Build lookup: query_text+mode → row for each tag
     index_a: dict[str, dict] = {

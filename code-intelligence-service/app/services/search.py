@@ -59,6 +59,7 @@ from app.services.mode_router import ModeConfig, get_mode_config
 from app.services.query_analyzer import QueryAnalysis, decompose_query
 from app.services.query_preprocessor import QuerySignals, build_file_patterns, preprocess_query
 from app.services.reranker import rerank_chunks
+from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.search")
 
@@ -681,8 +682,11 @@ async def _generate_drift_followups(
     if OPENROUTER_API_KEY and "openrouter" in QUERY_REFINER_MODEL.lower():
         kwargs["api_key"] = OPENROUTER_API_KEY
 
-    response = await asyncio.to_thread(litellm.completion, **kwargs)
-    raw = (response.choices[0].message.content or "").strip()
+    if prmpt_ai_client.is_configured():
+        raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+    else:
+        response = await asyncio.to_thread(litellm.completion, **kwargs)
+        raw = (response.choices[0].message.content or "").strip()
     data = json.loads(_strip_json_fence(raw))
     follow_ups = data.get("follow_ups", [])
     if not isinstance(follow_ups, list):
@@ -927,8 +931,11 @@ async def _refine_sub_queries(query: str, top_chunks: list[dict], mode: ModeEnum
         kwargs["api_key"] = OPENROUTER_API_KEY
 
     try:
-        response = await asyncio.to_thread(litellm.completion, **kwargs)
-        raw = (response.choices[0].message.content or "").strip()
+        if prmpt_ai_client.is_configured():
+            raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+        else:
+            response = await asyncio.to_thread(litellm.completion, **kwargs)
+            raw = (response.choices[0].message.content or "").strip()
         data = json.loads(_strip_json_fence(raw))
         sub_queries = data.get("sub_queries", [])
         if not isinstance(sub_queries, list):
