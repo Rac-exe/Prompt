@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import * as Sentry from '@sentry/electron/main';
 import { authState } from '../utils/auth-state';
+import { getCodeIntelRoot } from '../database/code-intel-local-store';
 
 export interface IngestPayload {
   project_id: string;
@@ -134,7 +135,10 @@ export class CodeIntelClient {
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 120_000,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Prmpt-Code-Intel-Root': getCodeIntelRoot(),
+      },
     });
 
     this.client.interceptors.request.use((config) => {
