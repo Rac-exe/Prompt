@@ -134,7 +134,7 @@ export class CodeIntelClient {
     this.baseUrl = baseUrl || process.env.CODE_INTELLIGENCE_SERVICE_URL || 'http://127.0.0.1:8002';
     this.client = axios.create({
       baseURL: this.baseUrl,
-      timeout: 120_000,
+      timeout: 300_000,
       headers: {
         'Content-Type': 'application/json',
         'X-Prmpt-Code-Intel-Root': getCodeIntelRoot(),

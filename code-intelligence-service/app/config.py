@@ -17,7 +17,7 @@ SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/deepseek/deeps
 RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "openrouter/deepseek/deepseek-chat")
 QUERY_REFINER_MODEL = os.environ.get("QUERY_REFINER_MODEL", "openrouter/deepseek/deepseek-chat")
 QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/openai/gpt-4o-mini")
-ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "openrouter/moonshotai/kimi-k2")
+ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "openrouter/deepseek/deepseek-chat")
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-large")
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1536"))
@@ -66,7 +66,7 @@ GRAPH_SEEDS_OPTIMIZE = int(os.environ.get("GRAPH_SEEDS_OPTIMIZE", "5"))
 GRAPH_DEPTH_OPTIMIZE = int(os.environ.get("GRAPH_DEPTH_OPTIMIZE", "3"))
 GRAPH_MAX_OPTIMIZE = int(os.environ.get("GRAPH_MAX_OPTIMIZE", "30"))
 
-ITERATIVE_REFINEMENT_THRESHOLD = float(os.environ.get("ITERATIVE_REFINEMENT_THRESHOLD", "0.5"))
+ITERATIVE_REFINEMENT_THRESHOLD = float(os.environ.get("ITERATIVE_REFINEMENT_THRESHOLD", "0.25"))
 MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "2"))
 STRUCTURE_SIMILARITY_WEIGHT = float(os.environ.get("STRUCTURE_SIMILARITY_WEIGHT", "0.25"))
 

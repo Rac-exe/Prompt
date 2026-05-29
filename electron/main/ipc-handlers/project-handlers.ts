@@ -599,6 +599,13 @@ export async function restoreActiveProject(): Promise<void> {
   try {
     const project = await _client.getProject(projectId);
     if (project) {
+      const badStatus = project.index_status === 'error' || project.index_status === 'stale';
+      if (badStatus) {
+        console.warn(`[ProjectHandlers] Persisted project ${projectId} has status '${project.index_status}' — skipping restore`);
+        activeProjectId = null;
+        activeProjectBranch = null;
+        return;
+      }
       if (project.local_path) {
         startWatching(project.id, project.local_path, _client!, branch || undefined, onWatcherIngest);
       }

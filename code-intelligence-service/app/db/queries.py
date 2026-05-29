@@ -833,78 +833,20 @@ def file_path_search(
 
 def upsert_communities(project_id: str, community_rows: list[dict]) -> dict[str, str]:
     """
-    Upsert community rows and return a label → UUID mapping for chunk writeback.
-
-    Each row must have: project_id, label, summary, summary_embedding,
-    member_count, level.
+    Upsert community rows and return a label → UUID mapping for chunk writeback
+    — delegates to local SQLite store.
     """
-    if not community_rows:
-        return {}
-    client = get_client()
-    label_to_id: dict[str, str] = {}
-    try:
-        result = client.table("communities").upsert(
-            community_rows, on_conflict="project_id,label"
-        ).execute()
-        for row in (result.data or []):
-            if row.get("label") and row.get("id"):
-                label_to_id[row["label"]] = str(row["id"])
-    except Exception as e:
-        logger.warning("[COMMUNITIES] Upsert failed (%s), trying insert individually", e)
-        for row in community_rows:
-            try:
-                result = client.table("communities").upsert(
-                    row, on_conflict="project_id,label"
-                ).execute()
-                if result.data and result.data[0].get("id"):
-                    label_to_id[row["label"]] = str(result.data[0]["id"])
-            except Exception as inner_e:
-                logger.error("[COMMUNITIES] Individual upsert failed for %r: %s", row.get("label"), inner_e)
-    return label_to_id
+    return _local_store.upsert_communities(project_id, community_rows)
 
 
 def get_all_project_chunk_ids(project_id: str) -> list[dict]:
     """Return all (id, name, file_path, chunk_type) rows for a project — used by graph builder."""
-    client = get_client()
-    all_rows: list[dict] = []
-    page_size = 1000
-    offset = 0
-    while True:
-        result = (
-            client.table("code_chunks")
-            .select("id,name,file_path,chunk_type,summary_code,semantic_summary")
-            .eq("project_id", project_id)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        rows = result.data or []
-        all_rows.extend(rows)
-        if len(rows) < page_size:
-            break
-        offset += page_size
-    return all_rows
+    return _local_store.get_all_project_chunk_ids(project_id)
 
 
 def get_all_project_relationships(project_id: str) -> list[dict]:
     """Return all relationship rows for a project — used by graph builder."""
-    client = get_client()
-    all_rows: list[dict] = []
-    page_size = 1000
-    offset = 0
-    while True:
-        result = (
-            client.table("code_relationships")
-            .select("id,from_chunk_id,to_chunk_id,relationship_type")
-            .eq("project_id", project_id)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        rows = result.data or []
-        all_rows.extend(rows)
-        if len(rows) < page_size:
-            break
-        offset += page_size
-    return all_rows
+    return _local_store.get_all_project_relationships(project_id)
 
 
 def update_chunks_graph_data(
@@ -913,40 +855,9 @@ def update_chunks_graph_data(
 ) -> int:
     """
     Write back pagerank_score, centrality_score, community_id, and
-    concept_embedding_1/2/3 to code_chunks.
-
-    Each row must have: id, pagerank_score, centrality_score, community_id.
-    Optionally: concept_embedding_1, concept_embedding_2, concept_embedding_3.
+    concept_embedding_1/2/3 to code_chunks — delegates to local SQLite store.
     """
-    if not chunk_graph_rows:
-        return 0
-    client = get_client()
-    processed = 0
-    for i in range(0, len(chunk_graph_rows), batch_size):
-        batch = chunk_graph_rows[i:i + batch_size]
-        for row in batch:
-            chunk_id = str(row.get("id", ""))
-            if not chunk_id:
-                continue
-            update_data: dict = {
-                "pagerank_score": row.get("pagerank_score", 0.0),
-                "centrality_score": row.get("centrality_score", 0.0),
-            }
-            if row.get("community_id"):
-                update_data["community_id"] = row["community_id"]
-            if row.get("concept_embedding_1"):
-                update_data["concept_embedding_1"] = row["concept_embedding_1"]
-            if row.get("concept_embedding_2"):
-                update_data["concept_embedding_2"] = row["concept_embedding_2"]
-            if row.get("concept_embedding_3"):
-                update_data["concept_embedding_3"] = row["concept_embedding_3"]
-            try:
-                client.table("code_chunks").update(update_data).eq("id", chunk_id).execute()
-                processed += 1
-            except Exception as e:
-                logger.warning("[GRAPH_DATA] Failed to update chunk %s: %s", chunk_id, e)
-    logger.info("[GRAPH_DATA] Updated %d/%d chunks with graph data", processed, len(chunk_graph_rows))
-    return processed
+    return _local_store.update_chunks_graph_data(chunk_graph_rows, batch_size)
 
 
 def update_relationship_embeddings(
@@ -954,28 +865,10 @@ def update_relationship_embeddings(
     batch_size: int = 50,
 ) -> int:
     """
-    Write relationship_summary and relationship_embedding back to code_relationships.
-
-    Each row must have: from_chunk_id, to_chunk_id, relationship_type,
-    relationship_summary, relationship_embedding.
+    Write relationship_summary and relationship_embedding back to code_relationships
+    — delegates to local SQLite store.
     """
-    if not rel_rows:
-        return 0
-    client = get_client()
-    processed = 0
-    for row in rel_rows:
-        try:
-            client.table("code_relationships").update({
-                "relationship_summary": row["relationship_summary"],
-                "relationship_embedding": row["relationship_embedding"],
-            }).eq("from_chunk_id", row["from_chunk_id"]).eq(
-                "to_chunk_id", row["to_chunk_id"]
-            ).eq("relationship_type", row["relationship_type"]).execute()
-            processed += 1
-        except Exception as e:
-            logger.warning("[REL_EMBED] Failed to update relationship: %s", e)
-    logger.info("[REL_EMBED] Updated %d/%d relationships with embeddings", processed, len(rel_rows))
-    return processed
+    return _local_store.update_relationship_embeddings(rel_rows, batch_size)
 
 
 # ── Graph-aware retrieval RPCs ────────────────────────────────────────────────
