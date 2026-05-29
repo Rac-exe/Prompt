@@ -5,7 +5,6 @@ from app.auth import require_auth
 from app.db.models import IngestRequest
 from app.db import queries
 from app.workers.index_worker import process_ingest_batch
-from app.services.graph import process_call_graph, process_import_edges
 from app.config import MAX_CHUNKS_PER_INGEST, REDIS_URL
 
 logger = logging.getLogger("code-intel.routes.ingest")
@@ -108,22 +107,8 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
             language_map=body.language_map,
             cleanup_scope=body.cleanup_scope,
             cleanup_keys=body.cleanup_keys,
+            call_graph=body.call_graph or [],
         )
-
-        if body.call_graph:
-            logger.info(f"Processing {len(body.call_graph)} call graph edges for project {project_id}")
-            process_call_graph(project_id, body.call_graph)
-
-        # Build function-level import edges (denser than file-level, critical for PageRank)
-        # These give every imported symbol an incoming edge from each file that imports it,
-        # which is what drives the PageRank score that separates implementers from callers.
-        if body.chunks:
-            chunks_with_imports = sum(1 for c in body.chunks if c.imports)
-            logger.info(
-                f"[IMPORT_EDGES] Processing import edges: {len(body.chunks)} chunks, "
-                f"{chunks_with_imports} have imports, project={project_id}"
-            )
-            process_import_edges(project_id, body.chunks)
 
         logger.info(f"Background ingest task complete for project {project_id}")
 

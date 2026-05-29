@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import sentry_sdk
 
 from app.config import GRAPH_BUILDER_ENABLED, SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
-from app.db.models import ChunkInput, ChunkKey
+from app.db.models import CallGraphEdge, ChunkInput, ChunkKey
 from app.db.queries import (
     cleanup_stale_chunks,
     cleanup_stale_chunks_for_files,
@@ -123,6 +123,7 @@ async def process_ingest_batch(
     language_map: dict[str, int] | None = None,
     cleanup_scope: str = "none",
     cleanup_keys: list[ChunkKey] | None = None,
+    call_graph: list[CallGraphEdge] | None = None,
 ):
     t_start = time.perf_counter()
     update_project_status(project_id, "indexing")
@@ -147,6 +148,16 @@ async def process_ingest_batch(
         logger.info(
             f"[project={project_id}] Ingest complete: all unchanged, skipped={skipped}, stale={stale_count}"
         )
+        # Edges still need to be refreshed before the graph pipeline even when
+        # no chunks changed — ensures new call-graph data from this session is in DB.
+        from app.services.graph import process_call_graph, process_import_edges
+        if call_graph:
+            logger.info(f"[project={project_id}] Processing {len(call_graph)} call graph edges (unchanged path)")
+            process_call_graph(project_id, call_graph)
+        chunks_with_imports = sum(1 for c in chunks if c.imports)
+        if chunks_with_imports:
+            process_import_edges(project_id, chunks)
+
         # Graph pipeline still needs to run if it hasn't produced community data yet,
         # or if the graph builder was just enabled. Pass empty summaries/rows — PageRank
         # and Leiden operate on the full DB snapshot, concept phrases are just skipped.
@@ -240,6 +251,16 @@ async def process_ingest_batch(
         f"[project={project_id}] Upsert complete: rows={len(rows)}, processed={processed}, errors={errors}"
     )
 
+    # ── Edge processing: must run BEFORE graph pipeline so PageRank sees current edges ──
+    from app.services.graph import process_call_graph, process_import_edges
+    if call_graph:
+        logger.info(f"[project={project_id}] Processing {len(call_graph)} call graph edges (pre-graph-pipeline)")
+        process_call_graph(project_id, call_graph)
+    chunks_with_imports = sum(1 for c in chunks if c.imports)
+    if chunks_with_imports:
+        logger.info(f"[project={project_id}] Processing import edges: {chunks_with_imports}/{len(chunks)} chunks have imports")
+        process_import_edges(project_id, chunks)
+
     # ── Graph pipeline (PageRank + Leiden + community reports + concept embeddings)
     if GRAPH_BUILDER_ENABLED:
         await _run_graph_pipeline(project_id, summaries, rows)
@@ -288,6 +309,9 @@ async def _run_graph_pipeline(
     try:
         # ── Step 1: Load full project graph from DB ───────────────────────────
         t_step = time.perf_counter()
+        from app.db.local_store import get_project_db_path
+        _db_path = get_project_db_path(project_id)
+        logger.info("[GRAPH_PIPELINE] ► Step 1/9 — DB path: %s (exists=%s)", _db_path, _db_path.exists())
         chunk_rows = get_all_project_chunk_ids(project_id)
         relationship_rows = get_all_project_relationships(project_id)
         logger.info(

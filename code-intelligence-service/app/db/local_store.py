@@ -348,7 +348,6 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = 500) -> int:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(project_id, file_path, name, chunk_type) DO UPDATE SET
-                  id = excluded.id,
                   user_id = excluded.user_id,
                   start_line = excluded.start_line,
                   end_line = excluded.end_line,
