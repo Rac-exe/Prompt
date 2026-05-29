@@ -20,21 +20,69 @@ It runs in your system tray. It hooks into your keyboard at the OS level. It boo
 
 ---
 
-## How It Actually Works
+## Project Overview
 
-### Type `@prompt` Anywhere
+Prmpt is built around three connected systems: **Prompt**, **Overlay**, and **Spaces**. Prompt is the intelligence layer, Overlay is the operating-system layer, and Spaces is the code-context layer.
 
-A Rust-compiled, platform-dispatched global keyboard hook monitors every keystroke across the entire operating system — `WH_KEYBOARD_LL` on Windows, `CGEventTap` (Core Graphics) on macOS. When you type `@prompt` in VS Code, Slack, Notion, a browser text field, Discord — anywhere — the hook fires, erases the trigger text from your app (`SendInput` on Windows, `CGEventPost` + clipboard restore on macOS), and opens a floating overlay panel near your cursor. Optimized result → click "Insert" → it's back in your original app. No window switching. No copy-paste.
+### 1. Prompt — The Optimization Engine
 
-> **macOS note:** On first launch, macOS will prompt you to grant **Accessibility** permission in System Settings → Privacy & Security → Accessibility. The keyboard hook and text replacement require this — without it, `@prompt` cannot fire and the in-place insert is disabled. Prmpt detects the permission state and surfaces a guided prompt.
+Prompt is the core product loop: take a rough instruction, understand what the user is actually trying to do, and turn it into a structured prompt that produces better model output with less wasted context.
 
-### Smart Clarification Before Optimization
+When a user submits a prompt, Prmpt routes it through a Python/FastAPI optimization service. The pipeline can classify the prompt, detect missing information, ask clarifying questions, attach files, apply custom instructions, use memory, and stream the final optimized result back to the desktop app. For simple prompts it stays fast; for complex implementation requests it can produce task-style output with ordered steps, constraints, and dependencies.
 
-Before optimizing, the pipeline runs a fast LLM analysis pass to detect what your prompt is missing. For a vague prompt like "fix this button hover", it asks: what framework? React + Tailwind? Vanilla CSS? Vue? The optimizer fabricates these details if you don't specify — Prmpt prevents that. For complex multi-part builds, it generates a structured task graph and produces a prompt broken into ordered, dependency-aware implementation sections.
+The Prompt layer includes:
+- **Prompt optimization** — rewrites vague or under-specified prompts into precise, model-ready instructions.
+- **Clarification** — asks targeted questions before optimization when the input is missing important details.
+- **Task planning** — breaks complex requests into ordered implementation sections instead of one messy blob.
+- **Streaming output** — returns tokens through WebSocket so the user sees progress immediately.
+- **Memory and custom instructions** — learns stable preferences and applies user-defined rules across future optimizations.
+- **Prompt library** — saves useful outputs into collections that can be reused, edited, shared, and copied later.
+- **History and versioning** — keeps previous conversations, regenerated answers, edits, and feedback.
 
-### Your Codebase as Context
+Production users do not provide model keys. Prmpt manages provider routing, billing, and model access through our own backend services. Development builds can use local `.env` values for contributor testing.
 
-The **Spaces** feature indexes your local code repositories using Tree-sitter AST parsing and pgvector semantic search. When you write a prompt about a bug or feature in your codebase, Prmpt retrieves the exact functions, classes, and files relevant to your query — with actual code bodies, call graphs, and branch diff context — and injects them directly into the optimizer's system prompt. Your AI coding assistant finally has the context it needs.
+### 2. Overlay — The OS Layer and How Everything Connects
+
+Overlay is what makes Prmpt feel native instead of like another chat tab. A Rust/N-API native module installs platform-specific keyboard hooks: `WH_KEYBOARD_LL` on Windows and `CGEventTap` on macOS. When the user types `@prompt` anywhere, Prmpt detects the trigger, removes it from the active application, opens a small floating overlay near the cursor, and keeps the user in the same workflow.
+
+The overlay is a frameless, always-on-top Electron window. It is preloaded in the background so it opens quickly, supports text input, clarification cards, attachments, voice input, streaming output, and one-click insertion back into the originating application. Text insertion uses OS-level APIs: `SendInput` on Windows and `CGEventPost` with clipboard restore on macOS.
+
+The connection flow is:
+
+```text
+User types @prompt in any app
+  -> native keyboard hook detects the trigger
+  -> Electron main process opens the Overlay
+  -> Overlay sends the prompt to the Python optimization service
+  -> Prompt pipeline clarifies, plans, optimizes, and streams output
+  -> User clicks Insert
+  -> Electron main process writes the optimized text back into the original app
+```
+
+Overlay also stays connected to the main app window. Auth state, active project status, Python service availability, offline state, and code-intel project updates are broadcast through IPC so the overlay can show whether Prmpt is ready, indexing, offline, or using an active Space as context.
+
+> **macOS note:** On first launch, macOS prompts for **Accessibility** permission in System Settings → Privacy & Security → Accessibility. The keyboard hook and text replacement require this. Prmpt detects the permission state and surfaces a guided prompt.
+
+### 3. Spaces — Code Context and Local Intelligence
+
+Spaces are named workspaces connected to local repositories. They let Prmpt understand the user's actual codebase instead of optimizing prompts in isolation. A Space can index a project, watch it for changes, retrieve relevant files/functions, and feed that context into the prompt pipeline.
+
+Electron owns the local filesystem side. It watches project folders with Chokidar, parses files with Tree-sitter WASM, extracts functions/classes/methods/imports/callees/signatures/line ranges, and skips unchanged files using SHA-256 hash checks. The code-intelligence service owns the indexing and retrieval logic: summarization, embeddings, hybrid search, reranking, graph expansion, and answer generation.
+
+Phase 1 local code-intel stores the heavy index locally instead of in Supabase:
+- **Local SQLite per project** — `code-intel/projects/<project_id>/index.db` stores chunk metadata, embeddings, summaries, relationships, communities, retrieval logs, FTS index, and file hashes.
+- **No full source bodies in DB** — the DB stores `file_path`, `start_line`, and `end_line`; code snippets are read from the user's filesystem at retrieval time.
+- **Live freshness** — file watchers update changed files, and Find mode can run a hash-diff freshness scan before retrieval so stale line ranges are repaired.
+- **Server-side provider keys** — embeddings and LLM operations go through Prmpt-controlled services/proxy APIs; provider keys are not bundled into the desktop app.
+- **Supabase stays lightweight** — auth, user data, chat history, prompt library, settings, analytics, and slim project metadata can remain remote. Heavy code chunks, vectors, relationships, and graph search data stay local.
+
+Spaces has four user-facing modes:
+- **Find** — fast code lookup with files, symbols, and exact line ranges.
+- **Ask** — answers questions about the codebase with probable source locations.
+- **Bug** — retrieves likely bug locations and related context for debugging prompts.
+- **Optimize** — builds a context-rich implementation prompt from the most relevant code.
+
+Spaces connects back into Prompt and Overlay. The main app is where users manage Spaces, add repositories, and inspect results. The overlay can show the active Space status and use indexed context when optimizing a prompt. The result is a desktop prompt optimizer that understands both what the user typed and the codebase they are working inside.
 
 ---
 
@@ -45,9 +93,9 @@ The **Spaces** feature indexes your local code repositories using Tree-sitter AS
 | **Desktop Shell** | Electron v32 · Node.js | Global keyboard hooks, system tray, offline filesystem, transparent frameless windows — impossible in a browser |
 | **UI** | React 18 · TypeScript · Vite · Tailwind CSS · Radix UI | Concurrent rendering handles 30+ state updates/second during streaming without jank |
 | **AI Pipeline** | Python · FastAPI · WebSocket · LiteLLM | Python-native AI ecosystem (LiteLLM, PyMuPDF, faster-whisper, torch, scipy) — no Node equivalents exist |
-| **Code Indexing (Electron-side)** | Tree-sitter WASM · Chokidar · SQLite hash cache | Parses your repo into structural chunks in the desktop process, watches for file changes (2s debounce, hash-skipped), ships only deltas to the service |
-| **Code Intelligence Service** | Python · FastAPI · OpenAI embeddings (512-dim) · Supabase + pgvector (HNSW) · ARQ + Redis (optional) | Hybrid retrieval: multi-query vector + full-text + concept + path search → RRF → rerank → graph expansion. Sub-100ms p50 |
-| **Database** | Supabase · PostgreSQL · RLS · pgvector HNSW | Managed Postgres with Row-Level Security, built-in auth, edge functions, vector ANN over chunks |
+| **Code Indexing (Electron-side)** | Tree-sitter WASM · Chokidar · local SQLite hash cache | Parses your repo into structural chunks in the desktop process, watches for file changes, hash-skips unchanged files, and ships only deltas to the code-intel runtime |
+| **Code Intelligence Service** | Python · FastAPI · local SQLite · FTS5 · embeddings via Prmpt AI proxy | Hybrid retrieval: vector + full-text + concept + path search → RRF → rerank → graph expansion, with heavy code-intel data stored locally |
+| **Database** | Supabase · PostgreSQL · RLS + local SQLite | Supabase handles auth, product data, chats, library, settings, and analytics. Local SQLite handles per-project code-intel indexes |
 | **OS Integration** | Rust · N-API (napi-rs) · WH_KEYBOARD_LL (Win) · CGEventTap (macOS) | One memory-safe crate, two platform backends behind the same `TriggerAnchor` API. Selective text replacement with thread-safe N-API callback into Node |
 | **Voice Input** | faster-Whisper · Silero VAD | Local transcription — no cloud API key required; VAD filters silence so Whisper only sees speech frames |
 | **Error Tracking & Tracing** | Sentry (4 surfaces: Electron main, React app, React overlay, both Python services) | Spans, breadcrumbs, tags, session replay (renderers), `FastApiIntegration` (Python). All prompt content scrubbed via `beforeSend` before transmission |
@@ -86,7 +134,7 @@ The App Window is a 1400×900 SPA with a custom title bar and sidebar navigation
 - Create named workspaces and attach local code repositories
 - Tree-sitter parses your codebase into functions, classes, and methods with signatures and call graphs
 - File watcher incrementally re-indexes changed files (2s debounce, hash-checked to skip unchanged)
-- Semantic search retrieves the most relevant code — with actual code bodies — for any query
+- Hybrid local search retrieves the most relevant code metadata and hydrates current snippets from the filesystem
 - Branch-aware context flags files modified in the current branch
 - Compose a context-rich prompt and send it to the full optimizer
 
@@ -141,14 +189,14 @@ Session tracking with crash recovery detection. Granular usage events batched to
 
 ### Code Intelligence Service (Spaces)
 
-A separate FastAPI microservice at `code-intelligence-service/` (port `8002`) is the **server-side brain of Spaces**. The Electron main process owns parsing and watching; this service owns embedding, retrieval, and storage.
+A separate FastAPI service at `code-intelligence-service/` (port `8002`) is the retrieval brain of Spaces. Electron owns parsing and watching; the service owns summarization, embeddings, search, reranking, graph expansion, and answer generation.
 
-- **Six route groups** under `/api`: `projects`, `index/ingest`, `retrieve`, `context`, `sync`, `webhooks/github`
-- **Embeddings**: OpenAI `text-embedding-3-small` at **512 dimensions** (reduced for HNSW efficiency)
-- **Hybrid retrieval pipeline**: query preprocessing → multi-query decomposition → parallel vector ANN + full-text + concept + file-path search → Reciprocal Rank Fusion → rerank → call-graph expansion
-- **Storage**: Supabase pgvector with an **HNSW** index (`m=16, ef_construction=64`) on chunk embeddings — replaced an earlier IVFFlat index for better recall at small project scales
-- **Async ingest workers**: ARQ + Redis (optional; falls back to inline async tasks). `index_worker` batch-embeds new/changed chunks; `arq_worker` runs the queue; `sync_worker` polls GitHub repos
-- **Local SQLite cache** (in the *Electron* process at `electron/main/database/local-project-cache.ts`) stores file content hashes so unchanged files skip re-ingestion entirely
+- **Route groups** under `/api`: `projects`, `index/ingest`, `retrieve`, `context`, `sync`, `webhooks/github`, `feedback`, `pipeline`, and graph visualization
+- **Local storage**: per-project SQLite `index.db` with chunks, summaries, embeddings, relationships, communities, FTS5, retrieval logs, and file hashes
+- **No code bodies stored**: source snippets are hydrated from the local filesystem using `file_path + start_line + end_line`
+- **Hybrid retrieval pipeline**: query preprocessing → multi-query decomposition → vector search + FTS5 + concept + file-path search → Reciprocal Rank Fusion → rerank → call-graph expansion
+- **Freshness model**: Chokidar detects saves/renames/deletes, SHA-256 hashes skip unchanged files, and Find mode can run a hash-diff scan before returning results
+- **Provider boundary**: embeddings and LLM calls route through Prmpt-controlled services/proxy APIs so provider keys stay server-side
 
 ---
 
@@ -157,22 +205,33 @@ A separate FastAPI microservice at `code-intelligence-service/` (port `8002`) is
 | Requirement | Version | Notes |
 |---|---|---|
 | OS | Windows 10/11 (x64) **or** macOS 12+ (Apple Silicon recommended) | Native `.node` artifacts shipped for both |
-| Node.js | 18+ | For Electron and the React frontend |
-| Python | 3.10+ | For the AI / transcription service and the Code Intelligence service |
-| OpenRouter API key | — | [openrouter.ai/keys](https://openrouter.ai/keys) — access to all LLM models |
-| OpenAI API key | — | Required for `text-embedding-3-small` in the Code Intelligence service |
-| Supabase project | — | Auth, chat history, library, memory, code intelligence (pgvector HNSW) |
-| Cloudinary account | — | Avatar and file attachment storage |
-| Redis | optional | Enables ARQ background ingest workers in the Code Intelligence service. Falls back to inline async tasks if absent |
-| Rust + `cargo` | stable | Only needed to rebuild the native module from source (Windows or macOS) |
 
-> Pre-compiled native binaries are checked in for both platforms — `native/platform-core/platform-core.win32-x64-msvc.node` and `native/platform-core/platform-core.darwin-arm64.node`. You only need Rust if you modify native code.
->
+Prmpt handles everything else under the hood. All AI models, embedding services, database infrastructure, and cloud storage are managed by us. No API keys, no third-party accounts, no configuration required from the user.
+
 > **macOS Accessibility:** the keyboard hook (`CGEventTap`) and text replacement (`CGEventPost`) require **Accessibility** permission. Grant it once in System Settings → Privacy & Security → Accessibility. The app polls for the permission and surfaces a dialog if missing.
+
+### For Contributors
+
+If you're building from source, see the [Development Setup](#development-setup) section below for the full stack requirements (Node.js, Python, Rust, etc.).
 
 ---
 
 ## Installation
+
+Download the latest installer from [tryprmpt.com](https://tryprmpt.com):
+
+- **Windows:** `.exe` installer (x64)
+- **macOS:** `.dmg` installer (Apple Silicon / Intel)
+
+Install, sign up, and you're ready to go.
+
+---
+
+<a id="development-setup"></a>
+
+## Development Setup
+
+> For contributors building from source only. End users should use the installer above.
 
 ```bash
 # 1. Clone the repository
@@ -199,12 +258,14 @@ cd code-intelligence-service && python3 -m venv .venv && \
 # 5. Configure environment variables
 cp .env.example .env
 cp code-intelligence-service/.env.example code-intelligence-service/.env
-# Open both .env files and fill in your credentials
+# Fill in your development credentials (see .env.example for details)
 ```
 
 ---
 
 ## Environment Variables
+
+> **For development only.** Production builds ship with managed credentials. Contributors building from source need their own keys.
 
 Copy `.env.example` to `.env` and fill in all values:
 
@@ -276,6 +337,8 @@ APP_VERSION=1.0.1
 ---
 
 ## Database Setup
+
+> **For development only.** Production database is managed by the Prmpt team.
 
 Apply the Supabase migrations to your project:
 
