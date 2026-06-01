@@ -24,8 +24,8 @@ logger = logging.getLogger("prmpt.project_context")
 CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
 
 MAX_BODY_PER_CHUNK = 2000
-MAX_PROBABLE_IN_CONTEXT = 20
-MAX_RELATED_IN_CONTEXT = 8
+MAX_PROBABLE_IN_CONTEXT = 8
+MAX_RELATED_IN_CONTEXT = 4
 
 
 @dataclass
@@ -324,7 +324,8 @@ def _format_probable_locations(
                 lines.append("  Note: modified in current branch")
 
             code_body = loc.get("code_body")
-            if code_body:
+            include_code_body = rank_idx < 3
+            if code_body and include_code_body:
                 lines.append(f"  ```{lang}")
                 for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
                     lines.append(f"  {code_line}")
