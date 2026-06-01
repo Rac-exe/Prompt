@@ -983,6 +983,23 @@ def get_project_summary(project_id: str) -> Optional[str]:
     return _local_store.get_project_summary(project_id)
 
 
+def warm_project_retrieval_cache(project_id: str) -> None:
+    """
+    Preload community reports and top PageRank metadata into in-memory cache.
+    Called in the background on project open/select so first Ask/Optimize is less cold.
+    """
+    try:
+        community_reports = _local_store.list_community_reports(project_id, limit=20)
+        _cache.set(f"warm_communities:{project_id}", community_reports)
+    except Exception as e:
+        logger.warning("Warm community cache failed for %s: %s", project_id, e)
+    try:
+        top_chunks = _local_store.list_top_pagerank_chunks(project_id, limit=50)
+        _cache.set(f"warm_top_pagerank:{project_id}", top_chunks)
+    except Exception as e:
+        logger.warning("Warm pagerank cache failed for %s: %s", project_id, e)
+
+
 # ── Phase 1 local code-intel backend overrides ───────────────────────────────
 #
 # Keep project auth/registry reads on Supabase, but route the heavy code-intel

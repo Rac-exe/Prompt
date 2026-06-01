@@ -879,6 +879,39 @@ def get_all_project_relationships(project_id: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def list_community_reports(project_id: str, limit: int = 20) -> list[dict]:
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, label, summary, member_count, level
+            FROM communities
+            WHERE project_id = ?
+            ORDER BY member_count DESC, updated_at DESC
+            LIMIT ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    reports = [dict(row) for row in rows]
+    for report in reports:
+        report["similarity"] = 0.0
+    return reports
+
+
+def list_top_pagerank_chunks(project_id: str, limit: int = 50) -> list[dict]:
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, file_path, name, chunk_type, pagerank_score, centrality_score, community_id
+            FROM code_chunks
+            WHERE project_id = ?
+            ORDER BY pagerank_score DESC
+            LIMIT ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def update_chunks_graph_data(chunk_graph_rows: list[dict], batch_size: int = 50) -> int:
     if not chunk_graph_rows:
         return 0

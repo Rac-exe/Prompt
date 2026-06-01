@@ -10,6 +10,8 @@ exponential backoff.
 import asyncio
 import time
 import logging
+from collections import OrderedDict
+from threading import Lock
 import litellm
 import sentry_sdk
 from app.config import (
@@ -25,6 +27,9 @@ logger = logging.getLogger("code-intel.embedding")
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
+QUERY_EMBED_CACHE_MAX = 512
+_query_embed_cache: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+_query_embed_lock = Lock()
 
 
 def _get_model_and_kwargs() -> tuple[str, dict]:
@@ -101,8 +106,20 @@ async def _embed_with_retry(texts: list[str], dimensions: int = EMBEDDING_DIMENS
 
 
 async def embed_text(text: str) -> list[float]:
+    cache_key = (EMBEDDING_MODEL, text)
+    with _query_embed_lock:
+        cached = _query_embed_cache.get(cache_key)
+        if cached is not None:
+            _query_embed_cache.move_to_end(cache_key)
+            return list(cached)
     results = await _embed_with_retry([text])
-    return results[0]
+    vector = results[0]
+    with _query_embed_lock:
+        _query_embed_cache[cache_key] = vector
+        _query_embed_cache.move_to_end(cache_key)
+        while len(_query_embed_cache) > QUERY_EMBED_CACHE_MAX:
+            _query_embed_cache.popitem(last=False)
+    return vector
 
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:

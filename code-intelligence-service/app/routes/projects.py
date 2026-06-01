@@ -1,4 +1,5 @@
 import logging
+import asyncio
 import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException
 from app.auth import require_auth
@@ -42,6 +43,7 @@ async def get_project(project_id: str, auth: dict = Depends(require_auth)):
     project = queries.get_project(project_id, user_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    asyncio.create_task(asyncio.to_thread(queries.warm_project_retrieval_cache, project_id))
     return project
 
 
