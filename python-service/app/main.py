@@ -978,10 +978,17 @@ async def optimize_stream(websocket: WebSocket):
                 logger.error(f"✗ Error processing request {request_id}: {e}")
                 import traceback
                 traceback.print_exc()
+                message = "Optimization failed. Please try again."
+                try:
+                    from pipeline_v2.project_context import ProjectContextUnavailableError
+                    if isinstance(e, ProjectContextUnavailableError):
+                        message = str(e)
+                except Exception:
+                    pass
                 await websocket.send_json({
                     "type": "error",
                     "request_id": request_id,
-                    "message": "Optimization failed. Please try again."
+                    "message": message
                 })
                 
     except WebSocketDisconnect:

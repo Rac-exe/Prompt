@@ -35,6 +35,10 @@ class ProjectContext:
     concepts: list[str] = field(default_factory=list)
 
 
+class ProjectContextUnavailableError(RuntimeError):
+    """Raised when project-attached optimization cannot obtain code context."""
+
+
 def fetch_project_context(
     project_id: str,
     user_query: str,

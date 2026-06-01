@@ -30,7 +30,11 @@ from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 from .document_parser import parse_files
 from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
-from .project_context import fetch_project_context, ProjectContext
+from .project_context import (
+    fetch_project_context,
+    ProjectContext,
+    ProjectContextUnavailableError,
+)
 
 litellm.set_verbose = False
 
@@ -332,10 +336,18 @@ def optimize(
                 logger.info(f"Project context retrieved ({len(project_context_text)} chars), "
                             f"intent={project_ctx.intent}, concepts={project_ctx.concepts}")
             else:
-                logger.info("Project context returned None")
+                logger.warning("Project context returned None for project=%s", project_id)
+                raise ProjectContextUnavailableError(
+                    "Couldn't load project context for this space. The code index may be unavailable or reindexing. Retry in a few seconds."
+                )
         except Exception as e:
+            if isinstance(e, ProjectContextUnavailableError):
+                raise
             sentry_sdk.capture_exception(e)
             logger.error(f"Project context fetch failed: {e}", exc_info=True)
+            raise ProjectContextUnavailableError(
+                "Couldn't load project context for this space. The code index may be unavailable or reindexing. Retry in a few seconds."
+            ) from e
 
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
