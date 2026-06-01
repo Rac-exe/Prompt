@@ -11,9 +11,14 @@ from app.db.supabase_client import get_client
 from app.db import local_store as _local_store
 from app.config import (
     CACHE_TTL_SECONDS,
+    EMBEDDING_BACKEND,
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_LOCAL_MODEL,
+    EMBEDDING_MODEL,
     GRAPH_MAX_DEPTH,
     GRAPH_MAX_RELATED,
     STORAGE_BACKEND,
+    STRUCTURE_EMBEDDING_DIMENSIONS,
     UPSERT_BATCH_PAUSE_SECONDS,
     UPSERT_BATCH_SIZE,
 )
@@ -998,6 +1003,50 @@ def warm_project_retrieval_cache(project_id: str) -> None:
         _cache.set(f"warm_top_pagerank:{project_id}", top_chunks)
     except Exception as e:
         logger.warning("Warm pagerank cache failed for %s: %s", project_id, e)
+
+
+def active_embedding_signature() -> tuple[str, int, int]:
+    model_name = EMBEDDING_LOCAL_MODEL if EMBEDDING_BACKEND == "local" else EMBEDDING_MODEL
+    return model_name, EMBEDDING_DIMENSIONS, STRUCTURE_EMBEDDING_DIMENSIONS
+
+
+def update_project_embedding_config(project_id: str) -> None:
+    model_name, embed_dim, structure_dim = active_embedding_signature()
+    _local_store.update_project_embedding_config(
+        project_id,
+        embedding_model=model_name,
+        embedding_dimensions=embed_dim,
+        structure_embedding_dimensions=structure_dim,
+    )
+
+
+def ensure_project_embedding_compatibility(project_id: str) -> bool:
+    """
+    Returns True when project vectors were built with the active embedding config.
+    Returns False and marks project stale when mismatch is detected.
+    """
+    stored = _local_store.get_project_embedding_config(project_id)
+    if stored is None:
+        return True
+    model_name, embed_dim, structure_dim = active_embedding_signature()
+    if (
+        stored.get("embedding_model") == model_name
+        and int(stored.get("embedding_dimensions") or 0) == int(embed_dim)
+        and int(stored.get("structure_embedding_dimensions") or 0) == int(structure_dim)
+    ):
+        return True
+    logger.warning(
+        "[EMBEDDING_MISMATCH] project=%s stored=(%s,%s,%s) active=(%s,%s,%s) -> marking stale",
+        project_id,
+        stored.get("embedding_model"),
+        stored.get("embedding_dimensions"),
+        stored.get("structure_embedding_dimensions"),
+        model_name,
+        embed_dim,
+        structure_dim,
+    )
+    update_project_status(project_id, "stale")
+    return False
 
 
 # ── Phase 1 local code-intel backend overrides ───────────────────────────────

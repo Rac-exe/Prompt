@@ -129,6 +129,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           last_indexed_at TEXT,
           project_summary TEXT,
           tech_stack_json TEXT,
+          embedding_model TEXT,
+          embedding_dimensions INTEGER,
+          structure_embedding_dimensions INTEGER,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -255,6 +258,20 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_communities_project ON communities(project_id);
         """
     )
+    _ensure_projects_local_columns(conn)
+
+
+def _ensure_projects_local_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(projects_local)").fetchall()
+    }
+    if "embedding_model" not in existing:
+        conn.execute("ALTER TABLE projects_local ADD COLUMN embedding_model TEXT")
+    if "embedding_dimensions" not in existing:
+        conn.execute("ALTER TABLE projects_local ADD COLUMN embedding_dimensions INTEGER")
+    if "structure_embedding_dimensions" not in existing:
+        conn.execute("ALTER TABLE projects_local ADD COLUMN structure_embedding_dimensions INTEGER")
 
 
 def sync_project(project: dict | None) -> None:
@@ -334,6 +351,60 @@ def update_project_summary(project_id: str, summary: str, tech_stack: dict | Non
             """,
             (project_id, summary, _json_dumps(tech_stack) if tech_stack is not None else None),
         )
+
+
+def update_project_embedding_config(
+    project_id: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+    structure_embedding_dimensions: int,
+) -> None:
+    with connect(project_id) as conn:
+        conn.execute(
+            """
+            INSERT INTO projects_local (
+              id,
+              embedding_model,
+              embedding_dimensions,
+              structure_embedding_dimensions,
+              updated_at
+            )
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(id) DO UPDATE SET
+              embedding_model = excluded.embedding_model,
+              embedding_dimensions = excluded.embedding_dimensions,
+              structure_embedding_dimensions = excluded.structure_embedding_dimensions,
+              updated_at = datetime('now')
+            """,
+            (
+                project_id,
+                embedding_model,
+                int(embedding_dimensions),
+                int(structure_embedding_dimensions),
+            ),
+        )
+
+
+def get_project_embedding_config(project_id: str) -> dict | None:
+    with connect(project_id) as conn:
+        row = conn.execute(
+            """
+            SELECT embedding_model, embedding_dimensions, structure_embedding_dimensions
+            FROM projects_local
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+    if not row:
+        return None
+    if row["embedding_model"] is None:
+        return None
+    return {
+        "embedding_model": row["embedding_model"],
+        "embedding_dimensions": int(row["embedding_dimensions"] or 0),
+        "structure_embedding_dimensions": int(row["structure_embedding_dimensions"] or 0),
+    }
 
 
 def get_project_summary(project_id: str) -> Optional[str]:

@@ -24,8 +24,11 @@ QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/open
 ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "openrouter/deepseek/deepseek-chat")
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-large")
-EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", "1536"))
-STRUCTURE_EMBEDDING_DIMENSIONS = int(os.environ.get("STRUCTURE_EMBEDDING_DIMENSIONS", "1536"))
+EMBEDDING_BACKEND = os.environ.get("EMBEDDING_BACKEND", "remote").lower()
+EMBEDDING_LOCAL_MODEL = os.environ.get("EMBEDDING_LOCAL_MODEL", "Xenova/bge-small-en-v1.5")
+_EMBEDDING_DIM_DEFAULT = "384" if EMBEDDING_BACKEND == "local" else "1536"
+EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", _EMBEDDING_DIM_DEFAULT))
+STRUCTURE_EMBEDDING_DIMENSIONS = int(os.environ.get("STRUCTURE_EMBEDDING_DIMENSIONS", _EMBEDDING_DIM_DEFAULT))
 
 GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")

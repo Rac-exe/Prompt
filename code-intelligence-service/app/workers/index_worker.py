@@ -17,17 +17,20 @@ import sentry_sdk
 from app.config import GRAPH_BUILDER_ENABLED, SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
 from app.db.models import CallGraphEdge, ChunkInput, ChunkKey
 from app.db.queries import (
+    active_embedding_signature,
     cleanup_stale_chunks,
     cleanup_stale_chunks_for_files,
     get_all_project_chunk_ids,
     get_all_project_relationships,
     get_existing_chunk_hashes,
     update_chunks_graph_data,
+    update_project_embedding_config,
     update_project_status,
     update_relationship_embeddings,
     upsert_chunks_batch,
     upsert_communities,
 )
+from app.db.local_store import get_project_embedding_config
 from app.services import cache as _cache
 from app.services.community import invalidate_community_cache
 from app.services.context_builder import EnrichedChunk, build_enriched_chunks
@@ -135,7 +138,29 @@ async def process_ingest_batch(
         f"cleanup_keys={len(cleanup_keys or [])}"
     )
 
-    new_chunks = _filter_unchanged(project_id, chunks)
+    active_model, active_dim, active_structure_dim = active_embedding_signature()
+    stored_embedding = get_project_embedding_config(project_id)
+    embedding_mismatch = bool(
+        stored_embedding
+        and (
+            stored_embedding.get("embedding_model") != active_model
+            or int(stored_embedding.get("embedding_dimensions") or 0) != int(active_dim)
+            or int(stored_embedding.get("structure_embedding_dimensions") or 0) != int(active_structure_dim)
+        )
+    )
+    if embedding_mismatch:
+        logger.warning(
+            "[project=%s] Embedding config mismatch detected; re-embedding all chunks. "
+            "stored=%s active=(%s,%s,%s)",
+            project_id,
+            stored_embedding,
+            active_model,
+            active_dim,
+            active_structure_dim,
+        )
+        new_chunks = chunks
+    else:
+        new_chunks = _filter_unchanged(project_id, chunks)
     skipped = len(chunks) - len(new_chunks)
     logger.info(
         f"[project={project_id}] Hash filter: new={len(new_chunks)}, skipped={skipped}"
@@ -174,6 +199,7 @@ async def process_ingest_batch(
         update_project_status(project_id, final_status, last_indexed_at=now)
         if final_status == "ready":
             _cache.invalidate(f"project_summary:{project_id}")
+        update_project_embedding_config(project_id)
         logger.info(
             f"[project={project_id}] Ingest complete: all unchanged, status={final_status}, "
             f"skipped={skipped}, stale={stale_count}"
@@ -303,6 +329,8 @@ async def process_ingest_batch(
     update_project_status(project_id, final_status, last_indexed_at=now)
     if final_status == "ready":
         _cache.invalidate(f"project_summary:{project_id}")
+    if final_status != "error":
+        update_project_embedding_config(project_id)
     logger.info(
         f"[project={project_id}] Ingest complete: status={final_status}, "
         f"processed={processed}, skipped={skipped}, errors={errors}, stale={stale_count}, "
