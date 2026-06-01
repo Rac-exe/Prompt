@@ -37,6 +37,7 @@ from app.config import (
     PIPELINE_TAG, PIPELINE_FINGERPRINT,
     GRAPH_BUILDER_ENABLED, CONCEPT_PHRASE_PER_CHUNK, FIND_PAGERANK_WEIGHT,
 )
+from app.runtime_state import is_service_ready, set_service_ready
 
 log_level = logging.INFO
 logging.basicConfig(
@@ -136,6 +137,19 @@ app.include_router(pipeline_router, prefix="/api")
 app.include_router(graph_viz_router, prefix="/api")
 
 
+@app.on_event("startup")
+async def _on_startup() -> None:
+    from app.db.local_store import warmup_local_store
+
+    set_service_ready(False)
+    ok = warmup_local_store()
+    set_service_ready(ok)
+    if ok:
+        logger.info("Startup warmup complete: service ready for ingest")
+    else:
+        logger.error("Startup warmup failed: ingest will return 503 until next successful warmup")
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "code-intelligence"}
@@ -144,6 +158,7 @@ async def health():
 @app.get("/health/ready")
 async def health_ready():
     checks: dict = {}
+    checks["service_ready"] = is_service_ready()
     from app.db.local_store import get_db_root
     try:
         db_root = get_db_root()
@@ -160,7 +175,12 @@ async def health_ready():
         sentry_sdk.capture_exception(e)
     from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY, PRMPT_AI_PROXY_URL
     checks["ai_provider"] = bool(PRMPT_AI_PROXY_URL) or bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
-    all_ok = checks.get("local_sqlite") and checks.get("supabase_auth_registry") and checks.get("ai_provider")
+    all_ok = (
+        checks.get("service_ready")
+        and checks.get("local_sqlite")
+        and checks.get("supabase_auth_registry")
+        and checks.get("ai_provider")
+    )
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 

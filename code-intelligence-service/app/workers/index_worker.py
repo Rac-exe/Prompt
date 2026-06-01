@@ -37,6 +37,7 @@ from app.services.project_summary import generate_project_summary
 from app.services.summarizer import ChunkSummaryInput, SummaryResult, summarize_chunk_batch
 
 logger = logging.getLogger("code-intel.worker.index")
+GRAPH_RETRY_DELAY_SEC = 3.0
 
 
 def _filter_unchanged(project_id: str, chunks: list[ChunkInput]) -> list[ChunkInput]:
@@ -142,12 +143,6 @@ async def process_ingest_batch(
     if not new_chunks:
         stale_count = _cleanup_if_project_snapshot(project_id, cleanup_scope, cleanup_keys)
         _generate_summary(project_id, language_map or {}, chunks)
-        now = datetime.now(timezone.utc).isoformat()
-        update_project_status(project_id, "ready", last_indexed_at=now)
-        _cache.invalidate(f"project_summary:{project_id}")
-        logger.info(
-            f"[project={project_id}] Ingest complete: all unchanged, skipped={skipped}, stale={stale_count}"
-        )
         # Edges still need to be refreshed before the graph pipeline even when
         # no chunks changed — ensures new call-graph data from this session is in DB.
         from app.services.graph import process_call_graph, process_import_edges
@@ -161,12 +156,28 @@ async def process_ingest_batch(
         # Graph pipeline still needs to run if it hasn't produced community data yet,
         # or if the graph builder was just enabled. Pass empty summaries/rows — PageRank
         # and Leiden operate on the full DB snapshot, concept phrases are just skipped.
+        graph_ok = True
         if GRAPH_BUILDER_ENABLED:
             logger.info(
                 "[GRAPH_PIPELINE] All chunks unchanged — running graph pipeline on existing "
                 "DB data to ensure PageRank/communities are populated."
             )
-            await _run_graph_pipeline(project_id, [], [])
+            graph_ok = await _run_graph_pipeline(project_id, [], [])
+            if not graph_ok:
+                logger.warning(
+                    "[project=%s] Graph pipeline failed on unchanged path; scheduling one retry",
+                    project_id,
+                )
+                asyncio.create_task(_retry_graph_pipeline_once(project_id))
+        final_status = "partial" if not graph_ok else "ready"
+        now = datetime.now(timezone.utc).isoformat()
+        update_project_status(project_id, final_status, last_indexed_at=now)
+        if final_status == "ready":
+            _cache.invalidate(f"project_summary:{project_id}")
+        logger.info(
+            f"[project={project_id}] Ingest complete: all unchanged, status={final_status}, "
+            f"skipped={skipped}, stale={stale_count}"
+        )
         return
 
     enriched = build_enriched_chunks(new_chunks)
@@ -262,8 +273,15 @@ async def process_ingest_batch(
         process_import_edges(project_id, chunks)
 
     # ── Graph pipeline (PageRank + Leiden + community reports + concept embeddings)
+    graph_ok = True
     if GRAPH_BUILDER_ENABLED:
-        await _run_graph_pipeline(project_id, summaries, rows)
+        graph_ok = await _run_graph_pipeline(project_id, summaries, rows)
+        if not graph_ok:
+            logger.warning(
+                "[project=%s] Graph pipeline failed after chunk upsert; scheduling one retry",
+                project_id,
+            )
+            asyncio.create_task(_retry_graph_pipeline_once(project_id))
 
     stale_count = _cleanup_if_project_snapshot(project_id, cleanup_scope, cleanup_keys)
     logger.info(
@@ -273,7 +291,7 @@ async def process_ingest_batch(
 
     _generate_summary(project_id, language_map or {}, [*chunks])
 
-    final_status = "error" if processed == 0 and errors else "partial" if errors else "ready"
+    final_status = "error" if processed == 0 and errors else "partial" if errors or not graph_ok else "ready"
     now = datetime.now(timezone.utc).isoformat()
     update_project_status(project_id, final_status, last_indexed_at=now)
     if final_status == "ready":
@@ -289,7 +307,7 @@ async def _run_graph_pipeline(
     project_id: str,
     summaries: list[SummaryResult],
     upserted_rows: list[dict],
-) -> None:
+) -> bool:
     """
     Run the full knowledge-graph pipeline after a successful chunk upsert.
 
@@ -533,10 +551,26 @@ async def _run_graph_pipeline(
             len(rel_write_rows),
             time.perf_counter() - t0,
         )
+        return True
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
         logger.error("[GRAPH_PIPELINE] Pipeline failed (non-fatal): %s", e, exc_info=True)
+        return False
+
+
+async def _retry_graph_pipeline_once(project_id: str) -> None:
+    """Single delayed retry for graph pipeline startup/transient failures."""
+    await asyncio.sleep(GRAPH_RETRY_DELAY_SEC)
+    logger.info("[GRAPH_PIPELINE] Retry start for project=%s", project_id)
+    ok = await _run_graph_pipeline(project_id, [], [])
+    if ok:
+        now = datetime.now(timezone.utc).isoformat()
+        update_project_status(project_id, "ready", last_indexed_at=now)
+        _cache.invalidate(f"project_summary:{project_id}")
+        logger.info("[GRAPH_PIPELINE] Retry succeeded for project=%s", project_id)
+    else:
+        logger.warning("[GRAPH_PIPELINE] Retry failed for project=%s; status remains partial", project_id)
 
 
 def _generate_summary(project_id: str, language_map: dict[str, int], chunks: list[ChunkInput]):

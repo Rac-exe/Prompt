@@ -57,6 +57,32 @@ def get_project_db_path(project_id: str) -> Path:
     return get_project_dir(project_id) / "index.db"
 
 
+def warmup_local_store() -> bool:
+    """
+    Verify local DB root is writable and pragmas can be applied on startup.
+    This runs once during service boot before ingest is accepted.
+    """
+    probe_path = get_db_root() / ".startup_probe.db"
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(str(probe_path), timeout=5.0)
+        _configure(conn)
+        _ensure_schema(conn)
+        conn.commit()
+        return True
+    except Exception:
+        logger.exception("Local store warmup failed")
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                (Path(str(probe_path) + suffix)).unlink(missing_ok=True)
+            except OSError:
+                logger.debug("Warmup probe cleanup failed for %s", str(probe_path) + suffix)
+
+
 def delete_project_index(project_id: str) -> None:
     shutil.rmtree(get_project_dir(project_id), ignore_errors=True)
 

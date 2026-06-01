@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.auth import require_auth
 from app.db.models import IngestRequest
 from app.db import queries
+from app.db.local_store import warmup_local_store
+from app.runtime_state import is_service_ready, set_service_ready
 from app.workers.index_worker import process_ingest_batch
 from app.config import MAX_CHUNKS_PER_INGEST, REDIS_URL
 
@@ -22,6 +24,15 @@ async def ingest_skeleton(
     Returns 202 immediately; indexing runs async in the background.
     """
     user_id = auth.get("sub")
+
+    if not is_service_ready():
+        ready_now = warmup_local_store()
+        set_service_ready(ready_now)
+        if not ready_now:
+            raise HTTPException(
+                status_code=503,
+                detail="Code intelligence service is warming up. Retry indexing in a few seconds.",
+            )
 
     project = queries.get_project(body.project_id, user_id)
     if not project:
