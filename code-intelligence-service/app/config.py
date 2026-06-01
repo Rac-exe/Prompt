@@ -11,6 +11,7 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 PRMPT_AI_PROXY_URL = os.environ.get("PRMPT_AI_PROXY_URL", "")
 PRMPT_AI_PROXY_TOKEN = os.environ.get("PRMPT_AI_PROXY_TOKEN", "")
 CODE_INTEL_DB_ROOT = os.environ.get("CODE_INTEL_DB_ROOT", "")
+STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local").lower()
 
 # ── LLM Models ──────────────────────────────────────────────────────────────
 SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/deepseek/deepseek-chat")

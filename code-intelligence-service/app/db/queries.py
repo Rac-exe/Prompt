@@ -13,9 +13,11 @@ from app.config import (
     CACHE_TTL_SECONDS,
     GRAPH_MAX_DEPTH,
     GRAPH_MAX_RELATED,
+    STORAGE_BACKEND,
     UPSERT_BATCH_PAUSE_SECONDS,
     UPSERT_BATCH_SIZE,
 )
+from app.db.storage_backend import get_storage_backend
 from app.services import cache as _cache
 
 logger = logging.getLogger("code-intel.queries")
@@ -983,38 +985,54 @@ def get_project_summary(project_id: str) -> Optional[str]:
 
 # ── Phase 1 local code-intel backend overrides ───────────────────────────────
 #
-# Keep project auth/registry reads on Supabase, but disconnect the heavy
-# code-intel data plane (chunks, relationships, graph data, search telemetry)
-# from Supabase tables/RPCs. These assignments preserve the existing public
-# query function names used throughout search.py, graph.py, and index_worker.py.
+# Keep project auth/registry reads on Supabase, but route the heavy code-intel
+# data plane (chunks, relationships, graph data, search telemetry) through one
+# storage backend switch so there is a single place to change behavior.
 
-get_existing_chunk_hashes = _local_store.get_existing_chunk_hashes
-upsert_chunks_batch = _local_store.upsert_chunks_batch
-cleanup_stale_chunks = _local_store.cleanup_stale_chunks
-cleanup_stale_chunks_for_files = _local_store.cleanup_stale_chunks_for_files
-delete_chunks_for_file = _local_store.delete_chunks_for_file
-upsert_relationship = _local_store.upsert_relationship
-find_chunk_by_name = _local_store.find_chunk_by_name
-find_chunks_by_names = _local_store.find_chunks_by_names
-find_chunks_by_file_paths = _local_store.find_chunks_by_file_paths
-upsert_relationships_batch = _local_store.upsert_relationships_batch
-hydrate_chunks_by_ids = _local_store.hydrate_chunks_by_ids
-get_chunk_structure_embeddings = _local_store.get_chunk_structure_embeddings
-vector_search = _local_store.vector_search
-concept_search = _local_store.concept_search
-text_search = _local_store.text_search
-get_related_chunks = _local_store.get_related_chunks
-get_related_chunks_multihop = _local_store.get_related_chunks_multihop
-increment_observation_counts = _local_store.increment_observation_counts
-get_branch_context = _local_store.get_branch_context
-upsert_branch = _local_store.upsert_branch
-flag_diverged_chunks = _local_store.flag_diverged_chunks
-file_path_search = _local_store.file_path_search
-upsert_communities = _local_store.upsert_communities
-get_all_project_chunk_ids = _local_store.get_all_project_chunk_ids
-get_all_project_relationships = _local_store.get_all_project_relationships
-update_chunks_graph_data = _local_store.update_chunks_graph_data
-update_relationship_embeddings = _local_store.update_relationship_embeddings
-match_community_reports = _local_store.match_community_reports
-match_concept_embeddings = _local_store.match_concept_embeddings
-get_community_members_ranked = _local_store.get_community_members_ranked
+_storage_backend = get_storage_backend(STORAGE_BACKEND)
+logger.info("[STORAGE_BACKEND] Active backend: %s", _storage_backend.kind)
+
+get_existing_chunk_hashes = _storage_backend.get_existing_chunk_hashes
+upsert_chunks_batch = _storage_backend.upsert_chunks_batch
+cleanup_stale_chunks = _storage_backend.cleanup_stale_chunks
+cleanup_stale_chunks_for_files = _storage_backend.cleanup_stale_chunks_for_files
+delete_chunks_for_file = _storage_backend.delete_chunks_for_file
+upsert_relationship = _storage_backend.upsert_relationship
+find_chunk_by_name = _storage_backend.find_chunk_by_name
+find_chunks_by_names = _storage_backend.find_chunks_by_names
+find_chunks_by_file_paths = _storage_backend.find_chunks_by_file_paths
+upsert_relationships_batch = _storage_backend.upsert_relationships_batch
+hydrate_chunks_by_ids = _storage_backend.hydrate_chunks_by_ids
+get_chunk_structure_embeddings = _storage_backend.get_chunk_structure_embeddings
+vector_search = _storage_backend.vector_search
+concept_search = _storage_backend.concept_search
+text_search = _storage_backend.text_search
+get_related_chunks = _storage_backend.get_related_chunks
+get_related_chunks_multihop = _storage_backend.get_related_chunks_multihop
+increment_observation_counts = _storage_backend.increment_observation_counts
+get_branch_context = _storage_backend.get_branch_context
+upsert_branch = _storage_backend.upsert_branch
+flag_diverged_chunks = _storage_backend.flag_diverged_chunks
+file_path_search = _storage_backend.file_path_search
+upsert_communities = _storage_backend.upsert_communities
+get_all_project_chunk_ids = _storage_backend.get_all_project_chunk_ids
+get_all_project_relationships = _storage_backend.get_all_project_relationships
+update_chunks_graph_data = _storage_backend.update_chunks_graph_data
+update_relationship_embeddings = _storage_backend.update_relationship_embeddings
+match_community_reports = _storage_backend.match_community_reports
+match_concept_embeddings = _storage_backend.match_concept_embeddings
+get_community_members_ranked = _storage_backend.get_community_members_ranked
+
+if STORAGE_BACKEND == "local":
+    _runtime_supabase_chunk_funcs = (
+        get_existing_chunk_hashes,
+        upsert_chunks_batch,
+        cleanup_stale_chunks,
+        vector_search,
+        text_search,
+        concept_search,
+    )
+    if any(func.__module__ == __name__ for func in _runtime_supabase_chunk_funcs):
+        raise RuntimeError(
+            "STORAGE_BACKEND=local but chunk/graph operations still point at Supabase query functions"
+        )
