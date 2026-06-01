@@ -108,6 +108,11 @@ def delete_project(project_id: str, user_id: str):
 
 
 # ── Chunks ──────────────────────────────────────────────────────────────────
+#
+# DEPRECATED (Phase 1 local migration):
+# Supabase code-intel chunk/graph runtime paths below are retained only as
+# commented rollback reference. Active runtime dispatch is controlled by the
+# single STORAGE_BACKEND switch at the end of this file.
 
 def upsert_chunk(
     project_id: str,
@@ -879,6 +884,10 @@ def update_relationship_embeddings(
 
 
 # ── Graph-aware retrieval RPCs ────────────────────────────────────────────────
+#
+# DEPRECATED (Phase 1 local migration):
+# Supabase RPC-based community/concept retrieval remains as rollback reference.
+# Runtime chunk/graph reads and writes are routed through STORAGE_BACKEND.
 
 def match_community_reports(
     project_id: str,
@@ -1054,6 +1063,18 @@ def ensure_project_embedding_compatibility(project_id: str) -> bool:
 # Keep project auth/registry reads on Supabase, but route the heavy code-intel
 # data plane (chunks, relationships, graph data, search telemetry) through one
 # storage backend switch so there is a single place to change behavior.
+#
+# DEPRECATED (Phase 1 local migration):
+# Supabase code-intel runtime bindings are intentionally disabled.
+# Legacy shape (for rollback reference only):
+#   get_existing_chunk_hashes = <supabase impl>
+#   upsert_chunks_batch = <supabase impl>
+#   vector_search = <supabase impl>
+#   concept_search = <supabase impl>
+#   text_search = <supabase impl>
+#   get_related_chunks = <supabase impl>
+#   get_related_chunks_multihop = <supabase impl>
+#   file_path_search = <supabase impl>
 
 _storage_backend = get_storage_backend(STORAGE_BACKEND)
 logger.info("[STORAGE_BACKEND] Active backend: %s", _storage_backend.kind)
