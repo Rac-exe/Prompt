@@ -134,17 +134,11 @@ async def retrieve_context_full(
         config.refine,
         config.graph_expand,
     )
-    analysis = await _analyze_query(query, config)
+    analysis = QueryAnalysis(intent=mode_enum.value, sub_queries=[query], concepts=_detect_concepts(query))
     concepts = analysis.concepts or _detect_concepts(query)
     if mode_enum == ModeEnum.FIND:
         concepts = _normalize_find_concepts(query, concepts)
     sub_queries = analysis.sub_queries or [query]
-    logger.info(
-        "[RETRIEVE] analysis intent=%s sub_queries=%s concepts=%s",
-        analysis.intent,
-        sub_queries,
-        concepts,
-    )
 
     # ── Graph-aware retrieval paths (GRAPH_BUILDER_ENABLED=true) ─────────────
     if GRAPH_BUILDER_ENABLED and config.search_path != "flat":
@@ -173,6 +167,17 @@ async def retrieve_context_full(
                 "[RETRIEVE] Graph search failed (%s), falling back to flat retrieval", e
             )
 
+    decompose_task: asyncio.Task[QueryAnalysis] | None = None
+    if _should_run_decompose(query, config):
+        decompose_task = asyncio.create_task(decompose_query(query))
+        logger.info("[RETRIEVE] decompose started in parallel with first-pass recall")
+
+    logger.info(
+        "[RETRIEVE] analysis intent=%s sub_queries=%s concepts=%s",
+        analysis.intent,
+        sub_queries,
+        concepts,
+    )
     candidates, query_embedding = await _broad_recall(
         project_id, user_id, query, sub_queries, concepts, signals, branch, config
     )
@@ -192,6 +197,59 @@ async def retrieve_context_full(
         _score(ranked[0]) if ranked else 0.0,
         MIN_RESPONSE_RELEVANCE,
     )
+
+    top_score = _score(ranked[0]) if ranked else 0.0
+    if decompose_task and top_score < ITERATIVE_REFINEMENT_THRESHOLD:
+        try:
+            decompose_analysis = await decompose_task
+            decompose_sub_queries = decompose_analysis.sub_queries or [query]
+            decompose_concepts = decompose_analysis.concepts or concepts
+            if mode_enum == ModeEnum.FIND:
+                decompose_concepts = _normalize_find_concepts(query, decompose_concepts)
+            if (
+                decompose_sub_queries != sub_queries
+                or set(decompose_concepts) != set(concepts)
+            ):
+                logger.info(
+                    "[RETRIEVE] decompose second-pass triggered: top_score=%.3f threshold=%.3f sub_queries=%s",
+                    top_score,
+                    ITERATIVE_REFINEMENT_THRESHOLD,
+                    decompose_sub_queries,
+                )
+                decomposed_candidates, _ = await _broad_recall(
+                    project_id,
+                    user_id,
+                    query,
+                    decompose_sub_queries,
+                    decompose_concepts,
+                    signals,
+                    branch,
+                    config,
+                )
+                ranked = await _rank_candidates(
+                    [[*ranked], *decomposed_candidates],
+                    query,
+                    mode_enum,
+                    config,
+                    limit,
+                    project_id,
+                    user_id,
+                    decompose_concepts,
+                )
+                ranked = _filter_response_relevance(ranked)
+                analysis = decompose_analysis
+                concepts = decompose_concepts
+        except Exception as e:
+            logger.warning("[RETRIEVE] decompose second-pass failed: %s", e)
+            sentry_sdk.capture_exception(e)
+    elif decompose_task:
+        if not decompose_task.done():
+            decompose_task.cancel()
+        logger.info(
+            "[RETRIEVE] decompose skipped second-pass: top_score=%.3f threshold=%.3f",
+            top_score,
+            ITERATIVE_REFINEMENT_THRESHOLD,
+        )
 
     if config.refine and _should_refine(query, ranked, mode_enum):
         refined_queries = await _refine_sub_queries(query, ranked[:3], mode_enum)
@@ -968,6 +1026,22 @@ async def _analyze_query(query: str, config: ModeConfig) -> QueryAnalysis:
     if not config.decompose:
         return QueryAnalysis(intent=config.mode.value, sub_queries=[query], concepts=_detect_concepts(query))
     return await decompose_query(query)
+
+
+_IDENTIFIER_HINT_RE = re.compile(
+    r"`[^`]+`|[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*\([A-Za-z0-9_, ]*\)"
+)
+
+
+def _should_run_decompose(query: str, config: ModeConfig) -> bool:
+    if not config.decompose:
+        return False
+    tokens = query.split()
+    if len(tokens) < 12:
+        return False
+    if _IDENTIFIER_HINT_RE.search(query):
+        return False
+    return True
 
 
 async def _broad_recall(
