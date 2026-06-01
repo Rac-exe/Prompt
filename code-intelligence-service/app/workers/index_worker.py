@@ -187,6 +187,13 @@ async def process_ingest_batch(
         f"with_siblings={sum(1 for e in enriched if e.sibling_names)}"
     )
     summaries = await _summarize_batched(enriched)
+    fallback_count = sum(1 for s in summaries if s.used_fallback)
+    llm_count = max(len(summaries) - fallback_count, 0)
+    summary_empty_count = sum(1 for s in summaries if not (s.summary_code or "").strip())
+    logger.info(
+        "[project=%s] Summary quality: llm=%d fallback=%d summary_empty_count=%d",
+        project_id, llm_count, fallback_count, summary_empty_count,
+    )
     logger.info(
         f"[project={project_id}] Summaries generated: count={len(summaries)}, "
         f"with_purpose={sum(1 for s in summaries if s.summary_purpose)}, "

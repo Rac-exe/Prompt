@@ -51,6 +51,7 @@ class SummaryResult:
     summary_code: str
     summary_purpose: str = ""
     concepts: list[str] = field(default_factory=list)
+    used_fallback: bool = False
     # Free-form semantic phrases for concept embedding (only populated when
     # GRAPH_BUILDER_ENABLED=true).  Not stored in code_chunks.concepts — kept
     # separate so the fixed-vocab tags remain available for fast keyword matching.
@@ -114,27 +115,59 @@ def summarize_chunk_batch(chunks: list[ChunkSummaryInput]) -> list[SummaryResult
     for i, chunk in enumerate(chunks, 1):
         numbered_parts.append(f"--- ELEMENT {i} ---\n{_build_chunk_text(chunk)}")
 
+    user_content = "\n\n".join(numbered_parts)
     kwargs = _get_llm_kwargs()
-    kwargs["messages"] = [
-        {"role": "system", "content": BATCH_SUMMARIZE_SYSTEM_PROMPT},
-        {"role": "user", "content": "\n\n".join(numbered_parts)},
-    ]
     kwargs["max_tokens"] = min(max(SUMMARY_MAX_TOKENS * len(chunks), 300), 3000)
 
     try:
-        if prmpt_ai_client.is_configured():
-            raw = prmpt_ai_client.completion(**kwargs).strip()
-        else:
-            response = litellm.completion(**kwargs)
-            raw = (response.choices[0].message.content or "").strip()
-        parsed = _parse_batch_response(raw, chunks)
-        if parsed:
+        parsed = _summarize_attempt(
+            kwargs=kwargs,
+            user_content=user_content,
+            chunks=chunks,
+            strict_retry=False,
+        )
+        if parsed is not None:
             return parsed
+        logger.warning("Batch summary parse failed, retrying once with strict JSON reminder")
+        retry_parsed = _summarize_attempt(
+            kwargs=kwargs,
+            user_content=(
+                user_content
+                + "\n\nIMPORTANT: Your previous response was invalid. "
+                + "Return ONLY a valid JSON array, no markdown, no prose, no code fences."
+            ),
+            chunks=chunks,
+            strict_retry=True,
+        )
+        if retry_parsed is not None:
+            return retry_parsed
     except Exception as e:
         logger.warning(f"Batch summarization failed ({e}), using fallbacks")
         sentry_sdk.capture_exception(e)
 
     return [_build_fallback(c) for c in chunks]
+
+
+def _summarize_attempt(
+    *,
+    kwargs: dict,
+    user_content: str,
+    chunks: list[ChunkSummaryInput],
+    strict_retry: bool,
+) -> list[SummaryResult] | None:
+    request_kwargs = dict(kwargs)
+    request_kwargs["messages"] = [
+        {"role": "system", "content": BATCH_SUMMARIZE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+    if strict_retry:
+        request_kwargs["temperature"] = 0.0
+    if prmpt_ai_client.is_configured():
+        raw = prmpt_ai_client.completion(**request_kwargs).strip()
+    else:
+        response = litellm.completion(**request_kwargs)
+        raw = (response.choices[0].message.content or "").strip()
+    return _parse_batch_response(raw, chunks)
 
 
 def _parse_batch_response(raw: str, chunks: list[ChunkSummaryInput]) -> list[SummaryResult] | None:
@@ -178,6 +211,7 @@ def _parse_batch_response(raw: str, chunks: list[ChunkSummaryInput]) -> list[Sum
             summary_purpose=summary_purpose[:350],
             concepts=concepts,
             concept_phrases=concept_phrases,
+            used_fallback=False,
         )
 
     results = []
@@ -192,4 +226,12 @@ def _build_fallback(chunk: ChunkSummaryInput) -> SummaryResult:
         summary += f" {chunk.signature}"
     if chunk.docstring:
         summary += f" - {chunk.docstring[:120]}"
-    return SummaryResult(summary_code=summary[:300], summary_purpose="", concepts=[])
+    text_parts = [chunk.name, chunk.signature or "", chunk.docstring or "", chunk.code_body or ""]
+    haystack = " ".join(text_parts).lower()
+    concepts = [concept for concept in VALID_CONCEPTS if concept.lower() in haystack][:6]
+    return SummaryResult(
+        summary_code=summary[:300],
+        summary_purpose="",
+        concepts=concepts,
+        used_fallback=True,
+    )
