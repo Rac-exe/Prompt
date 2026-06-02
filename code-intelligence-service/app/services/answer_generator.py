@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import AsyncIterator
 
 import litellm
 import sentry_sdk
@@ -48,6 +49,69 @@ async def generate_answer(
         logger.warning(f"Answer generation failed: {e}")
         sentry_sdk.capture_exception(e)
         return None, []
+
+
+def answer_source_ids(chunks: list[dict]) -> list[str]:
+    """The chunk ids cited as sources for an answer (top-N)."""
+    return [str(c["id"]) for c in chunks[:8] if c.get("id")]
+
+
+async def generate_answer_stream(
+    query: str,
+    chunks: list[dict],
+    project_summary: str | None = None,
+) -> AsyncIterator[str]:
+    """Yield the answer token-by-token. This is the latency-perceived win for
+    Ask: the UI renders deltas as they arrive instead of waiting ~20-50s for the
+    whole completion. Falls back to a single emit if streaming is unavailable
+    (e.g. the proxy backend, which has no streaming endpoint)."""
+    if not chunks:
+        return
+
+    context = _build_context(chunks, project_summary)
+    kwargs: dict = {
+        "model": ANSWER_MODEL,
+        "messages": [
+            {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query[:2000]}"},
+        ],
+        "max_tokens": 900,
+        "temperature": 0.2,
+    }
+    if OPENROUTER_API_KEY and "openrouter" in ANSWER_MODEL.lower():
+        kwargs["api_key"] = OPENROUTER_API_KEY
+
+    # Proxy backend can't stream — emit the full answer once.
+    if prmpt_ai_client.is_configured():
+        try:
+            answer = (await prmpt_ai_client.completion_async(**kwargs)).strip()
+            if answer:
+                yield answer
+        except Exception as e:
+            logger.warning(f"Answer (proxy) generation failed: {e}")
+            sentry_sdk.capture_exception(e)
+        return
+
+    try:
+        response = await litellm.acompletion(stream=True, **kwargs)
+        async for part in response:
+            try:
+                delta = part.choices[0].delta.content
+            except (AttributeError, IndexError, KeyError):
+                delta = None
+            if delta:
+                yield delta
+    except Exception as e:
+        logger.warning(f"Answer streaming failed ({e}); falling back to non-streamed")
+        sentry_sdk.capture_exception(e)
+        # Fallback: one-shot non-streamed completion so Ask still answers.
+        try:
+            answer, _ = await generate_answer(query, chunks, project_summary)
+            if answer:
+                yield answer
+        except Exception as e2:
+            logger.warning(f"Answer fallback also failed: {e2}")
+            sentry_sdk.capture_exception(e2)
 
 
 def _build_context(chunks: list[dict], project_summary: str | None) -> str:

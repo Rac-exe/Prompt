@@ -5,9 +5,13 @@ that may be relevant to the user's query. No diagnosis, no hedged prose.
 The downstream LLM decides what's broken.
 """
 
+import json
 import logging
 import time
+from typing import AsyncIterator
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.auth import require_auth
 from app.db import queries
@@ -17,11 +21,22 @@ from app.db.models import (
     ProbableLocation,
     RetrievedChunk,
 )
+from app.services.answer_generator import answer_source_ids, generate_answer_stream
 from app.services.search import retrieve_context_full
 from app.services.query_preprocessor import preprocess_query
 
 logger = logging.getLogger("code-intel.routes.context")
 router = APIRouter(tags=["context"])
+
+
+def _sse(event: str, data: dict | list | str) -> str:
+    payload = data if isinstance(data, str) else json.dumps(data, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _loc_dump(loc: ProbableLocation) -> dict:
+    dump = getattr(loc, "model_dump", None)
+    return dump() if dump else loc.dict()
 
 
 def _to_probable(chunk: RetrievedChunk) -> ProbableLocation:
@@ -144,3 +159,92 @@ async def get_context(
     except Exception as e:
         logger.error(f"Context retrieval failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Context retrieval failed")
+
+
+@router.post("/context/stream")
+async def get_context_stream(
+    request: ContextRequest,
+    auth: dict = Depends(require_auth),
+):
+    """Streaming variant of /context for Ask: returns retrieved locations first,
+    then streams the answer token-by-token over Server-Sent Events. This is the
+    biggest perceived-latency win — the UI shows sources + first tokens in
+    seconds instead of waiting for the whole completion.
+
+    Event sequence:
+      event: locations  -> {probable_locations, related_locations, sources, ...}
+      event: token      -> {delta: "..."}   (repeated)
+      event: done        -> {source_ids: [...]}
+      event: error       -> {message: "..."}
+    """
+    user_id = auth.get("sub")
+
+    project = queries.get_project(request.project_id, user_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.get("index_status") == "indexing":
+        raise HTTPException(status_code=409, detail="Project is currently indexing. Please wait.")
+
+    async def event_stream() -> AsyncIterator[str]:
+        t_start = time.perf_counter()
+        try:
+            signals = preprocess_query(request.query)
+            project_summary = queries.get_project_summary(request.project_id)
+            # Retrieve WITHOUT the blocking inline answer — we stream it below.
+            result = await retrieve_context_full(
+                project_id=request.project_id,
+                user_id=user_id,
+                query=request.query,
+                branch=request.branch,
+                limit=request.limit,
+                signals=signals,
+                mode=request.mode,
+                project_summary=project_summary,
+                variant=request.variant,
+                generate_answer_override=False,
+            )
+
+            from app.services.search import _to_retrieved_chunk
+            probable_locations = [_to_probable(_to_retrieved_chunk(c)) for c in result.ranked_chunks]
+            related_locations = [_to_probable(_to_retrieved_chunk(c, score=0.0)) for c in result.related_chunks]
+            source_ids = answer_source_ids(result.ranked_chunks)
+            source_paths = {
+                c.get("file_path") for c in result.ranked_chunks
+                if str(c.get("id")) in set(source_ids)
+            }
+            sources = [loc for loc in probable_locations if loc.file_path in source_paths]
+
+            yield _sse("locations", {
+                "mode": result.mode.value if hasattr(result.mode, "value") else str(result.mode),
+                "probable_locations": [_loc_dump(loc) for loc in probable_locations],
+                "related_locations": [_loc_dump(loc) for loc in related_locations],
+                "sources": [_loc_dump(loc) for loc in sources],
+                "intent": result.query_intent or "general",
+                "concepts": result.query_concepts or [],
+                "project_summary": project_summary,
+                "branch_context": result.branch_context,
+                "search_id": result.search_id,
+            })
+
+            emitted_any = False
+            async for delta in generate_answer_stream(request.query, result.ranked_chunks, project_summary):
+                emitted_any = True
+                yield _sse("token", {"delta": delta})
+
+            yield _sse("done", {
+                "source_ids": source_ids if emitted_any else [],
+                "elapsed": round(time.perf_counter() - t_start, 2),
+            })
+            logger.info(
+                "[CONTEXT_STREAM] done project=%s elapsed=%.2fs answer=%s",
+                request.project_id, time.perf_counter() - t_start, "yes" if emitted_any else "no",
+            )
+        except Exception as e:
+            logger.error(f"Context stream failed: {e}", exc_info=True)
+            yield _sse("error", {"message": "Context streaming failed"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

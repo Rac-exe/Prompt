@@ -253,4 +253,81 @@ export class CodeIntelClient {
   async syncProject(projectId?: string): Promise<void> {
     await this.client.post('/api/sync', { project_id: projectId });
   }
+
+  /**
+   * Streaming Ask: POSTs to /api/context/stream and parses the SSE stream,
+   * invoking callbacks as events arrive. Returns an abort() function. The
+   * answer is streamed token-by-token so the renderer shows output in seconds.
+   */
+  contextStream(
+    params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' },
+    handlers: {
+      onLocations?: (data: any) => void;
+      onToken?: (delta: string) => void;
+      onDone?: (data: any) => void;
+      onError?: (message: string) => void;
+    },
+  ): () => void {
+    const controller = new AbortController();
+    const url = `${this.baseUrl}/api/context/stream`;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+      'X-Prmpt-Code-Intel-Root': getCodeIntelRoot(),
+    };
+    const token = authState.currentAccessToken;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    (async () => {
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(params),
+          signal: controller.signal,
+        });
+        if (!resp.ok || !resp.body) {
+          throw new Error(`context/stream HTTP ${resp.status}`);
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        // SSE events are separated by a blank line; parse incrementally.
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let sep: number;
+          while ((sep = buffer.indexOf('\n\n')) !== -1) {
+            const raw = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            let eventName = 'message';
+            const dataLines: string[] = [];
+            for (const line of raw.split('\n')) {
+              if (line.startsWith('event:')) eventName = line.slice(6).trim();
+              else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+            }
+            const dataStr = dataLines.join('\n');
+            if (!dataStr) continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (eventName === 'locations') handlers.onLocations?.(parsed);
+              else if (eventName === 'token') handlers.onToken?.(parsed.delta ?? '');
+              else if (eventName === 'done') handlers.onDone?.(parsed);
+              else if (eventName === 'error') handlers.onError?.(parsed.message ?? 'stream error');
+            } catch {
+              // ignore malformed event
+            }
+          }
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        const safe = sanitizeAxiosError(err);
+        Sentry.captureException(safe, { level: 'warning', tags: { component: 'code-intel-client', op: 'contextStream' } });
+        handlers.onError?.(safe.message);
+      }
+    })();
+
+    return () => controller.abort();
+  }
 }

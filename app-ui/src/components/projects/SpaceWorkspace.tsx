@@ -653,6 +653,59 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   // ── Handlers ─────────────────────────────────────────────────
   const runOptimization = useCallback(async (rawQuery: string, generationId: string) => {
     if (codeIntelMode === "ask") {
+      // Streaming path (single-project, common case): show sources + answer
+      // tokens as they arrive instead of blocking for the whole completion.
+      const canStream = space.projects.length === 1 && typeof (api as any).contextStream === "function";
+      if (canStream) {
+        const proj = space.projects[0];
+        let accumulated = "";
+        let locationsData: any = null;
+        let streamError = false;
+        startStreaming();
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = () => { if (!settled) { settled = true; resolve(); } };
+          const abort = (api as any).contextStream(
+            { project_id: proj.projectId, query: rawQuery, branch: proj.branch || undefined, limit: 10, mode: "ask" },
+            {
+              onLocations: (data: any) => { locationsData = data; },
+              onToken: (delta: string) => {
+                if (activeGenerationIdRef.current !== generationId) { abort(); finish(); return; }
+                accumulated += delta;
+                handleChunk(delta, accumulated);
+              },
+              onDone: () => finish(),
+              onError: () => { streamError = true; finish(); },
+            },
+          );
+        });
+
+        if (activeGenerationIdRef.current !== generationId) return;
+
+        if (accumulated.trim()) {
+          const combined = { ...(locationsData || {}), answer: accumulated.trim() } as ContextResult;
+          handleFinalMessage({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: formatAskResponse(rawQuery, combined, (locationsData?.probable_locations || []) as CodeIntelLocation[]),
+            timestamp: new Date(),
+          });
+          return;
+        }
+        // No answer tokens streamed — drop the streaming placeholder and fall
+        // back to the non-streamed path below (or finalize from locations).
+        resetStreaming();
+        if (!streamError && locationsData) {
+          handleStreamingComplete({
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: formatAskResponse(rawQuery, locationsData as ContextResult, (locationsData?.probable_locations || []) as CodeIntelLocation[]),
+            timestamp: new Date(),
+          });
+          return;
+        }
+      }
+
       let combinedContext: ContextResult | null = null;
       let fallbackChunks: CodeIntelLocation[] = [];
       let fails = 0;
@@ -766,7 +819,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       primaryProject?.projectId,
       primaryProject?.branch,
     );
-  }, [codeIntelMode, space.id, space.projects, api, electronAPI, startStreaming, handleStreamingComplete]);
+  }, [codeIntelMode, space.id, space.projects, api, electronAPI, startStreaming, handleStreamingComplete, handleChunk, handleFinalMessage, resetStreaming]);
 
   const handleSubmit = useCallback(async () => {
     const query = input.trim();

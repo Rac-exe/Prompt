@@ -22,6 +22,8 @@ let activeProjectId: string | null = null;
 let activeProjectBranch: string | null = null;
 
 const activeScans = new Map<string, ScanSignal>();
+// requestId -> abort() for in-flight streaming Ask requests.
+const activeContextStreams = new Map<string, () => void>();
 
 function cancelActiveScan(projectId: string): void {
   const signal = activeScans.get(projectId);
@@ -390,6 +392,34 @@ export function registerProjectHandlers(
   ipcMain.handle('project:context', async (_event, params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => {
     if (!_client) throw new Error('Code intelligence client not initialized');
     return await _client.context(params);
+  });
+
+  // Streaming Ask: SSE-backed. The renderer subscribes via a requestId and we
+  // forward locations + answer tokens as they arrive on the code-intel stream.
+  ipcMain.on('project:context-stream', (event, params: { requestId: string; project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => {
+    const send = (payload: Record<string, unknown>) => {
+      if (event.sender.isDestroyed()) return;
+      event.sender.send('project:context-stream:event', { requestId: params.requestId, ...payload });
+    };
+    if (!_client) {
+      send({ type: 'error', message: 'Code intelligence client not initialized' });
+      return;
+    }
+    const abort = _client.contextStream(params, {
+      onLocations: (data) => send({ type: 'locations', data }),
+      onToken: (delta) => send({ type: 'token', delta }),
+      onDone: (data) => { send({ type: 'done', data }); activeContextStreams.delete(params.requestId); },
+      onError: (message) => { send({ type: 'error', message }); activeContextStreams.delete(params.requestId); },
+    });
+    activeContextStreams.set(params.requestId, abort);
+  });
+
+  ipcMain.on('project:context-stream:abort', (_event, requestId: string) => {
+    const abort = activeContextStreams.get(requestId);
+    if (abort) {
+      abort();
+      activeContextStreams.delete(requestId);
+    }
   });
 
   /**
