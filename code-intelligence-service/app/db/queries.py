@@ -1014,6 +1014,30 @@ def warm_project_retrieval_cache(project_id: str) -> None:
         logger.warning("Warm pagerank cache failed for %s: %s", project_id, e)
 
 
+def get_graph_health(project_id: str) -> dict:
+    """Graph-health snapshot (edge/pagerank/community counts) for diagnostics."""
+    try:
+        return _local_store.get_graph_health(project_id)
+    except Exception as e:
+        logger.warning("get_graph_health failed for %s: %s", project_id, e)
+        return {"project_id": project_id, "healthy": False, "error": str(e)[:200]}
+
+
+def find_definitions(project_id: str, symbol: str, limit: int = 5) -> list[dict]:
+    """Chunks that define `symbol` (for agentic get_definition tool)."""
+    return _local_store.find_definitions(project_id, symbol, limit)
+
+
+def get_callers(project_id: str, chunk_id: str, limit: int = 15) -> list[dict]:
+    """Incoming-edge chunks (who calls/imports chunk_id)."""
+    return _local_store.get_callers(project_id, chunk_id, limit)
+
+
+def get_callees(project_id: str, chunk_id: str, limit: int = 15) -> list[dict]:
+    """Outgoing-edge chunks (what chunk_id calls/imports)."""
+    return _local_store.get_callees(project_id, chunk_id, limit)
+
+
 def active_embedding_signature() -> tuple[str, int, int]:
     model_name = EMBEDDING_LOCAL_MODEL if EMBEDDING_BACKEND == "local" else EMBEDDING_MODEL
     return model_name, EMBEDDING_DIMENSIONS, STRUCTURE_EMBEDDING_DIMENSIONS

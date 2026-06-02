@@ -53,6 +53,15 @@ async def get_project(project_id: str, auth: dict = Depends(require_auth)):
     return project
 
 
+@router.get("/projects/{project_id}/graph-health")
+async def project_graph_health(project_id: str, auth: dict = Depends(require_auth)):
+    user_id = auth.get("sub")
+    project = queries.get_project(project_id, user_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return queries.get_graph_health(project_id)
+
+
 @router.delete("/projects/{project_id}", status_code=204)
 async def delete_project(project_id: str, auth: dict = Depends(require_auth)):
     user_id = auth.get("sub")

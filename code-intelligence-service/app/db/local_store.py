@@ -985,6 +985,124 @@ def list_top_pagerank_chunks(project_id: str, limit: int = 50) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def get_graph_health(project_id: str) -> dict:
+    """Lightweight graph-health snapshot for diagnostics / project status.
+
+    Surfaces the signals Find ranking depends on: edge population, PageRank
+    spread, centrality, and community count.
+    """
+    with connect(project_id) as conn:
+        def _scalar(sql: str, default=0):
+            try:
+                row = conn.execute(sql, (project_id,)).fetchone()
+                val = row[0] if row else None
+                return val if val is not None else default
+            except Exception:
+                return default
+
+        chunks = _scalar("SELECT COUNT(*) FROM code_chunks WHERE project_id = ?")
+        edges = _scalar("SELECT COUNT(*) FROM code_relationships WHERE project_id = ?")
+        pr_nonzero = _scalar(
+            "SELECT COUNT(*) FROM code_chunks WHERE project_id = ? AND pagerank_score > 0"
+        )
+        pr_max = _scalar(
+            "SELECT MAX(pagerank_score) FROM code_chunks WHERE project_id = ?", 0.0
+        )
+        cen_nonzero = _scalar(
+            "SELECT COUNT(*) FROM code_chunks WHERE project_id = ? AND centrality_score > 0"
+        )
+        communities = _scalar(
+            "SELECT COUNT(DISTINCT community_id) FROM code_chunks "
+            "WHERE project_id = ? AND community_id IS NOT NULL"
+        )
+        rel_types: dict[str, int] = {}
+        try:
+            for r in conn.execute(
+                "SELECT relationship_type, COUNT(*) FROM code_relationships "
+                "WHERE project_id = ? GROUP BY relationship_type",
+                (project_id,),
+            ).fetchall():
+                rel_types[str(r[0])] = int(r[1])
+        except Exception:
+            pass
+
+    return {
+        "project_id": project_id,
+        "chunks": int(chunks),
+        "edges": int(edges),
+        "edge_types": rel_types,
+        "edges_per_node": round(int(edges) / max(int(chunks), 1), 3),
+        "pagerank_nonzero": int(pr_nonzero),
+        "pagerank_max": float(pr_max or 0.0),
+        "centrality_nonzero": int(cen_nonzero),
+        "communities": int(communities),
+        "healthy": int(edges) > 0 and float(pr_max or 0.0) > 0.0,
+    }
+
+
+_AGENT_CHUNK_COLS = (
+    "id, file_path, name, chunk_type, signature, start_line, end_line, "
+    "pagerank_score, summary_code"
+)
+_AGENT_CHUNK_COLS_C = (
+    "c.id, c.file_path, c.name, c.chunk_type, c.signature, c.start_line, "
+    "c.end_line, c.pagerank_score, c.summary_code"
+)
+
+
+def find_definitions(project_id: str, symbol: str, limit: int = 5) -> list[dict]:
+    """Chunks whose own name defines `symbol` (exact, then suffix on dotted)."""
+    sym = (symbol or "").strip()
+    if not sym:
+        return []
+    short = sym.split(".")[-1]
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_AGENT_CHUNK_COLS} FROM code_chunks
+            WHERE project_id = ? AND (name = ? OR name = ?)
+            ORDER BY pagerank_score DESC
+            LIMIT ?
+            """,
+            (project_id, sym, short, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_callers(project_id: str, chunk_id: str, limit: int = 15) -> list[dict]:
+    """Chunks with an incoming edge into `chunk_id` (who calls/imports it)."""
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_AGENT_CHUNK_COLS_C}, r.relationship_type AS edge
+            FROM code_relationships r
+            JOIN code_chunks c ON c.id = r.from_chunk_id
+            WHERE r.project_id = ? AND r.to_chunk_id = ?
+            ORDER BY c.pagerank_score DESC
+            LIMIT ?
+            """,
+            (project_id, chunk_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_callees(project_id: str, chunk_id: str, limit: int = 15) -> list[dict]:
+    """Chunks `chunk_id` points to (what it calls/imports)."""
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_AGENT_CHUNK_COLS_C}, r.relationship_type AS edge
+            FROM code_relationships r
+            JOIN code_chunks c ON c.id = r.to_chunk_id
+            WHERE r.project_id = ? AND r.from_chunk_id = ?
+            ORDER BY c.pagerank_score DESC
+            LIMIT ?
+            """,
+            (project_id, chunk_id, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def update_chunks_graph_data(chunk_graph_rows: list[dict], batch_size: int = 50) -> int:
     if not chunk_graph_rows:
         return 0
