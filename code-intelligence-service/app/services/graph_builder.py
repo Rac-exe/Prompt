@@ -408,6 +408,33 @@ async def run_graph_pipeline(
         (time.perf_counter() - t_step) * 1000,
     )
 
+    # Graph-health summary: Find's ranking depends on a populated, non-flat
+    # PageRank distribution. Surface it loudly so a regression (0 edges / flat
+    # scores) is obvious in the ingest logs instead of silently degrading Find.
+    edge_count = graph.ecount()
+    pr_nonzero = sum(1 for v in pagerank if v > 0.0)
+    pr_max = max(pagerank) if pagerank else 0.0
+    edges_per_node = edge_count / max(len(chunk_rows), 1)
+    logger.info(
+        "[GRAPH_HEALTH] project=%s nodes=%d edges=%d edges/node=%.2f "
+        "pagerank_nonzero=%d/%d pagerank_max=%.5f",
+        project_id, len(chunk_rows), edge_count, edges_per_node,
+        pr_nonzero, len(pagerank), pr_max,
+    )
+    if edge_count == 0:
+        logger.warning(
+            "[GRAPH_HEALTH] project=%s has ZERO edges — Find will fall back to "
+            "lexical-only ranking (no definition-vs-reference signal). Check the "
+            "parser's callees/imports output and graph.py edge resolution.",
+            project_id,
+        )
+    elif pr_nonzero == 0 or pr_max <= 0.0:
+        logger.warning(
+            "[GRAPH_HEALTH] project=%s PageRank is flat/zero despite %d edges — "
+            "graph ranking signal is unavailable.",
+            project_id, edge_count,
+        )
+
     # Step 3: Leiden community detection
     t_step = time.perf_counter()
     community_map = _run_leiden(graph)

@@ -163,6 +163,16 @@ def _coerce_score(value) -> float:
         return 0.0
 
 
+def query_mentions_tests(query: str) -> bool:
+    """Public alias: True when the query explicitly asks about tests."""
+    return _query_mentions_tests(query)
+
+
+def is_test_chunk(chunk: dict) -> bool:
+    """Public alias: True when the chunk is a test file/symbol."""
+    return _is_test_chunk(chunk)
+
+
 def _query_mentions_tests(query: str) -> bool:
     lowered = (query or "").lower()
     return any(

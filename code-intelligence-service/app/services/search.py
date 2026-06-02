@@ -10,7 +10,7 @@ import logging
 import math
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 import numpy as np
@@ -20,8 +20,10 @@ import sentry_sdk
 
 from app.config import (
     FIND_BOOST_BODY,
+    FIND_BOOST_CENTRALITY,
     FIND_BOOST_CONCEPT,
     FIND_BOOST_LEXICAL,
+    FIND_BOOST_NAME_DEF,
     FIND_BOOST_PATH,
     FIND_BOOST_SIGNAL,
     FIND_BOOST_SIGNATURE,
@@ -29,6 +31,7 @@ from app.config import (
     FIND_MIN_SCORE,
     FIND_PAGERANK_WEIGHT,
     FIND_PENALTY_MISS,
+    AGENTIC_RETRIEVAL_ENABLED,
     GRAPH_BUILDER_ENABLED,
     ITERATIVE_REFINEMENT_THRESHOLD,
     MAX_ITERATIONS,
@@ -60,7 +63,7 @@ from app.services.feedback import record_search
 from app.services.mode_router import ModeConfig, get_mode_config
 from app.services.query_analyzer import QueryAnalysis, decompose_query
 from app.services.query_preprocessor import QuerySignals, build_file_patterns, preprocess_query
-from app.services.reranker import rerank_chunks
+from app.services.reranker import is_test_chunk, query_mentions_tests, rerank_chunks
 from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.search")
@@ -70,9 +73,11 @@ _FIND_MIN_RESULTS_FLOOR = 8
 # Drop tail candidates whose raw composite score is below this fraction of the
 # top match, but only after the recall floor is met (noise suppression).
 _FIND_TAIL_FRACTION = float(os.environ.get("FIND_TAIL_FRACTION", "0.45"))
-# Allow very strong same-file matches past per-file cap (prevents exact routes
-# from being dropped when other symbols from the same file rank first).
-_FIND_STRONG_FRACTION = float(os.environ.get("FIND_STRONG_FRACTION", "0.60"))
+# Refine gating: the refine round is an extra LLM call + embed + recall. Skip it
+# when the first pass is already confident, or when candidates are too sparse for
+# a second pass to plausibly help — both pure-latency wins for Ask/Bug/Optimize.
+_REFINE_SKIP_CONFIDENCE = float(os.environ.get("REFINE_SKIP_CONFIDENCE", "0.55"))
+_REFINE_MIN_CANDIDATES = int(os.environ.get("REFINE_MIN_CANDIDATES", "3"))
 
 _FIND_STOP_WORDS = {
     "where", "what", "which", "when", "why", "how", "find", "show",
@@ -142,9 +147,43 @@ async def retrieve_context_full(
     mode: ModeEnum | str = ModeEnum.BUG,
     project_summary: str | None = None,
     variant: str | None = None,
+    generate_answer_override: bool | None = None,
 ) -> FullSearchResult:
     mode_enum = mode if isinstance(mode, ModeEnum) else ModeEnum(mode)
     config = get_mode_config(mode_enum, variant)
+    # When the caller streams the answer itself (SSE), skip the blocking inline
+    # answer generation so chunks return immediately and tokens stream after.
+    if generate_answer_override is False:
+        config = replace(config, generate_answer=False)
+
+    # ── Agentic multi-hop retrieval (opt-in, non-FIND) ───────────────────────
+    # Gather context via a bounded local tool-calling loop, then answer over it.
+    # Falls back transparently to the one-shot pipeline below on None.
+    if AGENTIC_RETRIEVAL_ENABLED and mode_enum != ModeEnum.FIND:
+        try:
+            from app.services.agent_loop import agentic_retrieve
+            agent_chunks = await agentic_retrieve(project_id, user_id, query, mode_enum.value, limit)
+        except Exception as e:
+            logger.warning("[RETRIEVE] agentic path errored (%s); using one-shot", e)
+            agent_chunks = None
+        if agent_chunks:
+            agent_chunks = _demote_test_chunks(query, agent_chunks, mode_enum)
+            answer = None
+            source_ids: list[str] = []
+            if config.generate_answer:
+                answer, source_ids = await generate_answer(query, agent_chunks, project_summary)
+            logger.info("[RETRIEVE] agentic complete project=%s ranked=%d", project_id, len(agent_chunks))
+            return FullSearchResult(
+                ranked_chunks=agent_chunks[:limit],
+                related_chunks=[],
+                branch_context=get_branch_context(project_id, branch),
+                query_intent=mode_enum.value,
+                query_concepts=_detect_concepts(query),
+                mode=mode_enum,
+                answer=answer,
+                source_ids=source_ids,
+                search_id=None,
+            )
     signals = signals or preprocess_query(query)
     logger.info(
         "[RETRIEVE] start project=%s mode=%s limit=%s branch=%s vector=%s rerank=%s refine=%s graph=%s",
@@ -385,6 +424,9 @@ async def retrieve_context_full(
         query_embedding,
         variant=variant or PIPELINE_TAG,
     )
+
+    # Final-stage: keep test files out of the lead unless the query asks for them.
+    ranked = _demote_test_chunks(query, ranked, mode_enum)
 
     answer = None
     source_ids: list[str] = []
@@ -909,6 +951,9 @@ async def _dispatch_graph_search(
         variant=variant or PIPELINE_TAG,
     )
 
+    # Final-stage: keep test files out of the lead unless the query asks for them.
+    ranked = _demote_test_chunks(query, ranked, mode_enum)
+
     answer = None
     source_ids: list[str] = []
     if config.generate_answer:
@@ -1040,8 +1085,30 @@ async def _rank_candidates(
     return ranked[:rank_limit]
 
 
+def _demote_test_chunks(query: str, ranked: list[dict], mode: ModeEnum) -> list[dict]:
+    """Stable final-stage demotion of test files for non-FIND modes.
+
+    The reranker already penalizes test chunks, but later stages (MMR, graph
+    expansion, refine merges) can re-surface them. This guarantees no test file
+    leads the Ask sources unless the query explicitly mentions tests — without
+    dropping them entirely (they stay, just below real code).
+    """
+    if mode == ModeEnum.FIND or not ranked or query_mentions_tests(query):
+        return ranked
+    non_test = [c for c in ranked if not is_test_chunk(c)]
+    test = [c for c in ranked if is_test_chunk(c)]
+    if not test or not non_test:
+        return ranked
+    return non_test + test
+
+
 def _should_refine(query: str, ranked: list[dict], mode: ModeEnum) -> bool:
     if mode == ModeEnum.FIND or not ranked:
+        return False
+
+    # Too few candidates for a second pass to plausibly rescue — skip the cost.
+    if len(ranked) < _REFINE_MIN_CANDIDATES:
+        logger.info("[REFINE] Skipped: sparse candidates=%d", len(ranked))
         return False
 
     top_score = ranked[0].get("final_score", ranked[0].get("similarity_score", ranked[0].get("similarity", 0)))
@@ -1049,6 +1116,11 @@ def _should_refine(query: str, ranked: list[dict], mode: ModeEnum) -> bool:
         top_score = float(top_score)
     except (TypeError, ValueError):
         top_score = 0.0
+
+    # Already confident — refining adds an LLM round-trip for marginal gain.
+    if top_score >= _REFINE_SKIP_CONFIDENCE:
+        logger.info("[REFINE] Skipped: high confidence %.3f", top_score)
+        return False
 
     if top_score < ITERATIVE_REFINEMENT_THRESHOLD:
         logger.info("[REFINE] Triggered by low confidence: %.3f", top_score)
@@ -1434,6 +1506,48 @@ def _rank_find_candidates(
             mean_idf = max(sum(idf.values()) / max(len(idf), 1), 1e-6)
             term_weights = {term: (value / mean_idf) for term, value in idf.items()}
 
+    # Candidate-local graph normalization. Raw PageRank values are tiny absolute
+    # numbers (~1/N, max ~0.07) so `pagerank * weight` was ~15-30x too small to
+    # rival lexical boosts. We rank-normalize PageRank/centrality WITHIN the
+    # candidate set to [0,1] so the most structurally-central definition gets the
+    # full weight and out-ranks chunks that merely reference it.
+    pr_values = [float(c.get("pagerank_score") or 0.0) for c in chunks]
+    cen_values = [float(c.get("centrality_score") or 0.0) for c in chunks]
+    pr_norm_by_id: dict[str, float] = {}
+    cen_norm_by_id: dict[str, float] = {}
+
+    def _percentile_norm(values: list[float]) -> list[float]:
+        # Map each value to its fractional rank in [0,1]; ties share the mean
+        # rank. Robust to the heavy-tailed PageRank distribution (better than
+        # min-max, which a single hub would otherwise dominate).
+        n = len(values)
+        if n == 0:
+            return []
+        if max(values) <= 0.0:
+            return [0.0] * n
+        order = sorted(range(n), key=lambda i: values[i])
+        norm = [0.0] * n
+        i = 0
+        while i < n:
+            j = i
+            while j + 1 < n and values[order[j + 1]] == values[order[i]]:
+                j += 1
+            # average rank for the tie group, normalized to [0,1]
+            avg_rank = (i + j) / 2.0
+            frac = avg_rank / (n - 1) if n > 1 else 1.0
+            for k in range(i, j + 1):
+                norm[order[k]] = frac
+            i = j + 1
+        return norm
+
+    pr_norms = _percentile_norm(pr_values)
+    cen_norms = _percentile_norm(cen_values)
+    for idx_c, chunk in enumerate(chunks):
+        cid = str(chunk.get("id") or "")
+        if cid:
+            pr_norm_by_id[cid] = pr_norms[idx_c]
+            cen_norm_by_id[cid] = cen_norms[idx_c]
+
     for idx, chunk in enumerate(chunks):
         haystack = chunk_haystacks[idx] if idx < len(chunk_haystacks) else _chunk_search_text(chunk)
         file_path = str(chunk.get("file_path") or "").replace("\\", "/").lower()
@@ -1473,10 +1587,21 @@ def _rank_find_candidates(
             )
         )
 
-        # PageRank boost: implementers naturally have more incoming edges than callers.
-        # When GRAPH_BUILDER_ENABLED, this is the primary signal distinguishing
-        # "this IS the function" from "this USES the function".
-        pagerank = float(chunk.get("pagerank_score") or 0.0)
+        # Definition-vs-reference: a chunk whose OWN name is a requested symbol is
+        # the definition ("this IS the function"); chunks that only contain the
+        # term in their body are references/callers ("this USES the function").
+        # This, combined with the (normalized) PageRank below, is the primary
+        # structural signal that pushes definers above their callers.
+        cid_for_graph = str(chunk.get("id") or "")
+        name_def_hits = sum(
+            term_weights.get(term, 1.0) for term in specific_terms if term and term in name_token
+        )
+
+        # Rank-normalized graph signals (computed across the candidate set above).
+        # Implementers have more incoming edges -> higher PageRank; centrality is
+        # a small tie-breaker among otherwise-equal candidates.
+        pr_norm = pr_norm_by_id.get(cid_for_graph, 0.0) if GRAPH_BUILDER_ENABLED else 0.0
+        cen_norm = cen_norm_by_id.get(cid_for_graph, 0.0) if GRAPH_BUILDER_ENABLED else 0.0
 
         boost = (
             lexical_hits * FIND_BOOST_LEXICAL
@@ -1485,7 +1610,9 @@ def _rank_find_candidates(
             + body_hits * FIND_BOOST_BODY
             + exact_signal_hits * FIND_BOOST_SIGNAL
             + concept_hits * FIND_BOOST_CONCEPT
-            + pagerank * FIND_PAGERANK_WEIGHT
+            + name_def_hits * FIND_BOOST_NAME_DEF
+            + pr_norm * FIND_PAGERANK_WEIGHT
+            + cen_norm * FIND_BOOST_CENTRALITY
         )
         if "config" in terms and ".config" in (chunk.get("code_body") or "").lower():
             boost += 0.30
@@ -1512,8 +1639,10 @@ def _rank_find_candidates(
         chunk["_find_route_handler"] = is_route_handler
         chunk["_find_method_match"] = method_hits > 0
         chunk["_find_domain_match"] = domain_hits > 0
-        if path_hits or signature_hits or body_hits or exact_signal_hits or concept_hits:
+        if name_def_hits or path_hits or signature_hits or body_hits or exact_signal_hits or concept_hits:
             reasons = []
+            if name_def_hits:
+                reasons.append("defines the requested symbol")
             if path_hits:
                 reasons.append("matches requested terms in file path/name")
             if signature_hits:
@@ -1532,7 +1661,15 @@ def _rank_find_candidates(
                 reasons.append("matches requested domain terms")
             chunk["relevance_reasoning"] = "; ".join(reasons)
 
-    ranked = sorted(chunks, key=lambda c: c.get("_find_raw", 0.0), reverse=True)
+    ranked = sorted(
+        chunks,
+        key=lambda c: (
+            c.get("_find_raw", 0.0),
+            pr_norm_by_id.get(str(c.get("id") or ""), 0.0),
+            cen_norm_by_id.get(str(c.get("id") or ""), 0.0),
+        ),
+        reverse=True,
+    )
     # Map raw composite scores onto a spread display confidence. The top match
     # anchors near 1.0 and weaker candidates decay via a power curve, so the
     # results carry a real, discriminating spread instead of a wall of 100%.
@@ -1617,8 +1754,10 @@ def _postprocess_find_ranked(ranked: list[dict], query: str, limit: int, plan: F
             return False
         if file_path:
             file_count = sum(1 for c in selected if str(c.get("file_path") or "") == file_path)
-            strong_same_file = current_raw >= (top_raw * _FIND_STRONG_FRACTION)
-            if file_count >= per_file_cap and not strong_same_file:
+            # Strict per-file cap: graph-primary ranking now places the single
+            # best chunk per file at the top, so we no longer need a score bypass
+            # to rescue a second strong same-file match (which caused flooding).
+            if file_count >= per_file_cap:
                 return False
         if name in _FIND_GENERIC_SYMBOL_NAMES and file_path:
             key = (file_path, name)
