@@ -306,37 +306,123 @@ function buildCallGraph(chunks: ChunkData[]): CallGraphEdge[] {
       }
     }
 
+    const isPython = chunk.file_path.toLowerCase().endsWith('.py');
     for (const imp of chunk.imports) {
       if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
-      const match = imp.match(/from\s+['"]([^'"]+)['"]/);
-      if (!match) continue;
-      const modulePath = match[1];
-      if (!modulePath.startsWith('.')) continue;
-
-      const resolved = path.posix.normalize(
-        path.posix.join(path.posix.dirname(chunk.file_path), modulePath),
-      );
-
-      for (const [filePath, fileChunks] of chunksByFile) {
-        const withoutExt = filePath.replace(/\.\w+$/, '');
-        if (withoutExt === resolved || filePath === resolved) {
-          const fileChunk = fileChunks.find((c) => c.chunk_type === 'file') ?? fileChunks[0];
-          if (fileChunk) {
-            edges.push({
-              from_name: chunk.name,
-              from_file: chunk.file_path,
-              to_name: fileChunk.name,
-              to_file: fileChunk.file_path,
-              relationship_type: 'imports',
-            });
-          }
-          break;
+      const targetFiles = isPython
+        ? resolvePythonImportFiles(chunk.file_path, imp, chunksByFile)
+        : resolveJsImportFiles(chunk.file_path, imp, chunksByFile);
+      for (const fileChunks of targetFiles) {
+        if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
+        const fileChunk = fileChunks.find((c) => c.chunk_type === 'file') ?? fileChunks[0];
+        if (fileChunk && fileChunk.name !== chunk.name) {
+          edges.push({
+            from_name: chunk.name,
+            from_file: chunk.file_path,
+            to_name: fileChunk.name,
+            to_file: fileChunk.file_path,
+            relationship_type: 'imports',
+          });
         }
       }
     }
   }
 
   return edges;
+}
+
+/**
+ * Resolve a JS/TS import statement ("import { x } from '../foo'") to the
+ * matching project file's chunks. Only relative specifiers resolve in-project.
+ */
+function resolveJsImportFiles(
+  importerFile: string,
+  imp: string,
+  chunksByFile: Map<string, ChunkData[]>,
+): ChunkData[][] {
+  const match = imp.match(/from\s+['"]([^'"]+)['"]/);
+  if (!match) return [];
+  const modulePath = match[1];
+  if (!modulePath.startsWith('.')) return [];
+  const resolved = path.posix.normalize(
+    path.posix.join(path.posix.dirname(importerFile.replace(/\\/g, '/')), modulePath),
+  );
+  for (const [filePath, fileChunks] of chunksByFile) {
+    const fp = filePath.replace(/\\/g, '/');
+    const withoutExt = fp.replace(/\.\w+$/, '');
+    if (withoutExt === resolved || fp === resolved) return [fileChunks];
+  }
+  return [];
+}
+
+/**
+ * Resolve a Python import statement to matching project files. Handles:
+ *   from .utils import x          (relative, same package)
+ *   from ..pkg.mod import x       (relative, parent package)
+ *   from . import utils           (relative bare submodule)
+ *   from app.services.mod import x (absolute dotted — suffix-matched)
+ *   import app.services.mod        (absolute dotted)
+ * Third-party / stdlib specifiers simply don't match any project file.
+ */
+function resolvePythonImportFiles(
+  importerFile: string,
+  imp: string,
+  chunksByFile: Map<string, ChunkData[]>,
+): ChunkData[][] {
+  const importerDir = path.posix.dirname(importerFile.replace(/\\/g, '/'));
+  const candidates: Array<{ rel: boolean; dots: number; mod: string }> = [];
+
+  let m: RegExpMatchArray | null;
+  if ((m = imp.match(/^\s*from\s+(\.*)([\w.]*)\s+import\s+(.+)$/))) {
+    const dots = m[1].length;
+    const mod = m[2];
+    const names = m[3];
+    if (dots > 0 && mod) {
+      candidates.push({ rel: true, dots, mod });
+    } else if (dots > 0 && !mod) {
+      // from . import a, b  -> each name is a submodule in this package
+      for (const nm of names.split(',')) {
+        const clean = nm.trim().split(/\s+as\s+/)[0].trim().replace(/[()]/g, '');
+        if (/^\w+$/.test(clean)) candidates.push({ rel: true, dots, mod: clean });
+      }
+    } else if (mod) {
+      candidates.push({ rel: false, dots: 0, mod });
+    }
+  } else if ((m = imp.match(/^\s*import\s+(.+)$/))) {
+    for (const part of m[1].split(',')) {
+      const clean = part.trim().split(/\s+as\s+/)[0].trim();
+      if (/^[\w.]+$/.test(clean)) candidates.push({ rel: false, dots: 0, mod: clean });
+    }
+  }
+  if (!candidates.length) return [];
+
+  const out: ChunkData[][] = [];
+  for (const c of candidates) {
+    const relParts = c.mod.split('.').filter(Boolean);
+    if (!relParts.length) continue;
+    if (c.rel) {
+      let baseDir = importerDir;
+      for (let i = 0; i < c.dots - 1; i++) baseDir = path.posix.dirname(baseDir);
+      const joined = path.posix.normalize([baseDir, ...relParts].join('/'));
+      const wantA = joined + '.py';
+      const wantB = joined + '/__init__.py';
+      for (const [filePath, fileChunks] of chunksByFile) {
+        const fp = path.posix.normalize(filePath.replace(/\\/g, '/'));
+        if (fp === wantA || fp === wantB) out.push(fileChunks);
+      }
+    } else {
+      // Absolute dotted: suffix-match (file paths may be rooted differently).
+      const suffixA = relParts.join('/') + '.py';
+      const suffixB = relParts.join('/') + '/__init__.py';
+      for (const [filePath, fileChunks] of chunksByFile) {
+        const fp = filePath.replace(/\\/g, '/');
+        if (fp === suffixA || fp.endsWith('/' + suffixA) || fp === suffixB || fp.endsWith('/' + suffixB)) {
+          out.push(fileChunks);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 export interface ScanSignal { cancelled: boolean; }
