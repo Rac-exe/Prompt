@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -64,6 +65,10 @@ from app.services import prmpt_ai_client
 logger = logging.getLogger("code-intel.search")
 
 MIN_RESPONSE_RELEVANCE = 0.10
+_FIND_MIN_RESULTS_FLOOR = 8
+# Drop tail candidates whose raw composite score is below this fraction of the
+# top match, but only after the recall floor is met (noise suppression).
+_FIND_TAIL_FRACTION = float(os.environ.get("FIND_TAIL_FRACTION", "0.45"))
 
 _FIND_STOP_WORDS = {
     "where", "what", "which", "when", "why", "how", "find", "show",
@@ -71,6 +76,7 @@ _FIND_STOP_WORDS = {
     "workflow", "workflows", "code", "base", "codebase", "there", "here",
     "the", "and", "or", "is", "are", "can", "could", "would", "should",
     "i", "me", "my", "a", "an", "to", "of", "in", "on", "for", "with",
+    "section", "sections", "exist", "exists", "locate", "located", "show",
 }
 
 _FIND_GENERIC_CONCEPTS = {"search"}
@@ -87,6 +93,19 @@ class FullSearchResult:
     answer: str | None = None
     source_ids: list[str] = field(default_factory=list)
     search_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FindQueryPlan:
+    scope_all: bool
+    wants_route_handlers: bool
+    http_methods: set[str]
+    domain_terms: set[str]
+    explicit_generic_symbols: set[str]
+
+    @property
+    def has_constraints(self) -> bool:
+        return bool(self.wants_route_handlers or self.http_methods or self.domain_terms)
 
 
 async def retrieve_context(
@@ -198,7 +217,38 @@ async def retrieve_context_full(
         MIN_RESPONSE_RELEVANCE,
     )
 
+    # FIND mode: if first-pass lexical/path recall is too thin, run one bounded
+    # vector fallback pass to recover missed but semantically related symbols.
+    if mode_enum == ModeEnum.FIND and len(ranked) < _find_target_count(limit):
+        fallback_lists, fallback_embedding = await _find_vector_fallback_recall(
+            project_id=project_id,
+            user_id=user_id,
+            query=query,
+            branch=branch,
+            broad_limit=max(limit * 3, 24),
+        )
+        if fallback_lists:
+            ranked = await _rank_candidates(
+                [[*ranked], *fallback_lists],
+                query,
+                mode_enum,
+                config,
+                limit,
+                project_id,
+                user_id,
+                concepts,
+            )
+            ranked = _filter_response_relevance(ranked)
+            if query_embedding is None and fallback_embedding is not None:
+                query_embedding = fallback_embedding
+            logger.info(
+                "[RETRIEVE] find vector fallback applied: ranked_now=%d fallback_lists=%d",
+                len(ranked),
+                len(fallback_lists),
+            )
+
     top_score = _score(ranked[0]) if ranked else 0.0
+    decompose_second_pass_ran = False
     if decompose_task and top_score < ITERATIVE_REFINEMENT_THRESHOLD:
         try:
             decompose_analysis = await decompose_task
@@ -239,6 +289,7 @@ async def retrieve_context_full(
                 ranked = _filter_response_relevance(ranked)
                 analysis = decompose_analysis
                 concepts = decompose_concepts
+                decompose_second_pass_ran = True
         except Exception as e:
             logger.warning("[RETRIEVE] decompose second-pass failed: %s", e)
             sentry_sdk.capture_exception(e)
@@ -251,7 +302,12 @@ async def retrieve_context_full(
             ITERATIVE_REFINEMENT_THRESHOLD,
         )
 
-    if config.refine and _should_refine(query, ranked, mode_enum):
+    if decompose_second_pass_ran and config.refine:
+        # The decompose second-pass already executed a full sub-query recall + rerank.
+        # Running the refine round immediately after is largely redundant work and is
+        # the single biggest avoidable latency cost in Ask/Bug. Skip it.
+        logger.info("[REFINE] skipped: decompose second-pass already ran (avoids double recall)")
+    if config.refine and not decompose_second_pass_ran and _should_refine(query, ranked, mode_enum):
         refined_queries = await _refine_sub_queries(query, ranked[:3], mode_enum)
         if refined_queries:
             logger.info(
@@ -899,12 +955,69 @@ async def _rank_candidates(
     ranked = fused
     rank_limit = max(limit, config.rerank_limit if mode != ModeEnum.FIND else limit)
     if mode == ModeEnum.FIND:
-        ranked = _rank_find_candidates(fused, query, _normalize_find_concepts(query, _detect_concepts(query)), rank_limit)
+        find_plan = _build_find_query_plan(query)
+        ranked = _rank_find_candidates(
+            fused,
+            query,
+            _normalize_find_concepts(query, _detect_concepts(query)),
+            rank_limit,
+            find_plan,
+        )
         before = len(ranked)
-        ranked = [c for c in ranked if c.get("find_score", 0) >= FIND_MIN_SCORE]
+        # Filter on the raw composite (absolute, pre-normalization) so recall
+        # behavior is unchanged; the relative display score is for ranking spread.
+        strict_ranked = [c for c in ranked if c.get("_find_raw", 0.0) >= FIND_MIN_SCORE]
+        ranked = strict_ranked
+        target_count = _find_target_count(rank_limit)
+        if len(ranked) < target_count and before > len(ranked):
+            relaxed_threshold = max(0.20, FIND_MIN_SCORE - 0.15)
+            relaxed_ranked = [c for c in ranked if c.get("_find_raw", 0.0) >= relaxed_threshold]
+            if len(relaxed_ranked) < target_count:
+                relaxed_ranked = [
+                    c
+                    for c in _rank_find_candidates(
+                        fused,
+                        query,
+                        _normalize_find_concepts(query, _detect_concepts(query)),
+                        rank_limit,
+                        find_plan,
+                    )
+                    if c.get("_find_raw", 0.0) >= relaxed_threshold
+                ]
+            if len(relaxed_ranked) > len(ranked):
+                ranked = relaxed_ranked
+                logger.info(
+                    "[RANK] find threshold relaxed to %.2f to avoid thin recall (target=%d got=%d)",
+                    relaxed_threshold,
+                    target_count,
+                    len(ranked),
+                )
+        if len(ranked) < target_count and before:
+            ranked = _rank_find_candidates(
+                fused,
+                query,
+                _normalize_find_concepts(query, _detect_concepts(query)),
+                rank_limit,
+                find_plan,
+            )[:target_count]
+            logger.info(
+                "[RANK] find backfill applied to reach target=%d (now=%d)",
+                target_count,
+                len(ranked),
+            )
+        ranked = _postprocess_find_ranked(ranked, query, rank_limit, find_plan)
+        strict_hits = (
+            sum(1 for c in ranked if _chunk_matches_find_constraints(c, find_plan))
+            if find_plan.has_constraints else 0
+        )
         logger.info(
-            "[RANK] find ranking applied limit=%d before_filter=%d after_filter=%d threshold=%.2f",
-            rank_limit, before, len(ranked), FIND_MIN_SCORE,
+            "[RANK] find ranking applied limit=%d before_filter=%d after_filter=%d threshold=%.2f constraints=%s strict_hits=%d",
+            rank_limit,
+            before,
+            len(ranked),
+            FIND_MIN_SCORE,
+            find_plan.has_constraints,
+            strict_hits,
         )
         return ranked[:rank_limit]
     if config.rerank:
@@ -1125,6 +1238,30 @@ async def _broad_recall(
     return lists, query_embedding
 
 
+async def _find_vector_fallback_recall(
+    project_id: str,
+    user_id: str,
+    query: str,
+    branch: str | None,
+    broad_limit: int,
+) -> tuple[list[list[dict]], list[float] | None]:
+    try:
+        embeddings = await embed_texts([query])
+        query_embedding = embeddings[0] if embeddings else None
+        if not query_embedding:
+            return [], None
+        results = await asyncio.to_thread(
+            vector_search, project_id, user_id, query_embedding, broad_limit, branch
+        )
+        if results:
+            return [results], query_embedding
+        return [], query_embedding
+    except Exception as e:
+        logger.warning("[RECALL] find vector fallback failed: %s", e)
+        sentry_sdk.capture_exception(e)
+        return [], None
+
+
 def _filter_response_relevance(chunks: list[dict]) -> list[dict]:
     return [chunk for chunk in chunks if _score(chunk) > MIN_RESPONSE_RELEVANCE]
 
@@ -1259,15 +1396,24 @@ def _reciprocal_rank_fusion(*result_lists: list[dict], k: int = 60) -> list[dict
     return [chunks[cid] for cid in ordered]
 
 
-def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], limit: int) -> list[dict]:
+def _rank_find_candidates(
+    chunks: list[dict],
+    query: str,
+    concepts: list[str],
+    limit: int,
+    plan: FindQueryPlan | None = None,
+) -> list[dict]:
     terms = _find_terms(query)
     specific_terms = terms - _FIND_GENERIC_TERMS
+    plan = plan or _build_find_query_plan(query)
+    query_generic_symbol_terms = plan.explicit_generic_symbols
     # Domain signal terms that qualify for the signal-hit boost (configurable via env)
     query_signal_terms = terms & FIND_DOMAIN_SIGNAL_TERMS
 
     for chunk in chunks:
         haystack = _chunk_search_text(chunk)
-        path_name = f"{chunk.get('file_path', '')} {chunk.get('name', '')}".lower()
+        file_path = str(chunk.get("file_path") or "").replace("\\", "/").lower()
+        path_name = f"{file_path} {chunk.get('name', '')}".lower()
         signature = _split_identifiers(str(chunk.get("signature") or "")).lower()
         code_body = _split_identifiers(str(chunk.get("code_body") or "")[:2500]).lower()
         concepts_set = {str(c) for c in (chunk.get("concepts") or [])}
@@ -1281,6 +1427,27 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
             1 for term in query_signal_terms if term in haystack
         )
         concept_hits = len(concepts_set.intersection(concepts))
+        name_token = str(chunk.get("name") or "").strip().lower()
+        method_hits = sum(
+            1
+            for method in plan.http_methods
+            if method in path_name or method in signature or name_token == method
+        )
+        domain_hits = sum(
+            1
+            for term in plan.domain_terms
+            if term in path_name or term in signature or term in code_body or term in haystack
+        )
+        is_route_file = "/api/" in file_path and "/route." in file_path
+        is_route_handler = bool(
+            is_route_file
+            and (
+                name_token in _FIND_HTTP_METHODS
+                or "route" in name_token
+                or "handler" in name_token
+                or any(method in signature for method in _FIND_HTTP_METHODS)
+            )
+        )
 
         # PageRank boost: implementers naturally have more incoming edges than callers.
         # When GRAPH_BUILDER_ENABLED, this is the primary signal distinguishing
@@ -1300,10 +1467,27 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
             boost += 0.30
         if specific_terms and not (path_hits or signature_hits or body_hits):
             boost += FIND_PENALTY_MISS
+        # Reduce generic-route/page noise unless user asked for those symbols.
+        if (
+            name_token in _FIND_GENERIC_SYMBOL_NAMES
+            and name_token not in query_generic_symbol_terms
+        ):
+            boost -= 0.12
+        if plan.wants_route_handlers:
+            boost += 0.30 if is_route_handler else -0.22
+        if plan.http_methods:
+            boost += 0.22 if method_hits else -0.18
+        if plan.domain_terms:
+            boost += 0.24 if domain_hits else -0.20
 
         base = _score(chunk)
-        chunk["find_score"] = max(0.0, min(base + boost, 1.0))
-        chunk["final_score"] = chunk["find_score"]
+        # Keep the raw composite UNCLAMPED. Clamping to 1.0 pinned every strong
+        # candidate to an identical 100% and made the final sort arbitrary among
+        # them (the true best could sink). Ranking + display both derive from raw.
+        chunk["_find_raw"] = base + boost
+        chunk["_find_route_handler"] = is_route_handler
+        chunk["_find_method_match"] = method_hits > 0
+        chunk["_find_domain_match"] = domain_hits > 0
         if path_hits or signature_hits or body_hits or exact_signal_hits or concept_hits:
             reasons = []
             if path_hits:
@@ -1316,10 +1500,152 @@ def _rank_find_candidates(chunks: list[dict], query: str, concepts: list[str], l
                 reasons.append("matches requested signal terms")
             if concept_hits:
                 reasons.append(f"shares concepts: {', '.join(sorted(concepts_set.intersection(concepts)))}")
+            if plan.wants_route_handlers and is_route_handler:
+                reasons.append("matches route-handler intent")
+            if plan.http_methods and method_hits:
+                reasons.append("matches requested HTTP method")
+            if plan.domain_terms and domain_hits:
+                reasons.append("matches requested domain terms")
             chunk["relevance_reasoning"] = "; ".join(reasons)
 
-    ranked = sorted(chunks, key=lambda c: c.get("find_score", 0), reverse=True)
+    ranked = sorted(chunks, key=lambda c: c.get("_find_raw", 0.0), reverse=True)
+    # Map raw composite scores onto a spread display confidence. The top match
+    # anchors near 1.0 and weaker candidates decay via a power curve, so the
+    # results carry a real, discriminating spread instead of a wall of 100%.
+    if ranked:
+        top_raw = max(ranked[0].get("_find_raw", 0.0), 1e-6)
+        for c in ranked:
+            rel = max(0.0, c.get("_find_raw", 0.0)) / top_raw
+            c["find_score"] = round(min(rel ** 1.4, 1.0), 4)
+            c["final_score"] = c["find_score"]
     return ranked[:limit]
+
+
+def _find_target_count(limit: int) -> int:
+    return max(min(limit, _FIND_MIN_RESULTS_FLOOR), min(4, limit))
+
+
+def _is_breadth_find_query(query: str) -> bool:
+    terms = _find_terms(query)
+    if not terms:
+        return False
+    return bool(terms.intersection(_FIND_BREADTH_HINTS))
+
+
+def _build_find_query_plan(query: str) -> FindQueryPlan:
+    terms = _find_terms(query)
+    method_terms = terms.intersection(_FIND_HTTP_METHODS)
+    route_hint_terms = terms.intersection(_FIND_ROUTE_HINTS)
+    explicit_generic_symbols = terms.intersection(_FIND_GENERIC_SYMBOL_NAMES)
+    domain_terms = {
+        term
+        for term in terms
+        if term not in _FIND_GENERIC_TERMS
+        and term not in _FIND_BREADTH_HINTS
+        and term not in _FIND_ROUTE_HINTS
+        and term not in _FIND_HTTP_METHODS
+        and term not in _FIND_GENERIC_SYMBOL_NAMES
+    }
+    return FindQueryPlan(
+        scope_all=bool(terms.intersection(_FIND_BREADTH_HINTS)),
+        wants_route_handlers=bool(route_hint_terms or method_terms),
+        http_methods=method_terms,
+        domain_terms=domain_terms,
+        explicit_generic_symbols=explicit_generic_symbols,
+    )
+
+
+def _chunk_matches_find_constraints(chunk: dict, plan: FindQueryPlan) -> bool:
+    if plan.wants_route_handlers and not bool(chunk.get("_find_route_handler")):
+        return False
+    if plan.http_methods and not bool(chunk.get("_find_method_match")):
+        return False
+    if plan.domain_terms and not bool(chunk.get("_find_domain_match")):
+        return False
+    return True
+
+
+def _postprocess_find_ranked(ranked: list[dict], query: str, limit: int, plan: FindQueryPlan) -> list[dict]:
+    if not ranked or limit <= 0:
+        return ranked
+
+    breadth_query = plan.scope_all
+    selected: list[dict] = []
+    seen_ids: set[str] = set()
+    selected_file_paths: set[str] = set()
+    # Recall floor + relative tail gate: keep at least the floor, then drop the
+    # weak tail (raw far below the top) so noise doesn't pad the result page.
+    floor = _find_target_count(limit)
+    top_raw = max(ranked[0].get("_find_raw", 0.0), 1e-6)
+    tail_min_raw = top_raw * _FIND_TAIL_FRACTION
+    # Cap chunks per file so a single file can't flood the results.
+    per_file_cap = 3 if breadth_query else 2
+
+    def _add_chunk(chunk: dict) -> bool:
+        cid = str(chunk.get("id") or "")
+        file_path = str(chunk.get("file_path") or "")
+        name = str(chunk.get("name") or "").strip().lower()
+        if not cid or cid in seen_ids:
+            return False
+        if file_path:
+            file_count = sum(1 for c in selected if str(c.get("file_path") or "") == file_path)
+            if file_count >= per_file_cap:
+                return False
+        if name in _FIND_GENERIC_SYMBOL_NAMES and file_path:
+            key = (file_path, name)
+            if key in generic_seen_per_file:
+                return False
+            generic_seen_per_file.add(key)
+        selected.append(chunk)
+        seen_ids.add(cid)
+        if file_path:
+            selected_file_paths.add(file_path)
+        return True
+
+    generic_seen_per_file: set[tuple[str, str]] = set()
+
+    # Pass 0: if query has explicit constraints, reserve top slots for candidates
+    # satisfying all constraints (route-handler/method/domain).
+    if plan.has_constraints:
+        strict_candidates = [c for c in ranked if _chunk_matches_find_constraints(c, plan)]
+        if strict_candidates:
+            strict_contract = int(limit * (0.8 if breadth_query else 0.7))
+            strict_contract = max(1, min(limit, strict_contract))
+            for chunk in strict_candidates:
+                if len(selected) >= strict_contract:
+                    break
+                _add_chunk(chunk)
+
+    # Pass 1: prioritize unique files on breadth-style "where all" queries.
+    if breadth_query:
+        for chunk in ranked:
+            if len(selected) >= limit:
+                break
+            cid = str(chunk.get("id") or "")
+            file_path = str(chunk.get("file_path") or "")
+            if not cid or cid in seen_ids or not file_path:
+                continue
+            if file_path in selected_file_paths:
+                continue
+            _add_chunk(chunk)
+
+    # Pass 2: fill remaining slots with strongest leftovers, but suppress
+    # duplicate generic symbols from the same file to reduce noisy repetition.
+    for chunk in selected:
+        file_path = str(chunk.get("file_path") or "")
+        name = str(chunk.get("name") or "").strip().lower()
+        if name in _FIND_GENERIC_SYMBOL_NAMES and file_path:
+            generic_seen_per_file.add((file_path, name))
+
+    for chunk in ranked:
+        if len(selected) >= limit:
+            break
+        # Once the recall floor is satisfied, stop padding with the weak tail.
+        if len(selected) >= floor and float(chunk.get("_find_raw", 0.0)) < tail_min_raw:
+            continue
+        _add_chunk(chunk)
+
+    return selected
 
 
 def _mmr(chunks: list[dict], lambda_param: float, limit: int) -> list[dict]:
@@ -1389,6 +1715,12 @@ def _word_variants(text: str) -> set[str]:
     words = set(re.findall(r"\w+", _split_identifiers(text).lower()))
     variants = set(words)
     for word in words:
+        # Better plural normalization: communities -> community
+        if word.endswith("ies") and len(word) > 4:
+            variants.add(word[:-3] + "y")
+        # Common plural normalization: classes -> class, tokens -> token
+        if word.endswith("es") and len(word) > 4:
+            variants.add(word[:-2])
         if word.endswith("s") and len(word) > 3:
             variants.add(word[:-1])
     return variants
@@ -1404,6 +1736,20 @@ def _find_terms(query: str) -> set[str]:
 _FIND_GENERIC_TERMS = {
     "config", "configs", "configuration", "configure", "configured",
     "located", "location", "where", "file", "files", "code",
+}
+
+_FIND_GENERIC_SYMBOL_NAMES = {
+    "route", "get", "post", "put", "patch", "delete", "head", "options",
+    "page", "layout", "default", "handler",
+}
+
+_FIND_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
+
+_FIND_ROUTE_HINTS = {"route", "routes", "handler", "handlers", "endpoint", "endpoints", "api"}
+
+_FIND_BREADTH_HINTS = {
+    "all", "every", "entire", "full", "complete", "where", "locations",
+    "location", "places", "codes", "files", "section", "sections",
 }
 
 
