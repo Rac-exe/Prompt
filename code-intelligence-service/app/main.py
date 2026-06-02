@@ -30,7 +30,7 @@ from starlette.responses import Response as StarletteResponse
 
 from app.config import (
     APP_ENV, APP_VERSION, SENTRY_DSN,
-    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
+    EMBEDDING_MODEL, EMBEDDING_BACKEND, EMBEDDING_LOCAL_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
     QUERY_DECOMPOSE_MODEL,
     SUMMARIZER_CONCURRENCY, GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED,
     RETRIEVAL_DEFAULT_LIMIT,
@@ -78,10 +78,12 @@ app.add_middleware(RequestIDMiddleware)
 
 logger.info(
     "Code Intelligence Service starting — env=%s, version=%s, pipeline_tag=%s (fingerprint=%s), "
-    "embed_model=%s (dim=%s), summarizer=%s, decomposer=%s, "
+    "embed_backend=%s, embed_model=%s (dim=%s), summarizer=%s, decomposer=%s, "
     "concurrency=%d, graph_depth=%d, graph_max_related=%d, retrieval_limit=%d",
     APP_ENV, APP_VERSION, PIPELINE_TAG, PIPELINE_FINGERPRINT,
-    EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
+    EMBEDDING_BACKEND,
+    (EMBEDDING_LOCAL_MODEL if EMBEDDING_BACKEND == "local" else EMBEDDING_MODEL),
+    EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
     QUERY_DECOMPOSE_MODEL, SUMMARIZER_CONCURRENCY,
     GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, RETRIEVAL_DEFAULT_LIMIT,
 )

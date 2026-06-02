@@ -115,12 +115,12 @@ def _extract_optimized_prompt(raw: str) -> str:
         raw, re.DOTALL | re.IGNORECASE
     )
     if match:
-        return match.group(1).strip()
+        return _strip_leading_meta(match.group(1).strip())
     cleaned = raw.strip()
     prompt_start = _find_prompt_start_after_analysis(cleaned)
     if 0 < prompt_start < len(cleaned):
-        return cleaned[prompt_start:].lstrip('\n')
-    return cleaned
+        return _strip_leading_meta(cleaned[prompt_start:].lstrip('\n'))
+    return _strip_leading_meta(cleaned)
 
 
 # ── Analysis leak detection & stripping ──────────────────────────────────────
@@ -142,6 +142,37 @@ _ANALYSIS_LAST_SECTION_RE = re.compile(
 _STRIP_BUFFER_LIMIT_TASK = 2000
 _STRIP_BUFFER_LIMIT_SINGLE = 4000
 _QUICK_CHECK_LEN = 500
+
+# Conversational preamble leak: the model sometimes narrates before emitting the
+# prompt, e.g. "I should output the optimized prompt:" or "Here is the optimized
+# prompt:". Strip such a SHORT leading meta line (must start with a meta phrase
+# AND reference the prompt/output) so it never leaks into the user-facing result.
+_META_PREAMBLE_RE = re.compile(
+    r'^\s*(?:sure|okay|ok|alright|certainly|got\s+it|understood)?[\s,!.:-]*'
+    r'(?:here(?:\'s|\s+is)|below\s+is|the\s+following\s+is|this\s+is|let\s+me|'
+    r'i\b[^\n]*?\b(?:output|provide|give|should|will|am|have|need\s+to))'
+    r'[^\n]*?(?:optimi[sz]ed\s+prompt|prompt|output|version|rewrite|response)[^\n]*$',
+    re.IGNORECASE,
+)
+
+
+def _strip_leading_meta(text: str) -> str:
+    """Drop up to 2 leading conversational meta lines (preamble leak)."""
+    if not text:
+        return text
+    lines = text.split('\n')
+    removed = 0
+    while lines and removed < 2:
+        first = lines[0].strip()
+        if not first:
+            lines.pop(0)
+            continue
+        if len(first) <= 200 and _META_PREAMBLE_RE.match(first):
+            lines.pop(0)
+            removed += 1
+            continue
+        break
+    return '\n'.join(lines).lstrip('\n')
 
 
 def _find_prompt_start_after_analysis(buf: str) -> int:
