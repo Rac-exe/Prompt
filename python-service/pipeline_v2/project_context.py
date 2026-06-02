@@ -21,7 +21,11 @@ import httpx
 
 logger = logging.getLogger("prmpt.project_context")
 
-CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
+# Default to the local code-intel service when unset. Electron's code-intel
+# client uses the same default, and in packaged builds both services run on
+# the same machine, so 127.0.0.1:8002 is correct across dev and prod. An
+# explicit env var still overrides this.
+CODE_INTEL_URL = (os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").strip() or "http://127.0.0.1:8002").rstrip("/")
 
 MAX_BODY_PER_CHUNK = 2000
 MAX_PROBABLE_IN_CONTEXT = 8
@@ -46,11 +50,19 @@ def fetch_project_context(
     auth_token: str | None = None,
     limit: int = 20,
     mode: str | None = None,
+    code_intel_root: str | None = None,
 ) -> ProjectContext | None:
     """
     Call the Code Intelligence Service to get probable locations.
     Tries /api/context first (structured probable_locations), falls back
     to /api/retrieve if that fails.
+
+    code_intel_root: the Electron-announced local DB root (userData/code-intel).
+    It MUST be forwarded as the X-Prmpt-Code-Intel-Root header so the service
+    reads the same per-project index.db Electron wrote to. Find requests go
+    Electron→service directly (header set there); optimize/ask/bug go
+    Electron→python-service→service, so we re-attach the header here. Relying on
+    the service's sticky global root is unsafe (resets on reload / first call).
     """
     if not CODE_INTEL_URL:
         logger.debug("CODE_INTELLIGENCE_SERVICE_URL not set — skipping project context")
@@ -62,12 +74,15 @@ def fetch_project_context(
     logger.info(
         f"[PROJECT CTX] Fetching context: project={project_id}, "
         f"query={user_query[:80]!r}, branch={branch}, limit={limit}, "
-        f"service_url={CODE_INTEL_URL or '(not set)'}"
+        f"service_url={CODE_INTEL_URL or '(not set)'}, "
+        f"db_root={'set' if code_intel_root else 'MISSING'}"
     )
 
     headers = {"Content-Type": "application/json"}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
+    if code_intel_root:
+        headers["X-Prmpt-Code-Intel-Root"] = code_intel_root
 
     logger.info("[PROJECT CTX] Trying /api/context endpoint first...")
     result = _try_context_endpoint(project_id, user_query, branch, limit, headers, mode)

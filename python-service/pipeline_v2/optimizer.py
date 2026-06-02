@@ -287,6 +287,7 @@ def optimize(
     project_id: Optional[str] = None,
     project_branch: Optional[str] = None,
     auth_token: Optional[str] = None,
+    code_intel_root: Optional[str] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -319,35 +320,47 @@ def optimize(
         },
     )
 
-    # Fetch project codebase context if a project is attached
+    # Fetch project codebase context if a project is attached.
+    # POLICY: never optimize "blind" when a project is attached — if the code
+    # index genuinely can't be consulted we hard-fail with a clean message.
+    # We retry once only to absorb a transient warmup/reindex window, then stop.
     project_context_text = ""
     project_ctx: ProjectContext | None = None
     if project_id:
-        logger.info(f"Fetching project context for project={project_id}")
-        try:
-            project_ctx = fetch_project_context(
-                project_id=project_id,
-                user_query=user_input,
-                branch=project_branch,
-                auth_token=auth_token,
-            )
+        last_err: Exception | None = None
+        for attempt in range(1, 3):
+            logger.info(f"Fetching project context for project={project_id} (attempt {attempt}/2)")
+            try:
+                project_ctx = fetch_project_context(
+                    project_id=project_id,
+                    user_query=user_input,
+                    branch=project_branch,
+                    auth_token=auth_token,
+                    code_intel_root=code_intel_root,
+                )
+            except Exception as e:
+                last_err = e
+                sentry_sdk.capture_exception(e)
+                logger.error(f"Project context fetch raised on attempt {attempt}: {e}", exc_info=True)
+                project_ctx = None
+
             if project_ctx:
                 project_context_text = project_ctx.text
                 logger.info(f"Project context retrieved ({len(project_context_text)} chars), "
                             f"intent={project_ctx.intent}, concepts={project_ctx.concepts}")
-            else:
-                logger.warning("Project context returned None for project=%s", project_id)
-                raise ProjectContextUnavailableError(
-                    "Couldn't load project context for this space. The code index may be unavailable or reindexing. Retry in a few seconds."
-                )
-        except Exception as e:
-            if isinstance(e, ProjectContextUnavailableError):
-                raise
-            sentry_sdk.capture_exception(e)
-            logger.error(f"Project context fetch failed: {e}", exc_info=True)
+                break
+
+            if attempt == 1:
+                time.sleep(1.0)  # brief backoff for warmup / transient reindex
+
+        if not project_ctx:
+            logger.warning(
+                "Project context unavailable for project=%s after retries (last_err=%s)",
+                project_id, last_err,
+            )
             raise ProjectContextUnavailableError(
                 "Couldn't load project context for this space. The code index may be unavailable or reindexing. Retry in a few seconds."
-            ) from e
+            ) from last_err
 
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
