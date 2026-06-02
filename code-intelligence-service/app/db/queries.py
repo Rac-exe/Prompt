@@ -1044,6 +1044,17 @@ def ensure_project_embedding_compatibility(project_id: str) -> bool:
         and int(stored.get("structure_embedding_dimensions") or 0) == int(structure_dim)
     ):
         return True
+    local_project = _local_store.get_local_project(project_id) or {}
+    current_status = str(local_project.get("index_status") or "").lower()
+    # Don't flip to stale mid-index. During active indexing, the new embedding
+    # signature will be persisted at completion by the worker.
+    if current_status in {"indexing", "partial"}:
+        logger.info(
+            "[EMBEDDING_MISMATCH] project=%s deferred while status=%s",
+            project_id,
+            current_status,
+        )
+        return False
     logger.warning(
         "[EMBEDDING_MISMATCH] project=%s stored=(%s,%s,%s) active=(%s,%s,%s) -> marking stale",
         project_id,

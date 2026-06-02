@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -11,6 +12,8 @@ from app.config import MAX_CHUNKS_PER_INGEST, REDIS_URL
 
 logger = logging.getLogger("code-intel.routes.ingest")
 router = APIRouter(tags=["ingest"])
+_INGEST_WARMUP_ATTEMPTS = 3
+_INGEST_WARMUP_RETRY_DELAY_SEC = 0.4
 
 
 @router.post("/index/ingest", status_code=202)
@@ -26,8 +29,14 @@ async def ingest_skeleton(
     user_id = auth.get("sub")
 
     if not is_service_ready():
-        ready_now = warmup_local_store()
-        set_service_ready(ready_now)
+        ready_now = False
+        for attempt in range(1, _INGEST_WARMUP_ATTEMPTS + 1):
+            ready_now = warmup_local_store()
+            set_service_ready(ready_now)
+            if ready_now:
+                break
+            if attempt < _INGEST_WARMUP_ATTEMPTS:
+                await asyncio.sleep(_INGEST_WARMUP_RETRY_DELAY_SEC)
         if not ready_now:
             raise HTTPException(
                 status_code=503,
@@ -126,4 +135,6 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
     except Exception as e:
         sentry_sdk.capture_exception(e)
         logger.error(f"Ingest background task failed for project {project_id}: {e}", exc_info=True)
-        queries.update_project_status(project_id, "stale")
+        # Avoid regressing to "stale" on transient first-run/startup failures.
+        # "partial" preserves user trust and signals retryable degradation.
+        queries.update_project_status(project_id, "partial")

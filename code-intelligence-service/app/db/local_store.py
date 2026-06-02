@@ -66,6 +66,7 @@ def warmup_local_store() -> bool:
     conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(str(probe_path), timeout=5.0)
+        conn.row_factory = sqlite3.Row
         _configure(conn)
         _ensure_schema(conn)
         conn.commit()
@@ -262,8 +263,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_projects_local_columns(conn: sqlite3.Connection) -> None:
+    # Keep this resilient for callers that may not set row_factory.
     existing = {
-        str(row["name"])
+        str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
         for row in conn.execute("PRAGMA table_info(projects_local)").fetchall()
     }
     if "embedding_model" not in existing:
