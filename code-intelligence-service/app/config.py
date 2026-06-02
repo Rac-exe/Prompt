@@ -23,10 +23,25 @@ QUERY_REFINER_MODEL = os.environ.get("QUERY_REFINER_MODEL", "openrouter/deepseek
 QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/openai/gpt-4o-mini")
 ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "openrouter/deepseek/deepseek-chat")
 
+# ── Agentic multi-hop retrieval (Bet 2) ──────────────────────────────────────
+# Opt-in: when enabled, Ask/Bug/Optimize gather context with a bounded local
+# tool-calling loop (zero-network SQLite tools) before answering. Falls back to
+# one-shot RAG on any failure or cap. Off by default so the baseline pipeline
+# stays stable for benchmarking.
+AGENTIC_RETRIEVAL_ENABLED = os.environ.get("AGENTIC_RETRIEVAL_ENABLED", "false").lower() == "true"
+AGENT_MODEL = os.environ.get("AGENT_MODEL", ANSWER_MODEL)
+AGENT_MAX_HOPS = int(os.environ.get("AGENT_MAX_HOPS", "6"))
+AGENT_TIME_BUDGET_S = float(os.environ.get("AGENT_TIME_BUDGET_S", "25"))
+AGENT_MAX_CHUNKS = int(os.environ.get("AGENT_MAX_CHUNKS", "15"))
+
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-large")
-EMBEDDING_BACKEND = os.environ.get("EMBEDDING_BACKEND", "remote").lower()
+# Local-first by default: embeddings run on-device via ONNX (no network hop/cost).
+EMBEDDING_BACKEND = os.environ.get("EMBEDDING_BACKEND", "local").lower()
+# bge-small-en-v1.5 (384-dim) is the default — fast CPU-only (~90MB RAM, ~33M params).
+# Switch to Xenova/bge-base-en-v1.5 + 768 dims only when a GPU/ample RAM is available.
 EMBEDDING_LOCAL_MODEL = os.environ.get("EMBEDDING_LOCAL_MODEL", "Xenova/bge-small-en-v1.5")
-_EMBEDDING_DIM_DEFAULT = "384" if EMBEDDING_BACKEND == "local" else "1536"
+_LOCAL_EMBED_DIM_DEFAULT = "768" if "base" in EMBEDDING_LOCAL_MODEL.lower() else "384"
+_EMBEDDING_DIM_DEFAULT = _LOCAL_EMBED_DIM_DEFAULT if EMBEDDING_BACKEND == "local" else "1536"
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", _EMBEDDING_DIM_DEFAULT))
 STRUCTURE_EMBEDDING_DIMENSIONS = int(os.environ.get("STRUCTURE_EMBEDDING_DIMENSIONS", _EMBEDDING_DIM_DEFAULT))
 
@@ -86,6 +101,11 @@ FIND_BOOST_SIGNAL = float(os.environ.get("FIND_BOOST_SIGNAL", "0.12"))
 FIND_BOOST_CONCEPT = float(os.environ.get("FIND_BOOST_CONCEPT", "0.15"))
 FIND_PENALTY_MISS = float(os.environ.get("FIND_PENALTY_MISS", "-0.20"))
 FIND_MIN_SCORE = float(os.environ.get("FIND_MIN_SCORE", "0.40"))
+# Definition-vs-reference: a chunk whose own name IS a requested symbol is the
+# definition; chunks that merely call/import it are references and rank lower.
+FIND_BOOST_NAME_DEF = float(os.environ.get("FIND_BOOST_NAME_DEF", "0.45"))
+# Betweenness-centrality tie-breaker among near-equal candidates (small).
+FIND_BOOST_CENTRALITY = float(os.environ.get("FIND_BOOST_CENTRALITY", "0.08"))
 FIND_DOMAIN_SIGNAL_TERMS: frozenset[str] = frozenset(
     os.environ.get(
         "FIND_DOMAIN_SIGNAL_TERMS",

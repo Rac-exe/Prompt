@@ -59,70 +59,97 @@ def _get_model_and_kwargs() -> tuple[str, dict]:
 
 
 async def _embed_with_retry(texts: list[str], dimensions: int = EMBEDDING_DIMENSIONS) -> list[list[float]]:
-    """Call litellm.embedding with retries for transient provider failures."""
+    """Embed texts. Local-first: ONNX on-device is the only live path.
+
+    The remote (OpenRouter / direct OpenAI) implementation is intentionally
+    disabled and preserved below for easy revert. To re-enable remote, restore
+    the commented block and set EMBEDDING_BACKEND=remote in the environment.
+    """
     if EMBEDDING_BACKEND == "local":
         return await asyncio.to_thread(_embed_with_local, texts, dimensions)
 
-    if prmpt_ai_client.is_configured():
-        last_error: Exception | None = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await prmpt_ai_client.embed_texts(texts, EMBEDDING_MODEL, dimensions)
-            except Exception as e:
-                last_error = e
-                delay = RETRY_BASE_DELAY * (2 ** attempt)
-                logger.warning(
-                    "Prmpt AI proxy embedding attempt %d/%d failed (%s), retrying in %.1fs",
-                    attempt + 1, MAX_RETRIES, str(e)[:120], delay,
-                )
-                sentry_sdk.capture_exception(e)
-                if attempt < MAX_RETRIES - 1:
-                    await asyncio.sleep(delay)
-        raise RuntimeError(
-            f"Proxy embedding failed after {MAX_RETRIES} attempts: {last_error}"
-        ) from last_error
-
-    model, kwargs = _get_model_and_kwargs()
-    last_error: Exception | None = None
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            t0 = time.perf_counter()
-            response = await asyncio.to_thread(
-                litellm.embedding,
-                model=model,
-                input=texts,
-                dimensions=dimensions,
-                **kwargs,
-            )
-            elapsed = time.perf_counter() - t0
-            logger.debug(
-                f"Embedding batch ok: {len(texts)} texts, "
-                f"dim={dimensions}, took {elapsed:.2f}s"
-            )
-            return [d["embedding"] for d in response.data]
-        except Exception as e:
-            last_error = e
-            delay = RETRY_BASE_DELAY * (2 ** attempt)
-            logger.warning(
-                "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
-                attempt + 1, MAX_RETRIES, str(e)[:120], delay,
-            )
-            sentry_sdk.capture_exception(e)
-            if attempt < MAX_RETRIES - 1:
-                await asyncio.sleep(delay)
-
+    # ── REMOTE EMBEDDINGS DISABLED (local-first) ──────────────────────────────
+    # Guard so a stray EMBEDDING_BACKEND value can never silently bill/stall on
+    # the network. Local is the only supported backend right now.
     raise RuntimeError(
-        f"Embedding failed after {MAX_RETRIES} attempts: {last_error}"
-    ) from last_error
+        f"Remote embeddings are disabled (local-first). EMBEDDING_BACKEND="
+        f"{EMBEDDING_BACKEND!r}; set it to 'local'. To restore remote, un-comment "
+        f"the preserved block in embedding.py._embed_with_retry."
+    )
+
+    # --- PRESERVED REMOTE IMPLEMENTATION (commented for revert) ----------------
+    # if prmpt_ai_client.is_configured():
+    #     last_error: Exception | None = None
+    #     for attempt in range(MAX_RETRIES):
+    #         try:
+    #             return await prmpt_ai_client.embed_texts(texts, EMBEDDING_MODEL, dimensions)
+    #         except Exception as e:
+    #             last_error = e
+    #             delay = RETRY_BASE_DELAY * (2 ** attempt)
+    #             logger.warning(
+    #                 "Prmpt AI proxy embedding attempt %d/%d failed (%s), retrying in %.1fs",
+    #                 attempt + 1, MAX_RETRIES, str(e)[:120], delay,
+    #             )
+    #             sentry_sdk.capture_exception(e)
+    #             if attempt < MAX_RETRIES - 1:
+    #                 await asyncio.sleep(delay)
+    #     raise RuntimeError(
+    #         f"Proxy embedding failed after {MAX_RETRIES} attempts: {last_error}"
+    #     ) from last_error
+    #
+    # model, kwargs = _get_model_and_kwargs()
+    # last_error: Exception | None = None
+    # for attempt in range(MAX_RETRIES):
+    #     try:
+    #         t0 = time.perf_counter()
+    #         response = await asyncio.to_thread(
+    #             litellm.embedding,
+    #             model=model,
+    #             input=texts,
+    #             dimensions=dimensions,
+    #             **kwargs,
+    #         )
+    #         elapsed = time.perf_counter() - t0
+    #         logger.debug(
+    #             f"Embedding batch ok: {len(texts)} texts, dim={dimensions}, took {elapsed:.2f}s"
+    #         )
+    #         return [d["embedding"] for d in response.data]
+    #     except Exception as e:
+    #         last_error = e
+    #         delay = RETRY_BASE_DELAY * (2 ** attempt)
+    #         logger.warning(
+    #             "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
+    #             attempt + 1, MAX_RETRIES, str(e)[:120], delay,
+    #         )
+    #         sentry_sdk.capture_exception(e)
+    #         if attempt < MAX_RETRIES - 1:
+    #             await asyncio.sleep(delay)
+    # raise RuntimeError(
+    #     f"Embedding failed after {MAX_RETRIES} attempts: {last_error}"
+    # ) from last_error
+
+
+_ONNX_BATCH_SIZE = 16  # max texts per ONNX inference call
+_ONNX_MAX_SEQ_LEN = 512  # hard cap; dynamic padding reduces this for short texts
 
 
 def _embed_with_local(texts: list[str], dimensions: int) -> list[list[float]]:
     session, tokenizer = _get_local_embedder()
     if session is None or tokenizer is None:
         raise RuntimeError("Local embedding backend is unavailable")
-    max_len = 512
+
+    # Process in ONNX-safe sub-batches to keep memory bounded.
+    if len(texts) > _ONNX_BATCH_SIZE:
+        result: list[list[float]] = []
+        for i in range(0, len(texts), _ONNX_BATCH_SIZE):
+            result.extend(_embed_with_local(texts[i : i + _ONNX_BATCH_SIZE], dimensions))
+        return result
+
     encodings = [tokenizer.encode(t[:4000]) for t in texts]
+    # Dynamic padding: pad only to the longest sequence in THIS batch, not always 512.
+    actual_max = max(min(len(enc.ids), _ONNX_MAX_SEQ_LEN) for enc in encodings)
+    max_len = actual_max
+
     input_ids = []
     attention_masks = []
     for enc in encodings:
