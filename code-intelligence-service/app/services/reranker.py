@@ -26,6 +26,7 @@ _local_model_loaded = False
 _local_model_failed = False
 _local_ort_session = None
 _local_tokenizer = None
+_TEST_CHUNK_PENALTY = 0.60
 
 
 PROMPTS = {
@@ -53,11 +54,14 @@ async def rerank_chunks(query: str, chunks: list[dict], mode: ModeEnum, limit: i
 
     by_id = {str(item.get("id")): item for item in chunks}
     reranked = []
+    query_mentions_tests = _query_mentions_tests(query)
     for item in scored:
         chunk = by_id.get(str(item.get("id")))
         if not chunk:
             continue
         score = _coerce_score(item.get("score"))
+        if not query_mentions_tests and _is_test_chunk(chunk):
+            score *= _TEST_CHUNK_PENALTY
         chunk["rerank_score"] = score
         chunk["final_score"] = score
         reason = str(item.get("reasoning") or item.get("reason") or "").strip()
@@ -157,6 +161,34 @@ def _coerce_score(value) -> float:
         return max(0.0, min(numeric, 1.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _query_mentions_tests(query: str) -> bool:
+    lowered = (query or "").lower()
+    return any(
+        term in lowered
+        for term in (
+            " test",
+            "tests",
+            "pytest",
+            "spec",
+            "unit test",
+            "integration test",
+            "e2e",
+        )
+    )
+
+
+def _is_test_chunk(chunk: dict) -> bool:
+    file_path = str(chunk.get("file_path") or "").replace("\\", "/").lower()
+    name = str(chunk.get("name") or "").strip().lower()
+    if "/tests/" in file_path or file_path.startswith("tests/"):
+        return True
+    if "/test_" in file_path or file_path.endswith("_test.py"):
+        return True
+    if name.startswith("test") or name.startswith("test_"):
+        return True
+    return False
 
 
 def _local_chunk_text(chunk: dict) -> str:

@@ -116,21 +116,27 @@ def _extract_optimized_prompt(raw: str) -> str:
     )
     if match:
         return match.group(1).strip()
-    return raw.strip()
+    cleaned = raw.strip()
+    prompt_start = _find_prompt_start_after_analysis(cleaned)
+    if 0 < prompt_start < len(cleaned):
+        return cleaned[prompt_start:].lstrip('\n')
+    return cleaned
 
 
 # ── Analysis leak detection & stripping ──────────────────────────────────────
 _TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
 _SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
 _ANALYSIS_LEAK_RE = re.compile(
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION'
+    r'|CLASSIFICATION\b|DECISION\b|NEW\s+REQUEST\b|REFINEMENT/INVESTIGATION\b)',
     re.IGNORECASE,
 )
 _ANALYSIS_LAST_SECTION_RE = re.compile(
     r'(?:\*{0,2})'
     r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
     r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
-    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?'
+    r'|CLASSIFICATION|DECISION|NEW\s+REQUEST|REFINEMENT/INVESTIGATION)',
     re.IGNORECASE,
 )
 _STRIP_BUFFER_LIMIT_TASK = 2000
@@ -706,10 +712,7 @@ Apply your internal analysis silently (classify, select skills, choose technique
                 )
                 cleaned = cleaned[heading_match.start():]
         # Single-prompt mode: detect and strip analysis headers
-        elif cleaned and re.search(
-            r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
-            cleaned[:500], re.IGNORECASE
-        ):
+        elif cleaned and _ANALYSIS_LEAK_RE.search(cleaned[:_QUICK_CHECK_LEN]):
             prompt_start = _find_prompt_start_after_analysis(cleaned)
             if prompt_start > 0 and prompt_start < len(cleaned):
                 sentry_sdk.add_breadcrumb(

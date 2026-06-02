@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -69,6 +70,9 @@ _FIND_MIN_RESULTS_FLOOR = 8
 # Drop tail candidates whose raw composite score is below this fraction of the
 # top match, but only after the recall floor is met (noise suppression).
 _FIND_TAIL_FRACTION = float(os.environ.get("FIND_TAIL_FRACTION", "0.45"))
+# Allow very strong same-file matches past per-file cap (prevents exact routes
+# from being dropped when other symbols from the same file rank first).
+_FIND_STRONG_FRACTION = float(os.environ.get("FIND_STRONG_FRACTION", "0.60"))
 
 _FIND_STOP_WORDS = {
     "where", "what", "which", "when", "why", "how", "find", "show",
@@ -1409,19 +1413,39 @@ def _rank_find_candidates(
     query_generic_symbol_terms = plan.explicit_generic_symbols
     # Domain signal terms that qualify for the signal-hit boost (configurable via env)
     query_signal_terms = terms & FIND_DOMAIN_SIGNAL_TERMS
+    term_weights: dict[str, float] = {term: 1.0 for term in terms}
+    chunk_haystacks: list[str] = []
 
-    for chunk in chunks:
-        haystack = _chunk_search_text(chunk)
+    if chunks:
+        # Candidate-local IDF weighting: rare discriminating terms (e.g. clipboard)
+        # outrank ubiquitous terms (e.g. capture) without query-specific heuristics.
+        chunk_haystacks = [_chunk_search_text(chunk) for chunk in chunks]
+        if terms:
+            df = {term: 0 for term in terms}
+            for haystack in chunk_haystacks:
+                for term in terms:
+                    if term in haystack:
+                        df[term] += 1
+            n_docs = float(len(chunk_haystacks))
+            idf = {
+                term: math.log((n_docs + 1.0) / (float(df.get(term, 0)) + 0.5))
+                for term in terms
+            }
+            mean_idf = max(sum(idf.values()) / max(len(idf), 1), 1e-6)
+            term_weights = {term: (value / mean_idf) for term, value in idf.items()}
+
+    for idx, chunk in enumerate(chunks):
+        haystack = chunk_haystacks[idx] if idx < len(chunk_haystacks) else _chunk_search_text(chunk)
         file_path = str(chunk.get("file_path") or "").replace("\\", "/").lower()
         path_name = f"{file_path} {chunk.get('name', '')}".lower()
         signature = _split_identifiers(str(chunk.get("signature") or "")).lower()
         code_body = _split_identifiers(str(chunk.get("code_body") or "")[:2500]).lower()
         concepts_set = {str(c) for c in (chunk.get("concepts") or [])}
 
-        lexical_hits = sum(1 for term in terms if term in haystack)
-        path_hits = sum(1 for term in specific_terms if term in path_name)
-        signature_hits = sum(1 for term in specific_terms if term in signature)
-        body_hits = sum(1 for term in specific_terms if term in code_body)
+        lexical_hits = sum(term_weights.get(term, 1.0) for term in terms if term in haystack)
+        path_hits = sum(term_weights.get(term, 1.0) for term in specific_terms if term in path_name)
+        signature_hits = sum(term_weights.get(term, 1.0) for term in specific_terms if term in signature)
+        body_hits = sum(term_weights.get(term, 1.0) for term in specific_terms if term in code_body)
         # Signal hits: query contained a domain-signal term AND the chunk text also contains it
         exact_signal_hits = sum(
             1 for term in query_signal_terms if term in haystack
@@ -1585,11 +1609,16 @@ def _postprocess_find_ranked(ranked: list[dict], query: str, limit: int, plan: F
         cid = str(chunk.get("id") or "")
         file_path = str(chunk.get("file_path") or "")
         name = str(chunk.get("name") or "").strip().lower()
+        current_raw = float(chunk.get("_find_raw", 0.0))
         if not cid or cid in seen_ids:
+            return False
+        # Apply tail suppression across all passes once the recall floor is met.
+        if not breadth_query and len(selected) >= floor and current_raw < tail_min_raw:
             return False
         if file_path:
             file_count = sum(1 for c in selected if str(c.get("file_path") or "") == file_path)
-            if file_count >= per_file_cap:
+            strong_same_file = current_raw >= (top_raw * _FIND_STRONG_FRACTION)
+            if file_count >= per_file_cap and not strong_same_file:
                 return False
         if name in _FIND_GENERIC_SYMBOL_NAMES and file_path:
             key = (file_path, name)
@@ -1640,9 +1669,6 @@ def _postprocess_find_ranked(ranked: list[dict], query: str, limit: int, plan: F
     for chunk in ranked:
         if len(selected) >= limit:
             break
-        # Once the recall floor is satisfied, stop padding with the weak tail.
-        if len(selected) >= floor and float(chunk.get("_find_raw", 0.0)) < tail_min_raw:
-            continue
         _add_chunk(chunk)
 
     return selected
