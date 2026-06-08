@@ -322,8 +322,12 @@ export function registerChatHandlers(
                     null,
                     null,
                     false,
-                    source === 'space' ? (projectId || null) : getActiveProjectId(),
-                    source === 'space' ? (projectBranch || null) : getActiveProjectBranch(),
+                    // SpaceWorkspace already retrieves scoped code context and
+                    // embeds it into promptText. Passing projectId here triggers
+                    // a second Python-side /api/context fetch, which bloats the
+                    // final optimized prompt with extra file mentions.
+                    source === 'space' ? null : getActiveProjectId(),
+                    source === 'space' ? null : getActiveProjectBranch(),
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;

@@ -248,28 +248,27 @@ export function buildTailoredPrompt(
   relatedChunks: RetrievedChunk[],
 ): string {
   const lines: string[] = [];
+  const primaryChunks = chunks.slice(0, 5);
+  const secondaryChunks = relatedChunks.slice(0, 2);
 
   lines.push(taskDescription.trim());
   lines.push("");
 
-  if (chunks.length > 0) {
-    lines.push("Here are the most relevant parts of my codebase for this task:");
+  if (primaryChunks.length > 0) {
+    lines.push("Use this scoped code context. Mention only files that are necessary for the fix:");
     lines.push("");
 
-    for (const chunk of chunks.slice(0, 20)) {
+    for (const [idx, chunk] of primaryChunks.entries()) {
       const path = shortenPath(chunk.file_path);
       lines.push(
         `**${chunk.name}** (${chunk.chunk_type}) in \`${path}\` (lines ${chunk.start_line}-${chunk.end_line})`,
       );
-      if (chunk.concepts && chunk.concepts.length > 0) {
-        lines.push(`Concepts: ${chunk.concepts.join(", ")}`);
-      }
       if (chunk.semantic_summary) {
         lines.push(`Summary: ${chunk.semantic_summary}`);
       }
       if (chunk.code_body) {
         lines.push(`\`\`\`${chunk.language}`);
-        lines.push(chunk.code_body.slice(0, 2000));
+        lines.push(chunk.code_body.slice(0, idx < 2 ? 1200 : 600));
         lines.push("```");
       } else if (chunk.signature) {
         lines.push(`Signature: \`${chunk.signature}\``);
@@ -278,26 +277,21 @@ export function buildTailoredPrompt(
     }
   }
 
-  if (relatedChunks.length > 0) {
-    lines.push("Related/connected code:");
+  if (secondaryChunks.length > 0) {
+    lines.push("Only mention these related locations if they are directly needed:");
     lines.push("");
-    for (const chunk of relatedChunks.slice(0, 5)) {
+    for (const chunk of secondaryChunks) {
       const path = shortenPath(chunk.file_path);
       lines.push(`**${chunk.name}** in \`${path}\``);
       if (chunk.semantic_summary) {
         lines.push(`${chunk.semantic_summary}`);
-      }
-      if (chunk.code_body) {
-        lines.push(`\`\`\`${chunk.language}`);
-        lines.push(chunk.code_body.slice(0, 1500));
-        lines.push("```");
       }
       lines.push("");
     }
   }
 
   lines.push(
-    "Please provide a detailed, step-by-step plan considering these specific files and functions. Include exact file paths and function names in your response.",
+    "Generate a short, targeted prompt for another coding agent. It should name only the smallest set of files/functions needed, include exact line ranges when useful, and ask for the specific fix without broad repo exploration.",
   );
 
   return lines.join("\n");

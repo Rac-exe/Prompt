@@ -39,7 +39,6 @@ def upsert_project(
     github_repo_owner: Optional[str] = None,
     github_repo_name: Optional[str] = None,
 ) -> dict:
-    client = get_client()
     data = {
         "user_id": user_id,
         "name": name,
@@ -50,43 +49,80 @@ def upsert_project(
         "github_repo_owner": github_repo_owner,
         "github_repo_name": github_repo_name,
     }
-    result = client.table("projects").insert(data).execute()
-    project = result.data[0] if result.data else {}
-    _local_store.sync_project(project)
-    return project
+    try:
+        client = get_client()
+        result = client.table("projects").insert(data).execute()
+        project = result.data[0] if result.data else {}
+        _local_store.sync_project(project)
+        return project
+    except Exception as exc:
+        if STORAGE_BACKEND != "local":
+            raise
+        logger.warning(
+            "Remote project create failed; using local project registry for %s: %s",
+            name,
+            exc,
+        )
+        return _local_store.create_local_project(
+            user_id=user_id,
+            name=name,
+            repo_url=repo_url,
+            local_path=local_path,
+            default_branch=default_branch,
+            github_repo_owner=github_repo_owner,
+            github_repo_name=github_repo_name,
+        )
 
 
 def get_project(project_id: str, user_id: str) -> Optional[dict]:
-    client = get_client()
-    result = (
-        client.table("projects")
-        .select("*")
-        .eq("id", project_id)
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
-    )
-    project = result.data[0] if result.data else None
-    if project:
-        _local_store.sync_project(project)
-        return project
+    try:
+        client = get_client()
+        result = (
+            client.table("projects")
+            .select("*")
+            .eq("id", project_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        project = result.data[0] if result.data else None
+        if project:
+            _local_store.sync_project(project)
+            return project
+    except Exception as exc:
+        if STORAGE_BACKEND != "local":
+            raise
+        logger.warning("Remote project lookup failed; checking local registry for %s: %s", project_id, exc)
     return _local_store.get_local_project(project_id)
 
 
 def get_projects_for_user(user_id: str) -> list[dict]:
-    client = get_client()
-    result = (
-        client.table("projects")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(100)
-        .execute()
-    )
-    projects = result.data or []
-    for project in projects:
-        _local_store.sync_project(project)
-    return projects
+    try:
+        client = get_client()
+        result = (
+            client.table("projects")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+        projects = result.data or []
+        for project in projects:
+            _local_store.sync_project(project)
+        if STORAGE_BACKEND == "local":
+            local_projects = _local_store.get_local_projects_for_user(user_id)
+            seen_ids = {str(project.get("id")) for project in projects if project.get("id")}
+            projects.extend(
+                project for project in local_projects
+                if str(project.get("id")) not in seen_ids
+            )
+        return projects
+    except Exception as exc:
+        if STORAGE_BACKEND != "local":
+            raise
+        logger.warning("Remote project list failed; using local registry for user %s: %s", user_id, exc)
+        return _local_store.get_local_projects_for_user(user_id)
 
 
 def update_project_status(project_id: str, status: str, last_indexed_at: Optional[str] = None):
@@ -102,9 +138,14 @@ def update_project_status(project_id: str, status: str, last_indexed_at: Optiona
 
 
 def delete_project(project_id: str, user_id: str):
-    client = get_client()
     _local_store.delete_project_index(project_id)
-    client.table("projects").delete().eq("id", project_id).eq("user_id", user_id).execute()
+    try:
+        client = get_client()
+        client.table("projects").delete().eq("id", project_id).eq("user_id", user_id).execute()
+    except Exception as exc:
+        if STORAGE_BACKEND != "local":
+            raise
+        logger.warning("Remote project delete failed after local delete for %s: %s", project_id, exc)
 
 
 # ── Chunks ──────────────────────────────────────────────────────────────────

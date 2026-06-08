@@ -18,16 +18,27 @@ from app.config import SUPABASE_URL, SUPABASE_JWT_SECRET, APP_ENV
 logger = logging.getLogger("code-intel.auth")
 
 _AUTH_ENABLED = bool(SUPABASE_URL or SUPABASE_JWT_SECRET)
+_IS_PRODUCTION = APP_ENV.lower() == "production"
 
-# Stable per-process dev UUID derived from hostname + pid so two developers
-# sharing the same Supabase instance don't mix each other's data.
-_DEV_USER_ID = str(uuid.uuid5(
+# Development CLI smoke tests often run against the local service without a
+# browser Supabase session. Keep production strict, but allow local tools to use
+# a stable dev identity when APP_ENV is not production.
+_ALLOW_DEV_CLI_AUTH = (
+    not _IS_PRODUCTION
+    and os.environ.get("PRMPT_ALLOW_DEV_CLI_AUTH", "1").lower()
+    not in {"0", "false", "no", "off"}
+)
+_DEV_AUTH_TOKEN = os.environ.get("PRMPT_DEV_AUTH_TOKEN", "dev-cli-token")
+
+# Stable per-machine dev UUID so local SQLite projects survive service restarts
+# while still avoiding collisions across different developer machines.
+_DEV_USER_ID = os.environ.get("PRMPT_DEV_USER_ID") or str(uuid.uuid5(
     uuid.NAMESPACE_DNS,
-    f"{socket.gethostname()}-{os.getpid()}",
+    f"prmpt-dev-{socket.gethostname()}",
 ))
 
 if not _AUTH_ENABLED:
-    if APP_ENV == "production":
+    if _IS_PRODUCTION:
         logger.critical(
             "[Auth] FATAL: Neither SUPABASE_URL nor SUPABASE_JWT_SECRET is set in production."
         )
@@ -35,6 +46,13 @@ if not _AUTH_ENABLED:
     logger.warning(
         "[Auth] Auth is DISABLED — only acceptable in development. "
         "Dev user ID: %s",
+        _DEV_USER_ID,
+    )
+elif _ALLOW_DEV_CLI_AUTH:
+    logger.warning(
+        "[Auth] Development CLI auth fallback is ENABLED. Missing bearer tokens "
+        "or Bearer %s will use dev user ID: %s",
+        _DEV_AUTH_TOKEN,
         _DEV_USER_ID,
     )
 
@@ -45,6 +63,14 @@ if SUPABASE_URL:
     logger.info(f"[Auth] JWKS client initialized: {_JWKS_URL}")
 
 security = HTTPBearer(auto_error=False)
+
+
+def _dev_payload() -> dict:
+    return {"sub": _DEV_USER_ID, "role": "authenticated", "dev_cli": True}
+
+
+def _is_dev_cli_token(token: str | None) -> bool:
+    return bool(_ALLOW_DEV_CLI_AUTH and token and token == _DEV_AUTH_TOKEN)
 
 
 def _decode_token(token: str) -> dict:
@@ -91,11 +117,18 @@ async def require_auth(
 ) -> dict:
     if not _AUTH_ENABLED:
         logger.debug("Auth bypassed (disabled in dev mode), returning stable dev UUID")
-        return {"sub": _DEV_USER_ID, "role": "authenticated"}
+        return _dev_payload()
 
     if not credentials or not credentials.credentials:
+        if _ALLOW_DEV_CLI_AUTH:
+            logger.debug("Auth bypassed for dev CLI request, returning stable dev UUID")
+            return _dev_payload()
         logger.warning("Request rejected: missing Authorization header")
         raise HTTPException(status_code=401, detail="Authorization header missing")
+
+    if _is_dev_cli_token(credentials.credentials):
+        logger.debug("Auth bypassed for dev CLI bearer token, returning stable dev UUID")
+        return _dev_payload()
 
     payload = _decode_token(credentials.credentials)
     logger.debug(f"Auth ok: user={payload.get('sub')}, role={payload.get('role')}")

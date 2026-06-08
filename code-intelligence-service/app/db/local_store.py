@@ -315,6 +315,33 @@ def sync_project(project: dict | None) -> None:
         )
 
 
+def create_local_project(
+    user_id: str,
+    name: str,
+    repo_url: Optional[str] = None,
+    local_path: Optional[str] = None,
+    default_branch: str = "main",
+    github_repo_owner: Optional[str] = None,
+    github_repo_name: Optional[str] = None,
+) -> dict:
+    project = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "name": name,
+        "repo_url": repo_url,
+        "local_path": local_path,
+        "default_branch": default_branch or "main",
+        "current_branch": default_branch or "main",
+        "index_status": "stale",
+        "last_indexed_at": None,
+        "github_repo_owner": github_repo_owner,
+        "github_repo_name": github_repo_name,
+    }
+    sync_project(project)
+    stored = get_local_project(project["id"])
+    return {**project, **(stored or {})}
+
+
 def get_local_project(project_id: str) -> dict | None:
     with connect(project_id) as conn:
         row = conn.execute("SELECT * FROM projects_local WHERE id = ?", (project_id,)).fetchone()
@@ -323,6 +350,21 @@ def get_local_project(project_id: str) -> dict | None:
     data = dict(row)
     data["tech_stack"] = _json_loads(data.pop("tech_stack_json", None), {})
     return data
+
+
+def get_local_projects_for_user(user_id: str) -> list[dict]:
+    projects: list[dict] = []
+    projects_root = get_db_root() / "projects"
+    if not projects_root.exists():
+        return projects
+
+    for db_path in projects_root.glob("*/index.db"):
+        project_id = db_path.parent.name
+        project = get_local_project(project_id)
+        if project and project.get("user_id") == user_id:
+            projects.append(project)
+
+    return sorted(projects, key=lambda item: item.get("updated_at") or "", reverse=True)
 
 
 def update_project_status(project_id: str, status: str, last_indexed_at: Optional[str] = None) -> None:
