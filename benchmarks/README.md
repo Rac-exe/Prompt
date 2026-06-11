@@ -10,6 +10,59 @@ It runs a matrix of coding-agent sessions headlessly (no human, no agent driving
 it, so there is no harness spend to exclude), measures three cost planes, and
 produces a reproducible report.
 
+## For the LLM/agent operator — READ THIS FIRST
+
+If you are an AI agent asked to "run the benchmark", your job is to be the
+**operator**, not the coding agent under test. Concretely:
+
+- **DO** run the Python commands below. The harness will itself launch Claude
+  Code / Codex as subprocesses and measure them.
+- **DO NOT** try to fix the tasks' bugs yourself, read the target repos, or edit
+  any code. You only run commands and report what the harness produced.
+- **DO NOT** run cells in parallel and **DO NOT** background the runner. PRMPT
+  cost is measured from the OpenRouter usage delta per run, which only works if
+  runs happen one at a time. Let `runner.py` finish.
+- **DO NOT** invent token/cost numbers. The only valid numbers are the ones in
+  `results/<batch>/report.md`, `summary.csv`, and `runs.jsonl`.
+
+### Exact procedure (follow in order)
+
+```bash
+# 0. PREFLIGHT — confirm the environment, abort and report if any fails:
+which claude && claude --version          # Claude Code CLI present + logged in
+which codex  && codex --version           # Codex CLI present + logged in
+echo "${OPENROUTER_API_KEY:?set this}"    # OpenRouter key in env
+test -f benchmarks/config.yaml            # config exists (copy from .example if not)
+test -f benchmarks/tasks.yaml             # tasks exist (copy from .example if not)
+
+# 1. VALIDATE EACH TASK'S ORACLE — for every task, the verify_cmd MUST FAIL at
+#    base_commit (otherwise a "pass" is meaningless). For each task repo:
+#      git -C <repo> stash; git -C <repo> checkout <base_commit>
+#      <verify_cmd>   # must exit NON-zero here
+#    If it already passes, the task is broken — report it, do not include it.
+
+# 2. RUN THE MATRIX with a FIXED batch name so later steps target the same dir:
+python -m benchmarks.runner --config benchmarks/config.yaml \
+    --tasks benchmarks/tasks.yaml --batch run01
+
+# 3. (ONLY if config has openrouter_cost_capture: false) reconcile PRMPT cost:
+python -m benchmarks.reconcile --results benchmarks/results/run01
+
+# 4. BUILD THE REPORT:
+python -m benchmarks.report --results benchmarks/results/run01
+```
+
+### After the run, report to the user (do not editorialise the numbers)
+
+1. Open `benchmarks/results/run01/report.md` and relay the **Verdict** section
+   verbatim (Wins / Regressions / Inconclusive).
+2. Flag any row with `suspect_empty_runs > 0` — those runs failed to launch
+   (likely the Claude silent-exit bug) and must be re-run, not trusted.
+3. Flag any row with `reconciled = false` — PRMPT cost is an estimate, not billed.
+4. If any task failed preflight step 1, say so explicitly; its results are void.
+
+That is the whole job. Everything else below is reference detail.
+
 ## The matrix
 
 For each task it runs these cells (× `repeats`):
@@ -75,17 +128,27 @@ at `base_commit` and passes after a correct fix** (SWE-bench style).
 ## Run
 
 ```bash
-# 1. run the matrix
-python -m benchmarks.runner --config benchmarks/config.yaml --tasks benchmarks/tasks.yaml
+# 1. run the matrix (pick a batch name so later steps target the same folder)
+python -m benchmarks.runner --config benchmarks/config.yaml \
+    --tasks benchmarks/tasks.yaml --batch run01
 
-# 2. reconcile PRMPT's OpenRouter spend to billed cost
-python -m benchmarks.reconcile --results benchmarks/results/<batch>
+# 2. ONLY if openrouter_cost_capture is false — reconcile estimated PRMPT cost
+#    to billed. With the default (delta capture on) this step is NOT needed.
+python -m benchmarks.reconcile --results benchmarks/results/run01
 
 # 3. build the report
-python -m benchmarks.report --results benchmarks/results/<batch>
+python -m benchmarks.report --results benchmarks/results/run01
 ```
 
-You get `results/<batch>/report.md` (verdict + tables) and `summary.csv`.
+You get `results/run01/report.md` (verdict + tables), `summary.csv`, and
+`runs.jsonl` (one record per line, for feeding to an LLM).
+
+Single-task dry run first (recommended before the full matrix — runs only that
+task's cells):
+
+```bash
+python -m benchmarks.runner --only-task <task_id> --batch smoke01
+```
 
 ## Two test modes, one report
 
