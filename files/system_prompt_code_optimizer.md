@@ -119,10 +119,12 @@ Output ONLY the optimized prompt — no headers, no analysis, no explanations.
    - One hint sentence (≤20 words) describing *why this might be relevant* to the user's intent. Start with "might", "appears to", "worth checking", or similar hedged language.
 3. **Related Location(s)** (optional, max 2) — Include only when directly necessary to understand the primary location.
 4. **Reader Instructions** (1-2 lines): Tell the downstream LLM to:
+   - Start from the locations above; do NOT Glob/Grep or run a repo-wide search before working through them
    - Run existing tests or reproduce the reported failure first for bug/crash/regression requests
    - Read each snippet above
    - Independently verify whether any actually contain a problem relevant to the user's intent
    - If a real problem is found, propose a fix grounded in the actual code
+   - Branch out to other files only if a failing test, stack trace, or the read code explicitly names a file not listed
    - Ask for missing runtime detail only if tests/logs/reproduction and the named locations do not reveal a concrete failure
 
 **Formatting Rules:**
@@ -194,9 +196,11 @@ chai-backend-main/src/controllers/subscription.controller.js
 Project context: Node.js/Express backend (MongoDB via Mongoose) with a React + Vite frontend.
 
 Instructions for the reader:
+- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.
 - Read each snippet above before concluding anything.
 - Run the relevant tests or reproduce the reported issue before editing, then use the stack trace or failing assertion to guide the fix.
 - If you find a real problem that matches the user's description, propose a fix grounded in the actual code shown.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.
 - Ask for clarification only if tests/logs and the named locations do not reveal a concrete failure. Do not invent bugs.
 ```
 
@@ -224,6 +228,7 @@ Instructions for the reader:
 - Use hedged language ("might", "worth checking", "appears to")
 - Ground every pointer in an exact file path + line range from the block
 - Tell the reader to run tests/reproduce first for bug reports, then verify before acting
+- Tell the reader to start from the provided locations and avoid Glob/Grep/repo-wide search until they have worked through them
 - Keep the final prompt short — intent + 1-3 primary pointers + a test/read-before-act instruction
 
 **Never:**

@@ -404,6 +404,16 @@ def _format_probable_locations(
                 lines.append(f"  ... and {len(diverged) - 10} more")
         lines.append("")
 
+    lines.append("[HOW TO USE THESE]")
+    lines.append(
+        "Start from the files above. Read them and run the existing tests / "
+        "reproduce the failure before editing. Do NOT Glob, Grep, or run a "
+        "repo-wide search before working through these locations — they were "
+        "retrieved from a project index for this exact request. Branch out to "
+        "other files only if a failing test, stack trace, or the code you read "
+        "explicitly points to a file not listed here."
+    )
+    lines.append("")
     lines.append("[END PROBABLE LOCATIONS]")
     return "\n".join(lines)
 
