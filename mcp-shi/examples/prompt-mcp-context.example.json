@@ -1,0 +1,17 @@
+{
+  "repo": "orbit-crm-generated",
+  "prompt_id": "p4",
+  "optimized_prompts": [
+    {
+      "repo": "orbit-crm-generated",
+      "prompt_id": "p4",
+      "generic_prompt": "imported workspaces are corrupting lead assignment and workspace visibility, fix it and run the tests",
+      "optimized_prompt": "The user reports that imported workspaces are corrupting lead assignment and workspace visibility. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/features/imports/reconcileWorkspaceImport.js\n- lines 4-23 · reconcileWorkspaceImport — might be relevant because it filters imported leads by visible workspace IDs and assigns owners; worth checking whether the filtering or assignment logic handles edge cases (e.g., missing workspaces, null members).\n\nsrc/security/authorizeWorkspace.js\n- lines 6-9 · visibleWorkspaceIds — worth checking whether it correctly determines which workspaces the user should see, especially if imported workspaces have unexpected membership or role data.\n- lines 1-4 · authorizeWorkspace — worth inspecting to confirm role-checking logic is not bypassed or misapplied during import reconciliation.\n\nsrc/features/leads/leadScoring.js\n- lines 12-15 · assignLead — might be relevant because it assigns leads to owners based on score; worth verifying the owner pool is correct and the modulus logic does not cause misassignment when the pool is empty or corrupted.\n\nInstructions for the reader:\n- Run the existing tests first to see which assertions fail and what the error output reveals.\n- Read each snippet above and independently verify whether any actually contain a problem matching the reported corruption.\n- If a real problem is found, propose a fix grounded in the actual code shown.\n- Use test failures, stack traces, or a reproduction of the corruption to guide the fix.",
+      "request_id": "bench-orbit-crm-generated-p4-55bdd779",
+      "duration_ms": 19184,
+      "error": null,
+      "generic_chars": 101,
+      "optimized_chars": 1582
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "prompt": {
+      "command": "python3",
+      "args": ["mcp-shi/benchmark-runs/prompt_mcp_server.py"],
+      "env": {
+        "PRMPT_CONTEXT_FILE": "mcp-shi/examples/prompt-mcp-context.example.json",
+        "PRMPT_MCP_CALL_LOG": "mcp-shi/mcp-calls.jsonl",
+        "PRMPT_MCP_TRACE_LOG": "mcp-shi/mcp-trace.jsonl"
+      }
+    }
+  }
+}
