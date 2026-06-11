@@ -56,7 +56,8 @@ def aggregate(recs: list[RunRecord]) -> dict:
 
     agg = {}
     for key, rs in groups.items():
-        passes = [1 if r.outcome.passed else 0 for r in rs]
+        scored = [r for r in rs if r.outcome.success_known]
+        passes = [1 if r.outcome.passed else 0 for r in scored]
         net = [net_cost(r) for r in rs]
         agent_c = [r.agent_usage.cost_usd for r in rs]
         prmpt_c = [r.prmpt_usage.total_cost_usd for r in rs]
@@ -66,7 +67,8 @@ def aggregate(recs: list[RunRecord]) -> dict:
         suspect = sum(1 for r in rs if r.agent_usage.raw_session_path == "SUSPECT_EMPTY_RUN")
         agg[key] = {
             "n": len(rs),
-            "pass_rate": round(sum(passes) / len(rs), 4),
+            "n_scored": len(scored),
+            "pass_rate": round(sum(passes) / len(scored), 4) if scored else None,
             "net_cost_median": _med(net),
             "net_cost_min": round(min(net), 6),
             "net_cost_max": round(max(net), 6),
@@ -139,6 +141,12 @@ def _verdict(rows: list[dict]) -> list[str]:
         if r["vs_baseline_saving_pct"] is None:
             inconclusive.append(f"{tag} — no baseline cost to compare")
             continue
+        if r["pass_rate"] is None or base["pass_rate"] is None:
+            sign = "-" if r["vs_baseline_saving_pct"] > 0 else "+"
+            inconclusive.append(
+                f'{tag} — net {sign}{abs(r["vs_baseline_saving_pct"])}% but success unscored '
+                "(cost-only; cannot confirm correctness held)")
+            continue
         saved = r["vs_baseline_saving_pct"] > 0
         held = r["pass_rate"] >= base["pass_rate"]
         if saved and held:
@@ -186,6 +194,14 @@ def main() -> None:
     rows = build_rows(agg)
     write_csv(rows, results_dir / "summary.csv")
     write_markdown(rows, results_dir / "report.md")
+    # Combined one-line-per-run dump: hand this whole file to an LLM and it has
+    # everything it needs to write a report without report.py.
+    with (results_dir / "runs.jsonl").open("w", encoding="utf-8") as f:
+        for f_json in sorted(results_dir.glob("*.json")):
+            try:
+                f.write(json.dumps(json.loads(f_json.read_text(encoding="utf-8"))) + "\n")
+            except (json.JSONDecodeError, OSError):
+                continue
     if not all(r["reconciled"] for r in rows):
         print("WARNING: some records not reconciled — run reconcile.py for billed PRMPT cost.")
     print(f"Wrote {results_dir/'report.md'} and {results_dir/'summary.csv'} "

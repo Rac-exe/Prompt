@@ -109,6 +109,57 @@ def _iter_tool_uses(ev: dict):
                 yield block
 
 
+def latest_session_since(ts: float) -> Path | None:
+    """Newest Claude session JSONL modified at/after ts (for passive logging)."""
+    home = Path.home() / ".claude" / "projects"
+    if not home.exists():
+        return None
+    candidates = [p for p in home.rglob("*.jsonl") if p.stat().st_mtime >= ts - 2]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def parse_session_usage(session_path: Path) -> AgentUsage:
+    """Sum token usage + tool calls from a Claude session JSONL. Cost is left 0
+    for the caller to price (passive sessions bill on subscription, not per-call).
+    """
+    usage = AgentUsage(raw_session_path=str(session_path))
+    if not session_path.exists():
+        return usage
+    turns = 0
+    try:
+        for line in session_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if not line.strip():
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            msg = ev.get("message") or {}
+            u = msg.get("usage") or ev.get("usage") or {}
+            if u:
+                usage.input_tokens += int(u.get("input_tokens") or 0)
+                usage.output_tokens += int(u.get("output_tokens") or 0)
+                usage.cache_read_tokens += int(u.get("cache_read_input_tokens") or 0)
+                usage.cache_write_tokens += int(u.get("cache_creation_input_tokens") or 0)
+                turns += 1
+            for tu in _iter_tool_uses(ev):
+                name = tu.get("name", "")
+                if name.startswith("mcp__"):
+                    usage.mcp_tool_calls += 1
+                elif name in _NATIVE_SEARCH_TOOLS:
+                    usage.native_search_calls += 1
+    except OSError:
+        return usage
+    usage.turns = turns
+    usage.total_tokens = (
+        usage.input_tokens + usage.output_tokens
+        + usage.cache_read_tokens + usage.cache_write_tokens
+    )
+    return usage
+
+
 def find_session_file(session_dir: str | None) -> Path | None:
     if not session_dir:
         return None

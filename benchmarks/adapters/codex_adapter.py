@@ -37,6 +37,20 @@ def build_command(bin_path: str, prompt: str, model: str, *, sandbox: str = "wor
     ]
 
 
+def latest_rollout_since(sessions_dir: str, ts: float) -> Path | None:
+    """Public wrapper for passive logging."""
+    return _newest_rollout(Path(sessions_dir).expanduser(), ts)
+
+
+def parse_rollout_usage(rollout: Path) -> AgentUsage:
+    """Token usage + native-search counts from a Codex rollout file."""
+    usage = AgentUsage()
+    _augment_from_rollout(usage, rollout)
+    if usage.total_tokens == 0:
+        usage.total_tokens = usage.input_tokens + usage.output_tokens + usage.reasoning_tokens
+    return usage
+
+
 def _newest_rollout(sessions_dir: Path, since_ts: float) -> Path | None:
     if not sessions_dir.exists():
         return None

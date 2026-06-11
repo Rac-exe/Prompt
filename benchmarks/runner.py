@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ from pathlib import Path
 
 import yaml
 
+from benchmarks import openrouter
 from benchmarks.adapters import claude_adapter, codex_adapter
 from benchmarks.metrics import (
     Agent, Hardening, Outcome, PrmptUsage, RunRecord, Variant,
@@ -136,6 +138,14 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
         raw_prompt=task["raw_prompt"], started_at=_now(),
     )
 
+    # OpenRouter usage-delta capture: snapshot the key's spend before any PRMPT
+    # work and again after the agent finishes. The delta IS PRMPT's billed cost
+    # (agent bills elsewhere), so no service-side change is needed. Requires
+    # sequential runs (the harness runs sequentially).
+    capture_or = bool(cfg.get("openrouter_cost_capture", True)) and variant != Variant.RAW
+    or_key = os.environ.get(cfg.get("prmpt", {}).get("openrouter_api_key_env", "OPENROUTER_API_KEY"), "")
+    or_before = openrouter.get_key_usage(or_key) if (capture_or and or_key) else None
+
     t0 = time.perf_counter()
     try:
         sha = make_worktree(repo, task.get("base_commit", "HEAD"), wt)
@@ -169,6 +179,17 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
                 hardening=hardening, timeout_s=timeout,
             )
         rec.agent_usage = usage
+
+        # PRMPT's authoritative OpenRouter spend = usage delta across the window
+        # (covers indexing + optimize + any agentic-loop calls the MCP made
+        # during the agent run). Supersedes the hooks' local estimates.
+        if or_before is not None:
+            or_after = openrouter.settled_usage(or_key)
+            delta = openrouter.usage_delta(or_before, or_after)
+            rec.prmpt_usage.index_cost_usd = 0.0
+            rec.prmpt_usage.optimize_cost_usd = 0.0
+            rec.prmpt_usage.agent_loop_cost_usd = delta
+            rec.prmpt_usage.reconciled = True
 
         # ── objective oracle ─────────────────────────────────────────────────
         verify = _run_shell(task["verify_cmd"], cwd=str(wt),

@@ -89,7 +89,11 @@ class PrmptUsage:
 @dataclass
 class Outcome:
     """Plane 3 — did it actually work."""
-    passed: bool = False          # verify_cmd exit 0 on first agent attempt
+    passed: bool = False          # True if known-success; False if known-fail OR unknown
+    # How success was determined: "verify_cmd" (controlled test, objective),
+    # "self_report" (real user said y/n), or "unscored" (cost-only, no pass/fail).
+    success_source: str = "verify_cmd"
+    success_known: bool = True     # False when success_source == "unscored" / no signal
     retries: int = 0              # extra attempts the harness allowed
     wall_clock_s: float = 0.0
     files_touched: list[str] = field(default_factory=list)
