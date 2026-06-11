@@ -1,0 +1,181 @@
+[
+  {
+    "repo": "orbit-crm-generated",
+    "agent": "claude",
+    "condition": "without-mcp",
+    "prompt_id": "p4",
+    "branch": "without-prompt",
+    "worktree": "/Users/nihal/Desktop/code/test-prompt-bench/benchmark-runs/claude-fresh-three-way-20260609-0002/worktrees/orbit-crm-generated__claude__without-mcp__p4",
+    "started_at": "2026-06-08T18:33:55.507424+00:00",
+    "agent_timeout_seconds": 900,
+    "finished_at": "2026-06-08T18:35:58.530960+00:00",
+    "elapsed_ms": 122656,
+    "test_before_exit": 1,
+    "test_after_exit": 0,
+    "tests_passed": true,
+    "agent_exit_code": 0,
+    "agent_timed_out": false,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "files_touched_count": 3,
+    "diff_chars": 3889,
+    "usage": {
+      "total_cost_usd": 0.42088625,
+      "input_tokens": 7,
+      "output_tokens": 8194,
+      "cache_creation_input_tokens": 22745,
+      "cache_read_input_tokens": 146386,
+      "model_usage": {
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 567,
+          "outputTokens": 17,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.000652,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000
+        },
+        "claude-opus-4-6[1m]": {
+          "inputTokens": 7,
+          "outputTokens": 8194,
+          "cacheReadInputTokens": 146386,
+          "cacheCreationInputTokens": 22745,
+          "webSearchRequests": 0,
+          "costUSD": 0.42023425000000003,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 64000
+        }
+      },
+      "session_id": "d2dbc028-34bc-4987-b864-c2a25ce1b78a",
+      "num_turns": 12,
+      "duration_ms": 120783
+    },
+    "mcp_call_count": 0,
+    "mcp_tools": []
+  },
+  {
+    "repo": "orbit-crm-generated",
+    "agent": "claude",
+    "condition": "with-mcp",
+    "prompt_id": "p4",
+    "branch": "with-prompt",
+    "worktree": "/Users/nihal/Desktop/code/test-prompt-bench/benchmark-runs/claude-fresh-three-way-20260609-0002/worktrees/orbit-crm-generated__claude__with-mcp__p4",
+    "started_at": "2026-06-08T18:35:58.727492+00:00",
+    "agent_timeout_seconds": 900,
+    "finished_at": "2026-06-08T18:37:58.429309+00:00",
+    "elapsed_ms": 119545,
+    "test_before_exit": 1,
+    "test_after_exit": 0,
+    "tests_passed": true,
+    "agent_exit_code": 0,
+    "agent_timed_out": false,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "files_touched_count": 3,
+    "diff_chars": 3834,
+    "usage": {
+      "total_cost_usd": 0.49584525000000007,
+      "input_tokens": 17,
+      "output_tokens": 7206,
+      "cache_creation_input_tokens": 23033,
+      "cache_read_input_tokens": 341802,
+      "model_usage": {
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 678,
+          "outputTokens": 15,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.000753,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000
+        },
+        "claude-opus-4-6[1m]": {
+          "inputTokens": 17,
+          "outputTokens": 7206,
+          "cacheReadInputTokens": 341802,
+          "cacheCreationInputTokens": 23033,
+          "webSearchRequests": 0,
+          "costUSD": 0.49509225000000007,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 64000
+        }
+      },
+      "session_id": "8f8416b1-6812-4cdb-a7fb-be8e9e801a6a",
+      "num_turns": 15,
+      "duration_ms": 118188
+    },
+    "mcp_call_count": 1,
+    "mcp_tools": [
+      "prmpt_optimize_task"
+    ]
+  },
+  {
+    "repo": "orbit-crm-generated",
+    "agent": "claude",
+    "condition": "with-mcp-allowlist",
+    "prompt_id": "p4",
+    "branch": "with-prompt",
+    "worktree": "/Users/nihal/Desktop/code/test-prompt-bench/benchmark-runs/claude-fresh-three-way-20260609-0002/worktrees/orbit-crm-generated__claude__with-mcp-allowlist__p4",
+    "started_at": "2026-06-08T18:37:58.701807+00:00",
+    "agent_timeout_seconds": 900,
+    "finished_at": "2026-06-08T18:39:26.622513+00:00",
+    "elapsed_ms": 87755,
+    "test_before_exit": 1,
+    "test_after_exit": 0,
+    "tests_passed": true,
+    "agent_exit_code": 0,
+    "agent_timed_out": false,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "files_touched_count": 3,
+    "diff_chars": 3750,
+    "usage": {
+      "total_cost_usd": 0.39744425,
+      "input_tokens": 12,
+      "output_tokens": 5306,
+      "cache_creation_input_tokens": 21793,
+      "cache_read_input_tokens": 255560,
+      "model_usage": {
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 678,
+          "outputTokens": 14,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.000748,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000
+        },
+        "claude-opus-4-6[1m]": {
+          "inputTokens": 12,
+          "outputTokens": 5306,
+          "cacheReadInputTokens": 255560,
+          "cacheCreationInputTokens": 21793,
+          "webSearchRequests": 0,
+          "costUSD": 0.39669625000000003,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 64000
+        }
+      },
+      "session_id": "daf07f64-79ae-4970-95e8-ef0dff1607ce",
+      "num_turns": 16,
+      "duration_ms": 85764
+    },
+    "mcp_call_count": 1,
+    "mcp_tools": [
+      "prmpt_optimize_task"
+    ],
+    "allowed_tools": "mcp__prompt__prmpt_optimize_task,mcp__prompt__prmpt_retrieve_context,mcp__prompt__prmpt_get_test_plan,Bash,Read,Edit,MultiEdit"
+  }
+]

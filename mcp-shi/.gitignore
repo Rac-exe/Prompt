@@ -1,0 +1,32 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# Benchmark repos — source is committed; git metadata is local-only
+test-repo/orbit-crm-generated/.git/
+test-repo/atlas-commerce-generated/.git/
+test-repo/nova-support-generated/.git/
+test-repo/orbit-crm-generated/node_modules/
+test-repo/atlas-commerce-generated/node_modules/
+test-repo/nova-support-generated/node_modules/
+test-repo/orbit-crm-generated/package-lock.json
+test-repo/atlas-commerce-generated/package-lock.json
+test-repo/nova-support-generated/package-lock.json
+
+# Generated benchmark run outputs
+benchmark-runs/20*/
+benchmark-runs/*-mcp/
+benchmark-runs/agent-runs/
+benchmark-runs/worktrees/
+benchmark-runs/index/
+benchmark-runs/code-intel-root/
+benchmark-runs/optimized-prompts/
+benchmark-runs/*.json
+benchmark-runs/*.pdf
+
+# Local smoke / manual test artifacts
+*.jsonl
+claude-mcp.manual.json
+claude-mcp.json
+manual-mcp-*.jsonl
+smoke-mcp-*.jsonl
