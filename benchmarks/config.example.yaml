@@ -1,0 +1,57 @@
+# PRMPT benchmark harness — global config.
+# Copy to config.yaml and fill in. config.yaml is gitignored.
+
+# ── Output ───────────────────────────────────────────────────────────────────
+results_dir: ./results          # one subdir per run batch
+worktrees_dir: ./.worktrees     # isolated git checkouts per run (auto-cleaned)
+
+# ── Matrix ───────────────────────────────────────────────────────────────────
+# Which cells to run. Comment out an agent/variant to skip it.
+agents: [claude, codex]
+variants: [raw, mcp_optimizer, mcp_only]
+# For the +MCP variants, run native-search-allowed (soft) and/or denied (hard).
+hardenings: [soft, hard]
+repeats: 3                       # runs per cell; report uses median + spread
+
+# ── Models (pin exact versions for reproducibility) ─────────────────────────
+claude_model: claude-sonnet-4-6
+codex_model: gpt-5.3-codex
+
+# ── Coding-agent CLIs ────────────────────────────────────────────────────────
+claude:
+  bin: claude
+  extra_args: ["--bare"]         # skip local config discovery so stray ~/.claude can't contaminate
+codex:
+  bin: codex
+  # reasoning tokens are only in the rollout file, so never use --ephemeral here
+  sessions_dir: ~/.codex/sessions
+
+# ── PRMPT integration ────────────────────────────────────────────────────────
+# These are shell command templates the harness shells out to. They are
+# intentionally pluggable because the MCP server + services launch differently
+# per machine. Placeholders {repo} {prompt} {prompt_id} {run_id} {out} are
+# substituted. Each command MUST print a JSON line to stdout of the shape:
+#   {"generation_ids": [...], "tokens": <int>, "cost_usd": <float>, "result": <...>}
+# (cost_usd may be a local estimate; it is overwritten by reconcile.py).
+prmpt:
+  openrouter_api_key_env: OPENROUTER_API_KEY
+  # Index a repo into the local code-intelligence store before MCP variants.
+  index_cmd: "python -m benchmarks.prmpt_client index --repo {repo} --run-id {run_id} --out {out}"
+  # Optimize a raw prompt -> optimized prompt (+ injected probable locations).
+  optimize_cmd: "python -m benchmarks.prmpt_client optimize --repo {repo} --prompt {prompt} --run-id {run_id} --out {out}"
+  # MCP server launch config injected into the agent (see mcp_config_* below).
+
+# How the PRMPT MCP server is launched for each agent. Fill these in from your
+# actual MCP server (it currently lives in the external test-prompt-bench repo —
+# point these at wherever prompt_mcp_server.py runs).
+mcp_config_claude: ./hardening/mcp.claude.json     # --mcp-config <file>
+mcp_config_codex: ./hardening/mcp.codex.toml        # merged into ~/.codex/config.toml
+
+# ── Hardening assets ─────────────────────────────────────────────────────────
+hardening_claude_settings: ./hardening/claude-settings.hard.json
+hardening_codex_agents_md: ./hardening/AGENTS.hard.md
+append_system_prompt_file: ./hardening/append-system-prompt.txt
+
+# ── Safety ───────────────────────────────────────────────────────────────────
+per_run_timeout_s: 900
+allow_retries: 1                 # extra "it didn't work, try again" attempts to log

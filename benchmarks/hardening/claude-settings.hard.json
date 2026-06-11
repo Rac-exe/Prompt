@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "deny": [
+      "Grep",
+      "Glob",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(ag:*)"
+    ],
+    "allow": [
+      "mcp__prmpt__*",
+      "Read",
+      "Edit",
+      "Write",
+      "Bash(npm test:*)",
+      "Bash(pytest:*)",
+      "Bash(node:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

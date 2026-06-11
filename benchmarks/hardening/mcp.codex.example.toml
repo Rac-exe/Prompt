@@ -1,0 +1,7 @@
+# Merge into ~/.codex/config.toml (or point the harness at this file).
+# Replace command/args with however prompt_mcp_server.py is launched.
+
+[mcp_servers.prmpt]
+command = "python"
+args = ["-m", "prompt_mcp_server"]
+env = { OPENROUTER_API_KEY = "${OPENROUTER_API_KEY}", BENCH_MODE = "1" }

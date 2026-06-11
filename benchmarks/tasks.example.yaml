@@ -1,0 +1,28 @@
+# PRMPT benchmark — task manifest.
+# Each task is a real, verifiable unit of work. The success oracle is objective:
+# verify_cmd must exit 0 ONLY when the task is correctly done. Prefer real bugs
+# with a test that fails at base_commit and passes after a correct fix
+# (SWE-bench style) — that is the most credible, reproducible signal.
+
+tasks:
+  - id: orbit-import-reconciliation
+    repo: ../../test-prompt-bench/orbit-crm-generated   # path to a clean git repo
+    base_commit: HEAD                                   # commit where the bug exists
+    raw_prompt: "imported workspaces are corrupting lead assignment and workspace visibility, fix it and run the tests"
+    # Objective oracle. Run from the repo root. Exit 0 == fixed.
+    verify_cmd: "npm test -- test/importReconciliation.test.js"
+    timeout_s: 900
+    # Optional ground-truth for retrieval precision/recall (not used for pass/fail).
+    expected_files:
+      - src/features/imports/reconcileWorkspaceImport.js
+      - src/features/leads/leadScoring.js
+      - src/security/authorizeWorkspace.js
+
+  - id: example-python-bug
+    repo: ../../test-prompt-bench/atlas-commerce-generated
+    base_commit: HEAD
+    raw_prompt: "checkout total is wrong when a coupon and tax both apply, fix it"
+    verify_cmd: "pytest tests/test_checkout.py::test_coupon_with_tax -q"
+    timeout_s: 600
+    expected_files:
+      - src/checkout/pricing.py

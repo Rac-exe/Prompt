@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "prmpt": {
+      "command": "python",
+      "args": ["-m", "prompt_mcp_server"],
+      "env": {
+        "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+        "BENCH_MODE": "1"
+      },
+      "allowedTools": [
+        "prmpt_optimize_task",
+        "prmpt_retrieve_context",
+        "prmpt_get_test_plan"
+      ]
+    }
+  }
+}

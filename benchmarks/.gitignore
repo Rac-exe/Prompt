@@ -1,0 +1,8 @@
+# Local config + run artifacts — never commit real keys, repos, or results.
+config.yaml
+tasks.yaml
+results/
+.worktrees/
+hardening/mcp.claude.json
+hardening/mcp.codex.toml
+*.log

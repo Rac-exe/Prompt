@@ -1,0 +1,5 @@
+When a PRMPT MCP tool is available, call it FIRST to locate the files relevant to
+the task, then read those files and run the existing tests before editing. Start
+from the locations PRMPT returns. Do not run a repo-wide Glob/Grep/find search
+before working through them; branch out to other files only if a failing test,
+stack trace, or the code you read explicitly names a file PRMPT did not list.
