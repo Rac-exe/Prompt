@@ -51,6 +51,30 @@ log, so we stop guessing.
 
 ---
 
+## Scope — read the results correctly
+
+**What this measures:** the *routing / optimizer* value on **first-try** bug
+fixes — does `mcp_only` or `mcp_optimizer` beat `raw` on net cost while keeping
+correctness, and does it only win under `hard` hardening.
+
+**What this does NOT test yet (deliberately deferred):**
+- **The agentic retrieval loop.** The bundled MCP server is precomputed, so the
+  loop in `code-intelligence-service/app/services/agent_loop.py` does **not** run
+  during the agent's turn. (It may run once, first-pass only, during `prepare.py`
+  if `AGENTIC_RETRIEVAL_ENABLED=true`.)
+- **The "fix it again" determinism fix.** The loop can escalate on retries, but
+  no caller drives it — `search.py` always calls it with `attempt_number=1` and
+  no error signal, and the MCP layer has no per-run state. Wiring this needs the
+  pipeline rework (live + stateful MCP session), not a harness change.
+
+**Trigger to turn the loop test on (later):** (1) MCP server calls code-intel
+live with `AGENTIC_RETRIEVAL_ENABLED=true`; (2) `search.py` threads
+`attempt_number` / `previous_attempt_chunk_ids` / `error_signal`; (3) add a retry
+oracle here (on `npm test` fail, re-retrieve with the failure signal). Until then,
+read every result as **"routing/optimizer baseline,"** not "finished product."
+
+---
+
 ## Layout
 
 ```
