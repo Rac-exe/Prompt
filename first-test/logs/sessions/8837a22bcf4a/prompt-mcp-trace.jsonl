@@ -1,0 +1,7 @@
+{"ts": "2026-06-11T18:45:43.093343+00:00", "message": "server_start", "data": {"argv": ["/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/benchmark-runs/prompt_mcp_server.py"], "context": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-ahh/results/20260611-seq-p2p3-fixed/sessions/8837a22bcf4a/prompt-mcp-context.json"}}
+{"ts": "2026-06-11T18:45:43.093652+00:00", "message": "request", "data": {"method": "initialize", "id": 0}}
+{"ts": "2026-06-11T18:45:43.099042+00:00", "message": "request", "data": {"method": "notifications/initialized", "id": null}}
+{"ts": "2026-06-11T18:45:43.099161+00:00", "message": "request", "data": {"method": "tools/list", "id": 1}}
+{"ts": "2026-06-11T18:45:49.833638+00:00", "message": "request", "data": {"method": "tools/call", "id": 2}}
+{"ts": "2026-06-11T18:45:49.834505+00:00", "message": "tool_call", "data": {"name": "prmpt_optimize_task", "arguments": {"task": "the support page behavior is buggy around tickets and deadlines, fix it", "prompt_id": "p3"}}}
+{"ts": "2026-06-11T18:45:49.836437+00:00", "message": "tool_result", "data": {"name": "prmpt_optimize_task", "chars": 706}}

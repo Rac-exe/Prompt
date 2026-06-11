@@ -1,0 +1,50 @@
+# All complex tasks: p2 + p3 across 3 repos (6 tasks, 60 cells sequential).
+tasks:
+  - id: orbit-p2
+    repo: ./mcp-shi/test-repo/orbit-crm-generated
+    repo_name: orbit-crm-generated
+    prompt_id: p2
+    raw_prompt: "workspace access is buggy and imported customer lists are weird, look into it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: orbit-p3
+    repo: ./mcp-shi/test-repo/orbit-crm-generated
+    repo_name: orbit-crm-generated
+    prompt_id: p3
+    raw_prompt: "the crm is buggy around login and lead lists, run the test suite and fix it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: atlas-p2
+    repo: ./mcp-shi/test-repo/atlas-commerce-generated
+    repo_name: atlas-commerce-generated
+    prompt_id: p2
+    raw_prompt: "cart totals and product reservation lists are broken, look into it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: atlas-p3
+    repo: ./mcp-shi/test-repo/atlas-commerce-generated
+    repo_name: atlas-commerce-generated
+    prompt_id: p3
+    raw_prompt: "the commerce flow is buggy when coupons or missing items happen, fix it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: nova-p2
+    repo: ./mcp-shi/test-repo/nova-support-generated
+    repo_name: nova-support-generated
+    prompt_id: p2
+    raw_prompt: "the support lists are buggy for imported tickets, run tests and look into it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: nova-p3
+    repo: ./mcp-shi/test-repo/nova-support-generated
+    repo_name: nova-support-generated
+    prompt_id: p3
+    raw_prompt: "the support page behavior is buggy around tickets and deadlines, fix it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []

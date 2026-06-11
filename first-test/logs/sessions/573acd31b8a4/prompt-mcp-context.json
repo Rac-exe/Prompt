@@ -1,0 +1,39 @@
+{
+  "repo": "atlas-commerce-generated",
+  "prompt_id": "p3",
+  "optimized_prompts": [
+    {
+      "repo": "atlas-commerce-generated",
+      "prompt_id": "p1",
+      "generic_prompt": "items arent loading in checkout and inventory is buggy, fix it and run tests",
+      "optimized_prompt": "The user reports that items aren't loading in checkout and inventory is buggy. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/checkout/priceCart.js\n- lines 1-17 · priceCart — might be relevant because it calculates cart totals and applies coupon discounts; worth checking whether the coupon logic or price calculation is causing checkout failures.\n- lines 1-17 · mergeCartItems — appears to handle item consolidation by SKU; worth verifying it correctly preserves item data when merging.\n\nsrc/fulfillment/reserveInventory.js\n- lines 1-13 · reserveInventory — worth checking whether the stock comparison logic correctly prevents overselling or causes inventory to appear depleted.\n- lines 1-13 · reserveBatch — might be relevant because it maps reservation requests to products; worth verifying the product lookup by SKU succeeds and returns valid data.\n\nsrc/index.js\n- lines 1-6 · (entry point) — worth inspecting to see how cart and inventory data flow into the application on startup.\n\nsrc/catalog/createCatalog.js\n- lines 1-12 · createCatalog — might be relevant because it initializes the product catalog; worth checking whether products are being created with correct stock and price values.\n\nProject context: JavaScript. Entry point is src/index.js.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or run a repo-wide search before working through them.\n- Run the existing tests first to see which assertions fail and what error messages appear.\n- Read each snippet above and independently verify whether any actually contain a problem that matches the user's report (items not loading, inventory bugs).\n- If a failing test points to a specific function or reveals a concrete error, use that to guide your investigation.\n- Propose a fix grounded in the actual code shown only after you have identified a real problem.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-atlas-commerce-generated-p1-f50c6754",
+      "duration_ms": 21177,
+      "error": null,
+      "generic_chars": 76,
+      "optimized_chars": 2065
+    },
+    {
+      "repo": "atlas-commerce-generated",
+      "prompt_id": "p2",
+      "generic_prompt": "cart totals and product reservation lists are broken, look into it",
+      "optimized_prompt": "The user reports that cart totals and product reservation lists are broken. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/index.js\n- lines 1-6 · entry point — might be relevant because it integrates catalog creation and cart pricing, and logs the total to console; worth checking if the integration itself is broken.\n\nsrc/checkout/priceCart.js\n- lines 1-7 · priceCart — appears to calculate subtotal, discount, and total; worth checking whether the discount calculation or rounding logic produces incorrect totals.\n- lines 1-17 · mergeCartItems — worth inspecting if duplicate SKUs in the cart should be merged before pricing, and whether the current flow handles that.\n\nsrc/fulfillment/reserveInventory.js\n- lines 1-6 · reserveInventory — appears to check stock availability and reserve quantities; worth checking whether it correctly prevents overselling or returns accurate remaining stock.\n- lines 8-13 · reserveBatch — worth inspecting whether it correctly iterates over multiple reservation requests and aggregates results.\n\nProject context: JavaScript, 4 files total.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.\n- Run existing tests or reproduce the reported failures first to see what the actual output is vs. what is expected.\n- Read each snippet above and independently verify whether the logic matches the expected behavior for cart totals and inventory reservations.\n- If you find a real problem (e.g., incorrect discount calculation, wrong coupon logic, inventory not reserved correctly), propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-atlas-commerce-generated-p2-5d2834ef",
+      "duration_ms": 20521,
+      "error": null,
+      "generic_chars": 66,
+      "optimized_chars": 1847
+    },
+    {
+      "repo": "atlas-commerce-generated",
+      "prompt_id": "p3",
+      "generic_prompt": "the commerce flow is buggy when coupons or missing items happen, fix it",
+      "optimized_prompt": "The user reports that the commerce flow is buggy when coupons or missing items occur. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/checkout/priceCart.js\n- lines 1–6 · priceCart — worth checking because it calculates subtotal, discount, and total using coupon code length to determine discount strength; might be relevant to coupon-related failures.\n- lines 8–17 · mergeCartItems — appears connected to cart item handling.\n\nsrc/fulfillment/reserveInventory.js\n- lines 1–13 · reserveInventory — worth inspecting because it validates requested quantity against available stock and returns success/failure; might be relevant to missing item failures.\n- lines 15–20 · reserveBatch — appears to orchestrate multiple inventory reservations.\n\nsrc/index.js\n- lines 1–6 · entry point — worth checking to see how priceCart and reserveInventory integrate in the actual flow.\n\nProject context: JavaScript, 4 files total.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.\n- Run any existing tests or reproduce the reported failure first, then use the error output or stack trace to guide investigation.\n- Read each snippet above and independently verify whether it actually contains a problem matching the user's description (coupon or missing-item bugs).\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-atlas-commerce-generated-p3-92c64bc2",
+      "duration_ms": 21240,
+      "error": null,
+      "generic_chars": 71,
+      "optimized_chars": 1610
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "prompt": {
+      "command": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-ahh/.venv/bin/python",
+      "args": [
+        "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/benchmark-runs/prompt_mcp_server.py"
+      ],
+      "env": {
+        "PRMPT_CONTEXT_FILE": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-ahh/results/20260611-seq-p2p3-fixed/sessions/ebb2b6ed3399/prompt-mcp-context.json",
+        "PRMPT_MCP_CALL_LOG": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-ahh/results/20260611-seq-p2p3-fixed/sessions/ebb2b6ed3399/mcp-calls.jsonl",
+        "PRMPT_MCP_TRACE_LOG": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-ahh/results/20260611-seq-p2p3-fixed/sessions/ebb2b6ed3399/prompt-mcp-trace.jsonl"
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{"ts": "2026-06-11T17:48:55.325697+00:00", "message": "server_start", "data": {"argv": ["/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/benchmark-runs/prompt_mcp_server.py"], "context": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-ahh/results/20260611-seq-p2p3-fixed/sessions/be07c2bd859b/prompt-mcp-context.json"}}
+{"ts": "2026-06-11T17:48:55.326034+00:00", "message": "request", "data": {"method": "initialize", "id": 0}}
+{"ts": "2026-06-11T17:48:55.332879+00:00", "message": "request", "data": {"method": "notifications/initialized", "id": null}}
+{"ts": "2026-06-11T17:48:55.333042+00:00", "message": "request", "data": {"method": "tools/list", "id": 1}}
+{"ts": "2026-06-11T17:49:02.328276+00:00", "message": "request", "data": {"method": "tools/call", "id": 2}}
+{"ts": "2026-06-11T17:49:02.329221+00:00", "message": "tool_call", "data": {"name": "prmpt_optimize_task", "arguments": {"task": "the crm is buggy around login and lead lists, run the test suite and fix it", "prompt_id": "p3"}}}
+{"ts": "2026-06-11T17:49:02.330620+00:00", "message": "tool_result", "data": {"name": "prmpt_optimize_task", "chars": 493}}

@@ -1,0 +1,53 @@
+{
+  "run_id": "a61829e6f83e",
+  "task_id": "orbit-p3",
+  "agent": "claude",
+  "variant": "mcp_only",
+  "hardening": "soft",
+  "repeat": 0,
+  "model": "claude-sonnet-4-6",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/orbit-crm-generated",
+  "base_commit": "4f41ec596ab6f7b783b90367befbc5abbe48d8f7",
+  "raw_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it",
+  "final_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it\n\nCall `mcp__prompt__prmpt_optimize_task` first with task=<the bug report> and prompt_id=p3. Treat the returned JSON as the authoritative route: run `npm test`, read the JSON primary files, patch them, and rerun `npm test` until it passes.",
+  "started_at": "2026-06-11T17:46:55.171932+00:00",
+  "finished_at": "2026-06-11T17:48:54.951899+00:00",
+  "agent_usage": {
+    "input_tokens": 367,
+    "output_tokens": 7426,
+    "cache_read_tokens": 382654,
+    "cache_write_tokens": 24216,
+    "reasoning_tokens": 0,
+    "total_tokens": 414663,
+    "cost_usd": 0.3731872,
+    "turns": 19,
+    "mcp_tool_calls": 1,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.claude/projects/-Users-nihal--superconductor-worktrees-Prompt-local-improvement-mcp-ahh--worktrees-orbit-p3-a61829e6f83e/ce6749a4-e653-4083-8b7c-bd28944dce7f.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.048934,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.075841,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 118.97,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

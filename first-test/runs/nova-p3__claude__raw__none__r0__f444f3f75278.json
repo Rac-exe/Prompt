@@ -1,0 +1,54 @@
+{
+  "run_id": "f444f3f75278",
+  "task_id": "nova-p3",
+  "agent": "claude",
+  "variant": "raw",
+  "hardening": "none",
+  "repeat": 0,
+  "model": "claude-sonnet-4-6",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/nova-support-generated",
+  "base_commit": "23e615723a396e67924559ef6a9e1b620de167ef",
+  "raw_prompt": "the support page behavior is buggy around tickets and deadlines, fix it",
+  "final_prompt": "the support page behavior is buggy around tickets and deadlines, fix it",
+  "started_at": "2026-06-11T18:43:27.773194+00:00",
+  "finished_at": "2026-06-11T18:44:34.363746+00:00",
+  "agent_usage": {
+    "input_tokens": 13,
+    "output_tokens": 3577,
+    "cache_read_tokens": 332426,
+    "cache_write_tokens": 20131,
+    "reasoning_tokens": 0,
+    "total_tokens": 356147,
+    "cost_usd": 0.2747288,
+    "turns": 20,
+    "mcp_tool_calls": 0,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.claude/projects/-Users-nihal--superconductor-worktrees-Prompt-local-improvement-mcp-ahh--worktrees-nova-p3-f444f3f75278/c03d8d9c-8fe5-4a97-b96c-c98031b039aa.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.0,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.0,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 66.57,
+    "files_touched": [
+      "src/features/customers/customerHealth.js",
+      "src/features/sla/calculateSlaDeadline.js",
+      "src/features/tickets/routeTicket.js",
+      "src/features/tickets/ticketIntent.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

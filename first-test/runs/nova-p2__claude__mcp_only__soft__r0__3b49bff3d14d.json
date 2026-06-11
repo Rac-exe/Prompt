@@ -1,0 +1,54 @@
+{
+  "run_id": "3b49bff3d14d",
+  "task_id": "nova-p2",
+  "agent": "claude",
+  "variant": "mcp_only",
+  "hardening": "soft",
+  "repeat": 0,
+  "model": "claude-sonnet-4-6",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/nova-support-generated",
+  "base_commit": "23e615723a396e67924559ef6a9e1b620de167ef",
+  "raw_prompt": "the support lists are buggy for imported tickets, run tests and look into it",
+  "final_prompt": "the support lists are buggy for imported tickets, run tests and look into it\n\nCall `mcp__prompt__prmpt_optimize_task` first with task=<the bug report> and prompt_id=p2. Treat the returned JSON as the authoritative route: run `npm test`, read the JSON primary files, patch them, and rerun `npm test` until it passes.",
+  "started_at": "2026-06-11T18:32:41.742888+00:00",
+  "finished_at": "2026-06-11T18:33:59.624177+00:00",
+  "agent_usage": {
+    "input_tokens": 14,
+    "output_tokens": 4585,
+    "cache_read_tokens": 216558,
+    "cache_write_tokens": 17746,
+    "reasoning_tokens": 0,
+    "total_tokens": 238903,
+    "cost_usd": 0.24084640000000002,
+    "turns": 19,
+    "mcp_tool_calls": 1,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.claude/projects/-Users-nihal--superconductor-worktrees-Prompt-local-improvement-mcp-ahh--worktrees-nova-p2-3b49bff3d14d/53fbc849-9d4d-45f3-a310-dc16e13186ef.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.048934,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.0,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 77.38,
+    "files_touched": [
+      "src/features/customers/customerHealth.js",
+      "src/features/sla/calculateSlaDeadline.js",
+      "src/features/tickets/routeTicket.js",
+      "src/features/tickets/ticketIntent.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

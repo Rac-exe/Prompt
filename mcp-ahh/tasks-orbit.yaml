@@ -1,0 +1,18 @@
+# Complex tasks p2+p3 for orbit-crm-generated
+tasks:
+  - id: orbit-p2
+    repo: ./mcp-shi/test-repo/orbit-crm-generated
+    repo_name: orbit-crm-generated
+    prompt_id: p2
+    raw_prompt: "workspace access is buggy and imported customer lists are weird, look into it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: orbit-p3
+    repo: ./mcp-shi/test-repo/orbit-crm-generated
+    repo_name: orbit-crm-generated
+    prompt_id: p3
+    raw_prompt: "the crm is buggy around login and lead lists, run the test suite and fix it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []

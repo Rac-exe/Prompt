@@ -1,0 +1,53 @@
+{
+  "run_id": "a177db75cc60",
+  "task_id": "orbit-p3",
+  "agent": "claude",
+  "variant": "raw",
+  "hardening": "none",
+  "repeat": 0,
+  "model": "claude-sonnet-4-6",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/orbit-crm-generated",
+  "base_commit": "4f41ec596ab6f7b783b90367befbc5abbe48d8f7",
+  "raw_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it",
+  "final_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it",
+  "started_at": "2026-06-11T17:45:13.242314+00:00",
+  "finished_at": "2026-06-11T17:46:55.171318+00:00",
+  "agent_usage": {
+    "input_tokens": 14,
+    "output_tokens": 6309,
+    "cache_read_tokens": 375046,
+    "cache_write_tokens": 21906,
+    "reasoning_tokens": 0,
+    "total_tokens": 403275,
+    "cost_usd": 0.33916179999999996,
+    "turns": 16,
+    "mcp_tool_calls": 0,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.claude/projects/-Users-nihal--superconductor-worktrees-Prompt-local-improvement-mcp-ahh--worktrees-orbit-p3-a177db75cc60/f4371f8b-ac4d-4bbc-9418-ec02034a21d4.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.0,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.0,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 101.91,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

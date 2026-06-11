@@ -183,7 +183,7 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
                 call_log = session_dir / "mcp-calls.jsonl"
                 if agent == Agent.CLAUDE:
                     mcp_config = str(mcp_real.write_claude_config(
-                        session_dir, real_server, ctx, call_log))
+                        session_dir, real_server, ctx, call_log).resolve())
                 else:
                     mcp_real.write_codex_config(wt, real_server, ctx, call_log)
                 # Tell the agent to actually use the MCP route (availability
@@ -196,12 +196,21 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
                               else cfg.get("mcp_config_codex"))
 
         timeout = cfg.get("per_run_timeout_s", 900)
+        if agent == Agent.CODEX and hardening == Hardening.HARD:
+            agents_md = cfg.get("hardening_codex_agents_md")
+            if agents_md:
+                shutil.copy2(agents_md, wt / "AGENTS.md")
+        settings_file = None
+        if agent == Agent.CLAUDE and hardening == Hardening.HARD:
+            raw_settings = cfg.get("hardening_claude_settings")
+            if raw_settings:
+                settings_file = str(Path(raw_settings).expanduser().resolve())
         if agent == Agent.CLAUDE:
             usage, _text = claude_adapter.run(
                 bin_path=cfg["claude"]["bin"], prompt=final_prompt, model=model,
                 cwd=str(wt), mcp_config=mcp_config, hardening=hardening,
-                settings_file=cfg.get("hardening_claude_settings"),
-                append_system_prompt_file=cfg.get("append_system_prompt_file"),
+                settings_file=settings_file,
+                append_system_prompt_file=None,
                 extra_args=cfg["claude"].get("extra_args"),
                 timeout_s=timeout, session_dir=str(session_dir),
             )

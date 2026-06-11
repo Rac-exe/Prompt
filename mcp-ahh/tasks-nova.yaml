@@ -1,0 +1,17 @@
+tasks:
+  - id: nova-p2
+    repo: ./mcp-shi/test-repo/nova-support-generated
+    repo_name: nova-support-generated
+    prompt_id: p2
+    raw_prompt: "the support lists are buggy for imported tickets, run tests and look into it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: nova-p3
+    repo: ./mcp-shi/test-repo/nova-support-generated
+    repo_name: nova-support-generated
+    prompt_id: p3
+    raw_prompt: "the support page behavior is buggy around tickets and deadlines, fix it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []

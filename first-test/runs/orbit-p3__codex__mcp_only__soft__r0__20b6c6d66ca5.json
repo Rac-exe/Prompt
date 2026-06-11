@@ -1,0 +1,53 @@
+{
+  "run_id": "20b6c6d66ca5",
+  "task_id": "orbit-p3",
+  "agent": "codex",
+  "variant": "mcp_only",
+  "hardening": "soft",
+  "repeat": 0,
+  "model": "gpt-5.3-codex",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/orbit-crm-generated",
+  "base_commit": "4f41ec596ab6f7b783b90367befbc5abbe48d8f7",
+  "raw_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it",
+  "final_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it\n\nCall `mcp__prompt__prmpt_optimize_task` first with task=<the bug report> and prompt_id=p3. Treat the returned JSON as the authoritative route: run `npm test`, read the JSON primary files, patch them, and rerun `npm test` until it passes.",
+  "started_at": "2026-06-11T17:56:28.978198+00:00",
+  "finished_at": "2026-06-11T17:57:41.343101+00:00",
+  "agent_usage": {
+    "input_tokens": 181640,
+    "output_tokens": 3162,
+    "cache_read_tokens": 161792,
+    "cache_write_tokens": 0,
+    "reasoning_tokens": 677,
+    "total_tokens": 185479,
+    "cost_usd": 0.26544,
+    "turns": 0,
+    "mcp_tool_calls": 1,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/11/rollout-2026-06-11T23-26-29-019eb7d4-145e-7991-9e2b-3da4f24dd98f.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.048934,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.0892,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 71.61,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

@@ -1,0 +1,17 @@
+tasks:
+  - id: atlas-p2
+    repo: ./mcp-shi/test-repo/atlas-commerce-generated
+    repo_name: atlas-commerce-generated
+    prompt_id: p2
+    raw_prompt: "cart totals and product reservation lists are broken, look into it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []
+  - id: atlas-p3
+    repo: ./mcp-shi/test-repo/atlas-commerce-generated
+    repo_name: atlas-commerce-generated
+    prompt_id: p3
+    raw_prompt: "the commerce flow is buggy when coupons or missing items happen, fix it"
+    verify_cmd: "npm test"
+    base_commit: HEAD
+    expected_files: []

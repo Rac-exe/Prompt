@@ -1,0 +1,54 @@
+{
+  "run_id": "10b9b07eba99",
+  "task_id": "nova-p3",
+  "agent": "codex",
+  "variant": "raw",
+  "hardening": "none",
+  "repeat": 0,
+  "model": "gpt-5.3-codex",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/nova-support-generated",
+  "base_commit": "23e615723a396e67924559ef6a9e1b620de167ef",
+  "raw_prompt": "the support page behavior is buggy around tickets and deadlines, fix it",
+  "final_prompt": "the support page behavior is buggy around tickets and deadlines, fix it",
+  "started_at": "2026-06-11T18:49:39.415771+00:00",
+  "finished_at": "2026-06-11T18:50:46.903306+00:00",
+  "agent_usage": {
+    "input_tokens": 236151,
+    "output_tokens": 3278,
+    "cache_read_tokens": 192384,
+    "cache_write_tokens": 0,
+    "reasoning_tokens": 479,
+    "total_tokens": 239908,
+    "cost_usd": 0.332759,
+    "turns": 0,
+    "mcp_tool_calls": 0,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/12/rollout-2026-06-12T00-19-40-019eb804-c22a-72d2-846e-bd143496d6c7.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.0,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.0,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 67.47,
+    "files_touched": [
+      "src/features/customers/customerHealth.js",
+      "src/features/sla/calculateSlaDeadline.js",
+      "src/features/tickets/routeTicket.js",
+      "src/features/tickets/ticketIntent.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

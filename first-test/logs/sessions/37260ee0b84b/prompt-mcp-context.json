@@ -1,0 +1,39 @@
+{
+  "repo": "nova-support-generated",
+  "prompt_id": "p3",
+  "optimized_prompts": [
+    {
+      "repo": "nova-support-generated",
+      "prompt_id": "p1",
+      "generic_prompt": "support ticket routing is buggy and sla deadlines are weird, fix it",
+      "optimized_prompt": "The user reports buggy ticket routing and incorrect SLA deadline calculations. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/index.js\n- lines 1-11 · orchestration — might be relevant because it combines routing and SLA calculation; worth checking the inputs and outputs to understand the expected behavior.\n\nsrc/features/tickets/routeTicket.js\n- lines 3-18 · routeTicket — worth checking whether the queue assignment logic correctly handles all customer tiers and intents, and whether `detectIntent` is working as expected.\n- lines 20-24 · assignTicket — appears to depend on routeTicket; worth verifying it filters agents correctly and handles edge cases like an empty candidates list.\n\nsrc/features/sla/calculateSlaDeadline.js\n- lines 1-6 · calculateSlaDeadline — worth inspecting the deadline calculation logic to ensure it correctly adds hours and handles timezone or date edge cases.\n\nProject context: JavaScript with Jest for testing.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.\n- Run the existing Jest tests first to see which assertions fail, then use the test output to guide your investigation.\n- Read each snippet above and independently verify whether the logic matches the expected behavior for routing and SLA calculation.\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-nova-support-generated-p1-6d5a5e82",
+      "duration_ms": 20166,
+      "error": null,
+      "generic_chars": 67,
+      "optimized_chars": 1598
+    },
+    {
+      "repo": "nova-support-generated",
+      "prompt_id": "p2",
+      "generic_prompt": "the support lists are buggy for imported tickets, run tests and look into it",
+      "optimized_prompt": "The user reports that support lists are buggy for imported tickets. Run the existing tests first to surface the failure, then inspect the locations below.\n\nsrc/index.js\n- lines 1-11 · index — orchestrates ticket routing and SLA deadline calculation; worth checking whether the ticket import and list handling flow through here correctly.\n\nProject context: JavaScript with Jest. Entry point: src/index.js.\n\nInstructions for the reader:\n- Run the existing tests first to see which tests fail and what the error messages or assertions reveal.\n- Read the code snippet above and trace how tickets flow through routing and SLA calculation.\n- Use the failing test output to identify which part of the import or list logic is broken.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.\n- Propose a fix grounded in the actual code once you have identified the concrete failure.",
+      "request_id": "bench-nova-support-generated-p2-559960fa",
+      "duration_ms": 15411,
+      "error": null,
+      "generic_chars": 76,
+      "optimized_chars": 944
+    },
+    {
+      "repo": "nova-support-generated",
+      "prompt_id": "p3",
+      "generic_prompt": "the support page behavior is buggy around tickets and deadlines, fix it",
+      "optimized_prompt": "The user reports buggy behavior in the support page around tickets and deadlines. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/index.js\n- lines 1-11 · index — orchestrates ticket routing and SLA deadline calculation; worth checking whether the combined output matches the expected behavior.\n\nsrc/features/tickets/routeTicket.js\n- lines 1-24 · routeTicket — might be relevant because it determines the queue and priority for a ticket based on intent and customer tier.\n\nsrc/features/sla/calculateSlaDeadline.js\n- lines 1-10 · calculateSlaDeadline — worth inspecting to verify the SLA deadline calculation logic; also check isSlaBreached for any logic errors.\n\nsrc/features/tickets/ticketIntent.js\n- lines 1-14 · detectIntent — might be relevant because routing depends on correct intent detection from the message text.\n\nProject context: JavaScript with Jest for testing.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.\n- Run the existing tests first to see which assertions fail, or reproduce the reported buggy behavior manually.\n- Read each snippet above and independently verify whether any contain a problem that matches the user's description.\n- Use the failing test output or reproduction steps to pinpoint which function (routing, SLA calculation, or intent detection) is actually broken.\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-nova-support-generated-p3-dcc6cb90",
+      "duration_ms": 18347,
+      "error": null,
+      "generic_chars": 71,
+      "optimized_chars": 1666
+    }
+  ]
+}

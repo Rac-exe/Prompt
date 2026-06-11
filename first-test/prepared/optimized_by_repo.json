@@ -1,0 +1,107 @@
+{
+  "orbit-crm-generated": [
+    {
+      "repo": "orbit-crm-generated",
+      "prompt_id": "p1",
+      "generic_prompt": "auth isnt working and some leads are acting weird, fix it and run the tests",
+      "optimized_prompt": "User reports that authorization is not working and leads are behaving unexpectedly. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\n**src/security/authorizeWorkspace.js**\n- lines 1-4 · authorizeWorkspace — might be relevant because it checks user roles for workspace access; worth verifying the role-matching logic handles all cases correctly.\n\n**src/features/leads/leadScoring.js**\n- lines 1-10 · scoreLead — appears to calculate lead scores based on activities, tags, and company size; worth checking whether the scoring logic produces expected values.\n- lines 12-15 · assignLead — might be relevant because it distributes leads to owners; worth verifying the assignment logic doesn't drop or misroute leads.\n\n**src/features/imports/reconcileWorkspaceImport.js**\n- lines 4-23 · reconcileWorkspaceImport — worth checking because it filters imported leads by workspace visibility and assigns owners; this is where auth and lead state interact.\n\n**src/index.js**\n- lines 1-7 · entry point — might be relevant as a minimal reproduction case showing how authorization and lead scoring are integrated.\n\nProject context: JavaScript, 5 files total.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.\n- Run the existing tests first and capture any failures or stack traces — they will guide the investigation.\n- Read each snippet above and independently verify whether the logic matches the user's expectation (e.g., does `authorizeWorkspace` correctly handle all role scenarios, does `scoreLead` produce sensible scores, does `reconcileWorkspaceImport` filter leads correctly).\n- If a test fails or the code reveals a concrete bug, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-orbit-crm-generated-p1-141b436d",
+      "duration_ms": 20413,
+      "error": null,
+      "generic_chars": 75,
+      "optimized_chars": 1958
+    },
+    {
+      "repo": "orbit-crm-generated",
+      "prompt_id": "p2",
+      "generic_prompt": "workspace access is buggy and imported customer lists are weird, look into it",
+      "optimized_prompt": "Investigate reported issues with workspace access authorization and imported customer list handling. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/security/authorizeWorkspace.js\n- lines 1-4 · authorizeWorkspace — worth checking whether the role-checking logic correctly handles all permission levels and edge cases.\n- lines 6-9 · visibleWorkspaceIds — appears to filter workspaces based on user roles; might be relevant if access control is too permissive or too restrictive.\n\nsrc/features/imports/reconcileWorkspaceImport.js\n- lines 4-23 · reconcileWorkspaceImport — worth inspecting since it filters imported leads by visible workspace IDs and assigns owners; potential issue if workspace visibility filtering is incorrect or lead assignment logic fails.\n\nsrc/features/leads/leadScoring.js\n- lines 1-10 · scoreLead — might be relevant if lead scoring affects which leads appear in the imported list or how they're prioritized.\n- lines 12-15 · assignLead — worth checking if lead-to-owner assignment interacts unexpectedly with workspace visibility or filtering.\n\nProject context: JavaScript application with 5 files, entry point at src/index.js.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.\n- Run existing tests or reproduce the reported workspace access and import issues first; use any failing assertions or error output to guide inspection.\n- Read each snippet above and independently verify whether any actually contain a problem matching the user's description.\n- Pay particular attention to how visibleWorkspaceIds and reconcileWorkspaceImport interact, and whether filtering logic is sound.\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-orbit-crm-generated-p2-ac58a016",
+      "duration_ms": 19912,
+      "error": null,
+      "generic_chars": 77,
+      "optimized_chars": 1972
+    },
+    {
+      "repo": "orbit-crm-generated",
+      "prompt_id": "p3",
+      "generic_prompt": "the crm is buggy around login and lead lists, run the test suite and fix it",
+      "optimized_prompt": "The user reports bugs affecting login and lead list functionality. The retrieved entry point (src/index.js) is a demo that does not contain login or lead list code. Run the test suite first to surface stack traces and failing assertions; use those to identify which files actually contain the bugs.\n\nsrc/index.js (lines 1-7)\n- Entry point that initializes a pipeline, scores a lead, and logs output. Unlikely to be the source of login or lead list bugs, but included for context.\n\nInstructions for the reader:\n- Run the existing test suite first (`npm test` or equivalent). Capture the full output, stack traces, and any failing test names.\n- Read the failing test(s) to understand what login or lead list behavior is broken.\n- Use the stack trace to identify which files are actually involved (login module, lead list component, etc.). Those files are not listed above because retrieval did not find them; the test output will point you to them.\n- Once you have identified the actual buggy code via test failure, read it, verify the problem against the test assertion, and propose a fix grounded in that code.\n- Do not edit src/index.js unless a test explicitly fails within it.",
+      "request_id": "bench-orbit-crm-generated-p3-b303a84d",
+      "duration_ms": 21542,
+      "error": null,
+      "generic_chars": 75,
+      "optimized_chars": 1179
+    }
+  ],
+  "atlas-commerce-generated": [
+    {
+      "repo": "atlas-commerce-generated",
+      "prompt_id": "p1",
+      "generic_prompt": "items arent loading in checkout and inventory is buggy, fix it and run tests",
+      "optimized_prompt": "The user reports that items aren't loading in checkout and inventory is buggy. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/checkout/priceCart.js\n- lines 1-17 · priceCart — might be relevant because it calculates cart totals and applies coupon discounts; worth checking whether the coupon logic or price calculation is causing checkout failures.\n- lines 1-17 · mergeCartItems — appears to handle item consolidation by SKU; worth verifying it correctly preserves item data when merging.\n\nsrc/fulfillment/reserveInventory.js\n- lines 1-13 · reserveInventory — worth checking whether the stock comparison logic correctly prevents overselling or causes inventory to appear depleted.\n- lines 1-13 · reserveBatch — might be relevant because it maps reservation requests to products; worth verifying the product lookup by SKU succeeds and returns valid data.\n\nsrc/index.js\n- lines 1-6 · (entry point) — worth inspecting to see how cart and inventory data flow into the application on startup.\n\nsrc/catalog/createCatalog.js\n- lines 1-12 · createCatalog — might be relevant because it initializes the product catalog; worth checking whether products are being created with correct stock and price values.\n\nProject context: JavaScript. Entry point is src/index.js.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or run a repo-wide search before working through them.\n- Run the existing tests first to see which assertions fail and what error messages appear.\n- Read each snippet above and independently verify whether any actually contain a problem that matches the user's report (items not loading, inventory bugs).\n- If a failing test points to a specific function or reveals a concrete error, use that to guide your investigation.\n- Propose a fix grounded in the actual code shown only after you have identified a real problem.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-atlas-commerce-generated-p1-f50c6754",
+      "duration_ms": 21177,
+      "error": null,
+      "generic_chars": 76,
+      "optimized_chars": 2065
+    },
+    {
+      "repo": "atlas-commerce-generated",
+      "prompt_id": "p2",
+      "generic_prompt": "cart totals and product reservation lists are broken, look into it",
+      "optimized_prompt": "The user reports that cart totals and product reservation lists are broken. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/index.js\n- lines 1-6 · entry point — might be relevant because it integrates catalog creation and cart pricing, and logs the total to console; worth checking if the integration itself is broken.\n\nsrc/checkout/priceCart.js\n- lines 1-7 · priceCart — appears to calculate subtotal, discount, and total; worth checking whether the discount calculation or rounding logic produces incorrect totals.\n- lines 1-17 · mergeCartItems — worth inspecting if duplicate SKUs in the cart should be merged before pricing, and whether the current flow handles that.\n\nsrc/fulfillment/reserveInventory.js\n- lines 1-6 · reserveInventory — appears to check stock availability and reserve quantities; worth checking whether it correctly prevents overselling or returns accurate remaining stock.\n- lines 8-13 · reserveBatch — worth inspecting whether it correctly iterates over multiple reservation requests and aggregates results.\n\nProject context: JavaScript, 4 files total.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.\n- Run existing tests or reproduce the reported failures first to see what the actual output is vs. what is expected.\n- Read each snippet above and independently verify whether the logic matches the expected behavior for cart totals and inventory reservations.\n- If you find a real problem (e.g., incorrect discount calculation, wrong coupon logic, inventory not reserved correctly), propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-atlas-commerce-generated-p2-5d2834ef",
+      "duration_ms": 20521,
+      "error": null,
+      "generic_chars": 66,
+      "optimized_chars": 1847
+    },
+    {
+      "repo": "atlas-commerce-generated",
+      "prompt_id": "p3",
+      "generic_prompt": "the commerce flow is buggy when coupons or missing items happen, fix it",
+      "optimized_prompt": "The user reports that the commerce flow is buggy when coupons or missing items occur. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/checkout/priceCart.js\n- lines 1–6 · priceCart — worth checking because it calculates subtotal, discount, and total using coupon code length to determine discount strength; might be relevant to coupon-related failures.\n- lines 8–17 · mergeCartItems — appears connected to cart item handling.\n\nsrc/fulfillment/reserveInventory.js\n- lines 1–13 · reserveInventory — worth inspecting because it validates requested quantity against available stock and returns success/failure; might be relevant to missing item failures.\n- lines 15–20 · reserveBatch — appears to orchestrate multiple inventory reservations.\n\nsrc/index.js\n- lines 1–6 · entry point — worth checking to see how priceCart and reserveInventory integrate in the actual flow.\n\nProject context: JavaScript, 4 files total.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.\n- Run any existing tests or reproduce the reported failure first, then use the error output or stack trace to guide investigation.\n- Read each snippet above and independently verify whether it actually contains a problem matching the user's description (coupon or missing-item bugs).\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-atlas-commerce-generated-p3-92c64bc2",
+      "duration_ms": 21240,
+      "error": null,
+      "generic_chars": 71,
+      "optimized_chars": 1610
+    }
+  ],
+  "nova-support-generated": [
+    {
+      "repo": "nova-support-generated",
+      "prompt_id": "p1",
+      "generic_prompt": "support ticket routing is buggy and sla deadlines are weird, fix it",
+      "optimized_prompt": "The user reports buggy ticket routing and incorrect SLA deadline calculations. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/index.js\n- lines 1-11 · orchestration — might be relevant because it combines routing and SLA calculation; worth checking the inputs and outputs to understand the expected behavior.\n\nsrc/features/tickets/routeTicket.js\n- lines 3-18 · routeTicket — worth checking whether the queue assignment logic correctly handles all customer tiers and intents, and whether `detectIntent` is working as expected.\n- lines 20-24 · assignTicket — appears to depend on routeTicket; worth verifying it filters agents correctly and handles edge cases like an empty candidates list.\n\nsrc/features/sla/calculateSlaDeadline.js\n- lines 1-6 · calculateSlaDeadline — worth inspecting the deadline calculation logic to ensure it correctly adds hours and handles timezone or date edge cases.\n\nProject context: JavaScript with Jest for testing.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.\n- Run the existing Jest tests first to see which assertions fail, then use the test output to guide your investigation.\n- Read each snippet above and independently verify whether the logic matches the expected behavior for routing and SLA calculation.\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-nova-support-generated-p1-6d5a5e82",
+      "duration_ms": 20166,
+      "error": null,
+      "generic_chars": 67,
+      "optimized_chars": 1598
+    },
+    {
+      "repo": "nova-support-generated",
+      "prompt_id": "p2",
+      "generic_prompt": "the support lists are buggy for imported tickets, run tests and look into it",
+      "optimized_prompt": "The user reports that support lists are buggy for imported tickets. Run the existing tests first to surface the failure, then inspect the locations below.\n\nsrc/index.js\n- lines 1-11 · index — orchestrates ticket routing and SLA deadline calculation; worth checking whether the ticket import and list handling flow through here correctly.\n\nProject context: JavaScript with Jest. Entry point: src/index.js.\n\nInstructions for the reader:\n- Run the existing tests first to see which tests fail and what the error messages or assertions reveal.\n- Read the code snippet above and trace how tickets flow through routing and SLA calculation.\n- Use the failing test output to identify which part of the import or list logic is broken.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.\n- Propose a fix grounded in the actual code once you have identified the concrete failure.",
+      "request_id": "bench-nova-support-generated-p2-559960fa",
+      "duration_ms": 15411,
+      "error": null,
+      "generic_chars": 76,
+      "optimized_chars": 944
+    },
+    {
+      "repo": "nova-support-generated",
+      "prompt_id": "p3",
+      "generic_prompt": "the support page behavior is buggy around tickets and deadlines, fix it",
+      "optimized_prompt": "The user reports buggy behavior in the support page around tickets and deadlines. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.\n\nsrc/index.js\n- lines 1-11 · index — orchestrates ticket routing and SLA deadline calculation; worth checking whether the combined output matches the expected behavior.\n\nsrc/features/tickets/routeTicket.js\n- lines 1-24 · routeTicket — might be relevant because it determines the queue and priority for a ticket based on intent and customer tier.\n\nsrc/features/sla/calculateSlaDeadline.js\n- lines 1-10 · calculateSlaDeadline — worth inspecting to verify the SLA deadline calculation logic; also check isSlaBreached for any logic errors.\n\nsrc/features/tickets/ticketIntent.js\n- lines 1-14 · detectIntent — might be relevant because routing depends on correct intent detection from the message text.\n\nProject context: JavaScript with Jest for testing.\n\nInstructions for the reader:\n- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.\n- Run the existing tests first to see which assertions fail, or reproduce the reported buggy behavior manually.\n- Read each snippet above and independently verify whether any contain a problem that matches the user's description.\n- Use the failing test output or reproduction steps to pinpoint which function (routing, SLA calculation, or intent detection) is actually broken.\n- If you find a real problem, propose a fix grounded in the actual code shown.\n- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.",
+      "request_id": "bench-nova-support-generated-p3-dcc6cb90",
+      "duration_ms": 18347,
+      "error": null,
+      "generic_chars": 71,
+      "optimized_chars": 1666
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "run_id": "c64424bf4b99",
+  "task_id": "orbit-p2",
+  "agent": "codex",
+  "variant": "raw",
+  "hardening": "none",
+  "repeat": 0,
+  "model": "gpt-5.3-codex",
+  "repo": "/Users/nihal/.superconductor/worktrees/Prompt/local_improvement/mcp-shi/test-repo/orbit-crm-generated",
+  "base_commit": "4f41ec596ab6f7b783b90367befbc5abbe48d8f7",
+  "raw_prompt": "workspace access is buggy and imported customer lists are weird, look into it",
+  "final_prompt": "workspace access is buggy and imported customer lists are weird, look into it",
+  "started_at": "2026-06-11T17:25:35.191219+00:00",
+  "finished_at": "2026-06-11T17:26:51.795230+00:00",
+  "agent_usage": {
+    "input_tokens": 175413,
+    "output_tokens": 3148,
+    "cache_read_tokens": 158336,
+    "cache_write_tokens": 0,
+    "reasoning_tokens": 451,
+    "total_tokens": 179012,
+    "cost_usd": 0.255256,
+    "turns": 0,
+    "mcp_tool_calls": 0,
+    "native_search_calls": 0,
+    "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/11/rollout-2026-06-11T22-55-37-019eb7b7-ce8b-7490-b9e5-5ad951515865.jsonl"
+  },
+  "prmpt_usage": {
+    "index_tokens": 0,
+    "index_cost_usd": 0.0,
+    "optimize_tokens": 0,
+    "optimize_cost_usd": 0.0,
+    "agent_loop_tokens": 0,
+    "agent_loop_cost_usd": 0.0,
+    "generation_ids": [],
+    "reconciled": true
+  },
+  "outcome": {
+    "passed": true,
+    "success_source": "verify_cmd",
+    "success_known": true,
+    "retries": 0,
+    "wall_clock_s": 76.58,
+    "files_touched": [
+      "src/features/imports/reconcileWorkspaceImport.js",
+      "src/features/leads/leadScoring.js",
+      "src/security/authorizeWorkspace.js"
+    ],
+    "expected_files": [],
+    "verify_exit_code": 0,
+    "error": null
+  }
+}

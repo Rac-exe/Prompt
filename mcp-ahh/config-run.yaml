@@ -1,0 +1,35 @@
+# Run config: complex tasks p2+p3, 1 repeat for faster parallel batch.
+results_dir: ./mcp-ahh/results
+worktrees_dir: ./mcp-ahh/.worktrees
+
+agents: [claude, codex]
+variants: [raw, mcp_only, mcp_optimizer]
+hardenings: [soft, hard]
+repeats: 1
+
+claude_model: claude-sonnet-4-6
+codex_model: gpt-5.3-codex
+
+claude:
+  bin: claude
+  extra_args: ["--permission-mode", "bypassPermissions"]
+codex:
+  bin: codex
+  sessions_dir: ~/.codex/sessions
+
+mcp_real_server: ./mcp-shi/benchmark-runs/prompt_mcp_server.py
+prepared_store: ./mcp-ahh/results/prepared
+
+hardening_claude_settings: ./benchmarks/hardening/claude-settings.hard.json
+hardening_codex_agents_md: ./benchmarks/hardening/AGENTS.hard.md
+append_system_prompt_file: ./benchmarks/hardening/append-system-prompt.txt
+
+openrouter_cost_capture: true
+prmpt:
+  openrouter_api_key_env: OPENROUTER_API_KEY
+
+codex_cost_per_1k_input: 0.00125
+codex_cost_per_1k_output: 0.01
+
+per_run_timeout_s: 900
+allow_retries: 1

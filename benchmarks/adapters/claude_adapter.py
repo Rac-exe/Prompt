@@ -41,14 +41,11 @@ def build_command(
     if extra_args:
         cmd += list(extra_args)
     if mcp_config:
-        cmd += ["--mcp-config", mcp_config]
+        cmd += ["--mcp-config", mcp_config, "--strict-mcp-config"]
     if settings_file:
         cmd += ["--settings", settings_file]
     if append_system_prompt_file:
         cmd += ["--append-system-prompt-file", append_system_prompt_file]
-    if session_dir:
-        # Persist the session so tool-call counting can audit it afterwards.
-        cmd += ["--session-id-file", str(Path(session_dir) / "session_id.txt")]
     # `--` separates flags from the positional prompt (parsing-bug workaround).
     cmd += ["--", prompt]
     return cmd
@@ -217,7 +214,9 @@ def run(
         # (e.g. the silent-exit bug) instead of silently scoring it $0.
         final_text = (proc.stdout or proc.stderr or "")[:2000]
 
-    session_path = find_session_file(session_dir)
+    session_path = find_session_file(session_dir) if session_dir else None
+    if session_path is None:
+        session_path = latest_session_since(t0)
     if session_path:
         usage.raw_session_path = str(session_path)
         usage.mcp_tool_calls, usage.native_search_calls = _count_tool_calls(session_path)
