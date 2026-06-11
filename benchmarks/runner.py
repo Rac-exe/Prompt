@@ -32,7 +32,7 @@ from pathlib import Path
 
 import yaml
 
-from benchmarks import openrouter
+from benchmarks import mcp_real, openrouter
 from benchmarks.adapters import claude_adapter, codex_adapter
 from benchmarks.metrics import (
     Agent, Hardening, Outcome, PrmptUsage, RunRecord, Variant,
@@ -101,6 +101,19 @@ def prepare_prmpt(cfg: dict, variant: Variant, repo: str, raw_prompt: str,
     if variant == Variant.RAW:
         return final_prompt, pu
 
+    # mcp-ahh path: index+optimize already ran offline in prepare.py. Read the
+    # optimized prompt from the store and charge the amortized prep cost. No live
+    # hooks, no per-run OpenRouter calls (the precomputed MCP server is free).
+    store = cfg.get("prepared_store")
+    if store:
+        if variant == Variant.MCP_OPTIMIZER:
+            repo_name = Path(cfg.get("_repo_name") or repo).name
+            opt = mcp_real.optimized_prompt_for(store, repo_name, cfg.get("_prompt_id", "p1"))
+            if opt:
+                final_prompt = opt
+        pu.optimize_cost_usd = mcp_real.prepare_cost_per_task(store)
+        return final_prompt, pu
+
     pc = cfg["prmpt"]
     subs = {"repo": repo, "run_id": run_id, "prompt": shlex.quote(raw_prompt),
             "prompt_id": run_id, "out": ""}
@@ -151,14 +164,36 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
         sha = make_worktree(repo, task.get("base_commit", "HEAD"), wt)
         rec.base_commit = sha
 
+        repo_name = task.get("repo_name") or repo.name
+        prompt_id = task.get("prompt_id", "p1")
+        cfg["_repo_name"], cfg["_prompt_id"] = repo_name, prompt_id
+
         final_prompt, pu = prepare_prmpt(cfg, variant, str(wt), task["raw_prompt"], run_id)
         rec.final_prompt = final_prompt
         rec.prmpt_usage = pu
 
         mcp_config = None
+        call_log: Path | None = None
+        real_server = cfg.get("mcp_real_server")
         if variant in (Variant.MCP_OPTIMIZER, Variant.MCP_ONLY):
-            mcp_config = (cfg.get("mcp_config_claude") if agent == Agent.CLAUDE
-                          else cfg.get("mcp_config_codex"))
+            if real_server:
+                # Drive the REAL stdio MCP server with this task's prepared context.
+                optimized = mcp_real.load_prepared(cfg.get("prepared_store", ""), repo_name)
+                ctx = mcp_real.write_context(session_dir, repo_name, prompt_id, optimized)
+                call_log = session_dir / "mcp-calls.jsonl"
+                if agent == Agent.CLAUDE:
+                    mcp_config = str(mcp_real.write_claude_config(
+                        session_dir, real_server, ctx, call_log))
+                else:
+                    mcp_real.write_codex_config(wt, real_server, ctx, call_log)
+                # Tell the agent to actually use the MCP route (availability
+                # alone yields ~0 calls). Hard hardening forbids broad search.
+                final_prompt += mcp_real.mcp_instruction(
+                    prompt_id, hardening == Hardening.HARD)
+                rec.final_prompt = final_prompt
+            else:
+                mcp_config = (cfg.get("mcp_config_claude") if agent == Agent.CLAUDE
+                              else cfg.get("mcp_config_codex"))
 
         timeout = cfg.get("per_run_timeout_s", 900)
         if agent == Agent.CLAUDE:
@@ -180,14 +215,24 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
             )
         rec.agent_usage = usage
 
+        # Definitive MCP-call count from the server's own log (beats the
+        # session-parsed heuristic) when the real server is in play.
+        if call_log is not None:
+            n_calls, _tools = mcp_real.count_mcp_calls(call_log)
+            rec.agent_usage.mcp_tool_calls = n_calls
+
         # PRMPT's authoritative OpenRouter spend = usage delta across the window
         # (covers indexing + optimize + any agentic-loop calls the MCP made
         # during the agent run). Supersedes the hooks' local estimates.
         if or_before is not None:
             or_after = openrouter.settled_usage(or_key)
             delta = openrouter.usage_delta(or_before, or_after)
-            rec.prmpt_usage.index_cost_usd = 0.0
-            rec.prmpt_usage.optimize_cost_usd = 0.0
+            if not cfg.get("prepared_store"):
+                # Live-pipeline path: the whole delta is PRMPT's spend.
+                rec.prmpt_usage.index_cost_usd = 0.0
+                rec.prmpt_usage.optimize_cost_usd = 0.0
+            # With a prepared store, keep the amortized prep cost set above and
+            # ADD any live spend (e.g. an agentic-loop call the MCP made).
             rec.prmpt_usage.agent_loop_cost_usd = delta
             rec.prmpt_usage.reconciled = True
 

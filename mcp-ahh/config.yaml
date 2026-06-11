@@ -1,0 +1,57 @@
+# mcp-ahh — central benchmark config.
+# The measurement engine lives in benchmarks/. This file wires it to the REAL
+# Prompt MCP server + bundled buggy repos shipped in mcp-shi/.
+# Run everything from the REPO ROOT.
+
+# ── Output ───────────────────────────────────────────────────────────────────
+results_dir: ./mcp-ahh/results
+worktrees_dir: ./mcp-ahh/.worktrees
+
+# ── Matrix ───────────────────────────────────────────────────────────────────
+# raw           = vague prompt, no PRMPT (baseline)
+# mcp_only      = vague prompt + real MCP server available
+# mcp_optimizer = pre-optimized prompt + real MCP server available
+agents: [claude, codex]
+variants: [raw, mcp_only, mcp_optimizer]
+hardenings: [soft, hard]
+repeats: 3
+
+# ── Models (pin exact versions) ──────────────────────────────────────────────
+claude_model: claude-sonnet-4-6
+codex_model: gpt-5.3-codex
+
+# ── Coding-agent CLIs ────────────────────────────────────────────────────────
+claude:
+  bin: claude
+  extra_args: ["--permission-mode", "bypassPermissions", "--no-session-persistence"]
+codex:
+  bin: codex
+  sessions_dir: ~/.codex/sessions
+
+# ── REAL MCP server (from mcp-shi) ───────────────────────────────────────────
+# The engine launches this over stdio per MCP cell, feeds it the prepared
+# optimized-prompt context, and reads its call-log for definitive MCP usage.
+mcp_real_server: ./mcp-shi/benchmark-runs/prompt_mcp_server.py
+# Optimized-prompt store produced by `python mcp-ahh/prepare.py`.
+prepared_store: ./mcp-ahh/results/prepared
+
+# ── Hardening assets (reused from benchmarks/) ───────────────────────────────
+hardening_claude_settings: ./benchmarks/hardening/claude-settings.hard.json
+hardening_codex_agents_md: ./benchmarks/hardening/AGENTS.hard.md
+append_system_prompt_file: ./benchmarks/hardening/append-system-prompt.txt
+
+# ── PRMPT cost capture ───────────────────────────────────────────────────────
+# With the precomputed MCP server PRMPT spends nothing DURING a run; its real
+# cost is the offline index+optimize done by prepare.py, amortized per task.
+# The live delta is still captured (will be ~0 now, >0 if the server goes live).
+openrouter_cost_capture: true
+prmpt:
+  openrouter_api_key_env: OPENROUTER_API_KEY
+
+# ── Codex pricing (Codex reports no USD; price its tokens at your API rates) ──
+codex_cost_per_1k_input: 0.00125
+codex_cost_per_1k_output: 0.01
+
+# ── Safety ───────────────────────────────────────────────────────────────────
+per_run_timeout_s: 900
+allow_retries: 1
