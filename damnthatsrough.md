@@ -66,7 +66,6 @@ Benchmark scripts live in `/Users/nihal/Desktop/code/test-prompt-bench/benchmark
 - `run_benchmark.py`: original Prompt-vs-direct benchmark harness and PDF generator.
 - `run_mcp_benchmark.py`: MCP benchmark harness.
 - `prompt_mcp_server.py`: local Prompt MCP server.
-- `clean_mcp_proxy.py`: thin proxy used only to log calls to the real Clean MCP server.
 
 Prompt MCP evolved through these versions:
 
@@ -123,7 +122,6 @@ Useful local run directories:
 - `benchmark-runs/claude-big-import-smoke-20260608-2340`
 - `benchmark-runs/claude-big-import-smoke-allowlist-20260608-2351`
 - `benchmark-runs/claude-fresh-three-way-20260609-0002`
-- `benchmark-runs/claude-clean-mcp-three-way-20260609-0012`
 
 ## Prompt MCP Results
 
@@ -154,48 +152,6 @@ Takeaway:
 - Prompt MCP with allowlist excluding broad `Glob/Grep` beat direct Claude by about `5.6%`.
 - Strong descriptions alone did not solve the issue. Strong descriptions plus tool restrictions helped.
 
-## Clean MCP Setup
-
-Clean MCP repo:
-
-- Cloned from `https://github.com/cleanmcp/clean-mcp`
-- Local path: `/Users/nihal/Desktop/code/clean-mcp`
-- Installed with Python 3.11 venv because Clean MCP supports Python 3.10-3.13 and this machine defaulted to Python 3.14.
-
-Manual verification:
-
-- Server started with `python -m clean.local.mcp_server`.
-- Exposed tools:
-  - `index_repo`
-  - `delete_repo`
-  - `search_code`
-  - `list_repos`
-  - `get_token_savings`
-  - `get_file_tree`
-  - `get_source`
-  - `expand_result`
-- Indexed Orbit as `local/orbit-crm-generated`.
-- Manual `search_code` found the exact expected route:
-  - `src/features/imports/reconcileWorkspaceImport.js`
-  - `src/security/authorizeWorkspace.js`
-  - call graph into `src/features/leads/leadScoring.js`
-
-## Clean MCP Results
-
-Run dir: `benchmark-runs/claude-clean-mcp-three-way-20260609-0012`
-
-| Condition | Passed | Cost | Turns | Cache read | Output tokens | MCP calls | Files touched |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Claude direct | yes | `$0.4104` | 12 | `155,141` | `7,140` | 0 | 3 |
-| Claude + Clean MCP, no allowlist | yes | `$0.6579` | 19 | `457,293` | `8,611` | 0 | 3 |
-| Claude + Clean MCP, allowlist no `Glob/Grep` | yes | `$0.5635` | 16 | `366,650` | `7,660` | 0 | 3 |
-
-Important Clean MCP note:
-
-- Clean MCP worked manually and was configured for Claude.
-- Claude made `0` Clean MCP tool calls in the benchmark.
-- Therefore the Clean MCP run only added schema/config overhead and did not get retrieval benefit.
-
 ## Main Claude Finding
 
 Claude Code is already strong at test-driven repair when stack traces point to real files. For these tasks, MCP guidance often becomes additive overhead unless it actually changes Claude's behavior.
@@ -205,7 +161,6 @@ Observed patterns:
 - Direct Claude often fixes the correct files efficiently.
 - Prompt MCP without tool restriction routes correctly but still costs more because Claude cross-checks or retains normal exploration behavior.
 - Prompt MCP with `--allowedTools` excluding broad `Glob/Grep` can reduce cost, but that is not a realistic default for most users.
-- Clean MCP can retrieve the right code manually, but Claude may ignore it unless the setup/tool invocation is enforced more strongly.
 
 ## Best Current Interpretation
 

@@ -13,7 +13,6 @@ mcp-shi/
     run_benchmark.py
     run_mcp_benchmark.py
     prompt_mcp_server.py
-    clean_mcp_proxy.py
   examples/
     prompt-mcp-context.example.json
     claude-mcp.example.json
@@ -28,7 +27,6 @@ mcp-shi/
   REPOS.md
   results/
     prompt_mcp_three_way_results.json
-    clean_mcp_three_way_results.json
 ```
 
 Install Python deps once:
@@ -291,7 +289,6 @@ export PRMPT_BASE_BENCH_SCRIPT="/path/to/run_benchmark.py"
 Included historical result snapshots:
 
 - `results/prompt_mcp_three_way_results.json`
-- `results/clean_mcp_three_way_results.json`
 
 Prompt MCP three-way result:
 
@@ -306,18 +303,6 @@ Takeaway:
 - Prompt MCP only became cheaper in the allowlist case.
 - Strong MCP tool descriptions alone did not prevent Claude from doing extra exploration.
 - Broad search/tool behavior must be constrained or the MCP route can add overhead.
-
-Clean MCP result:
-
-| Condition | Passed | Cost | Turns | Cache Read | Output Tokens | MCP Calls |
-|---|---:|---:|---:|---:|---:|---:|
-| Claude direct | yes | `$0.4104` | 12 | `155,141` | `7,140` | 0 |
-| Claude + Clean MCP | yes | `$0.6579` | 19 | `457,293` | `8,611` | 0 |
-| Claude + Clean MCP allowlist | yes | `$0.5635` | 16 | `366,650` | `7,660` | 0 |
-
-Takeaway:
-
-- Clean MCP worked manually, but Claude made zero Clean MCP tool calls in that benchmark.
 - MCP availability is not enough. The downstream agent must actually invoke and follow it.
 
 ## How To Explain This To Another Agent

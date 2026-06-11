@@ -113,7 +113,7 @@ def mcp_instruction(prompt_id: str, hard: bool) -> str:
     """Instruction appended so the agent actually invokes the MCP route.
 
     Availability alone is not enough — without this, agents often make zero MCP
-    calls (observed in mcp-shi's 'Clean MCP' run)."""
+    calls even when an MCP server is configured."""
     return _MCP_INSTRUCTION.format(pid=prompt_id) + (_HARD_CLAUSE if hard else "")
 
 

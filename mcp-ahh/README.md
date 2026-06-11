@@ -39,9 +39,9 @@ replaces it with the **measured** OpenRouter usage-delta (live calls) plus the
 
 **The honest read of mcp-shi's own historical results:** Prompt MCP was only
 cheaper in the *allowlist* (hard-hardening) case; with strong tool descriptions
-alone, Claude still explored and the MCP *added* cost; and "Clean MCP" got **zero**
-MCP calls. mcp-ahh is built to expose exactly this — it runs soft vs hard side by
-side and counts calls from the server log, so we stop guessing.
+alone, Claude still explored and the MCP *added* cost. mcp-ahh is built to expose
+exactly this — it runs soft vs hard side by side and counts calls from the server
+log, so we stop guessing.
 
 > Note on the MCP server: it currently serves **precomputed** optimized prompts
 > from a context file (per mcp-shi's "Known Gaps"). mcp-ahh treats that honestly —

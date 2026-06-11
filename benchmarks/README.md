@@ -16,14 +16,14 @@ If you are an AI agent asked to "run the benchmark", your job is to be the
 **operator**, not the coding agent under test. Concretely:
 
 - **DO** run the Python commands below. The harness will itself launch Claude
-  Code / Codex as subprocesses and measure them.
+Code / Codex as subprocesses and measure them.
 - **DO NOT** try to fix the tasks' bugs yourself, read the target repos, or edit
-  any code. You only run commands and report what the harness produced.
+any code. You only run commands and report what the harness produced.
 - **DO NOT** run cells in parallel and **DO NOT** background the runner. PRMPT
-  cost is measured from the OpenRouter usage delta per run, which only works if
-  runs happen one at a time. Let `runner.py` finish.
+cost is measured from the OpenRouter usage delta per run, which only works if
+runs happen one at a time. Let `runner.py` finish.
 - **DO NOT** invent token/cost numbers. The only valid numbers are the ones in
-  `results/<batch>/report.md`, `summary.csv`, and `runs.jsonl`.
+`results/<batch>/report.md`, `summary.csv`, and `runs.jsonl`.
 
 ### Exact procedure (follow in order)
 
@@ -55,9 +55,9 @@ python -m benchmarks.report --results benchmarks/results/run01
 ### After the run, report to the user (do not editorialise the numbers)
 
 1. Open `benchmarks/results/run01/report.md` and relay the **Verdict** section
-   verbatim (Wins / Regressions / Inconclusive).
+  verbatim (Wins / Regressions / Inconclusive).
 2. Flag any row with `suspect_empty_runs > 0` — those runs failed to launch
-   (likely the Claude silent-exit bug) and must be re-run, not trusted.
+  (likely the Claude silent-exit bug) and must be re-run, not trusted.
 3. Flag any row with `reconciled = false` — PRMPT cost is an estimate, not billed.
 4. If any task failed preflight step 1, say so explicitly; its results are void.
 
@@ -85,7 +85,7 @@ The two MCP variants each run in `soft` (native search allowed — organic) and
   tokens from the rollout file (`~/.codex/sessions/.../rollout-*.jsonl`, because
    `--json` omits reasoning tokens) priced at the rates you configure.
 2. **PRMPT spend** — every OpenRouter call PRMPT makes for indexing, optimizing,
-   and the agentic loop. Measured with **zero changes to the PRMPT services**:
+  and the agentic loop. Measured with **zero changes to the PRMPT services**:
    the agent bills through Anthropic/OpenAI, PRMPT bills through OpenRouter, so
    PRMPT's cost for a run == the increase in the OpenRouter key's cumulative
    usage across the run window (`openrouter.py`). This is OpenRouter's own
@@ -152,13 +152,15 @@ python -m benchmarks.runner --only-task <task_id> --batch smoke01
 
 ## Two test modes, one report
 
-| | **Controlled** (`runner.py`) | **Passive** (`passive.py`) |
-|---|---|---|
-| Who drives the agent | the script (headless) | a real human |
-| Task | predefined prompt | whatever the user does |
-| "Did it work?" | `verify_cmd` exit code | self-reported y/n, or unscored |
-| Cost capture | OpenRouter usage-delta + agent JSON | OpenRouter usage-delta + agent log |
-| Output | `RunRecord` JSON | the **same** `RunRecord` JSON |
+
+|                      | **Controlled** (`runner.py`)        | **Passive** (`passive.py`)         |
+| -------------------- | ----------------------------------- | ---------------------------------- |
+| Who drives the agent | the script (headless)               | a real human                       |
+| Task                 | predefined prompt                   | whatever the user does             |
+| "Did it work?"       | `verify_cmd` exit code              | self-reported y/n, or unscored     |
+| Cost capture         | OpenRouter usage-delta + agent JSON | OpenRouter usage-delta + agent log |
+| Output               | `RunRecord` JSON                    | the **same** `RunRecord` JSON      |
+
 
 Both feed the same `report.py`. Unscored passive runs still record exact cost;
 the report shows their saving but marks them **inconclusive** (cost-only) so an
