@@ -160,9 +160,12 @@ async def retrieve_context_full(
     # Gather context via a bounded local tool-calling loop, then answer over it.
     # Falls back transparently to the one-shot pipeline below on None.
     if AGENTIC_RETRIEVAL_ENABLED and mode_enum != ModeEnum.FIND:
+        agent_stats: dict = {}
         try:
             from app.services.agent_loop import agentic_retrieve
-            agent_chunks = await agentic_retrieve(project_id, user_id, query, mode_enum.value, limit)
+            agent_chunks = await agentic_retrieve(
+                project_id, user_id, query, mode_enum.value, limit, stats=agent_stats
+            )
         except Exception as e:
             logger.warning("[RETRIEVE] agentic path errored (%s); using one-shot", e)
             agent_chunks = None
@@ -172,7 +175,13 @@ async def retrieve_context_full(
             source_ids: list[str] = []
             if config.generate_answer:
                 answer, source_ids = await generate_answer(query, agent_chunks, project_summary)
-            logger.info("[RETRIEVE] agentic complete project=%s ranked=%d", project_id, len(agent_chunks))
+            logger.info(
+                "[RETRIEVE] agentic complete project=%s ranked=%d agent_tokens=%d hops=%d tools=%d",
+                project_id, len(agent_chunks),
+                agent_stats.get("agent_total_tokens", 0),
+                agent_stats.get("agent_hops_used", 0),
+                agent_stats.get("agent_tool_calls", 0),
+            )
             return FullSearchResult(
                 ranked_chunks=agent_chunks[:limit],
                 related_chunks=[],
