@@ -180,6 +180,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
           community_id TEXT,
           relevance_reasoning TEXT,
           probable_issue TEXT,
+          sparse_embedding TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           UNIQUE(project_id, file_path, name, chunk_type)
@@ -274,6 +275,17 @@ def _ensure_projects_local_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE projects_local ADD COLUMN embedding_dimensions INTEGER")
     if "structure_embedding_dimensions" not in existing:
         conn.execute("ALTER TABLE projects_local ADD COLUMN structure_embedding_dimensions INTEGER")
+    _ensure_code_chunks_columns(conn)
+
+
+def _ensure_code_chunks_columns(conn: sqlite3.Connection) -> None:
+    """Additive migrations for code_chunks — safe to call on every open."""
+    existing = {
+        str(row["name"] if isinstance(row, sqlite3.Row) else row[1])
+        for row in conn.execute("PRAGMA table_info(code_chunks)").fetchall()
+    }
+    if "sparse_embedding" not in existing:
+        conn.execute("ALTER TABLE code_chunks ADD COLUMN sparse_embedding TEXT")
 
 
 def sync_project(project: dict | None) -> None:
@@ -443,9 +455,9 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = 500) -> int:
                   scope_type, chunk_index, parent_scope_name, name, signature, language,
                   semantic_summary, summary_code, summary_purpose, embedding, embedding_summary,
                   embedding_structure, content_hash, branch, branch_diverged, concepts_json,
-                  is_exported, updated_at
+                  is_exported, sparse_embedding, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
                 ON CONFLICT(project_id, file_path, name, chunk_type) DO UPDATE SET
                   user_id = excluded.user_id,
                   start_line = excluded.start_line,
@@ -466,6 +478,7 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = 500) -> int:
                   branch_diverged = excluded.branch_diverged,
                   concepts_json = excluded.concepts_json,
                   is_exported = excluded.is_exported,
+                  sparse_embedding = COALESCE(excluded.sparse_embedding, sparse_embedding),
                   updated_at = datetime('now')
                 """,
                 (
@@ -493,6 +506,7 @@ def upsert_chunks_batch(chunks_data: list[dict], batch_size: int = 500) -> int:
                     1 if row.get("branch_diverged") else 0,
                     _json_dumps(concepts),
                     1 if row.get("is_exported") else 0,
+                    row.get("sparse_embedding"),
                 ),
             )
             _upsert_fts(conn, chunk_id, row, concepts)
@@ -755,6 +769,76 @@ def text_search(project_id: str, user_id: str, query: str, limit: int = 10) -> l
         item["final_score"] = item["similarity"]
         results.append(item)
     return results
+
+
+def sparse_search(
+    project_id: str,
+    user_id: str,
+    query_sparse_vec: dict[str, float],
+    limit: int = 10,
+) -> list[dict]:
+    """
+    SPLADE sparse-vector search: dot-product of query and document sparse vectors.
+
+    Loads all rows with a non-null sparse_embedding for the project, deserializes
+    each JSON sparse vector, computes the dot product with the query vector, and
+    returns the top-k by score.
+
+    Returns an empty list when no rows have sparse embeddings populated yet
+    (allows callers to fall back to FTS5 text_search transparently).
+    """
+    if not query_sparse_vec:
+        return []
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            "SELECT * FROM code_chunks WHERE project_id = ? AND sparse_embedding IS NOT NULL",
+            (project_id,),
+        ).fetchall()
+    if not rows:
+        return []
+
+    scored: list[dict] = []
+    for row in rows:
+        raw = row["sparse_embedding"] if isinstance(row, sqlite3.Row) else dict(row).get("sparse_embedding")
+        doc_vec = _json_loads(raw, {})
+        if not doc_vec:
+            continue
+        score = 0.0
+        for token, q_w in query_sparse_vec.items():
+            d_w = doc_vec.get(token)
+            if d_w:
+                score += q_w * d_w
+        if score <= 0.0:
+            continue
+        item = _row_to_chunk(dict(row))
+        item["similarity"] = score
+        item["final_score"] = score
+        scored.append(item)
+
+    scored.sort(key=lambda r: r.get("final_score", 0.0), reverse=True)
+    return scored[:limit]
+
+
+def get_chunks_source(project_id: str, chunk_ids: list[str]) -> list[dict]:
+    """
+    Fetch full source columns for a list of chunk IDs within a project.
+    Used by the /api/chunks/expand endpoint to return code bodies on demand
+    without sending them by default in every retrieval response.
+    """
+    if not chunk_ids:
+        return []
+    placeholders = ",".join("?" for _ in chunk_ids)
+    with connect(project_id) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, file_path, start_line, end_line, name,
+                   code_body, context_header
+            FROM code_chunks
+            WHERE id IN ({placeholders}) AND project_id = ?
+            """,
+            (*chunk_ids, project_id),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def file_path_search(project_id: str, user_id: str, file_patterns: list[str], limit: int = 20) -> list[dict]:

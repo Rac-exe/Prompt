@@ -39,6 +39,8 @@ class StorageBackend:
     match_community_reports: Callable
     match_concept_embeddings: Callable
     get_community_members_ranked: Callable
+    sparse_search: Callable
+    get_chunks_source: Callable
 
 
 def get_storage_backend(kind: str) -> StorageBackend:
@@ -77,4 +79,6 @@ def get_storage_backend(kind: str) -> StorageBackend:
         match_community_reports=local_store.match_community_reports,
         match_concept_embeddings=local_store.match_concept_embeddings,
         get_community_members_ranked=local_store.get_community_members_ranked,
+        sparse_search=local_store.sparse_search,
+        get_chunks_source=local_store.get_chunks_source,
     )

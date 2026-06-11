@@ -38,12 +38,14 @@ from app.config import (
     OPENROUTER_API_KEY,
     PIPELINE_TAG,
     QUERY_REFINER_MODEL,
+    SPLADE_ENABLED,
     STRUCTURE_SIMILARITY_WEIGHT,
 )
 from app.db.models import ModeEnum, RetrievedChunk, RetrieveResponse
 from app.db.queries import (
     concept_search,
     file_path_search,
+    find_chunks_by_names,
     get_branch_context,
     get_chunk_structure_embeddings,
     get_community_members_ranked,
@@ -52,6 +54,7 @@ from app.db.queries import (
     increment_observation_counts,
     match_community_reports,
     match_concept_embeddings,
+    sparse_search,
     text_search,
     vector_search,
 )
@@ -62,7 +65,7 @@ from app.services.embedding import embed_structure_texts, embed_texts
 from app.services.feedback import record_search
 from app.services.mode_router import ModeConfig, get_mode_config
 from app.services.query_analyzer import QueryAnalysis, decompose_query
-from app.services.query_preprocessor import QuerySignals, build_file_patterns, preprocess_query
+from app.services.query_preprocessor import QuerySignals, build_file_patterns, extract_code_identifiers, preprocess_query
 from app.services.reranker import is_test_chunk, query_mentions_tests, rerank_chunks
 from app.services import prmpt_ai_client
 
@@ -126,8 +129,12 @@ async def retrieve_context(
     signals: Optional[QuerySignals] = None,
     mode: ModeEnum | str = ModeEnum.BUG,
     variant: str | None = None,
+    include_code_body: bool = False,
 ) -> RetrieveResponse:
-    full = await retrieve_context_full(project_id, user_id, query, branch, limit, signals, mode, variant=variant)
+    full = await retrieve_context_full(
+        project_id, user_id, query, branch, limit, signals, mode,
+        variant=variant, include_code_body=include_code_body,
+    )
     return RetrieveResponse(
         ranked_chunks=[_to_retrieved_chunk(c) for c in full.ranked_chunks],
         related_chunks=[_to_retrieved_chunk(c, score=0.0) for c in full.related_chunks],
@@ -148,6 +155,7 @@ async def retrieve_context_full(
     project_summary: str | None = None,
     variant: str | None = None,
     generate_answer_override: bool | None = None,
+    include_code_body: bool = False,
 ) -> FullSearchResult:
     mode_enum = mode if isinstance(mode, ModeEnum) else ModeEnum(mode)
     config = get_mode_config(mode_enum, variant)
@@ -388,7 +396,8 @@ async def retrieve_context_full(
         else:
             logger.info("[REFINE] skipped_after_trigger no refined queries returned")
 
-    ranked = _hydrate_ranked_chunks(ranked, project_id, user_id, limit)
+    ranked = _hydrate_ranked_chunks(ranked, project_id, user_id, limit, include_code_body=include_code_body)
+    ranked = _apply_rank_tiers(ranked, include_code_body)
 
     related = []
     if config.graph_expand and ranked:
@@ -1284,7 +1293,19 @@ async def _broad_recall(
 
     for sq in sub_queries:
         expanded = _expand_query(sq, concepts, config.mode)
-        results = text_search(project_id, user_id, expanded, limit=limit)
+        if SPLADE_ENABLED:
+            try:
+                from app.services.sparse_embedding import compute_sparse
+                q_sparse = compute_sparse(sq)
+                results = sparse_search(project_id, user_id, q_sparse, limit=limit)
+                if not results:
+                    # Fallback: sparse embeddings not yet populated for this project
+                    results = text_search(project_id, user_id, expanded, limit=limit)
+            except Exception as _splade_err:
+                logger.warning("[RECALL] SPLADE search failed, falling back to FTS5: %s", _splade_err)
+                results = text_search(project_id, user_id, expanded, limit=limit)
+        else:
+            results = text_search(project_id, user_id, expanded, limit=limit)
         if results:
             lists.append(results)
     logger.info("[RECALL] text complete sub_queries=%d lists_now=%d", len(sub_queries), len(lists))
@@ -1310,6 +1331,25 @@ async def _broad_recall(
         logger.info("[RECALL] filepath patterns=%s results=%d", file_patterns, len(results) if results else 0)
     else:
         logger.info("[RECALL] filepath skipped no file patterns")
+
+    # Identifier name-match channel (FIND mode only): guarantees that chunks whose
+    # own name exactly matches an extracted camelCase/PascalCase identifier are always
+    # in the candidate pool, regardless of embedding or sparse-search coverage.
+    if config.mode == ModeEnum.FIND:
+        identifiers = extract_code_identifiers(query)
+        if identifiers:
+            name_results_map = find_chunks_by_names(project_id, identifiers)
+            if name_results_map:
+                id_list = []
+                for matches in name_results_map.values():
+                    for m in matches:
+                        id_list.append({**m, "similarity": 1.0, "final_score": 1.0})
+                if id_list:
+                    lists.append(id_list)
+                    logger.info(
+                        "[RECALL] identifier_name identifiers=%s hits=%d",
+                        identifiers, len(id_list),
+                    )
 
     return lists, query_embedding
 
@@ -1347,8 +1387,14 @@ def _hydrate_ranked_chunks(
     project_id: str,
     user_id: str,
     limit: int,
+    include_code_body: bool = True,
 ) -> list[dict]:
-    """Fetch heavy columns for the small set that survived broad recall."""
+    """Fetch metadata/heavy columns for the small set that survived broad recall.
+
+    When include_code_body=False, code_body/context_header/parent_summary are
+    stripped from the final output to save tokens. The caller can fetch them
+    on demand via POST /api/chunks/expand.
+    """
     if not chunks or limit <= 0:
         return chunks
     hydrate_count = min(len(chunks), limit)
@@ -1364,10 +1410,50 @@ def _hydrate_ranked_chunks(
             for heavy_key in ("code_body", "context_header", "parent_summary"):
                 if full.get(heavy_key) is not None:
                     merged_chunk[heavy_key] = full.get(heavy_key)
+            if not include_code_body:
+                merged_chunk.pop("code_body", None)
+                merged_chunk.pop("context_header", None)
+                merged_chunk.pop("parent_summary", None)
             merged.append(merged_chunk)
         else:
+            if not include_code_body:
+                chunk.pop("code_body", None)
+                chunk.pop("context_header", None)
+                chunk.pop("parent_summary", None)
             merged.append(chunk)
     return merged
+
+
+_TIER2_DROP = frozenset({"summary_purpose", "concepts", "relevance_reasoning"})
+_TIER3_DROP = frozenset({"summary_code", "summary_purpose", "concepts",
+                         "relevance_reasoning", "semantic_summary"})
+
+
+def _apply_rank_tiers(chunks: list[dict], include_code_body: bool) -> list[dict]:
+    """Vary metadata verbosity by rank when include_code_body=False.
+
+    Tier 1 (rank 0-1): full metadata — the LLM is most likely to use these.
+    Tier 2 (rank 2-4): drop summary_purpose / concepts / relevance_reasoning.
+    Tier 3 (rank 5+):  drop all summaries — name + file + line range + scores only.
+
+    When include_code_body=True the caller already wants maximum detail, so
+    no trimming is applied.
+    """
+    if include_code_body or not chunks:
+        return chunks
+    result = []
+    for rank, chunk in enumerate(chunks):
+        c = dict(chunk)
+        if rank < 2:
+            pass
+        elif rank < 5:
+            for k in _TIER2_DROP:
+                c.pop(k, None)
+        else:
+            for k in _TIER3_DROP:
+                c.pop(k, None)
+        result.append(c)
+    return result
 
 
 async def _attach_structure_similarity(
@@ -1482,6 +1568,9 @@ def _rank_find_candidates(
     terms = _find_terms(query)
     specific_terms = terms - _FIND_GENERIC_TERMS
     plan = plan or _build_find_query_plan(query)
+    # Extract atomic code identifiers (camelCase/PascalCase etc.) that survive
+    # tokenization as whole symbols — used for exact name-definition matching.
+    code_identifiers = extract_code_identifiers(query)
     query_generic_symbol_terms = plan.explicit_generic_symbols
     # Domain signal terms that qualify for the signal-hit boost (configurable via env)
     query_signal_terms = terms & FIND_DOMAIN_SIGNAL_TERMS
@@ -1596,6 +1685,14 @@ def _rank_find_candidates(
         name_def_hits = sum(
             term_weights.get(term, 1.0) for term in specific_terms if term and term in name_token
         )
+        # Atomic identifier exact-match boost: for camelCase/PascalCase identifiers
+        # extracted from the query, check if the chunk's own name matches exactly
+        # (case-insensitive). This bypasses tokenization that would mangle e.g.
+        # "verifyJWT" → "verifyjwt" and ensures the defining chunk always ranks #1.
+        chunk_name_raw = str(chunk.get("name") or "")
+        identifier_name_match = any(
+            chunk_name_raw.lower() == ident.lower() for ident in code_identifiers
+        )
 
         # Rank-normalized graph signals (computed across the candidate set above).
         # Implementers have more incoming edges -> higher PageRank; centrality is
@@ -1611,6 +1708,7 @@ def _rank_find_candidates(
             + exact_signal_hits * FIND_BOOST_SIGNAL
             + concept_hits * FIND_BOOST_CONCEPT
             + name_def_hits * FIND_BOOST_NAME_DEF
+            + (FIND_BOOST_NAME_DEF if identifier_name_match else 0.0)
             + pr_norm * FIND_PAGERANK_WEIGHT
             + cen_norm * FIND_BOOST_CENTRALITY
         )

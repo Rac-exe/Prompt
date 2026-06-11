@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import sentry_sdk
 
-from app.config import GRAPH_BUILDER_ENABLED, SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
+from app.config import GRAPH_BUILDER_ENABLED, SPLADE_ENABLED, SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
 from app.db.models import CallGraphEdge, ChunkInput, ChunkKey
 from app.db.queries import (
     active_embedding_signature,
@@ -252,11 +252,33 @@ async def process_ingest_batch(
         update_project_status(project_id, "error", last_indexed_at=datetime.now(timezone.utc).isoformat())
         return
 
+    # ── SPLADE sparse embeddings (opt-in) ───────────────────────────────────
+    # Computed over the same summary texts used for dense embeddings.
+    # Stored as JSON dicts {token: weight} in sparse_embedding column.
+    sparse_vecs: list[dict] = []
+    if SPLADE_ENABLED:
+        try:
+            from app.services.sparse_embedding import compute_sparse_batch
+            sparse_vecs = compute_sparse_batch(summary_texts)
+            logger.info(
+                f"[project={project_id}] SPLADE sparse embeddings computed: count={len(sparse_vecs)}"
+            )
+        except Exception as splade_err:
+            sentry_sdk.capture_exception(splade_err)
+            logger.warning(
+                f"[project={project_id}] SPLADE computation failed (continuing without): {splade_err}"
+            )
+
+    import json as _json
+
     rows = []
-    for item, summary, summary_vec, structure_vec in zip(
+    for idx, (item, summary, summary_vec, structure_vec) in enumerate(zip(
         enriched, summaries, embedding_summary, embedding_structure
-    ):
+    )):
         chunk = item.chunk
+        sparse_embedding_json: str | None = None
+        if SPLADE_ENABLED and idx < len(sparse_vecs) and sparse_vecs[idx]:
+            sparse_embedding_json = _json.dumps(sparse_vecs[idx])
         rows.append({
             "project_id": project_id,
             "user_id": user_id,
@@ -287,6 +309,7 @@ async def process_ingest_batch(
             "context_before": item.context_before,
             "context_after": item.context_after,
             "parent_summary": item.parent_summary,
+            "sparse_embedding": sparse_embedding_json,
         })
 
     processed = upsert_chunks_batch(rows)

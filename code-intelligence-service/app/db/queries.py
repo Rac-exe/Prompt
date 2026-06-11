@@ -1144,6 +1144,8 @@ update_relationship_embeddings = _storage_backend.update_relationship_embeddings
 match_community_reports = _storage_backend.match_community_reports
 match_concept_embeddings = _storage_backend.match_concept_embeddings
 get_community_members_ranked = _storage_backend.get_community_members_ranked
+sparse_search = _storage_backend.sparse_search
+get_chunks_source = _storage_backend.get_chunks_source
 
 if STORAGE_BACKEND == "local":
     _runtime_supabase_chunk_funcs = (

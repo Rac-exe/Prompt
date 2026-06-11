@@ -127,6 +127,7 @@ from app.routes.webhooks import router as webhooks_router
 from app.routes.feedback import router as feedback_router
 from app.routes.pipeline import router as pipeline_router
 from app.routes.graph_viz import router as graph_viz_router
+from app.routes.debug import router as debug_router
 
 app.include_router(projects_router, prefix="/api")
 app.include_router(ingest_router, prefix="/api")
@@ -137,6 +138,7 @@ app.include_router(webhooks_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(graph_viz_router, prefix="/api")
+app.include_router(debug_router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -203,6 +205,7 @@ async def root():
             "pipeline_status": "GET /api/pipeline/status",
             "pipeline_compare": "GET /api/pipeline/compare",
             "graph_data": "GET /api/graph/data/{project_id}",
+            "debug_retrieve": "POST /api/debug/retrieve",
         },
     }
 

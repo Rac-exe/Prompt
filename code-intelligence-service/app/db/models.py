@@ -144,6 +144,13 @@ class ContextRequest(BaseModel):
     branch: Optional[str] = None
     limit: int = Field(default=10, ge=1, le=50)
     variant: Optional[str] = Field(default=None, description="Named pipeline variant for A/B testing (e.g. 'no_refine', 'deep_graph')")
+    include_code_body: bool = Field(
+        default=False,
+        description=(
+            "When False (default), code_body/context_header are omitted from results "
+            "to save tokens. Use POST /api/chunks/expand to fetch full source on demand."
+        ),
+    )
 
 
 class ProbableLocation(BaseModel):
@@ -196,6 +203,23 @@ class CommunityReport(BaseModel):
     summary: Optional[str] = None
     member_count: int = 0
     similarity: float = 0.0
+
+
+class ExpandRequest(BaseModel):
+    """Request to fetch full source for a list of chunk IDs (tiered output)."""
+    project_id: str
+    chunk_ids: list[str] = Field(..., min_length=1)
+
+
+class ExpandedChunk(BaseModel):
+    """Full source for a single chunk, returned by POST /api/chunks/expand."""
+    id: str
+    file_path: str
+    start_line: int
+    end_line: int
+    name: str
+    code_body: Optional[str] = None
+    context_header: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):

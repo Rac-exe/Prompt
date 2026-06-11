@@ -165,3 +165,11 @@ PIPELINE_VARIANTS: dict[str, dict] = {
     "deep_graph": {"graph_depth": 4, "graph_seeds": 6, "graph_max": 40},
     "wide_recall": {"broad_limit": 80},
 }
+
+# ── SPLADE sparse neural retrieval ──────────────────────────────────────────
+# Replaces FTS5 BM25 text_search with learned sparse token-weight vectors.
+# Set SPLADE_ENABLED=true after re-indexing to activate. FTS5 fallback fires
+# automatically when sparse_embedding is NULL for a project (not yet indexed).
+SPLADE_ENABLED: bool = os.environ.get("SPLADE_ENABLED", "false").lower() == "true"
+SPLADE_MODEL: str = os.environ.get("SPLADE_MODEL", "Xenova/splade-pp-en-v1")
+SPLADE_MIN_WEIGHT: float = float(os.environ.get("SPLADE_MIN_WEIGHT", "0.01"))

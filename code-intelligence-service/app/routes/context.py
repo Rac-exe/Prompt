@@ -18,6 +18,8 @@ from app.db import queries
 from app.db.models import (
     ContextRequest,
     ContextResponse,
+    ExpandedChunk,
+    ExpandRequest,
     ProbableLocation,
     RetrievedChunk,
 )
@@ -111,6 +113,7 @@ async def get_context(
             mode=request.mode,
             project_summary=project_summary,
             variant=request.variant,
+            include_code_body=request.include_code_body,
         )
         logger.info(
             f"[CONTEXT] Step 2 — Retrieval: {time.perf_counter() - t_step:.3f}s, "
@@ -248,3 +251,61 @@ async def get_context_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/chunks/expand", response_model=list[ExpandedChunk])
+async def expand_chunks(
+    body: ExpandRequest,
+    auth: dict = Depends(require_auth),
+):
+    """
+    Fetch full source (code_body + context_header) for a list of chunk IDs.
+
+    This is the tiered-output companion to GET /api/context with
+    include_code_body=False. The LLM calls this endpoint only for the chunks
+    it actually wants to read, saving tokens on chunks it ignores.
+
+    Each expand call is recorded as an implicit positive feedback signal —
+    over time, consistently expanded chunks surface as high-relevance data.
+    """
+    user_id = auth.get("sub")
+
+    project = queries.get_project(body.project_id, user_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from app.db.local_store import get_chunks_source, record_feedback
+
+    rows = get_chunks_source(body.project_id, body.chunk_ids)
+
+    # Record expand as implicit positive feedback (no associated search_id here,
+    # so we use a synthetic one keyed by project+user+chunks for idempotency).
+    try:
+        import uuid
+        synthetic_search_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"expand:{body.project_id}:{user_id}:{','.join(sorted(body.chunk_ids))}",
+        ))
+        record_feedback(
+            search_id=synthetic_search_id,
+            project_id=body.project_id,
+            user_id=user_id or "",
+            mode="expand",
+            selected_chunk_ids=body.chunk_ids,
+            was_useful=None,
+        )
+    except Exception as _fb_err:
+        logger.warning("[EXPAND] feedback recording failed (non-fatal): %s", _fb_err)
+
+    result: list[ExpandedChunk] = []
+    for row in rows:
+        result.append(ExpandedChunk(
+            id=str(row.get("id", "")),
+            file_path=str(row.get("file_path", "")),
+            start_line=int(row.get("start_line") or 0),
+            end_line=int(row.get("end_line") or 0),
+            name=str(row.get("name", "")),
+            code_body=row.get("code_body"),
+            context_header=row.get("context_header"),
+        ))
+    return result
