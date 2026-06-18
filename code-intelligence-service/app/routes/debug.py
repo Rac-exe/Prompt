@@ -41,6 +41,9 @@ class DebugRetrieveRequest(BaseModel):
     branch: Optional[str] = None
     include_code_body: bool = False
     variant: Optional[str] = None
+    # Set to False to skip answer generation — useful for benchmarking pure
+    # retrieval + reranker latency without the downstream LLM call.
+    generate_answer: Optional[bool] = None
 
 
 class DebugChunkResult(BaseModel):
@@ -161,6 +164,7 @@ async def debug_retrieve(body: DebugRetrieveRequest):
         project_summary=project_summary,
         variant=body.variant,
         include_code_body=body.include_code_body,
+        generate_answer_override=body.generate_answer,
     )
     timing["retrieval_ms"] = round((time.perf_counter() - t) * 1000, 1)
     timing["total_ms"] = round((time.perf_counter() - t_total) * 1000, 1)

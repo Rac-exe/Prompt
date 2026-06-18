@@ -36,6 +36,7 @@ from app.config import (
     RETRIEVAL_DEFAULT_LIMIT,
     PIPELINE_TAG, PIPELINE_FINGERPRINT,
     GRAPH_BUILDER_ENABLED, CONCEPT_PHRASE_PER_CHUNK, FIND_PAGERANK_WEIGHT,
+    RERANKER_BACKEND, RERANKER_LOCAL_MODEL,
 )
 from app.runtime_state import is_service_ready, set_service_ready
 
@@ -79,13 +80,16 @@ app.add_middleware(RequestIDMiddleware)
 logger.info(
     "Code Intelligence Service starting — env=%s, version=%s, pipeline_tag=%s (fingerprint=%s), "
     "embed_backend=%s, embed_model=%s (dim=%s), summarizer=%s, decomposer=%s, "
-    "concurrency=%d, graph_depth=%d, graph_max_related=%d, retrieval_limit=%d",
+    "concurrency=%d, graph_depth=%d, graph_max_related=%d, retrieval_limit=%d, "
+    "reranker_backend=%s, reranker_local_model=%s",
     APP_ENV, APP_VERSION, PIPELINE_TAG, PIPELINE_FINGERPRINT,
     EMBEDDING_BACKEND,
     (EMBEDDING_LOCAL_MODEL if EMBEDDING_BACKEND == "local" else EMBEDDING_MODEL),
     EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
     QUERY_DECOMPOSE_MODEL, SUMMARIZER_CONCURRENCY,
     GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED, RETRIEVAL_DEFAULT_LIMIT,
+    RERANKER_BACKEND,
+    (RERANKER_LOCAL_MODEL if RERANKER_BACKEND == "local" else "n/a"),
 )
 logger.info(
     "Knowledge graph pipeline — GRAPH_BUILDER_ENABLED=%s | "
@@ -143,7 +147,9 @@ app.include_router(debug_router, prefix="/api")
 
 @app.on_event("startup")
 async def _on_startup() -> None:
+    import asyncio
     from app.db.local_store import warmup_local_store
+    from app.services.reranker import initialize_local_reranker
 
     set_service_ready(False)
     ok = warmup_local_store()
@@ -152,6 +158,15 @@ async def _on_startup() -> None:
         logger.info("Startup warmup complete: service ready for ingest")
     else:
         logger.error("Startup warmup failed: ingest will return 503 until next successful warmup")
+
+    if RERANKER_BACKEND == "local":
+        reranker_ok = await asyncio.to_thread(initialize_local_reranker)
+        if not reranker_ok:
+            logger.warning(
+                "Local reranker unavailable at startup (model=%s); "
+                "reranking will fall back to LLM reranker",
+                RERANKER_LOCAL_MODEL,
+            )
 
 
 @app.get("/health")
@@ -179,6 +194,12 @@ async def health_ready():
         sentry_sdk.capture_exception(e)
     from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY, PRMPT_AI_PROXY_URL
     checks["ai_provider"] = bool(PRMPT_AI_PROXY_URL) or bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
+    if RERANKER_BACKEND == "local":
+        from app.services import reranker as _reranker_mod
+        checks["reranker_local"] = _reranker_mod._local_model_loaded
+        checks["reranker_local_model"] = RERANKER_LOCAL_MODEL
+    else:
+        checks["reranker_local"] = None
     all_ok = (
         checks.get("service_ready")
         and checks.get("local_sqlite")

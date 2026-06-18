@@ -79,7 +79,9 @@ async def _score_with_local(query: str, chunks: list[dict]) -> list[dict] | None
     session, tokenizer = _get_local_reranker()
     if session is None or tokenizer is None:
         return None
-    try:
+    # Run CPU-intensive ONNX inference in a thread so the event loop stays free
+    # to serve other requests concurrently.
+    def _infer_all() -> list[dict]:
         scored: list[dict] = []
         for chunk in chunks:
             text = _local_chunk_text(chunk)
@@ -92,6 +94,9 @@ async def _score_with_local(query: str, chunks: list[dict]) -> list[dict] | None
                 }
             )
         return scored
+
+    try:
+        return await asyncio.to_thread(_infer_all)
     except Exception as e:
         logger.warning("Local reranker inference failed: %s", e)
         sentry_sdk.capture_exception(e)
@@ -246,6 +251,53 @@ def _get_local_reranker():
             logger.warning("Failed to initialize local reranker model=%s: %s", RERANKER_LOCAL_MODEL, e)
             sentry_sdk.capture_exception(e)
             return None, None
+
+
+def initialize_local_reranker() -> bool:
+    """Eagerly load and verify the local reranker model.
+
+    Called at application startup so the first real request doesn't pay the
+    cold-start cost of downloading / initializing the ONNX session.
+
+    Returns True when the model loaded and a test inference succeeded,
+    False on any failure (the runtime will fall back to the LLM reranker).
+    """
+    if RERANKER_BACKEND != "local":
+        logger.info("Local reranker init skipped (RERANKER_BACKEND=%s)", RERANKER_BACKEND)
+        return True
+
+    logger.info("Initializing local reranker model=%s ...", RERANKER_LOCAL_MODEL)
+    session, tokenizer = _get_local_reranker()
+    if session is None or tokenizer is None:
+        logger.error(
+            "Local reranker failed to load; model=%s will fall back to LLM reranker",
+            RERANKER_LOCAL_MODEL,
+        )
+        return False
+
+    try:
+        test_score = _run_local_inference(
+            session,
+            tokenizer,
+            "find the login function",
+            "def login(username, password):\n    ...",
+        )
+        if not (0.0 <= test_score <= 1.0):
+            raise ValueError(f"score out of range: {test_score}")
+        logger.info(
+            "Local reranker ready: model=%s verification_score=%.4f",
+            RERANKER_LOCAL_MODEL,
+            test_score,
+        )
+        return True
+    except Exception as e:
+        logger.error(
+            "Local reranker verification failed model=%s: %s",
+            RERANKER_LOCAL_MODEL,
+            e,
+        )
+        sentry_sdk.capture_exception(e)
+        return False
 
 
 def _download_local_model_path(hf_hub_download) -> str:

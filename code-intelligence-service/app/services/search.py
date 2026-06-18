@@ -1063,6 +1063,7 @@ async def _rank_candidates(
                 target_count,
                 len(ranked),
             )
+        ranked = _dedup_overlapping_find_chunks(ranked)
         ranked = _postprocess_find_ranked(ranked, query, rank_limit, find_plan)
         strict_hits = (
             sum(1 for c in ranked if _chunk_matches_find_constraints(c, find_plan))
@@ -1728,6 +1729,18 @@ def _rank_find_candidates(
             boost += 0.22 if method_hits else -0.18
         if plan.domain_terms:
             boost += 0.24 if domain_hits else -0.20
+        # Implementation-depth bonus: prefer the chunk with more code (the actual
+        # definer/implementer) over thin wrappers or callers whose embedding
+        # similarity can otherwise dominate.  Fires on exact camelCase identifier
+        # match OR whenever the chunk's name already matched the query's specific
+        # terms (name_def_hits > 0) — i.e. both "loginUser" and "user login
+        # controller" queries benefit.  Scales from 0 at <=0 lines up to 0.70 at
+        # 30+ lines; the 0.63-point gap that opens between a 60-line controller
+        # and a 4-line wrapper is enough to overcome the typical embedding-score
+        # advantage of compact functions.
+        if identifier_name_match or name_def_hits > 0:
+            chunk_lines = int(chunk.get("end_line") or 0) - int(chunk.get("start_line") or 0)
+            boost += min(chunk_lines / 30.0, 1.0) * 0.70
 
         base = _score(chunk)
         # Keep the raw composite UNCLAMPED. Clamping to 1.0 pinned every strong
@@ -1778,6 +1791,64 @@ def _rank_find_candidates(
             c["find_score"] = round(min(rel ** 1.4, 1.0), 4)
             c["final_score"] = c["find_score"]
     return ranked[:limit]
+
+
+def _dedup_overlapping_find_chunks(chunks: list[dict]) -> list[dict]:
+    """Remove near-duplicate chunks from the same file based on line-range containment.
+
+    When >=80% of one chunk's lines fall inside another chunk from the same file,
+    the lower-scored one is dropped.  Genuinely distinct sibling chunks (different
+    functions with low overlap) are always preserved.
+    """
+    if len(chunks) <= 1:
+        return chunks
+
+    by_file: dict[str, list[int]] = {}
+    for i, chunk in enumerate(chunks):
+        fp = str(chunk.get("file_path") or "")
+        by_file.setdefault(fp, []).append(i)
+
+    dropped: set[int] = set()
+
+    for fp, indices in by_file.items():
+        if len(indices) < 2:
+            continue
+        for ii in range(len(indices)):
+            i = indices[ii]
+            if i in dropped:
+                continue
+            for jj in range(ii + 1, len(indices)):
+                j = indices[jj]
+                if j in dropped:
+                    continue
+                a, b = chunks[i], chunks[j]
+                a_start = int(a.get("start_line") or 0)
+                a_end = int(a.get("end_line") or 0)
+                b_start = int(b.get("start_line") or 0)
+                b_end = int(b.get("end_line") or 0)
+                a_len = max(a_end - a_start, 1)
+                b_len = max(b_end - b_start, 1)
+                overlap = max(0, min(a_end, b_end) - max(a_start, b_start))
+                if overlap == 0:
+                    continue
+                a_contained = overlap / a_len
+                b_contained = overlap / b_len
+                if max(a_contained, b_contained) < 0.80:
+                    continue
+                a_score = float(a.get("_find_raw", 0.0))
+                b_score = float(b.get("_find_raw", 0.0))
+                drop_idx = i if a_score <= b_score else j
+                dropped.add(drop_idx)
+                logger.debug(
+                    "[FIND-DEDUP] dropped overlapping chunk file=%s name=%s L%s-%s (%.0f%% overlap with higher-ranked chunk)",
+                    fp,
+                    chunks[drop_idx].get("name"),
+                    chunks[drop_idx].get("start_line"),
+                    chunks[drop_idx].get("end_line"),
+                    max(a_contained, b_contained) * 100,
+                )
+
+    return [c for i, c in enumerate(chunks) if i not in dropped]
 
 
 def _find_target_count(limit: int) -> int:

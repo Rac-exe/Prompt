@@ -8,7 +8,7 @@ import urllib.request
 import urllib.error
 import time
 
-BASE_URL = "http://localhost:8002"
+BASE_URL = "http://127.0.0.1:8002"
 PROJECT_ID = "c6cb5168-b909-41bf-890b-68407594bb69"
 
 QUERIES = [
