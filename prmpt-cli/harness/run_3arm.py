@@ -287,6 +287,9 @@ def main() -> int:
                 repo_dir = work_root / run_id
                 copy_repo(repo_src, repo_dir)
 
+                # Wall-clock window for this run. aggregate.py uses it to attribute
+                # code-intel's own LLM usage (from PRMPT_LLM_USAGE_LOG) to Arms B/C.
+                run_started_epoch = time.time()
                 metrics: dict = {}
                 try:
                     if arm == "A":
@@ -309,6 +312,7 @@ def main() -> int:
                         metrics = {"skipped": f"unknown arm {arm}"}
                 except Exception as e:  # never lose a batch to one bad run
                     metrics = {"error": f"{type(e).__name__}: {e}"}
+                run_ended_epoch = time.time()
 
                 passed = False
                 verify_tail = ""
@@ -330,6 +334,8 @@ def main() -> int:
                     "arm_label": label,
                     "model": args.claude_model if arm == "A" else f"{args.prmpt_provider}/{args.prmpt_model}",
                     "repeat": rep,
+                    "started_epoch": run_started_epoch,
+                    "ended_epoch": run_ended_epoch,
                     "passed": passed,
                     "precision": prec,
                     "recall": rec,
