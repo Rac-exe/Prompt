@@ -12,13 +12,15 @@ prmpt -p "<task>" --cwd <repo>
 
 ## Layout
 
-| Path | Role |
-|------|------|
-| `src/prmpt-extension.ts` | The `prmpt_retrieve` tool (live `POST :8002/api/context`) + the "retrieve first" policy preamble. Logs every call for the retry metric. |
-| `src/index.ts` | Headless binary. Runs the Pi agent loop, streams to stderr, prints a usage JSON line on stdout (tokens, cost, retrieval calls, context size). |
-| `harness/bootstrap_index.py` | Indexes the 3 JS repos once into a shared store; writes `index_map.json`. |
-| `harness/run_3arm.py` | The 3-arm benchmark runner (A/B/C × 9 tasks), worktree isolation, `npm test` oracle, crash-safe `results.jsonl`. |
-| `harness/aggregate.py` | Aggregates `results.jsonl` → `summary.json` and generates the comparison canvas. |
+
+| Path                         | Role                                                                                                                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/prmpt-extension.ts`     | The `prmpt_retrieve` tool (live `POST :8002/api/context`) + the "retrieve first" policy preamble. Logs every call for the retry metric.       |
+| `src/index.ts`               | Headless binary. Runs the Pi agent loop, streams to stderr, prints a usage JSON line on stdout (tokens, cost, retrieval calls, context size). |
+| `harness/bootstrap_index.py` | Indexes the 3 JS repos once into a shared store; writes `index_map.json`.                                                                     |
+| `harness/run_3arm.py`        | The 3-arm benchmark runner (A/B/C × 9 tasks), worktree isolation, `npm test` oracle, crash-safe `results.jsonl`.                              |
+| `harness/aggregate.py`       | Aggregates `results.jsonl` → `summary.json` and generates the comparison canvas.                                                              |
+
 
 ## The 3 arms
 
@@ -47,52 +49,39 @@ benchmark **runner**, not a generic multi-agent harness — see *Limitations* at
 bottom. On the test machine:
 
 - **Claude Code (Arm A)** is invoked through this runner using the `claude` CLI
-  already installed there (its own auth/subscription).
+already installed there (its own auth/subscription).
 - **PRMPT CLI (Arms B and C)** is invoked through the same runner; Arm C feeds the
-  pre-optimized prompts from `first-test/prepared/`.
+pre-optimized prompts from `first-test/prepared/`.
 
 All three produce one comparable record per run in `results.jsonl`.
 
 ## Setup (once per machine)
 
 1. **Install deps + build:**
-   ```bash
+  ```bash
    cd prmpt-cli
    npm install
    npm run build
-   ```
-
+  ```
 2. **Start the code-intelligence service** with PRMPT-side usage logging on
-   (from repo root, uses its own `.venv`):
-   ```bash
-   cd code-intelligence-service
-   # PowerShell — sets the usage log path for THIS service process
-   $env:PRMPT_LLM_USAGE_LOG = "$PWD\llm_usage.jsonl"
-   ./.venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
-   ```
-   ```bash
-   # bash equivalent
-   export PRMPT_LLM_USAGE_LOG="$PWD/llm_usage.jsonl"
-   ./.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8002
-   ```
+  (from repo root, uses its own `.venv`):
    Wait for `Application startup complete` and the log line
    `[Usage] PRMPT LLM usage logging ENABLED`. (On a machine without the local
    ONNX embedding deps, `pip install -r requirements.txt` into that venv first.)
    Every LLM call the service makes is appended to `llm_usage.jsonl` with token
    counts + cost; `aggregate.py` reads it to compute PRMPT's true cost. Leaving
    `PRMPT_LLM_USAGE_LOG` unset just means B/C totals are agent-only.
-
 3. **Index the 3 repos** (writes `prmpt-cli/index_map.json`):
-   ```bash
+  ```bash
    python prmpt-cli/harness/bootstrap_index.py
-   ```
+  ```
 
 ## API keys
 
 - **Arms B/C (PRMPT CLI):** set `OPENROUTER_API_KEY`. The CLI defaults to
-  `provider=openrouter`, `model=anthropic/claude-sonnet-4.6`. Override with
-  `PRMPT_PROVIDER` / `PRMPT_MODEL` (e.g. `provider=anthropic`,
-  `model=claude-sonnet-4-6` if you have a real Anthropic key).
+`provider=openrouter`, `model=anthropic/claude-sonnet-4.6`. Override with
+`PRMPT_PROVIDER` / `PRMPT_MODEL` (e.g. `provider=anthropic`,
+`model=claude-sonnet-4-6` if you have a real Anthropic key).
 - **Arm A (Claude Code):** uses whatever auth the `claude` CLI already has.
 
 ## Run the benchmark
@@ -139,25 +128,25 @@ tokens/cost (retrieval + amortized index, via the usage log).
 This is a purpose-built runner, not a general harness. Known constraints:
 
 1. **JS-only indexing.** `bootstrap_index.py` parses `src/**/*.js`. Other
-   languages won't index, so `prmpt_retrieve` returns nothing and PRMPT degrades
+  languages won't index, so `prmpt_retrieve` returns nothing and PRMPT degrades
    to blind editing. Adding a language needs a real (AST/tree-sitter) parser.
 2. **Binary oracle.** Pass/fail is `npm test` exit code only — no partial credit
-   or judged diff quality. A test can pass for the wrong reason.
+  or judged diff quality. A test can pass for the wrong reason.
 3. **Sequential only.** code-intel selects its DB root per request globally, so
-   runs must be serial (the runner is). Time-window cost attribution relies on
+  runs must be serial (the runner is). Time-window cost attribution relies on
    this; do not parallelize.
 4. **Mixed billing basis for Arm A.** Token counts are comparable, but if Claude
-   Code runs on a subscription the `$` is an estimate. Headline on tokens.
+  Code runs on a subscription the `$` is an estimate. Headline on tokens.
 5. **Claude Code model pinning.** The runner passes `--model claude-sonnet-4-6`,
-   but the effective version depends on the local `claude` CLI/account — confirm
+  but the effective version depends on the local `claude` CLI/account — confirm
    it is really 4.6.
 6. **Single sample by default** (`--repeats 1`); noisy. Use `--repeats 3` if the
-   budget allows.
+  budget allows.
 7. **Repos at HEAD, not a pinned SHA** — reproducibility assumes the bundled
-   buggy repos don't change.
+  buggy repos don't change.
 8. **Not a standalone harness agent.** The PRMPT CLI itself is a real agent you
-   can point at any repo, but it only retrieves usefully for repos indexed into
+  can point at any repo, but it only retrieves usefully for repos indexed into
    code-intel (JS today). The 3-arm runner is wired to these 9 tasks; new
    agents/languages/tasks require editing the script.
 
-All work for this lives on git branch **`feat/prmpt-cli`**.
+All work for this lives on git branch `**feat/prmpt-cli`**.
