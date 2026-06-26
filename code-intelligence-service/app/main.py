@@ -142,6 +142,9 @@ app.include_router(graph_viz_router, prefix="/api")
 @app.on_event("startup")
 async def _on_startup() -> None:
     from app.db.local_store import warmup_local_store
+    from app.services import usage_logger
+
+    usage_logger.install()
 
     set_service_ready(False)
     ok = warmup_local_store()
