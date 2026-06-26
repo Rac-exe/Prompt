@@ -33,7 +33,7 @@ from pathlib import Path
 import yaml
 
 from benchmarks import mcp_real, openrouter
-from benchmarks.adapters import claude_adapter, codex_adapter
+from benchmarks.adapters import claude_adapter, codex_adapter, command_code_adapter
 from benchmarks.metrics import (
     Agent, Hardening, Outcome, PrmptUsage, RunRecord, Variant,
 )
@@ -138,10 +138,16 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
              hardening: Hardening, repeat: int, batch_dir: Path) -> RunRecord:
     run_id = uuid.uuid4().hex[:12]
     repo = Path(task["repo"]).resolve()
-    model = cfg["claude_model"] if agent == Agent.CLAUDE else cfg["codex_model"]
     wt = Path(cfg["worktrees_dir"]).resolve() / f"{task['id']}-{run_id}"
     session_dir = batch_dir / "sessions" / run_id
     session_dir.mkdir(parents=True, exist_ok=True)
+
+    if agent == Agent.CLAUDE:
+        model = cfg["claude_model"]
+    elif agent == Agent.CODEX:
+        model = cfg["codex_model"]
+    else:
+        model = cfg.get("command_code_model", "deepseek-v4-pro")
 
     rec = RunRecord(
         run_id=run_id, task_id=task["id"], agent=agent, variant=variant,
@@ -184,8 +190,10 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
                 if agent == Agent.CLAUDE:
                     mcp_config = str(mcp_real.write_claude_config(
                         session_dir, real_server, ctx, call_log).resolve())
-                else:
+                elif agent == Agent.CODEX:
                     mcp_real.write_codex_config(wt, real_server, ctx, call_log)
+                else:
+                    mcp_real.write_command_code_config(wt, real_server, ctx, call_log)
                 # Tell the agent to actually use the MCP route (availability
                 # alone yields ~0 calls). Hard hardening forbids broad search.
                 final_prompt += mcp_real.mcp_instruction(
@@ -214,13 +222,19 @@ def run_cell(cfg: dict, task: dict, agent: Agent, variant: Variant,
                 extra_args=cfg["claude"].get("extra_args"),
                 timeout_s=timeout, session_dir=str(session_dir),
             )
-        else:
+        elif agent == Agent.CODEX:
             usage, _text = codex_adapter.run(
                 bin_path=cfg["codex"]["bin"], prompt=final_prompt, model=model,
                 cwd=str(wt), sessions_dir=cfg["codex"]["sessions_dir"],
                 cost_per_1k_input=cfg.get("codex_cost_per_1k_input", 0.0),
                 cost_per_1k_output=cfg.get("codex_cost_per_1k_output", 0.0),
                 hardening=hardening, timeout_s=timeout,
+            )
+        else:
+            usage, _text = command_code_adapter.run(
+                bin_path=cfg["command_code"]["bin"], prompt=final_prompt, model=model,
+                cwd=str(wt), hardening=hardening, timeout_s=timeout,
+                script_path=cfg["command_code"].get("script"),
             )
         rec.agent_usage = usage
 

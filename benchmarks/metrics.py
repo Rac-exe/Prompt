@@ -26,6 +26,7 @@ from enum import Enum
 class Agent(str, Enum):
     CLAUDE = "claude"
     CODEX = "codex"
+    COMMAND_CODE = "command_code"
 
 
 class Variant(str, Enum):

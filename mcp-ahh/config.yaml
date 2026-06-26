@@ -11,7 +11,7 @@ worktrees_dir: ./mcp-ahh/.worktrees
 # raw           = vague prompt, no PRMPT (baseline)
 # mcp_only      = vague prompt + real MCP server available
 # mcp_optimizer = pre-optimized prompt + real MCP server available
-agents: [claude, codex]
+agents: [claude, codex, command_code]
 variants: [raw, mcp_only, mcp_optimizer]
 hardenings: [soft, hard]
 repeats: 3
@@ -19,6 +19,7 @@ repeats: 3
 # ── Models (pin exact versions) ──────────────────────────────────────────────
 claude_model: claude-sonnet-4-6
 codex_model: gpt-5.3-codex
+command_code_model: deepseek-v4-pro
 
 # ── Coding-agent CLIs ────────────────────────────────────────────────────────
 claude:
@@ -27,6 +28,11 @@ claude:
 codex:
   bin: codex
   sessions_dir: ~/.codex/sessions
+command_code:
+  # On Windows, invoke via node + mjs path directly (avoids .cmd wrapper hanging).
+  # On Linux/macOS use: command-code
+  bin: node
+  script: C:\Users\Prabhat\AppData\Roaming\npm\node_modules\command-code\dist\index.mjs
 
 # ── REAL MCP server (from mcp-shi) ───────────────────────────────────────────
 # The engine launches this over stdio per MCP cell, feeds it the prepared

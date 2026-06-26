@@ -83,6 +83,32 @@ def write_claude_config(out_dir: Path, server: str, context_file: Path,
     return cfg
 
 
+def write_command_code_config(worktree: Path, server: str, context_file: Path,
+                              call_log: Path) -> None:
+    """Write .mcp.json at worktree root — Command Code's project-scope MCP config."""
+    server_path = Path(server).expanduser().resolve()
+    ctx_path = context_file.expanduser().resolve()
+    log_path = call_log.expanduser().resolve()
+    trace_path = (worktree / ".commandcode" / "prompt-mcp-trace.jsonl").resolve()
+    cfg = {
+        "mcpServers": {
+            "prompt": {
+                "type": "stdio",
+                "command": sys.executable,
+                "args": [str(server_path)],
+                "env": {
+                    "PRMPT_CONTEXT_FILE": str(ctx_path),
+                    "PRMPT_MCP_CALL_LOG": str(log_path),
+                    "PRMPT_MCP_TRACE_LOG": str(trace_path),
+                },
+            }
+        }
+    }
+    (worktree / ".mcp.json").write_text(
+        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def write_codex_config(worktree: Path, server: str, context_file: Path,
                        call_log: Path) -> None:
     codex_dir = worktree / ".codex"
