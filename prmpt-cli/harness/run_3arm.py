@@ -128,6 +128,7 @@ def run_arm_a(task: dict, repo_dir: Path, model: str, timeout_s: int) -> dict:
         model=model,
         cwd=str(repo_dir),
         hardening=Hardening.NONE,
+        extra_args=["--permission-mode", "bypassPermissions"],
         timeout_s=timeout_s,
     )
     elapsed_ms = round((time.perf_counter() - t0) * 1000)

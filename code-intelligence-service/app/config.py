@@ -162,6 +162,12 @@ COMMUNITY_REPORT_CACHE_TTL: float = float(os.environ.get("COMMUNITY_REPORT_CACHE
 PIPELINE_VARIANTS: dict[str, dict] = {
     "no_refine": {"refine": False},
     "no_rerank": {"rerank": False},
+    "prmpt_cli_fast": {
+        "decompose": False,
+        "rerank": False,
+        "refine": False,
+        "graph_expand": False,
+    },
     "deep_graph": {"graph_depth": 4, "graph_seeds": 6, "graph_max": 40},
     "wide_recall": {"broad_limit": 80},
 }

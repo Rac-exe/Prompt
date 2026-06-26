@@ -31,6 +31,8 @@ export interface PrmptRetrieveConfig {
   limit: number;
   /** Truncate each returned code body to this many chars (keeps context lean). */
   maxBodyChars: number;
+  /** Optional code-intel pipeline variant for fast/benchmark retrieval. */
+  variant?: string;
 }
 
 interface ProbableLocation {
@@ -135,6 +137,7 @@ export function createPrmptRetrieveTool(cfg: PrmptRetrieveConfig) {
             query,
             mode: "bug",
             limit: cfg.limit,
+            variant: cfg.variant,
           }),
         });
 

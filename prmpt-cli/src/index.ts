@@ -83,9 +83,29 @@ async function main(): Promise<void> {
   const retrieveLog = process.env.PRMPT_RETRIEVE_LOG || undefined;
   const usageOut = process.env.PRMPT_USAGE_OUT || undefined;
   const limit = Number(process.env.PRMPT_RETRIEVE_LIMIT || "8");
+  const retrieveVariant = process.env.PRMPT_RETRIEVE_VARIANT || "prmpt_cli_fast";
 
   const authStorage = AuthStorage.create();
+  const envApiKey =
+    args.provider === "openrouter"
+      ? process.env.OPENROUTER_API_KEY
+      : args.provider === "anthropic"
+        ? process.env.ANTHROPIC_API_KEY
+        : args.provider === "openai"
+          ? process.env.OPENAI_API_KEY
+          : args.provider === "google"
+            ? process.env.GOOGLE_API_KEY
+            : undefined;
+  if (envApiKey) {
+    authStorage.setRuntimeApiKey(args.provider, envApiKey);
+  }
   const modelRegistry = ModelRegistry.create(authStorage);
+  if (args.provider === "openrouter") {
+    modelRegistry.registerProvider("openrouter", {
+      baseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+      apiKey: envApiKey,
+    });
+  }
   const model = modelRegistry.find(args.provider, args.model);
   if (!model) {
     process.stderr.write(
@@ -103,6 +123,7 @@ async function main(): Promise<void> {
     retrieveLog,
     limit,
     maxBodyChars: 1600,
+    variant: retrieveVariant,
   });
 
   // Inject the PRMPT policy as a virtual context file so it shapes every turn
