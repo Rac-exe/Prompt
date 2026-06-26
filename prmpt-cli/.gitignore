@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.smoke/
+.code-intel-root/
+index_map.json
+harness/results/
+harness/summary.json
+*.log
