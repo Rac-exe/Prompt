@@ -1,0 +1,25 @@
+The user reports that items aren't loading in checkout and inventory is buggy. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.
+
+src/checkout/priceCart.js
+- lines 1-17 · priceCart — might be relevant because it calculates cart totals and applies coupon discounts; worth checking whether the coupon logic or price calculation is causing checkout failures.
+- lines 1-17 · mergeCartItems — appears to handle item consolidation by SKU; worth verifying it correctly preserves item data when merging.
+
+src/fulfillment/reserveInventory.js
+- lines 1-13 · reserveInventory — worth checking whether the stock comparison logic correctly prevents overselling or causes inventory to appear depleted.
+- lines 1-13 · reserveBatch — might be relevant because it maps reservation requests to products; worth verifying the product lookup by SKU succeeds and returns valid data.
+
+src/index.js
+- lines 1-6 · (entry point) — worth inspecting to see how cart and inventory data flow into the application on startup.
+
+src/catalog/createCatalog.js
+- lines 1-12 · createCatalog — might be relevant because it initializes the product catalog; worth checking whether products are being created with correct stock and price values.
+
+Project context: JavaScript. Entry point is src/index.js.
+
+Instructions for the reader:
+- Start from the locations above; do not Glob, Grep, or run a repo-wide search before working through them.
+- Run the existing tests first to see which assertions fail and what error messages appear.
+- Read each snippet above and independently verify whether any actually contain a problem that matches the user's report (items not loading, inventory bugs).
+- If a failing test points to a specific function or reveals a concrete error, use that to guide your investigation.
+- Propose a fix grounded in the actual code shown only after you have identified a real problem.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.

@@ -1,0 +1,42 @@
+{
+  "batch": "20260628-010421",
+  "created_at": "2026-06-27T19:34:21.355353+00:00",
+  "repo_root": "/Users/nihal/code/Prompt",
+  "benchmark_branch": "feat/prmpt-cli",
+  "benchmark_commit": "9509528a33f16d94c7ce87ecbf9bf8ffdec777fd",
+  "benchmark_status": "M prmpt-cli/harness/run_3arm.py",
+  "node_version": "v22.22.3",
+  "npm_version": "10.9.8",
+  "python_version": "Python 3.14.4",
+  "claude_version": "2.1.195 (Claude Code)",
+  "arms": [
+    "A",
+    "B",
+    "C"
+  ],
+  "repeats": 3,
+  "tasks_file": "/Users/nihal/code/Prompt/mcp-ahh/tasks.yaml",
+  "store_file": "/Users/nihal/code/Prompt/first-test/prepared/optimized_by_repo.json",
+  "prmpt_model": "anthropic/claude-sonnet-4.6",
+  "prmpt_provider": "openrouter",
+  "prmpt_max_tokens": "4096",
+  "claude_model": "claude-sonnet-4-6",
+  "code_intel_url": "http://127.0.0.1:8002/api",
+  "code_intel_root": "/Users/nihal/code/Prompt/prmpt-cli/harness/results/repeats3-20260628-010310/code-intel-root",
+  "project_ids": {
+    "orbit-crm-generated": "1c1eb0e0-071c-4d16-9275-f228f35183a7",
+    "atlas-commerce-generated": "d9e8856d-576a-43f3-93b8-583d97ec53f4",
+    "nova-support-generated": "7067faea-460b-4616-adf6-912f5bf9875f"
+  },
+  "clean_check": "pre-agent verify_cmd must fail unless --allow-initial-pass is set",
+  "artifact_contract": [
+    "results-<batch>.jsonl",
+    "manifest-<batch>.json",
+    "<run_id>.pre_verify.txt",
+    "<run_id>.post_verify.txt",
+    "<run_id>.changed_files.json",
+    "<run_id>.usage.json (PRMPT runs)",
+    "<run_id>.retrieve.jsonl (PRMPT runs)",
+    "<run_id>.prompt.txt (PRMPT runs)"
+  ]
+}

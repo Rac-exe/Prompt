@@ -1,0 +1,1 @@
+items arent loading in checkout and inventory is buggy, fix it and run tests

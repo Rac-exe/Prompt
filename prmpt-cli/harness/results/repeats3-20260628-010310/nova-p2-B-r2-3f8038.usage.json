@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "error": null,
+  "model": "openrouter/anthropic/claude-sonnet-4.6",
+  "input_tokens": 18056,
+  "output_tokens": 2206,
+  "cache_read_tokens": 83487,
+  "cache_write_tokens": 12881,
+  "total_tokens": 116630,
+  "cost_usd": 0.16060785,
+  "tool_calls": 11,
+  "retrieval_calls": 1,
+  "retrieval_files": [
+    "src/index.js",
+    "src/features/tickets/routeTicket.js",
+    "src/features/customers/customerHealth.js",
+    "src/features/sla/calculateSlaDeadline.js",
+    "src/features/tickets/ticketIntent.js"
+  ],
+  "assistant_messages": 9,
+  "context_tokens": 15834,
+  "context_window": 1000000,
+  "elapsed_ms": 39076
+}

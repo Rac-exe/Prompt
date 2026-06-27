@@ -1,0 +1,22 @@
+Investigate reported issues with workspace access authorization and imported customer list handling. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.
+
+src/security/authorizeWorkspace.js
+- lines 1-4 · authorizeWorkspace — worth checking whether the role-checking logic correctly handles all permission levels and edge cases.
+- lines 6-9 · visibleWorkspaceIds — appears to filter workspaces based on user roles; might be relevant if access control is too permissive or too restrictive.
+
+src/features/imports/reconcileWorkspaceImport.js
+- lines 4-23 · reconcileWorkspaceImport — worth inspecting since it filters imported leads by visible workspace IDs and assigns owners; potential issue if workspace visibility filtering is incorrect or lead assignment logic fails.
+
+src/features/leads/leadScoring.js
+- lines 1-10 · scoreLead — might be relevant if lead scoring affects which leads appear in the imported list or how they're prioritized.
+- lines 12-15 · assignLead — worth checking if lead-to-owner assignment interacts unexpectedly with workspace visibility or filtering.
+
+Project context: JavaScript application with 5 files, entry point at src/index.js.
+
+Instructions for the reader:
+- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.
+- Run existing tests or reproduce the reported workspace access and import issues first; use any failing assertions or error output to guide inspection.
+- Read each snippet above and independently verify whether any actually contain a problem matching the user's description.
+- Pay particular attention to how visibleWorkspaceIds and reconcileWorkspaceImport interact, and whether filtering logic is sound.
+- If you find a real problem, propose a fix grounded in the actual code shown.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.

@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "error": null,
+  "model": "openrouter/anthropic/claude-sonnet-4.6",
+  "input_tokens": 11537,
+  "output_tokens": 1782,
+  "cache_read_tokens": 58396,
+  "cache_write_tokens": 11168,
+  "total_tokens": 82883,
+  "cost_usd": 0.12073980000000001,
+  "tool_calls": 9,
+  "retrieval_calls": 2,
+  "retrieval_files": [
+    "src/checkout/priceCart.js",
+    "src/index.js",
+    "src/fulfillment/reserveInventory.js",
+    "src/catalog/createCatalog.js"
+  ],
+  "assistant_messages": 8,
+  "context_tokens": 14005,
+  "context_window": 1000000,
+  "elapsed_ms": 36091
+}

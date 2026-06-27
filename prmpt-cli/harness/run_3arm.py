@@ -341,6 +341,7 @@ def main() -> int:
         "store_file": str(store_path.resolve()),
         "prmpt_model": args.prmpt_model,
         "prmpt_provider": args.prmpt_provider,
+        "prmpt_max_tokens": os.environ.get("PRMPT_MAX_TOKENS", "4096"),
         "claude_model": args.claude_model,
         "code_intel_url": idx.get("code_intel_url"),
         "code_intel_root": idx.get("code_intel_root"),

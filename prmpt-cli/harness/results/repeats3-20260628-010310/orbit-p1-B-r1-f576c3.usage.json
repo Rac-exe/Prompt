@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "error": null,
+  "model": "openrouter/anthropic/claude-sonnet-4.6",
+  "input_tokens": 14673,
+  "output_tokens": 3399,
+  "cache_read_tokens": 149289,
+  "cache_write_tokens": 16788,
+  "total_tokens": 184149,
+  "cost_usd": 0.20274569999999995,
+  "tool_calls": 15,
+  "retrieval_calls": 2,
+  "retrieval_files": [
+    "src/security/authorizeWorkspace.js",
+    "src/index.js",
+    "src/platform/pipeline.js",
+    "src/features/leads/leadScoring.js",
+    "src/features/imports/reconcileWorkspaceImport.js"
+  ],
+  "assistant_messages": 13,
+  "context_tokens": 19266,
+  "context_window": 1000000,
+  "elapsed_ms": 76096
+}

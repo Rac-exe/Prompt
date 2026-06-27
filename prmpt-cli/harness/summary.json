@@ -1,0 +1,415 @@
+{
+  "arms_present": [
+    "A",
+    "B",
+    "C"
+  ],
+  "per_arm": {
+    "A": {
+      "label": "Claude Code + raw",
+      "runs": 27,
+      "passed": 26,
+      "pass_rate": 96.3,
+      "agent_tokens": 8196009,
+      "agent_cost": 7.9444,
+      "input_tokens": 2326,
+      "output_tokens": 144796,
+      "prmpt_retrieval_tokens": 0,
+      "prmpt_retrieval_cost": 0.0,
+      "prmpt_index_amortized_tokens": 0,
+      "prmpt_index_amortized_cost": 0.0,
+      "total_tokens": 8196009,
+      "total_cost": 7.9444,
+      "avg_tokens": 303555,
+      "avg_cost": 0.2942,
+      "avg_elapsed_ms": 90335,
+      "avg_retrieval_calls": 0.0
+    },
+    "B": {
+      "label": "PRMPT CLI + raw",
+      "runs": 27,
+      "passed": 24,
+      "pass_rate": 88.9,
+      "agent_tokens": 3824009,
+      "agent_cost": 5.0922,
+      "input_tokens": 524750,
+      "output_tokens": 61120,
+      "prmpt_retrieval_tokens": 0,
+      "prmpt_retrieval_cost": 0.0,
+      "prmpt_index_amortized_tokens": 10220,
+      "prmpt_index_amortized_cost": 0.0027,
+      "total_tokens": 3834229,
+      "total_cost": 5.0949,
+      "avg_tokens": 142008,
+      "avg_cost": 0.1887,
+      "avg_elapsed_ms": 47992,
+      "avg_retrieval_calls": 1.63
+    },
+    "C": {
+      "label": "PRMPT CLI + optimized",
+      "runs": 27,
+      "passed": 25,
+      "pass_rate": 92.6,
+      "agent_tokens": 2637012,
+      "agent_cost": 3.7248,
+      "input_tokens": 259006,
+      "output_tokens": 79269,
+      "prmpt_retrieval_tokens": 0,
+      "prmpt_retrieval_cost": 0.0,
+      "prmpt_index_amortized_tokens": 10220,
+      "prmpt_index_amortized_cost": 0.0027,
+      "total_tokens": 2647232,
+      "total_cost": 3.7275,
+      "avg_tokens": 98045,
+      "avg_cost": 0.1381,
+      "avg_elapsed_ms": 55966,
+      "avg_retrieval_calls": 0.07
+    }
+  },
+  "savings": {
+    "B_vs_A": {
+      "token_saving_pct": 53.2,
+      "cost_saving_pct": 35.9,
+      "pass_rate_delta": -7.4
+    },
+    "C_vs_A": {
+      "token_saving_pct": 67.7,
+      "cost_saving_pct": 53.1,
+      "pass_rate_delta": -3.7
+    },
+    "C_vs_B": {
+      "token_saving_pct": 31.0,
+      "cost_saving_pct": 26.8,
+      "pass_rate_delta": 3.7
+    }
+  },
+  "per_task": [
+    {
+      "task_id": "orbit-p1",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 395794,
+          "cost_usd": 0.3885,
+          "retrieval_calls": 0,
+          "elapsed_ms": 141527,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 170025,
+          "cost_usd": 0.2007,
+          "retrieval_calls": 2,
+          "elapsed_ms": 65203,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 101838,
+          "cost_usd": 0.1604,
+          "retrieval_calls": 0,
+          "elapsed_ms": 67105,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "orbit-p2",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 348112,
+          "cost_usd": 0.3196,
+          "retrieval_calls": 0,
+          "elapsed_ms": 99520,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": false,
+          "total_tokens": 54260,
+          "cost_usd": 0.0874,
+          "retrieval_calls": 2,
+          "elapsed_ms": 40145,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 142516,
+          "cost_usd": 0.1953,
+          "retrieval_calls": 0,
+          "elapsed_ms": 79608,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "orbit-p3",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 421074,
+          "cost_usd": 0.3735,
+          "retrieval_calls": 0,
+          "elapsed_ms": 105440,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 132105,
+          "cost_usd": 0.1916,
+          "retrieval_calls": 1,
+          "elapsed_ms": 52792,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 92474,
+          "cost_usd": 0.1481,
+          "retrieval_calls": 0,
+          "elapsed_ms": 58702,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "atlas-p1",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 203237,
+          "cost_usd": 0.2309,
+          "retrieval_calls": 0,
+          "elapsed_ms": 75911,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 196880,
+          "cost_usd": 0.328,
+          "retrieval_calls": 2,
+          "elapsed_ms": 50938,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 67458,
+          "cost_usd": 0.1133,
+          "retrieval_calls": 0,
+          "elapsed_ms": 45391,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "atlas-p2",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 199653,
+          "cost_usd": 0.2719,
+          "retrieval_calls": 0,
+          "elapsed_ms": 93086,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 82883,
+          "cost_usd": 0.1207,
+          "retrieval_calls": 2,
+          "elapsed_ms": 36091,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 66257,
+          "cost_usd": 0.1133,
+          "retrieval_calls": 0,
+          "elapsed_ms": 47001,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "atlas-p3",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 171382,
+          "cost_usd": 0.2584,
+          "retrieval_calls": 0,
+          "elapsed_ms": 100287,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 183913,
+          "cost_usd": 0.267,
+          "retrieval_calls": 1,
+          "elapsed_ms": 47408,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 63827,
+          "cost_usd": 0.0996,
+          "retrieval_calls": 0,
+          "elapsed_ms": 40086,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "nova-p1",
+      "arms": {
+        "A": {
+          "passed": false,
+          "total_tokens": 280090,
+          "cost_usd": 0.2153,
+          "retrieval_calls": 0,
+          "elapsed_ms": 58093,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 136047,
+          "cost_usd": 0.1649,
+          "retrieval_calls": 3,
+          "elapsed_ms": 46534,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": false,
+          "total_tokens": 85060,
+          "cost_usd": 0.1136,
+          "retrieval_calls": 0,
+          "elapsed_ms": 51075,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "nova-p2",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 304940,
+          "cost_usd": 0.2513,
+          "retrieval_calls": 0,
+          "elapsed_ms": 68374,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 116630,
+          "cost_usd": 0.1606,
+          "retrieval_calls": 1,
+          "elapsed_ms": 39076,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 93061,
+          "cost_usd": 0.1309,
+          "retrieval_calls": 0,
+          "elapsed_ms": 46504,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    },
+    {
+      "task_id": "nova-p3",
+      "arms": {
+        "A": {
+          "passed": true,
+          "total_tokens": 280771,
+          "cost_usd": 0.2541,
+          "retrieval_calls": 0,
+          "elapsed_ms": 58792,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "B": {
+          "passed": true,
+          "total_tokens": 270104,
+          "cost_usd": 0.2947,
+          "retrieval_calls": 1,
+          "elapsed_ms": 46075,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        },
+        "C": {
+          "passed": true,
+          "total_tokens": 110036,
+          "cost_usd": 0.1325,
+          "retrieval_calls": 0,
+          "elapsed_ms": 52325,
+          "skipped": null,
+          "invalid_task": null,
+          "pre_passed": false
+        }
+      }
+    }
+  ],
+  "prmpt_side": {
+    "index_tokens": 20440,
+    "index_cost": 0.0053,
+    "unattributed_tokens": 0,
+    "unattributed_cost": 0.0,
+    "usage_rows": 8,
+    "captured": true
+  },
+  "model": "openrouter/anthropic/claude-sonnet-4.6",
+  "batch": "20260628-010421",
+  "total_runs": 81,
+  "invalid_runs": 0
+}

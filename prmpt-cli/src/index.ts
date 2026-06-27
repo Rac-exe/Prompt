@@ -100,10 +100,35 @@ async function main(): Promise<void> {
     authStorage.setRuntimeApiKey(args.provider, envApiKey);
   }
   const modelRegistry = ModelRegistry.create(authStorage);
+  const maxTokens = Number(process.env.PRMPT_MAX_TOKENS || "4096");
+  const openRouterBaseUrl =
+    process.env.PRMPT_OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
   if (args.provider === "openrouter") {
+    const builtInModel = modelRegistry.find(args.provider, args.model) as any;
     modelRegistry.registerProvider("openrouter", {
-      baseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+      baseUrl: openRouterBaseUrl,
       apiKey: envApiKey,
+      models: builtInModel
+        ? [
+            {
+              id: builtInModel.id,
+              name: builtInModel.name || builtInModel.id,
+              api: builtInModel.api,
+              baseUrl: openRouterBaseUrl,
+              reasoning: builtInModel.reasoning,
+              thinkingLevelMap: builtInModel.thinkingLevelMap,
+              input: builtInModel.input,
+              cost: builtInModel.cost,
+              contextWindow: builtInModel.contextWindow,
+              maxTokens:
+                Number.isFinite(maxTokens) && maxTokens > 0
+                  ? Math.min(builtInModel.maxTokens ?? maxTokens, maxTokens)
+                  : builtInModel.maxTokens,
+              headers: builtInModel.headers,
+              compat: builtInModel.compat,
+            },
+          ]
+        : undefined,
     });
   }
   const model = modelRegistry.find(args.provider, args.model);
@@ -113,6 +138,9 @@ async function main(): Promise<void> {
         `Check the id and that ANTHROPIC_API_KEY is set.\n`,
     );
     process.exit(3);
+  }
+  if (Number.isFinite(maxTokens) && maxTokens > 0) {
+    (model as any).maxTokens = Math.min((model as any).maxTokens ?? maxTokens, maxTokens);
   }
 
   const retrieveTool = createPrmptRetrieveTool({
@@ -152,6 +180,20 @@ async function main(): Promise<void> {
     customTools: [retrieveTool],
     sessionManager: SessionManager.inMemory(args.cwd),
   });
+  const agent = (session as any).agent;
+  const previousOnPayload = agent?.onPayload;
+  if (agent && args.provider === "openrouter" && Number.isFinite(maxTokens) && maxTokens > 0) {
+    agent.onPayload = async (payload: any, payloadModel: any) => {
+      const next = previousOnPayload
+        ? await previousOnPayload(payload, payloadModel)
+        : payload;
+      return {
+        ...next,
+        max_tokens: maxTokens,
+        max_completion_tokens: undefined,
+      };
+    };
+  }
 
   // Stream agent output to stderr; keep stdout clean for the usage JSON.
   session.subscribe((event) => {
@@ -172,6 +214,14 @@ async function main(): Promise<void> {
     process.stderr.write(`\nprmpt: run error: ${runError}\n`);
   }
   const elapsedMs = Date.now() - t0;
+
+  const assistantError = session.state.messages.find(
+    (msg: any) => msg.role === "assistant" && msg.stopReason === "error",
+  ) as any;
+  if (assistantError && runError === null) {
+    runError = assistantError.errorMessage || "assistant stopped with error";
+    process.stderr.write(`\nprmpt: run error: ${runError}\n`);
+  }
 
   const stats = session.getSessionStats();
   const usage = {

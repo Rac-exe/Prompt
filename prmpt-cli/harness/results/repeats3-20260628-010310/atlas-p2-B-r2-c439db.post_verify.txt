@@ -1,0 +1,56 @@
+
+> atlas-commerce-generated@1.0.0 test
+> node --test
+
+TAP version 13
+# Subtest: cart pricing works without an active coupon
+ok 1 - cart pricing works without an active coupon
+  ---
+  duration_ms: 0.335292
+  type: 'test'
+  ...
+# Subtest: cart pricing accepts catalog product price fields
+ok 2 - cart pricing accepts catalog product price fields
+  ---
+  duration_ms: 0.0465
+  type: 'test'
+  ...
+# Subtest: cart pricing ignores coupons without a usable percent
+ok 3 - cart pricing ignores coupons without a usable percent
+  ---
+  duration_ms: 0.038208
+  type: 'test'
+  ...
+# Subtest: cart merging keeps the newest price when duplicate items are re-added
+ok 4 - cart merging keeps the newest price when duplicate items are re-added
+  ---
+  duration_ms: 0.286041
+  type: 'test'
+  ...
+# Subtest: inventory can reserve exact available stock
+ok 5 - inventory can reserve exact available stock
+  ---
+  duration_ms: 0.312792
+  type: 'test'
+  ...
+# Subtest: batch reservation reports unavailable SKUs instead of crashing
+ok 6 - batch reservation reports unavailable SKUs instead of crashing
+  ---
+  duration_ms: 0.06525
+  type: 'test'
+  ...
+# Subtest: batch reservation accepts catalog arrays from search results
+ok 7 - batch reservation accepts catalog arrays from search results
+  ---
+  duration_ms: 0.238333
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 61.979959
