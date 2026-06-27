@@ -33,6 +33,7 @@ Required env:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -104,6 +105,49 @@ def run_verify(verify_cmd: str, cwd: Path, timeout_s: int = 300) -> tuple[bool, 
 def write_text_artifact(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text or "", encoding="utf-8", errors="replace")
+
+
+def run_capture(cmd: list[str], cwd: Path | None = None, timeout_s: int = 20) -> str | None:
+    try:
+        proc = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout_s,
+        )
+    except Exception:
+        return None
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return out.splitlines()[0] if out else None
+
+
+def file_hashes(root: Path) -> dict[str, str]:
+    """Content hashes for the copied repo before/after the agent.
+
+    This is intentionally lightweight audit evidence: it proves which files
+    changed without preserving full copied worktrees in git.
+    """
+    ignored_dirs = {".git", "node_modules", "dist", "coverage"}
+    hashes: dict[str, str] = {}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel_parts = path.relative_to(root).parts
+        if any(part in ignored_dirs for part in rel_parts):
+            continue
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        hashes[str(path.relative_to(root)).replace("\\", "/")] = digest
+    return hashes
+
+
+def diff_hashes(before: dict[str, str], after: dict[str, str]) -> dict[str, list[str]]:
+    before_keys = set(before)
+    after_keys = set(after)
+    return {
+        "added": sorted(after_keys - before_keys),
+        "deleted": sorted(before_keys - after_keys),
+        "modified": sorted(k for k in before_keys & after_keys if before[k] != after[k]),
+    }
 
 
 def precision_recall(retrieved: list[str], expected: list[str]) -> tuple[float | None, float | None]:
@@ -279,6 +323,41 @@ def main() -> int:
     work_root.mkdir(parents=True, exist_ok=True)
     batch = datetime.now().strftime("%Y%m%d-%H%M%S")
     results_path = out_dir / f"results-{batch}.jsonl"
+    manifest_path = out_dir / f"manifest-{batch}.json"
+    manifest = {
+        "batch": batch,
+        "created_at": now_iso(),
+        "repo_root": str(REPO_ROOT),
+        "benchmark_branch": run_capture(["git", "branch", "--show-current"], REPO_ROOT),
+        "benchmark_commit": run_capture(["git", "rev-parse", "HEAD"], REPO_ROOT),
+        "benchmark_status": run_capture(["git", "status", "--short"], REPO_ROOT),
+        "node_version": run_capture(["node", "--version"], REPO_ROOT),
+        "npm_version": run_capture(["npm", "--version"], REPO_ROOT),
+        "python_version": run_capture([sys.executable, "--version"], REPO_ROOT),
+        "claude_version": run_capture(["claude", "--version"], REPO_ROOT),
+        "arms": arms,
+        "repeats": args.repeats,
+        "tasks_file": str(Path(args.tasks).resolve()),
+        "store_file": str(store_path.resolve()),
+        "prmpt_model": args.prmpt_model,
+        "prmpt_provider": args.prmpt_provider,
+        "claude_model": args.claude_model,
+        "code_intel_url": idx.get("code_intel_url"),
+        "code_intel_root": idx.get("code_intel_root"),
+        "project_ids": idx.get("projects", {}),
+        "clean_check": "pre-agent verify_cmd must fail unless --allow-initial-pass is set",
+        "artifact_contract": [
+            "results-<batch>.jsonl",
+            "manifest-<batch>.json",
+            "<run_id>.pre_verify.txt",
+            "<run_id>.post_verify.txt",
+            "<run_id>.changed_files.json",
+            "<run_id>.usage.json (PRMPT runs)",
+            "<run_id>.retrieve.jsonl (PRMPT runs)",
+            "<run_id>.prompt.txt (PRMPT runs)",
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     total = len(tasks) * len(arms) * args.repeats
     print(f"Plan: {len(tasks)} tasks x {len(arms)} arms x {args.repeats} repeats = {total} runs")
@@ -300,6 +379,7 @@ def main() -> int:
 
                 repo_dir = work_root / run_id
                 copy_repo(repo_src, repo_dir)
+                before_hashes = file_hashes(repo_dir)
 
                 pre_passed, pre_tail = run_verify(task["verify_cmd"], repo_dir)
                 write_text_artifact(out_dir / f"{run_id}.pre_verify.txt", pre_tail)
@@ -320,6 +400,7 @@ def main() -> int:
                         "pre_verify_tail": pre_tail[-600:],
                         "passed": False,
                         "invalid_task": "initial repo already passed verification",
+                        "changed_files": {"added": [], "deleted": [], "modified": []},
                     }
                     with results_path.open("a", encoding="utf-8") as f:
                         f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -359,6 +440,12 @@ def main() -> int:
                 if "skipped" not in metrics and "error" not in metrics:
                     passed, verify_tail = run_verify(task["verify_cmd"], repo_dir)
                     write_text_artifact(out_dir / f"{run_id}.post_verify.txt", verify_tail)
+                after_hashes = file_hashes(repo_dir)
+                changed_files = diff_hashes(before_hashes, after_hashes)
+                (out_dir / f"{run_id}.changed_files.json").write_text(
+                    json.dumps(changed_files, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
 
                 prec, rec = precision_recall(
                     metrics.get("retrieval_files", []), task.get("expected_files", []),
@@ -380,6 +467,8 @@ def main() -> int:
                     "pre_passed": pre_passed,
                     "pre_verify_tail": pre_tail[-600:],
                     "passed": passed,
+                    "changed_files": changed_files,
+                    "changed_file_count": sum(len(v) for v in changed_files.values()),
                     "precision": prec,
                     "recall": rec,
                     "verify_tail": verify_tail[-600:],

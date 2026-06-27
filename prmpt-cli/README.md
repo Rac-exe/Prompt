@@ -111,8 +111,10 @@ any arm an already-green task. The result row includes:
 
 The runner also writes per-run evidence files next to `results-<batch>.jsonl`:
 
+- `manifest-<batch>.json` with branch, commit, tool versions, model args, code-intel root, and project IDs
 - `<run_id>.pre_verify.txt`
 - `<run_id>.post_verify.txt`
+- `<run_id>.changed_files.json`
 - `<run_id>.usage.json` for PRMPT runs
 - `<run_id>.retrieve.jsonl` for PRMPT retrieval calls
 - `<run_id>.prompt.txt`
@@ -140,9 +142,10 @@ runs, but prints a NOTE that B/C totals are agent-only.
 ## Metrics captured per run
 
 input/output/cache tokens · total tokens · cost (USD) · wall-clock time ·
-passed (tests green) · retrieval retries (`prmpt_retrieve` calls) · tool calls ·
-file precision/recall vs `expected_files` · context size · PRMPT-side code-intel
-tokens/cost (retrieval + amortized index, via the usage log).
+pre-agent test status · passed (post-agent tests green) · changed-file count ·
+retrieval retries (`prmpt_retrieve` calls) · tool calls · file precision/recall
+vs `expected_files` · context size · PRMPT-side code-intel tokens/cost
+(retrieval + amortized index, via the usage log).
 
 ## Limitations (read before trusting the numbers)
 
