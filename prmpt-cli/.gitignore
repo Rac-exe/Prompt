@@ -3,6 +3,7 @@ dist/
 .smoke/
 .code-intel-root/
 index_map.json
-harness/results/
-harness/summary.json
+harness/results/_work/
+harness/results/**/_work/
+harness/results/**/node_modules/
 *.log

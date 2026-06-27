@@ -100,6 +100,27 @@ python prmpt-cli/harness/run_3arm.py --dry-run             # print the plan, run
 Each run copies the task repo to a throwaway dir, runs the agent there, runs
 `npm test`, and appends one record to `harness/results/results-<batch>.jsonl`.
 
+Before any model is called, the runner now runs the same `verify_cmd` once on the
+fresh copy. If the copied repo already passes, the cell is marked invalid and the
+agent is skipped. This is the clean-check that proves the benchmark did not hand
+any arm an already-green task. The result row includes:
+
+- `pre_passed`: should be `false` for every valid benchmark cell.
+- `pre_verify_tail`: tail of the failing pre-agent test output.
+- `verify_tail`: tail of the post-agent test output.
+
+The runner also writes per-run evidence files next to `results-<batch>.jsonl`:
+
+- `<run_id>.pre_verify.txt`
+- `<run_id>.post_verify.txt`
+- `<run_id>.usage.json` for PRMPT runs
+- `<run_id>.retrieve.jsonl` for PRMPT retrieval calls
+- `<run_id>.prompt.txt`
+
+Commit the final `harness/results/` batch folder/files and `harness/summary.json`
+after the rerun. The only thing intentionally ignored is `_work/`, the temporary
+copied repositories.
+
 ## Report
 
 ```bash
@@ -143,10 +164,11 @@ This is a purpose-built runner, not a general harness. Known constraints:
 6. **Single sample by default** (`--repeats 1`); noisy. Use `--repeats 3` if the
   budget allows.
 7. **Repos at HEAD, not a pinned SHA** — reproducibility assumes the bundled
-  buggy repos don't change.
+  buggy repos don't change. The pre-agent clean-check will catch already-green
+  tasks, but a future rerun should still record the source commit SHA.
 8. **Not a standalone harness agent.** The PRMPT CLI itself is a real agent you
   can point at any repo, but it only retrieves usefully for repos indexed into
    code-intel (JS today). The 3-arm runner is wired to these 9 tasks; new
    agents/languages/tasks require editing the script.
 
-All work for this lives on git branch `**feat/prmpt-cli`**.
+All work for this lives on git branch **`feat/prmpt-cli`**.

@@ -101,6 +101,11 @@ def run_verify(verify_cmd: str, cwd: Path, timeout_s: int = 300) -> tuple[bool, 
     return proc.returncode == 0, tail
 
 
+def write_text_artifact(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text or "", encoding="utf-8", errors="replace")
+
+
 def precision_recall(retrieved: list[str], expected: list[str]) -> tuple[float | None, float | None]:
     if not expected:
         return None, None
@@ -230,6 +235,14 @@ def main() -> int:
     ap.add_argument("--prmpt-provider", default="openrouter")
     ap.add_argument("--claude-model", default="claude-sonnet-4-6")
     ap.add_argument("--timeout-s", type=int, default=900)
+    ap.add_argument(
+        "--allow-initial-pass",
+        action="store_true",
+        help=(
+            "Run the agent even if the copied repo already passes verification. "
+            "Default is to mark the cell invalid and skip model spend."
+        ),
+    )
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -288,6 +301,32 @@ def main() -> int:
                 repo_dir = work_root / run_id
                 copy_repo(repo_src, repo_dir)
 
+                pre_passed, pre_tail = run_verify(task["verify_cmd"], repo_dir)
+                write_text_artifact(out_dir / f"{run_id}.pre_verify.txt", pre_tail)
+
+                if pre_passed and not args.allow_initial_pass:
+                    record = {
+                        "run_id": run_id,
+                        "ts": now_iso(),
+                        "batch": batch,
+                        "task_id": task["id"],
+                        "repo_name": task["repo_name"],
+                        "prompt_id": task["prompt_id"],
+                        "arm": arm,
+                        "arm_label": label,
+                        "model": args.claude_model if arm == "A" else f"{args.prmpt_provider}/{args.prmpt_model}",
+                        "repeat": rep,
+                        "pre_passed": True,
+                        "pre_verify_tail": pre_tail[-600:],
+                        "passed": False,
+                        "invalid_task": "initial repo already passed verification",
+                    }
+                    with results_path.open("a", encoding="utf-8") as f:
+                        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                    print("        -> INVALID | initial repo already passes; skipped agent")
+                    shutil.rmtree(repo_dir, ignore_errors=True)
+                    continue
+
                 # Wall-clock window for this run. aggregate.py uses it to attribute
                 # code-intel's own LLM usage (from PRMPT_LLM_USAGE_LOG) to Arms B/C.
                 run_started_epoch = time.time()
@@ -319,6 +358,7 @@ def main() -> int:
                 verify_tail = ""
                 if "skipped" not in metrics and "error" not in metrics:
                     passed, verify_tail = run_verify(task["verify_cmd"], repo_dir)
+                    write_text_artifact(out_dir / f"{run_id}.post_verify.txt", verify_tail)
 
                 prec, rec = precision_recall(
                     metrics.get("retrieval_files", []), task.get("expected_files", []),
@@ -337,6 +377,8 @@ def main() -> int:
                     "repeat": rep,
                     "started_epoch": run_started_epoch,
                     "ended_epoch": run_ended_epoch,
+                    "pre_passed": pre_passed,
+                    "pre_verify_tail": pre_tail[-600:],
                     "passed": passed,
                     "precision": prec,
                     "recall": rec,

@@ -60,6 +60,10 @@ def _num(rec: dict, key: str) -> float:
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def _valid_result(rec: dict) -> bool:
+    return "skipped" not in rec and "invalid_task" not in rec
+
+
 def load_usage_rows(path: Path | None) -> list[dict]:
     """Load code-intel's own LLM usage log (PRMPT_LLM_USAGE_LOG). Each row is one
     litellm completion the service made (summaries/concepts/decompose/answer/
@@ -142,7 +146,7 @@ def aggregate(records: list[dict], usage_per_run: dict, usage_meta: dict) -> dic
 
     per_arm: dict[str, dict] = {}
     for arm in arms_present:
-        rs = [r for r in records if r.get("arm") == arm and "skipped" not in r]
+        rs = [r for r in records if r.get("arm") == arm and _valid_result(r)]
         if not rs:
             continue
         n = len(rs)
@@ -225,6 +229,8 @@ def aggregate(records: list[dict], usage_per_run: dict, usage_meta: dict) -> dic
                 "retrieval_calls": int(_num(r, "retrieval_calls")),
                 "elapsed_ms": int(_num(r, "elapsed_ms")),
                 "skipped": r.get("skipped"),
+                "invalid_task": r.get("invalid_task"),
+                "pre_passed": bool(r.get("pre_passed")),
             }
         per_task.append(row)
 
@@ -248,6 +254,7 @@ def aggregate(records: list[dict], usage_per_run: dict, usage_meta: dict) -> dic
         "model": next((r.get("model") for r in records if r.get("arm") in ("B", "C")), None),
         "batch": next((r.get("batch") for r in records if r.get("batch")), None),
         "total_runs": len(records),
+        "invalid_runs": sum(1 for r in records if r.get("invalid_task")),
     }
 
 
@@ -424,12 +431,13 @@ export default function Prmpt3ArmReport() {
             ...arms.map((a) => {
               const c = t.arms[a];
               if (!c) return "—";
+              if (c.invalid_task) return "invalid";
               if (c.skipped) return "skip";
               return c.passed ? "PASS" : "FAIL";
             }),
             ...arms.map((a) => {
               const c = t.arms[a];
-              return c && !c.skipped ? fmtTokens(c.total_tokens) : "—";
+              return c && !c.skipped && !c.invalid_task ? fmtTokens(c.total_tokens) : "—";
             }),
           ])}
           rowTone={DATA.per_task.map((t: any) => {
