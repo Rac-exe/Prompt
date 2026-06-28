@@ -1,0 +1,1 @@
+auth isnt working and some leads are acting weird, fix it and run the tests

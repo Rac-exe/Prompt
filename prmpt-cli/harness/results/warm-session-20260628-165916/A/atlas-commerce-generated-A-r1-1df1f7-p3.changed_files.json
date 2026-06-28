@@ -1,0 +1,10 @@
+{
+  "added": [],
+  "deleted": [],
+  "modified": [
+    "src/checkout/priceCart.js",
+    "src/fulfillment/reserveInventory.js",
+    "test/checkout.test.js",
+    "test/fulfillment.test.js"
+  ]
+}

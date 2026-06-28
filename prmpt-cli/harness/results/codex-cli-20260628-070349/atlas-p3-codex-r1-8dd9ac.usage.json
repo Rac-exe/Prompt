@@ -1,0 +1,11 @@
+{
+  "input_tokens": 296523,
+  "output_tokens": 2874,
+  "cache_read_tokens": 279552,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 378,
+  "total_tokens": 299775,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-32-31-019f0bf6-cc04-78f0-8a93-d1c052d94ac3.jsonl",
+  "final_text_tail": "Fixed the commerce edge cases in [priceCart.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p3-codex-r1-8dd9ac/src/checkout/priceCart.js:1) and [reserveInventory.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p3-codex-r1-8dd9ac/src/fulfillment/reserveInventory.js:1).\n\nWhat changed:\n- Null/missing coupons no longer crash pricing.\n- Coupons without a valid numeric percent are ignored.\n- Cart items can price from either `unitPrice` or catalog-style `price`.\n- Duplicate cart items now sum quantity while keeping the newest item metadata/price.\n- Missing SKUs in batch reservation return `{ ok: false, remaining: 0, reserved: 0 }` instead of crashing.\n- `reserveBatch` now accepts both `{ products: [...] }` catalogs and raw product arrays.\n\nVerified with `npm test`: all 7 tests pass."
+}

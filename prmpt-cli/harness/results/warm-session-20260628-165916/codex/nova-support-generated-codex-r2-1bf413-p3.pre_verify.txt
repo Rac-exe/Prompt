@@ -1,0 +1,55 @@
+ated@1.0.0 test
+> node --test
+
+TAP version 13
+# Subtest: customer health handles accounts before tickets are synced
+ok 1 - customer health handles accounts before tickets are synced
+  ---
+  duration_ms: 0.340667
+  type: 'test'
+  ...
+# Subtest: customer health includes imported tickets with nested customer data
+ok 2 - customer health includes imported tickets with nested customer data
+  ---
+  duration_ms: 0.066834
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back for unknown priorities
+ok 3 - SLA deadline falls back for unknown priorities
+  ---
+  duration_ms: 1.462417
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 4 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.512084
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 5 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.0605
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 6 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.790375
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 7 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.262083
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 55.998625

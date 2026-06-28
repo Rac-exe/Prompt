@@ -1,0 +1,42 @@
+{
+  "added": [
+    "test/supportLists.test.js"
+  ],
+  "deleted": [],
+  "modified": [
+    "src/generated/tickets/module-000.js",
+    "src/generated/tickets/module-001.js",
+    "src/generated/tickets/module-002.js",
+    "src/generated/tickets/module-003.js",
+    "src/generated/tickets/module-004.js",
+    "src/generated/tickets/module-005.js",
+    "src/generated/tickets/module-006.js",
+    "src/generated/tickets/module-007.js",
+    "src/generated/tickets/module-008.js",
+    "src/generated/tickets/module-009.js",
+    "src/generated/tickets/module-010.js",
+    "src/generated/tickets/module-011.js",
+    "src/generated/tickets/module-012.js",
+    "src/generated/tickets/module-013.js",
+    "src/generated/tickets/module-014.js",
+    "src/generated/tickets/module-015.js",
+    "src/generated/tickets/module-016.js",
+    "src/generated/tickets/module-017.js",
+    "src/generated/tickets/module-018.js",
+    "src/generated/tickets/module-019.js",
+    "src/generated/tickets/module-020.js",
+    "src/generated/tickets/module-021.js",
+    "src/generated/tickets/module-022.js",
+    "src/generated/tickets/module-023.js",
+    "src/generated/tickets/module-024.js",
+    "src/generated/tickets/module-025.js",
+    "src/generated/tickets/module-026.js",
+    "src/generated/tickets/module-027.js",
+    "src/generated/tickets/module-028.js",
+    "src/generated/tickets/module-029.js",
+    "src/generated/tickets/module-030.js",
+    "src/generated/tickets/module-031.js",
+    "src/generated/tickets/module-032.js",
+    "src/generated/tickets/module-033.js"
+  ]
+}

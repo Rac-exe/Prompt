@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "error": null,
+  "model": "openrouter/anthropic/claude-sonnet-4.6",
+  "input_tokens": 46930,
+  "output_tokens": 4104,
+  "cache_read_tokens": 110318,
+  "cache_write_tokens": 16026,
+  "total_tokens": 177378,
+  "cost_usd": 0.2955429,
+  "tool_calls": 19,
+  "retrieval_calls": 2,
+  "retrieval_files": [],
+  "assistant_messages": 14,
+  "context_tokens": 18193,
+  "context_window": 1000000,
+  "elapsed_ms": 69778
+}

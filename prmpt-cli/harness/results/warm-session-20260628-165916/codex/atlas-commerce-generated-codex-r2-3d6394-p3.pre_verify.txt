@@ -1,0 +1,56 @@
+log product price fields
+  ---
+  duration_ms: 0.049708
+  type: 'test'
+  ...
+# Subtest: cart pricing ignores coupons without a usable percent
+ok 3 - cart pricing ignores coupons without a usable percent
+  ---
+  duration_ms: 0.07275
+  type: 'test'
+  ...
+# Subtest: cart merging keeps the newest price when duplicate items are re-added
+ok 4 - cart merging keeps the newest price when duplicate items are re-added
+  ---
+  duration_ms: 0.615667
+  type: 'test'
+  ...
+# Subtest: cart pricing totals merged duplicate items with the newest price
+ok 5 - cart pricing totals merged duplicate items with the newest price
+  ---
+  duration_ms: 0.07975
+  type: 'test'
+  ...
+# Subtest: inventory can reserve exact available stock
+ok 6 - inventory can reserve exact available stock
+  ---
+  duration_ms: 0.314666
+  type: 'test'
+  ...
+# Subtest: batch reservation reports unavailable SKUs instead of crashing
+ok 7 - batch reservation reports unavailable SKUs instead of crashing
+  ---
+  duration_ms: 0.075583
+  type: 'test'
+  ...
+# Subtest: batch reservation accepts catalog arrays from search results
+ok 8 - batch reservation accepts catalog arrays from search results
+  ---
+  duration_ms: 0.290375
+  type: 'test'
+  ...
+# Subtest: batch reservation consumes stock across duplicate SKU requests
+ok 9 - batch reservation consumes stock across duplicate SKU requests
+  ---
+  duration_ms: 0.336209
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 50.603041

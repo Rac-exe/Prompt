@@ -1,0 +1,23 @@
+The user reports buggy behavior in the support page around tickets and deadlines. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.
+
+src/index.js
+- lines 1-11 · index — orchestrates ticket routing and SLA deadline calculation; worth checking whether the combined output matches the expected behavior.
+
+src/features/tickets/routeTicket.js
+- lines 1-24 · routeTicket — might be relevant because it determines the queue and priority for a ticket based on intent and customer tier.
+
+src/features/sla/calculateSlaDeadline.js
+- lines 1-10 · calculateSlaDeadline — worth inspecting to verify the SLA deadline calculation logic; also check isSlaBreached for any logic errors.
+
+src/features/tickets/ticketIntent.js
+- lines 1-14 · detectIntent — might be relevant because routing depends on correct intent detection from the message text.
+
+Project context: JavaScript with Jest for testing.
+
+Instructions for the reader:
+- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.
+- Run the existing tests first to see which assertions fail, or reproduce the reported buggy behavior manually.
+- Read each snippet above and independently verify whether any contain a problem that matches the user's description.
+- Use the failing test output or reproduction steps to pinpoint which function (routing, SLA calculation, or intent detection) is actually broken.
+- If you find a real problem, propose a fix grounded in the actual code shown.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.

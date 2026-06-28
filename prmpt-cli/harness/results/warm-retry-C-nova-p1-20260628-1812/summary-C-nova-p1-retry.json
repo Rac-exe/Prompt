@@ -1,0 +1,13 @@
+{
+  "arm": "C",
+  "label": "PRMPT CLI + optimized retry of failed nova-p1 cells",
+  "attempts": 2,
+  "passed": 2,
+  "failed": 0,
+  "total_tokens": 262623,
+  "avg_tokens": 131312,
+  "total_time_min": 2.39,
+  "avg_elapsed_ms": 71648,
+  "agent_errors": 0,
+  "results": "/Users/nihal/code/Prompt/prmpt-cli/harness/results/warm-retry-C-nova-p1-20260628-1812/results-C-nova-p1-retry.jsonl"
+}

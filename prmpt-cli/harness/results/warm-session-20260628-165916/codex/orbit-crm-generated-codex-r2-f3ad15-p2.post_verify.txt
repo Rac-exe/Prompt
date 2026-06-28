@@ -1,0 +1,56 @@
+s leads unassigned when no owners are available
+  ---
+  duration_ms: 0.137542
+  type: 'test'
+  ...
+# Subtest: lead assignment ignores malformed owner rows
+ok 7 - lead assignment ignores malformed owner rows
+  ---
+  duration_ms: 0.827084
+  type: 'test'
+  ...
+# Subtest: lead scoring does not let malformed imported company sizes reduce scores
+ok 8 - lead scoring does not let malformed imported company sizes reduce scores
+  ---
+  duration_ms: 0.138458
+  type: 'test'
+  ...
+# Subtest: workspace auth handles users without assigned roles
+ok 9 - workspace auth handles users without assigned roles
+  ---
+  duration_ms: 0.354083
+  type: 'test'
+  ...
+# Subtest: workspace auth treats roles as a hierarchy
+ok 10 - workspace auth treats roles as a hierarchy
+  ---
+  duration_ms: 0.082208
+  type: 'test'
+  ...
+# Subtest: workspace visibility handles malformed workspace lists
+ok 11 - workspace visibility handles malformed workspace lists
+  ---
+  duration_ms: 0.261958
+  type: 'test'
+  ...
+# Subtest: workspace visibility ignores archived workspaces without member lists
+ok 12 - workspace visibility ignores archived workspaces without member lists
+  ---
+  duration_ms: 0.595666
+  type: 'test'
+  ...
+# Subtest: workspace visibility hides inactive workspaces for direct members
+ok 13 - workspace visibility hides inactive workspaces for direct members
+  ---
+  duration_ms: 0.049583
+  type: 'test'
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 61.430125

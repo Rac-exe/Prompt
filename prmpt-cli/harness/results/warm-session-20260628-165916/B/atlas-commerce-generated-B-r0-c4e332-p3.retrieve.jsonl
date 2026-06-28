@@ -1,0 +1,2 @@
+{"ts":"2026-06-28T11:43:46.404Z","query":"coupon validation commerce flow error handling","ok":false,"error":"TypeError: fetch failed","ms":5}
+{"ts":"2026-06-28T11:43:46.404Z","query":"missing items cart checkout error handling","ok":false,"error":"TypeError: fetch failed","ms":4}

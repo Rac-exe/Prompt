@@ -1,0 +1,54 @@
+0.304875
+  type: 'test'
+  ...
+# Subtest: lead assignment keeps leads unassigned when no owners are available
+ok 6 - lead assignment keeps leads unassigned when no owners are available
+  ---
+  duration_ms: 0.053125
+  type: 'test'
+  ...
+# Subtest: lead scoring does not let malformed imported company sizes reduce scores
+ok 7 - lead scoring does not let malformed imported company sizes reduce scores
+  ---
+  duration_ms: 0.098542
+  type: 'test'
+  ...
+# Subtest: lead scoring handles numeric company sizes from CSV imports
+ok 8 - lead scoring handles numeric company sizes from CSV imports
+  ---
+  duration_ms: 0.037459
+  type: 'test'
+  ...
+# Subtest: workspace auth handles users without assigned roles
+ok 9 - workspace auth handles users without assigned roles
+  ---
+  duration_ms: 0.31
+  type: 'test'
+  ...
+# Subtest: workspace visibility ignores archived workspaces without member lists
+ok 10 - workspace visibility ignores archived workspaces without member lists
+  ---
+  duration_ms: 0.2595
+  type: 'test'
+  ...
+# Subtest: workspace visibility hides inactive workspaces for direct members
+ok 11 - workspace visibility hides inactive workspaces for direct members
+  ---
+  duration_ms: 0.042459
+  type: 'test'
+  ...
+# Subtest: workspace visibility handles missing workspace lists
+ok 12 - workspace visibility handles missing workspace lists
+  ---
+  duration_ms: 0.309042
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 57.666125

@@ -1,0 +1,51 @@
+pace import keeps valid leads unassigned when no owner pool is available
+ok 2 - workspace import keeps valid leads unassigned when no owner pool is available
+  ---
+  duration_ms: 0.191125
+  type: 'test'
+  ...
+# Subtest: lead scoring handles imported leads without activity history
+ok 3 - lead scoring handles imported leads without activity history
+  ---
+  duration_ms: 0.32725
+  type: 'test'
+  ...
+# Subtest: lead assignment keeps leads unassigned when no owners are available
+ok 4 - lead assignment keeps leads unassigned when no owners are available
+  ---
+  duration_ms: 0.05375
+  type: 'test'
+  ...
+# Subtest: lead scoring does not let malformed imported company sizes reduce scores
+ok 5 - lead scoring does not let malformed imported company sizes reduce scores
+  ---
+  duration_ms: 0.03975
+  type: 'test'
+  ...
+# Subtest: workspace auth handles users without assigned roles
+ok 6 - workspace auth handles users without assigned roles
+  ---
+  duration_ms: 0.297208
+  type: 'test'
+  ...
+# Subtest: workspace visibility ignores archived workspaces without member lists
+ok 7 - workspace visibility ignores archived workspaces without member lists
+  ---
+  duration_ms: 0.962834
+  type: 'test'
+  ...
+# Subtest: workspace visibility hides inactive workspaces for direct members
+ok 8 - workspace visibility hides inactive workspaces for direct members
+  ---
+  duration_ms: 0.053792
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 54.687

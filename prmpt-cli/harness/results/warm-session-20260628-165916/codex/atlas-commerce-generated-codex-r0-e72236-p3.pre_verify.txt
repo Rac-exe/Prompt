@@ -1,0 +1,56 @@
+ores coupons without a usable percent
+  ---
+  duration_ms: 0.073
+  type: 'test'
+  ...
+# Subtest: cart pricing rounds all monetary totals to cents
+ok 4 - cart pricing rounds all monetary totals to cents
+  ---
+  duration_ms: 0.548667
+  type: 'test'
+  ...
+# Subtest: cart merging keeps the newest price when duplicate items are re-added
+ok 5 - cart merging keeps the newest price when duplicate items are re-added
+  ---
+  duration_ms: 0.06925
+  type: 'test'
+  ...
+# Subtest: inventory can reserve exact available stock
+ok 6 - inventory can reserve exact available stock
+  ---
+  duration_ms: 0.290791
+  type: 'test'
+  ...
+# Subtest: batch reservation reports unavailable SKUs instead of crashing
+ok 7 - batch reservation reports unavailable SKUs instead of crashing
+  ---
+  duration_ms: 0.06925
+  type: 'test'
+  ...
+# Subtest: batch reservation accepts catalog arrays from search results
+ok 8 - batch reservation accepts catalog arrays from search results
+  ---
+  duration_ms: 0.235458
+  type: 'test'
+  ...
+# Subtest: batch reservation applies earlier reservations to later requests
+ok 9 - batch reservation applies earlier reservations to later requests
+  ---
+  duration_ms: 0.338875
+  type: 'test'
+  ...
+# Subtest: batch reservation keeps SKUs in unavailable reservation rows
+ok 10 - batch reservation keeps SKUs in unavailable reservation rows
+  ---
+  duration_ms: 0.271125
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 58.100708

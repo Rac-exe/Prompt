@@ -1,0 +1,54 @@
+tion_ms: 0.31625
+  type: 'test'
+  ...
+# Subtest: customer health counts imported tickets with embedded customer object
+ok 2 - customer health counts imported tickets with embedded customer object
+  ---
+  duration_ms: 0.058417
+  type: 'test'
+  ...
+# Subtest: customer health counts imported tickets with flat customerId
+ok 3 - customer health counts imported tickets with flat customerId
+  ---
+  duration_ms: 0.039542
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back for unknown priorities
+ok 4 - SLA deadline falls back for unknown priorities
+  ---
+  duration_ms: 0.76175
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 5 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.307083
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 6 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.061209
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 7 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.375625
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 8 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.21575
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 52.807666

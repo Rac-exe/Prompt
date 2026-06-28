@@ -1,0 +1,56 @@
+alth includes imported tickets with alternate customer fields
+  ---
+  duration_ms: 0.073083
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back for unknown priorities
+ok 3 - SLA deadline falls back for unknown priorities
+  ---
+  duration_ms: 0.800042
+  type: 'test'
+  ...
+# Subtest: SLA deadline normalizes imported ticket fields
+ok 4 - SLA deadline normalizes imported ticket fields
+  ---
+  duration_ms: 0.058
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 5 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.296
+  type: 'test'
+  ...
+# Subtest: ticket routing normalizes imported ticket fields
+ok 6 - ticket routing normalizes imported ticket fields
+  ---
+  duration_ms: 0.04725
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 7 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.063083
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 8 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.035042
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 9 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.250709
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 58.033625

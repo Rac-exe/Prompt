@@ -1,0 +1,56 @@
+ocal time mutation
+  ---
+  duration_ms: 0.048084
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back when policy is missing
+ok 4 - SLA deadline falls back when policy is missing
+  ---
+  duration_ms: 0.037125
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 5 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.329375
+  type: 'test'
+  ...
+# Subtest: ticket routing ignores trailing blank imported messages
+ok 6 - ticket routing ignores trailing blank imported messages
+  ---
+  duration_ms: 0.384625
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 7 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.06375
+  type: 'test'
+  ...
+# Subtest: ticket assignment tolerates agents without queue metadata
+ok 8 - ticket assignment tolerates agents without queue metadata
+  ---
+  duration_ms: 0.039667
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 9 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.037083
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 10 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.224541
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 62.217

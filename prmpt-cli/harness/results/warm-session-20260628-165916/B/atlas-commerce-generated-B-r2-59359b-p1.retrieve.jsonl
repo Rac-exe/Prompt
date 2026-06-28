@@ -1,0 +1,2 @@
+{"ts":"2026-06-28T11:48:32.915Z","query":"checkout items loading","ok":false,"error":"TypeError: fetch failed","ms":4}
+{"ts":"2026-06-28T11:48:32.916Z","query":"inventory management bug","ok":false,"error":"TypeError: fetch failed","ms":4}

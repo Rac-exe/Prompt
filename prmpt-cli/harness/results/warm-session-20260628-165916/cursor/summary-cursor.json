@@ -1,0 +1,14 @@
+{
+  "arm": "cursor",
+  "label": "Cursor Agent + raw warm session",
+  "turns": 27,
+  "passed_turns": 27,
+  "sessions": 9,
+  "completed_sessions": 9,
+  "total_tokens": 9990378,
+  "avg_tokens_per_turn": 370014,
+  "total_time_min": 28.06,
+  "avg_elapsed_ms": 62359,
+  "agent_errors": 0,
+  "invalid_flows": 0
+}

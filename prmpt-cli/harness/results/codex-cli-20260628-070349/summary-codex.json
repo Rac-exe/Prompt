@@ -1,0 +1,83 @@
+{
+  "agent": "Codex CLI + raw",
+  "model": "gpt-5.5 (Codex account default; high reasoning)",
+  "results": "prmpt-cli/harness/results/codex-cli-20260628-070349/results-20260628-070349.jsonl",
+  "runs": 27,
+  "passed": 27,
+  "pass_rate": 100.0,
+  "total_tokens": 11234950,
+  "avg_tokens": 416109,
+  "total_time_min": 49.46,
+  "avg_elapsed_ms": 109908,
+  "invalid_runs": 0,
+  "agent_errors": 0,
+  "per_task": [
+    {
+      "task_id": "atlas-p1",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1140454,
+      "avg_elapsed_ms": 92915
+    },
+    {
+      "task_id": "atlas-p2",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1102778,
+      "avg_elapsed_ms": 88351
+    },
+    {
+      "task_id": "atlas-p3",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1176603,
+      "avg_elapsed_ms": 94768
+    },
+    {
+      "task_id": "nova-p1",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1465024,
+      "avg_elapsed_ms": 134826
+    },
+    {
+      "task_id": "nova-p2",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1084943,
+      "avg_elapsed_ms": 105447
+    },
+    {
+      "task_id": "nova-p3",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1408182,
+      "avg_elapsed_ms": 123290
+    },
+    {
+      "task_id": "orbit-p1",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1000073,
+      "avg_elapsed_ms": 100157
+    },
+    {
+      "task_id": "orbit-p2",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1718005,
+      "avg_elapsed_ms": 140617
+    },
+    {
+      "task_id": "orbit-p3",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1138888,
+      "avg_elapsed_ms": 108806
+    }
+  ],
+  "notes": [
+    "The requested gpt-5.3-codex model was rejected by the ChatGPT-backed Codex account, so the run used the configured working default model.",
+    "Codex CLI did not report dollar cost in this run; token usage was captured from Codex JSON events and rollout files."
+  ]
+}

@@ -1,0 +1,11 @@
+The user reports bugs affecting login and lead list functionality. The retrieved entry point (src/index.js) is a demo that does not contain login or lead list code. Run the test suite first to surface stack traces and failing assertions; use those to identify which files actually contain the bugs.
+
+src/index.js (lines 1-7)
+- Entry point that initializes a pipeline, scores a lead, and logs output. Unlikely to be the source of login or lead list bugs, but included for context.
+
+Instructions for the reader:
+- Run the existing test suite first (`npm test` or equivalent). Capture the full output, stack traces, and any failing test names.
+- Read the failing test(s) to understand what login or lead list behavior is broken.
+- Use the stack trace to identify which files are actually involved (login module, lead list component, etc.). Those files are not listed above because retrieval did not find them; the test output will point you to them.
+- Once you have identified the actual buggy code via test failure, read it, verify the problem against the test assertion, and propose a fix grounded in that code.
+- Do not edit src/index.js unless a test explicitly fails within it.

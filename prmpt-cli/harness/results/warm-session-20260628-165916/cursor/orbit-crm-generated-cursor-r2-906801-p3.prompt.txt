@@ -1,0 +1,1 @@
+the crm is buggy around login and lead lists, run the test suite and fix it

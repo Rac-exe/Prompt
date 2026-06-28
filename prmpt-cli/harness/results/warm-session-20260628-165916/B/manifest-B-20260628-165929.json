@@ -1,0 +1,23 @@
+{
+  "batch": "20260628-165929",
+  "created_at": "2026-06-28T11:29:29.089738+00:00",
+  "arm": "B",
+  "label": "PRMPT CLI + raw same-workspace sequential",
+  "repo_root": "/Users/nihal/code/Prompt",
+  "benchmark_branch": "feat/prmpt-cli",
+  "benchmark_commit": "78c6cc7ca83f92a9084b012f66a7de8200f7bc4b",
+  "benchmark_status": "?? prmpt-cli/harness/results/codex-cli-20260628-070349/",
+  "tasks_file": "/Users/nihal/code/Prompt/mcp-ahh/tasks.yaml",
+  "store_file": "/Users/nihal/code/Prompt/first-test/prepared/optimized_by_repo.json",
+  "repeats": 3,
+  "flow_shape": "one copied workspace per repo/repeat; prompts p1 -> p2 -> p3 in order",
+  "session_semantics": "same workspace sequential turns; PRMPT CLI process/session is single-shot",
+  "models": {
+    "A": "claude-sonnet-4-6",
+    "B": "openrouter/anthropic/claude-sonnet-4.6",
+    "C": "openrouter/anthropic/claude-sonnet-4.6",
+    "cursor": "claude-4.6-sonnet-medium",
+    "codex": "gpt-5.5 account default"
+  },
+  "results": "/Users/nihal/code/Prompt/prmpt-cli/harness/results/warm-session-20260628-165916/B/results-B-20260628-165929.jsonl"
+}

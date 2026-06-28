@@ -1,0 +1,11 @@
+{
+  "input_tokens": 455108,
+  "output_tokens": 6741,
+  "cache_read_tokens": 391680,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 1303,
+  "total_tokens": 463152,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-37-46-019f0bfb-9a19-7d40-9f1d-c1bb961fbbba.jsonl",
+  "final_text_tail": "Fixed the routing and SLA edge cases.\n\nChanged:\n- [routeTicket.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p1-codex-r1-ba948e/src/features/tickets/routeTicket.js:3): handles missing/blank message history, uses latest non-blank message, tolerates missing agent queue metadata, leaves unassigned as `ownerId: null`.\n- [ticketIntent.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p1-codex-r1-ba948e/src/features/tickets/ticketIntent.js:1): missing text now routes as `general`; keyword extraction returns `[]`.\n- [calculateSlaDeadline.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p1-codex-r1-ba948e/src/features/sla/calculateSlaDeadline.js:1): unknown/missing policy falls back to 24 hours, and deadlines are computed with elapsed milliseconds instead of local-time mutation.\n- [customerHealth.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p1-codex-r1-ba948e/src/features/customers/customerHealth.js:1): handles customers before tickets are synced.\n\nAdded regression coverage for trailing blank ticket messages, missing agent queues, DST-style SLA math, and missing SLA policy.\n\nVerification:\n- `npm test` passes: 10/10\n- `npm run smoke` passes"
+}

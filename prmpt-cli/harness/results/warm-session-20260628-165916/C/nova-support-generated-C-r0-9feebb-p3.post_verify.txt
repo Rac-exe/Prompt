@@ -1,0 +1,50 @@
+
+> nova-support-generated@1.0.0 test
+> node --test
+
+TAP version 13
+# Subtest: customer health handles accounts before tickets are synced
+ok 1 - customer health handles accounts before tickets are synced
+  ---
+  duration_ms: 0.2565
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back for unknown priorities
+ok 2 - SLA deadline falls back for unknown priorities
+  ---
+  duration_ms: 0.733167
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 3 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.590125
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 4 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.156416
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 5 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.586584
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 6 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.309833
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 54.253625

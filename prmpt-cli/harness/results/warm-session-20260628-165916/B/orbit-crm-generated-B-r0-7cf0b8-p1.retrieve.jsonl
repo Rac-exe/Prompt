@@ -1,0 +1,2 @@
+{"ts":"2026-06-28T11:29:36.961Z","query":"authentication login auth","ok":false,"error":"TypeError: fetch failed","ms":12}
+{"ts":"2026-06-28T11:29:36.962Z","query":"leads behavior bug","ok":false,"error":"TypeError: fetch failed","ms":10}

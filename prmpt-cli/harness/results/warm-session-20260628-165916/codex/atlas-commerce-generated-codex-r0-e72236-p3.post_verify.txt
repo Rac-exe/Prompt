@@ -1,0 +1,56 @@
+issing item records
+  ---
+  duration_ms: 0.167333
+  type: 'test'
+  ...
+# Subtest: inventory can reserve exact available stock
+ok 12 - inventory can reserve exact available stock
+  ---
+  duration_ms: 0.348583
+  type: 'test'
+  ...
+# Subtest: inventory rejects invalid quantities without changing stock
+ok 13 - inventory rejects invalid quantities without changing stock
+  ---
+  duration_ms: 0.2885
+  type: 'test'
+  ...
+# Subtest: batch reservation reports unavailable SKUs instead of crashing
+ok 14 - batch reservation reports unavailable SKUs instead of crashing
+  ---
+  duration_ms: 0.427667
+  type: 'test'
+  ...
+# Subtest: batch reservation accepts catalog arrays from search results
+ok 15 - batch reservation accepts catalog arrays from search results
+  ---
+  duration_ms: 0.052792
+  type: 'test'
+  ...
+# Subtest: batch reservation applies earlier reservations to later requests
+ok 16 - batch reservation applies earlier reservations to later requests
+  ---
+  duration_ms: 0.100542
+  type: 'test'
+  ...
+# Subtest: batch reservation keeps SKUs in unavailable reservation rows
+ok 17 - batch reservation keeps SKUs in unavailable reservation rows
+  ---
+  duration_ms: 0.039666
+  type: 'test'
+  ...
+# Subtest: batch reservation tolerates missing product and request records
+ok 18 - batch reservation tolerates missing product and request records
+  ---
+  duration_ms: 0.101708
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 55.92425

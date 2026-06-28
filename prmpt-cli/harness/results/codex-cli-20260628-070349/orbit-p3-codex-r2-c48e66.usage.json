@@ -1,0 +1,11 @@
+{
+  "input_tokens": 276617,
+  "output_tokens": 4118,
+  "cache_read_tokens": 259072,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 410,
+  "total_tokens": 281145,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-19-56-019f0beb-46e6-7340-b106-8cbcef391b4f.jsonl",
+  "final_text_tail": "Fixed the CRM login/auth and lead list issues.\n\nChanged:\n- [authorizeWorkspace.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/orbit-p3-codex-r2-c48e66/src/security/authorizeWorkspace.js:1): handles users without `roles`, ignores inactive workspaces, and tolerates missing `members`.\n- [leadScoring.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/orbit-p3-codex-r2-c48e66/src/features/leads/leadScoring.js:1): handles missing activities/tags, clamps bad company sizes, and leaves leads unassigned when no owners exist.\n- [reconcileWorkspaceImport.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/orbit-p3-codex-r2-c48e66/src/features/imports/reconcileWorkspaceImport.js:4): filters to visible active workspaces, dedupes imported leads by highest score, preserves priority, and excludes unassigned leads from owner load.\n\nVerification:\n- `npm test` passes: 8/8\n- `npm run smoke` passes and prints the expected pipeline JSON."
+}

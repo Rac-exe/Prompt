@@ -1,0 +1,1 @@
+the commerce flow is buggy when coupons or missing items happen, fix it

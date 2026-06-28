@@ -1,0 +1,2 @@
+{"ts":"2026-06-28T11:36:22.763Z","query":"login authentication user credentials","ok":false,"error":"TypeError: fetch failed","ms":4}
+{"ts":"2026-06-28T11:36:22.764Z","query":"lead list filter display sort","ok":false,"error":"TypeError: fetch failed","ms":3}

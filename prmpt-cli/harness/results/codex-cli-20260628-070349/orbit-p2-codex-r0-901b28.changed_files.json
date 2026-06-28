@@ -1,0 +1,11 @@
+{
+  "added": [],
+  "deleted": [],
+  "modified": [
+    "src/features/imports/reconcileWorkspaceImport.js",
+    "src/features/leads/leadScoring.js",
+    "src/security/authorizeWorkspace.js",
+    "test/importReconciliation.test.js",
+    "test/leadScoring.test.js"
+  ]
+}

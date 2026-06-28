@@ -1,0 +1,11 @@
+{
+  "input_tokens": 392925,
+  "output_tokens": 4714,
+  "cache_read_tokens": 351872,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 1054,
+  "total_tokens": 398693,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-21-25-019f0bec-a418-7173-8c86-ff50aa1eb259.jsonl",
+  "final_text_tail": "Fixed checkout and inventory.\n\nChanged:\n- [priceCart.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p1-codex-r0-feb70c/src/checkout/priceCart.js:1): checkout now accepts catalog `price` fields, handles `null` coupons, ignores unusable coupon percents, and keeps newest item data when merging duplicate SKUs.\n- [reserveInventory.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p1-codex-r0-feb70c/src/fulfillment/reserveInventory.js:1): inventory reservation now reports missing SKUs as unavailable instead of crashing, and `reserveBatch` accepts both `{ products: [...] }` catalogs and raw product arrays.\n\nVerification:\n- `npm test` passes: 7/7\n- `npm run smoke` passes: `{\"products\":2,\"total\":45}`"
+}

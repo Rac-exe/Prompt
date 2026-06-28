@@ -1,0 +1,21 @@
+{
+  "batch": "20260628-070349",
+  "created_at": "2026-06-28T01:33:49.728372+00:00",
+  "repo_root": "/Users/nihal/code/Prompt",
+  "benchmark_branch": "feat/prmpt-cli",
+  "benchmark_commit": "78c6cc7ca83f92a9084b012f66a7de8200f7bc4b",
+  "benchmark_status": "?? prmpt-cli/harness/results/cursor-cli-20260628-030208/",
+  "node_version": "v22.22.3",
+  "npm_version": "10.9.8",
+  "python_version": "Python 3.14.4",
+  "codex_version": "codex-cli 0.130.0",
+  "codex_config_model": "gpt-5.5",
+  "model": "gpt-5.5 (Codex account default; high reasoning)",
+  "agent": "codex exec",
+  "repeats": 3,
+  "tasks_file": "/Users/nihal/code/Prompt/mcp-ahh/tasks.yaml",
+  "permissions": [
+    "--dangerously-bypass-approvals-and-sandbox"
+  ],
+  "clean_check": "pre-agent verify_cmd must fail; passing initial copies are invalid/skipped"
+}

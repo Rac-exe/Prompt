@@ -1,0 +1,8 @@
+{
+  "added": [],
+  "deleted": [],
+  "modified": [
+    "src/features/leads/leadScoring.js",
+    "src/security/authorizeWorkspace.js"
+  ]
+}

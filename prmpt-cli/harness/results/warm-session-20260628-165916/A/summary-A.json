@@ -1,0 +1,14 @@
+{
+  "arm": "A",
+  "label": "Claude Code + raw warm session",
+  "turns": 27,
+  "passed_turns": 27,
+  "sessions": 9,
+  "completed_sessions": 9,
+  "total_tokens": 10042422,
+  "avg_tokens_per_turn": 371942,
+  "total_time_min": 62.98,
+  "avg_elapsed_ms": 139947,
+  "agent_errors": 0,
+  "invalid_flows": 0
+}

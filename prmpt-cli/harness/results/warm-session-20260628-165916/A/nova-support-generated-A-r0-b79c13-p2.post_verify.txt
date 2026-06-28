@@ -1,0 +1,54 @@
+ duration_ms: 0.139042
+  type: 'test'
+  ...
+# Subtest: imported ticket without priority sorts at normal level
+ok 6 - imported ticket without priority sorts at normal level
+  ---
+  duration_ms: 0.308542
+  type: 'test'
+  ...
+# Subtest: imported ticket without createdAt sorts without crashing
+ok 7 - imported ticket without createdAt sorts without crashing
+  ---
+  duration_ms: 0.050375
+  type: 'test'
+  ...
+# Subtest: enterprise imported ticket routes to priority-support queue
+ok 8 - enterprise imported ticket routes to priority-support queue
+  ---
+  duration_ms: 0.039167
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 9 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.766542
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 10 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.09575
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 11 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.501834
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 12 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.26575
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 55.579375

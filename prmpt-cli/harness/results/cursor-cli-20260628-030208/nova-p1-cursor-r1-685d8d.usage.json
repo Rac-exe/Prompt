@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 86472,
+  "duration_api_ms": 86472,
+  "result": "Let me explore the codebase to understand the support ticket routing and SLA deadline logic.Now I can see all the bugs clearly. Let me run the tests first to confirm what's failing:I also need to check the customerHealth file. Let me look at it too:Now I have a clear picture of all 4 bugs. Let me fix them all:\n\n**Bug summary:**\n1. `routeTicket`: crashes when `messages` is empty \u2014 `at(-1)` returns `undefined`, then `.text` throws\n2. `assignTicket`: crashes when no candidates found \u2014 `candidates[0]` is `undefined`, then `.id` throws (should return `null`)\n3. `detectIntent`: crashes on `null`/`undefined` input \u2014 no guard before `.toLowerCase()`\n4. `extractKeywords`: crashes on `undefined` \u2014 no guard before `.toLowerCase()`\n5. `calculateSlaDeadline`: crashes when priority not in policy \u2014 `policy[ticket.priority]` is `undefined`, `setHours(NaN)` corrupts the date\n6. `summarizeCustomerHealth`: crashes when `tickets` is not provided \u2014 no default for missing argAll 6 tests pass. Here's what was fixed:\n\n**`ticketIntent.js`** \u2014 `detectIntent` and `extractKeywords` both crashed on `null`/`undefined` input. Added null guards that return `'general'` and `[]` respectively.\n\n**`routeTicket.js`** \u2014 Two bugs:\n- `routeTicket`: `messages.at(-1)` returns `undefined` for empty arrays, then `.text` threw. Fixed with optional chaining `latestMessage?.text ?? null`.\n- `assignTicket`: when no agent matched the queue, `candidates[0]` was `undefined` and `.id` threw. Fixed with `candidates[0]?.id ?? null` to properly return `null` for unassigned tickets.\n\n**`calculateSlaDeadline.js`** \u2014 When the ticket priority wasn't in the policy (e.g. `'low'` with only `high`/`normal` defined), `policy[ticket.priority]` returned `undefined`, making `setHours(NaN)` corrupt the date. Fixed with a fallback chain: `policy[ticket.priority] ?? policy.normal ?? 24`.\n\n**`customerHealth.js`** \u2014 `tickets` parameter had no default, so calling with just a customer object crashed on `.filter`. Fixed with `tickets = []`.",
+  "session_id": "07bbc5be-b4bc-4b94-9d8b-4e960ce99eb1",
+  "request_id": "d4474739-4033-4c29-bb04-7ce97ac3cd4b",
+  "usage": {
+    "inputTokens": 13,
+    "outputTokens": 3885,
+    "cacheReadTokens": 347003,
+    "cacheWriteTokens": 20275
+  }
+}

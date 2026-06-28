@@ -1,0 +1,14 @@
+{
+  "arm": "C",
+  "label": "PRMPT CLI + optimized same-workspace sequential",
+  "turns": 27,
+  "passed_turns": 25,
+  "sessions": 9,
+  "completed_sessions": 7,
+  "total_tokens": 3322867,
+  "avg_tokens_per_turn": 123069,
+  "total_time_min": 35.27,
+  "avg_elapsed_ms": 78387,
+  "agent_errors": 0,
+  "invalid_flows": 0
+}

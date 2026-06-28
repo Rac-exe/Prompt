@@ -1,0 +1,51 @@
+ndles users without assigned roles
+ok 12 - workspace auth handles users without assigned roles
+  ---
+  duration_ms: 0.342709
+  type: 'test'
+  ...
+# Subtest: workspace visibility ignores archived workspaces without member lists
+ok 13 - workspace visibility ignores archived workspaces without member lists
+  ---
+  duration_ms: 1.491166
+  type: 'test'
+  ...
+# Subtest: workspace visibility hides inactive workspaces for direct members
+ok 14 - workspace visibility hides inactive workspaces for direct members
+  ---
+  duration_ms: 0.751833
+  type: 'test'
+  ...
+# Subtest: workspace visibility supports object member lists and archived flags
+ok 15 - workspace visibility supports object member lists and archived flags
+  ---
+  duration_ms: 0.129125
+  type: 'test'
+  ...
+# Subtest: workspace visibility treats missing workspace lists as empty
+ok 16 - workspace visibility treats missing workspace lists as empty
+  ---
+  duration_ms: 0.192125
+  type: 'test'
+  ...
+# Subtest: workspace auth accepts token-style singular roles case-insensitively
+ok 17 - workspace auth accepts token-style singular roles case-insensitively
+  ---
+  duration_ms: 0.097583
+  type: 'test'
+  ...
+# Subtest: workspace visibility matches numeric member ids and skips disabled memberships
+ok 18 - workspace visibility matches numeric member ids and skips disabled memberships
+  ---
+  duration_ms: 0.105333
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 18
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 88.344292

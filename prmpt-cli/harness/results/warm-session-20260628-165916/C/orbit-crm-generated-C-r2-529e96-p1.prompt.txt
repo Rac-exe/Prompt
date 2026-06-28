@@ -1,0 +1,23 @@
+User reports that authorization is not working and leads are behaving unexpectedly. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.
+
+**src/security/authorizeWorkspace.js**
+- lines 1-4 · authorizeWorkspace — might be relevant because it checks user roles for workspace access; worth verifying the role-matching logic handles all cases correctly.
+
+**src/features/leads/leadScoring.js**
+- lines 1-10 · scoreLead — appears to calculate lead scores based on activities, tags, and company size; worth checking whether the scoring logic produces expected values.
+- lines 12-15 · assignLead — might be relevant because it distributes leads to owners; worth verifying the assignment logic doesn't drop or misroute leads.
+
+**src/features/imports/reconcileWorkspaceImport.js**
+- lines 4-23 · reconcileWorkspaceImport — worth checking because it filters imported leads by workspace visibility and assigns owners; this is where auth and lead state interact.
+
+**src/index.js**
+- lines 1-7 · entry point — might be relevant as a minimal reproduction case showing how authorization and lead scoring are integrated.
+
+Project context: JavaScript, 5 files total.
+
+Instructions for the reader:
+- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.
+- Run the existing tests first and capture any failures or stack traces — they will guide the investigation.
+- Read each snippet above and independently verify whether the logic matches the user's expectation (e.g., does `authorizeWorkspace` correctly handle all role scenarios, does `scoreLead` produce sensible scores, does `reconcileWorkspaceImport` filter leads correctly).
+- If a test fails or the code reveals a concrete bug, propose a fix grounded in the actual code shown.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.

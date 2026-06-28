@@ -1,0 +1,11 @@
+{
+  "input_tokens": 513762,
+  "output_tokens": 5254,
+  "cache_read_tokens": 492800,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 1185,
+  "total_tokens": 520201,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-30-32-019f0bf4-fd22-7af2-a3a0-66a72e6a3ee0.jsonl",
+  "final_text_tail": "Fixed the commerce edge cases.\n\nChanged [priceCart.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p3-codex-r0-20f241/src/checkout/priceCart.js:1) to handle `null`/invalid coupons, accept catalog `price` fields, clamp usable coupon percentages, and keep the newest price when merging duplicate cart items.\n\nChanged [reserveInventory.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p3-codex-r0-20f241/src/fulfillment/reserveInventory.js:1) so missing products or missing catalogs return unavailable inventory instead of crashing, and batch reservations work with either `{ products }` catalogs or raw product arrays.\n\nAdded regression coverage in [checkout.test.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p3-codex-r0-20f241/test/checkout.test.js:23) and [fulfillment.test.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/atlas-p3-codex-r0-20f241/test/fulfillment.test.js:26).\n\nVerification: `npm test` passes, 9/9 tests."
+}

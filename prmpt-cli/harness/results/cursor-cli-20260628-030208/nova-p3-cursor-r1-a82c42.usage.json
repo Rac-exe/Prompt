@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 73972,
+  "duration_api_ms": 73972,
+  "result": "Let me explore the codebase to understand the support page structure.Now let me run the tests to see what's failing:Now I also need to check `customerHealth.js`:Now I have a clear picture of all 6 bugs. Let me fix them:\n\n**Bug summary:**\n1. `summarizeCustomerHealth` crashes when `tickets` is `undefined` \u2014 needs a default\n2. `calculateSlaDeadline` crashes with `NaN` date when priority is not in the policy \u2014 needs a fallback\n3. `routeTicket` crashes when `messages` is empty \u2014 `at(-1)` returns `undefined`\n4. `assignTicket` crashes when no matching agent is found \u2014 `candidates[0]` is `undefined`\n5. `detectIntent` crashes on `null` input\n6. `extractKeywords` crashes on `undefined` inputAll 6 tests pass. Here's a summary of the bugs fixed:\n\n**`ticketIntent.js`**\n- `detectIntent(null)` \u2014 crashed on `.toLowerCase()` of null; added an early `null` guard returning `'general'`\n- `extractKeywords(undefined)` \u2014 same issue; added a guard returning `[]`\n\n**`routeTicket.js`**\n- `routeTicket` with empty `messages` array \u2014 `at(-1)` returned `undefined`, crashing on `.text`; used optional chaining `latestMessage?.text ?? null`\n- `assignTicket` when no agent matches the queue \u2014 `candidates[0]` was `undefined`, crashing on `.id`; used `candidates[0]?.id ?? null` so `ownerId` is `null` instead of throwing\n\n**`calculateSlaDeadline.js`**\n- Unknown `priority` not in policy \u2014 `policy[ticket.priority]` returned `undefined`, producing an invalid date; added `?? policy['normal'] ?? 24` fallback\n\n**`customerHealth.js`**\n- `summarizeCustomerHealth` called without a `tickets` argument \u2014 defaulted the parameter to `[]`",
+  "session_id": "8f7943c6-4c29-4b84-b63c-303d1077fc49",
+  "request_id": "4b1d31ff-a10d-41b0-b519-726c4e86b440",
+  "usage": {
+    "inputTokens": 16,
+    "outputTokens": 3205,
+    "cacheReadTokens": 447865,
+    "cacheWriteTokens": 38774
+  }
+}

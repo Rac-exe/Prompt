@@ -1,0 +1,10 @@
+{
+  "added": [
+    "src/features/support/supportPage.js",
+    "test/supportPage.test.js"
+  ],
+  "deleted": [],
+  "modified": [
+    "src/features/sla/calculateSlaDeadline.js"
+  ]
+}

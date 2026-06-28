@@ -1,0 +1,1 @@
+cart totals and product reservation lists are broken, look into it

@@ -1,0 +1,11 @@
+{
+  "input_tokens": 348512,
+  "output_tokens": 4033,
+  "cache_read_tokens": 307968,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 529,
+  "total_tokens": 353074,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-49-03-019f0c05-f1a5-73f0-b35c-a589fe3f6d92.jsonl",
+  "final_text_tail": "Fixed the support ticket/deadline behavior in the domain helpers:\n\n- [ticketIntent.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r1-f285d6/src/features/tickets/ticketIntent.js:1): missing/null message text now falls back to general intent and empty keywords.\n- [routeTicket.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r1-f285d6/src/features/tickets/routeTicket.js:3): imported tickets with no messages no longer throw; assignment returns `ownerId: null` when no agent is available.\n- [calculateSlaDeadline.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r1-f285d6/src/features/sla/calculateSlaDeadline.js:1): unknown priorities now fall back to `normal`, then `24` hours.\n- [customerHealth.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r1-f285d6/src/features/customers/customerHealth.js:1): customer health handles missing ticket sync data.\n\nVerification: `npm test` passes, 6/6 tests green."
+}

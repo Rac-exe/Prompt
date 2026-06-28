@@ -1,0 +1,54 @@
+047583
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back for unknown priorities
+ok 4 - SLA deadline falls back for unknown priorities
+  ---
+  duration_ms: 0.69875
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 5 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.320667
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 6 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.322959
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 7 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.038041
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 8 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.217375
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with missing messages field
+ok 9 - ticket routing handles imported tickets with missing messages field
+  ---
+  duration_ms: 0.041167
+  type: 'test'
+  ...
+# Subtest: ticket assignment handles imported tickets with undefined messages
+ok 10 - ticket assignment handles imported tickets with undefined messages
+  ---
+  duration_ms: 0.05275
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 53.2655

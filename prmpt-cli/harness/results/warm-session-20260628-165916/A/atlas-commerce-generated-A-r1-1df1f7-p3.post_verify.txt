@@ -1,0 +1,56 @@
+t any price field as zero
+  ---
+  duration_ms: 0.054542
+  type: 'test'
+  ...
+# Subtest: cart pricing clamps negative coupon percent to zero
+ok 5 - cart pricing clamps negative coupon percent to zero
+  ---
+  duration_ms: 0.042667
+  type: 'test'
+  ...
+# Subtest: cart pricing clamps coupon percent over 100 to a full discount
+ok 6 - cart pricing clamps coupon percent over 100 to a full discount
+  ---
+  duration_ms: 0.031916
+  type: 'test'
+  ...
+# Subtest: cart merging keeps the newest price when duplicate items are re-added
+ok 7 - cart merging keeps the newest price when duplicate items are re-added
+  ---
+  duration_ms: 0.28075
+  type: 'test'
+  ...
+# Subtest: inventory can reserve exact available stock
+ok 8 - inventory can reserve exact available stock
+  ---
+  duration_ms: 0.341292
+  type: 'test'
+  ...
+# Subtest: batch reservation reports unavailable SKUs instead of crashing
+ok 9 - batch reservation reports unavailable SKUs instead of crashing
+  ---
+  duration_ms: 0.072
+  type: 'test'
+  ...
+# Subtest: batch reservation handles a catalog object with no products list
+ok 10 - batch reservation handles a catalog object with no products list
+  ---
+  duration_ms: 0.038834
+  type: 'test'
+  ...
+# Subtest: batch reservation accepts catalog arrays from search results
+ok 11 - batch reservation accepts catalog arrays from search results
+  ---
+  duration_ms: 0.242958
+  type: 'test'
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.613208

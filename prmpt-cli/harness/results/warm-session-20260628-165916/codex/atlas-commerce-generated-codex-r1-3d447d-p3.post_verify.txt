@@ -1,0 +1,56 @@
+
+  ---
+  duration_ms: 0.055
+  type: 'test'
+  ...
+# Subtest: cart pricing ignores coupons without a usable percent
+ok 6 - cart pricing ignores coupons without a usable percent
+  ---
+  duration_ms: 0.036541
+  type: 'test'
+  ...
+# Subtest: cart merging keeps the newest price when duplicate items are re-added
+ok 7 - cart merging keeps the newest price when duplicate items are re-added
+  ---
+  duration_ms: 4.695
+  type: 'test'
+  ...
+# Subtest: inventory can reserve exact available stock
+ok 8 - inventory can reserve exact available stock
+  ---
+  duration_ms: 0.378708
+  type: 'test'
+  ...
+# Subtest: batch reservation reports unavailable SKUs instead of crashing
+ok 9 - batch reservation reports unavailable SKUs instead of crashing
+  ---
+  duration_ms: 0.082875
+  type: 'test'
+  ...
+# Subtest: batch reservation accepts catalog arrays from search results
+ok 10 - batch reservation accepts catalog arrays from search results
+  ---
+  duration_ms: 0.243583
+  type: 'test'
+  ...
+# Subtest: batch reservation handles missing request rows and string quantities
+ok 11 - batch reservation handles missing request rows and string quantities
+  ---
+  duration_ms: 0.397458
+  type: 'test'
+  ...
+# Subtest: batch reservation accounts for earlier reservations in the same batch
+ok 12 - batch reservation accounts for earlier reservations in the same batch
+  ---
+  duration_ms: 0.088625
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 57.535125

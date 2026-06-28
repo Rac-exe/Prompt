@@ -1,0 +1,79 @@
+{
+  "agent": "Cursor Agent + raw",
+  "model": "claude-4.6-sonnet-medium",
+  "results": "prmpt-cli/harness/results/cursor-cli-20260628-030208/results-20260628-030208.jsonl",
+  "runs": 27,
+  "passed": 27,
+  "pass_rate": 100.0,
+  "total_tokens": 11136948,
+  "avg_tokens": 412479,
+  "total_time_min": 38.8,
+  "avg_elapsed_ms": 86184,
+  "invalid_runs": 0,
+  "agent_errors": 0,
+  "per_task": [
+    {
+      "task_id": "atlas-p1",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 942606,
+      "avg_elapsed_ms": 70021
+    },
+    {
+      "task_id": "atlas-p2",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 866009,
+      "avg_elapsed_ms": 66024
+    },
+    {
+      "task_id": "atlas-p3",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 938618,
+      "avg_elapsed_ms": 70436
+    },
+    {
+      "task_id": "nova-p1",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1103847,
+      "avg_elapsed_ms": 82626
+    },
+    {
+      "task_id": "nova-p2",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 909199,
+      "avg_elapsed_ms": 75592
+    },
+    {
+      "task_id": "nova-p3",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1423230,
+      "avg_elapsed_ms": 85107
+    },
+    {
+      "task_id": "orbit-p1",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1813139,
+      "avg_elapsed_ms": 115068
+    },
+    {
+      "task_id": "orbit-p2",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1525717,
+      "avg_elapsed_ms": 103486
+    },
+    {
+      "task_id": "orbit-p3",
+      "runs": 3,
+      "passed": 3,
+      "tokens": 1614583,
+      "avg_elapsed_ms": 107296
+    }
+  ]
+}

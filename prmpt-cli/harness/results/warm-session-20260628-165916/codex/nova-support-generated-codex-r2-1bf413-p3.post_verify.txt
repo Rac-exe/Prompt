@@ -1,0 +1,51 @@
+test: SLA deadline handles imported timestamps and string policy values
+ok 4 - SLA deadline handles imported timestamps and string policy values
+  ---
+  duration_ms: 0.064625
+  type: 'test'
+  ...
+# Subtest: SLA breach check does not crash when imported ticket has no usable timestamp
+ok 5 - SLA breach check does not crash when imported ticket has no usable timestamp
+  ---
+  duration_ms: 0.051416
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 6 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.611125
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 7 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.124708
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported body fields and casing
+ok 8 - ticket routing handles imported body fields and casing
+  ---
+  duration_ms: 0.085208
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 9 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.042
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 10 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.252958
+  type: 'test'
+  ...
+1..10
+# tests 10
+# suites 0
+# pass 10
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 56.493208

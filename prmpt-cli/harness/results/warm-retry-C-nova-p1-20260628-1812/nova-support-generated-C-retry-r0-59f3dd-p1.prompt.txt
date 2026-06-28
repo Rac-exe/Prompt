@@ -1,0 +1,20 @@
+The user reports buggy ticket routing and incorrect SLA deadline calculations. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.
+
+src/index.js
+- lines 1-11 · orchestration — might be relevant because it combines routing and SLA calculation; worth checking the inputs and outputs to understand the expected behavior.
+
+src/features/tickets/routeTicket.js
+- lines 3-18 · routeTicket — worth checking whether the queue assignment logic correctly handles all customer tiers and intents, and whether `detectIntent` is working as expected.
+- lines 20-24 · assignTicket — appears to depend on routeTicket; worth verifying it filters agents correctly and handles edge cases like an empty candidates list.
+
+src/features/sla/calculateSlaDeadline.js
+- lines 1-6 · calculateSlaDeadline — worth inspecting the deadline calculation logic to ensure it correctly adds hours and handles timezone or date edge cases.
+
+Project context: JavaScript with Jest for testing.
+
+Instructions for the reader:
+- Start from the locations above; do not Glob, Grep, or repo-wide search before working through them.
+- Run the existing Jest tests first to see which assertions fail, then use the test output to guide your investigation.
+- Read each snippet above and independently verify whether the logic matches the expected behavior for routing and SLA calculation.
+- If you find a real problem, propose a fix grounded in the actual code shown.
+- Branch out to other files only if a failing test or the code you read explicitly names a file not listed above.

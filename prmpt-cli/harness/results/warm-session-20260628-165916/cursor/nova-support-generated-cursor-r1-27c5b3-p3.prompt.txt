@@ -1,0 +1,1 @@
+the support page behavior is buggy around tickets and deadlines, fix it

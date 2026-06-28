@@ -1,0 +1,56 @@
+ open
+  ---
+  duration_ms: 0.055792
+  type: 'test'
+  ...
+# Subtest: customer health does not count closed imported tickets as open
+ok 3 - customer health does not count closed imported tickets as open
+  ---
+  duration_ms: 0.03975
+  type: 'test'
+  ...
+# Subtest: SLA deadline falls back for unknown priorities
+ok 4 - SLA deadline falls back for unknown priorities
+  ---
+  duration_ms: 0.705584
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 5 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.2875
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 6 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.061958
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 7 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.037625
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 8 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.222167
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with null messages
+ok 9 - ticket routing handles imported tickets with null messages
+  ---
+  duration_ms: 0.039375
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 53.441708

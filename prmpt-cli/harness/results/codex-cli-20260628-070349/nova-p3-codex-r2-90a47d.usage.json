@@ -1,0 +1,11 @@
+{
+  "input_tokens": 555885,
+  "output_tokens": 5056,
+  "cache_read_tokens": 478464,
+  "cache_write_tokens": 0,
+  "reasoning_tokens": 1210,
+  "total_tokens": 562151,
+  "cost_usd": 0.0,
+  "raw_session_path": "/Users/nihal/.codex/sessions/2026/06/28/rollout-2026-06-28T07-51-14-019f0c07-ef50-7fb1-9fa8-74f44363f53f.jsonl",
+  "final_text_tail": "Fixed the support logic around partially synced tickets and SLA deadlines.\n\nChanged:\n- [routeTicket.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r2-90a47d/src/features/tickets/routeTicket.js:3): handles empty/missing message history and no matching agents.\n- [ticketIntent.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r2-90a47d/src/features/tickets/ticketIntent.js:1): treats missing message text as general and returns no keywords for blank imports.\n- [calculateSlaDeadline.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r2-90a47d/src/features/sla/calculateSlaDeadline.js:1): falls back to normal/24-hour SLA for unknown priorities and uses millisecond deadline math.\n- [customerHealth.js](/Users/nihal/code/Prompt/prmpt-cli/harness/results/codex-cli-20260628-070349/_work/nova-p3-codex-r2-90a47d/src/features/customers/customerHealth.js:1): handles customers before tickets are synced.\n\nVerification:\n- `npm test` passes: 6/6\n- `npm run smoke` passes and outputs `{\"queue\":\"general-support\",\"deadline\":\"2026-06-01T14:00:00.000Z\"}`"
+}

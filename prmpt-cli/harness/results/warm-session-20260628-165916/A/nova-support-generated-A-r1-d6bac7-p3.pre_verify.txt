@@ -1,0 +1,54 @@
+ms: 1.106458
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no message history
+ok 3 - ticket routing handles imported tickets with no message history
+  ---
+  duration_ms: 0.31025
+  type: 'test'
+  ...
+# Subtest: ticket assignment leaves ticket unassigned when queue has no available agent
+ok 4 - ticket assignment leaves ticket unassigned when queue has no available agent
+  ---
+  duration_ms: 0.563
+  type: 'test'
+  ...
+# Subtest: ticket intent treats missing imported message text as general
+ok 5 - ticket intent treats missing imported message text as general
+  ---
+  duration_ms: 0.163
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction ignores blank imported messages
+ok 6 - ticket keyword extraction ignores blank imported messages
+  ---
+  duration_ms: 0.351708
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no messages field
+ok 7 - ticket routing handles imported tickets with no messages field
+  ---
+  duration_ms: 0.079375
+  type: 'test'
+  ...
+# Subtest: ticket routing handles imported tickets with no customer field
+ok 8 - ticket routing handles imported tickets with no customer field
+  ---
+  duration_ms: 0.050375
+  type: 'test'
+  ...
+# Subtest: ticket keyword extraction includes three-character terms
+ok 9 - ticket keyword extraction includes three-character terms
+  ---
+  duration_ms: 0.09875
+  type: 'test'
+  ...
+1..9
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 51.657375

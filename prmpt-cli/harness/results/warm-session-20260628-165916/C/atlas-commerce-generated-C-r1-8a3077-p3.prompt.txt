@@ -1,0 +1,21 @@
+The user reports that the commerce flow is buggy when coupons or missing items occur. The following locations were retrieved as probably-relevant; read each and decide whether any actually contain a problem.
+
+src/checkout/priceCart.js
+- lines 1–6 · priceCart — worth checking because it calculates subtotal, discount, and total using coupon code length to determine discount strength; might be relevant to coupon-related failures.
+- lines 8–17 · mergeCartItems — appears connected to cart item handling.
+
+src/fulfillment/reserveInventory.js
+- lines 1–13 · reserveInventory — worth inspecting because it validates requested quantity against available stock and returns success/failure; might be relevant to missing item failures.
+- lines 15–20 · reserveBatch — appears to orchestrate multiple inventory reservations.
+
+src/index.js
+- lines 1–6 · entry point — worth checking to see how priceCart and reserveInventory integrate in the actual flow.
+
+Project context: JavaScript, 4 files total.
+
+Instructions for the reader:
+- Start from the locations above; do not Glob/Grep or repo-wide search before working through them.
+- Run any existing tests or reproduce the reported failure first, then use the error output or stack trace to guide investigation.
+- Read each snippet above and independently verify whether it actually contains a problem matching the user's description (coupon or missing-item bugs).
+- If you find a real problem, propose a fix grounded in the actual code shown.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.

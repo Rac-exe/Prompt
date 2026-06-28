@@ -1,0 +1,13 @@
+The user reports that support lists are buggy for imported tickets. Run the existing tests first to surface the failure, then inspect the locations below.
+
+src/index.js
+- lines 1-11 · index — orchestrates ticket routing and SLA deadline calculation; worth checking whether the ticket import and list handling flow through here correctly.
+
+Project context: JavaScript with Jest. Entry point: src/index.js.
+
+Instructions for the reader:
+- Run the existing tests first to see which tests fail and what the error messages or assertions reveal.
+- Read the code snippet above and trace how tickets flow through routing and SLA calculation.
+- Use the failing test output to identify which part of the import or list logic is broken.
+- Branch out to other files only if a failing test, stack trace, or the code you read explicitly names a file not listed above.
+- Propose a fix grounded in the actual code once you have identified the concrete failure.
