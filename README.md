@@ -4,6 +4,8 @@
 
 PRMPT indexes your codebase locally and retrieves only the files that matter — giving the agent precise context instead of burning tokens on noise. No code leaves your machine.
 
+> The proper CLI agent is currently being built. The code-intelligence retrieval service is complete and production-ready. See [Current State](#current-state) below.
+
 ---
 
 ## How It Works
@@ -16,25 +18,30 @@ prmpt --prompt "fix the auth bug" --cwd ./my-repo
   → done
 ```
 
-Two services, fully local:
+---
 
-| Service | Port | What it does |
-|---|---|---|
-| `code-intelligence-service` | 8002 | Indexes your repo, answers retrieval queries |
-| `prmpt-cli` | — | The CLI agent that calls the retrieval service and drives the LLM |
+## Current State
+
+| Component | Status |
+|---|---|
+| `code-intelligence-service/` | Production-ready. Hybrid retrieval: vector + FTS + concept + graph expansion. |
+| CLI agent | In development — being built from scratch with custom agent loop. |
+| Benchmark harness (`prmpt-cli/harness/`) | Complete. 3-arm benchmark vs Claude Code and Codex available. |
 
 ---
 
-## Quickstart
+## Setup (Code Intelligence Service)
 
-### 1. Clone
+The retrieval service is what you set up today. The CLI will be added on top once built.
+
+**1. Clone**
 
 ```bash
 git clone https://github.com/Rac-exe/Prompt.git
 cd Prompt
 ```
 
-### 2. Set up the Code Intelligence Service
+**2. Install dependencies**
 
 ```bash
 # Windows
@@ -44,13 +51,14 @@ npm run code-intel:install
 npm run code-intel:install:mac
 ```
 
-Copy the env template and fill in your keys:
+**3. Configure**
 
 ```bash
 cp code-intelligence-service/.env.example code-intelligence-service/.env
+# Fill in OPENAI_API_KEY and OPENROUTER_API_KEY
 ```
 
-Start the service:
+**4. Start**
 
 ```bash
 # Windows
@@ -60,20 +68,7 @@ npm run code-intel:dev
 npm run code-intel:dev:mac
 ```
 
-### 3. Set up the CLI
-
-```bash
-npm run cli:install
-cp .env.example .env
-# Fill in OPENROUTER_API_KEY (minimum required)
-```
-
-### 4. Run
-
-```bash
-cd prmpt-cli
-npx prmpt --prompt "your task here" --cwd /path/to/repo
-```
+Service runs on `http://localhost:8002`.
 
 ---
 
@@ -83,7 +78,7 @@ Copy `.env.example` to `.env`. Minimum required:
 
 | Variable | What |
 |---|---|
-| `OPENROUTER_API_KEY` | LLM provider key (get one at openrouter.ai) |
+| `OPENROUTER_API_KEY` | LLM provider key for the CLI agent |
 | `OPENAI_API_KEY` | Used by code-intel for embeddings |
 
 See `.env.example` for all options.
@@ -93,44 +88,31 @@ See `.env.example` for all options.
 ## Repository Structure
 
 ```
-├── code-intelligence-service/   # Retrieval brain (FastAPI, port 8002)
+├── code-intelligence-service/   # Retrieval brain (FastAPI, port 8002) — production-ready
 │   ├── app/
 │   │   ├── routes/              # projects, ingest, retrieve, context
 │   │   ├── services/            # search, embedding, reranker, summarizer
 │   │   └── db/                  # local SQLite store + storage backend
 │   └── requirements.txt
 │
-├── prmpt-cli/                   # CLI agent + benchmark harness
-│   ├── src/
-│   │   ├── index.ts             # CLI entry point
-│   │   └── prmpt-extension.ts   # prmpt_retrieve tool + retrieval integration
-│   └── harness/
-│       ├── run_3arm.py          # 3-arm benchmark runner
-│       ├── bootstrap_index.py   # Index repos once before benchmark
-│       └── aggregate.py         # Aggregate results + generate report
+├── prmpt-cli/                   # Benchmark prototype + harness (Pi SDK based)
+│   ├── src/                     # Prototype CLI — retrieval integration pattern
+│   └── harness/                 # 3-arm benchmark runner, bootstrap, aggregator
 │
-├── legacy/                      # Previous Electron desktop app (archived)
-│   └── ...                      # app-ui, electron, native, python-service, etc.
+├── legacy/                      # Previous Electron desktop app (archived, not deleted)
 │
 ├── .cursor/rules/prmpt.md       # Agent rules for this repo (shared via git)
-├── .env.example                 # Environment variable template
-└── prmpt-cli-investability-report.md
+└── .env.example                 # Environment variable template
 ```
 
 ---
 
-## Benchmark
+## Benchmark Results
 
-The `prmpt-cli/harness/` folder contains a 3-arm benchmark comparing:
-
-- **Arm A** — Claude Code (raw)
-- **Arm B** — PRMPT CLI (raw prompt)
-- **Arm C** — PRMPT CLI (optimized prompt)
-
-See [`prmpt-cli/README.md`](./prmpt-cli/README.md) for full benchmark setup instructions.
+A 3-arm benchmark (Claude Code raw vs PRMPT raw vs PRMPT optimized) was run on 9 JS tasks across 3 repos. See `prmpt-cli/README.md` and `prmpt-cli/report/` for full results.
 
 ---
 
 ## Legacy Code
 
-The previous Electron desktop app (keyboard hook, overlay, optimization pipeline) lives in `legacy/`. It is preserved for reference and can be revived. If you need to look at any of it, ask the agent explicitly — it won't explore it by default.
+The previous Electron desktop app (keyboard hook, overlay, optimization pipeline) lives in `legacy/`. Fully preserved and revivable. Agents won't explore it by default — ask explicitly if you need something from it.
