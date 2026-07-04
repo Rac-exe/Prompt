@@ -1,12 +1,20 @@
 # Dependencies
 node_modules/
-python-service/venv/
-python-service/__pycache__/
-python-service/**/__pycache__/
 code-intelligence-service/venv/
 code-intelligence-service/.venv/
 code-intelligence-service/__pycache__/
 code-intelligence-service/**/__pycache__/
+prmpt-cli/node_modules/
+prmpt-cli/dist/
+
+# Legacy (kept for reference, generated artifacts inside are ignored)
+legacy/node_modules/
+legacy/**/node_modules/
+legacy/**/__pycache__/
+legacy/**/venv/
+legacy/**/.venv/
+legacy/**/dist/
+legacy/release/
 
 # Build outputs
 dist/
@@ -28,7 +36,8 @@ Thumbs.db
 
 # AI Assistant tools (Kilo Code, Claude, Cursor, etc.)
 .claude/
-.cursor/
+.cursor/*
+!.cursor/rules/
 .agent/
 .agents/
 .kilocode/
@@ -62,12 +71,15 @@ app-ui/node_modules/
 app-ui/dist/
 app-ui/.emergent/
 
-# Machine Learning Models (large files)
+# Machine Learning Models (large files — too big for GitHub)
 python-service/vosk-model-*/
 python-service/*.pt
 python-service/*.pth
 python-service/*.onnx
 python-service/*.pb
+legacy/python-service/vosk-model-*/
+legacy/**/*.pt
+legacy/**/*.pth
 
 # TypeScript Build Info
 *.tsbuildinfo

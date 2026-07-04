@@ -1,0 +1,2 @@
+{"ts": "2026-03-25T19:20:09Z", "session_id": "1774466404200s7u3k6jis", "call_type": "optimizer_fast", "model": "openrouter/anthropic/claude-haiku-4.5", "skills": [], "prompt_tokens": 705, "completion_tokens": 127, "total_tokens": 832, "latency_ms": 3556, "cost_usd": 0.0}
+{"ts": "2026-03-25T19:20:50Z", "session_id": "177446643904597qqzso3g", "call_type": "optimizer_thinking", "model": "openrouter/anthropic/claude-haiku-4.5", "skills": ["creative", "technical"], "prompt_tokens": 7752, "completion_tokens": 793, "total_tokens": 8545, "latency_ms": 11737, "cost_usd": 0.0}

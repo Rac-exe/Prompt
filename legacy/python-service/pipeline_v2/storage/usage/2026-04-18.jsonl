@@ -1,0 +1,2 @@
+{"ts": "2026-04-18T13:56:19Z", "session_id": "unknown", "call_type": "clarifier", "model": "openrouter/openai/gpt-4o-mini", "skills": [], "prompt_tokens": 629, "completion_tokens": 209, "total_tokens": 838, "latency_ms": 3808, "cost_usd": 0.00021975}
+{"ts": "2026-04-18T13:56:37Z", "session_id": "1776520582485enhicyqct", "call_type": "optimizer_thinking", "model": "openrouter/anthropic/claude-haiku-4.5", "skills": ["creative"], "prompt_tokens": 5559, "completion_tokens": 624, "total_tokens": 6183, "latency_ms": 15218, "cost_usd": 0.0}

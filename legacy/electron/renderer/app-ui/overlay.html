@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' blob: data: https://res.cloudinary.com; connect-src 'self' blob: data: https://*.supabase.co wss://*.supabase.co https://api.cloudinary.com https://*.sentry.io; worker-src 'self' blob:; frame-src blob: data: 'self'; object-src blob: 'self';">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prmpt Overlay</title>
+    <script>
+      (function() {
+        try {
+          var stored = localStorage.getItem('prompt-weaver-settings');
+          var theme = stored ? JSON.parse(stored).theme : 'dark';
+          if (theme !== 'light') {
+            document.documentElement.classList.add('dark');
+          }
+        } catch (e) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <!-- Font loaded via CSS import in index.css (geist package) -->
+    <script type="module" crossorigin src="./assets/overlay-BYJCO9dK.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/index-CM3Ynsuy.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-DRl63WfF.css">
+    <link rel="stylesheet" crossorigin href="./assets/overlay-CqRMEGof.css">
+  </head>
+  <body style="margin:0; background:transparent;">
+    <div id="root"></div>
+  </body>
+</html>
+
+
+

@@ -1,0 +1,1 @@
+{"ts": "2026-03-27T06:55:08Z", "session_id": "1774594502544gcajtu4y9", "call_type": "optimizer_fast", "model": "openrouter/anthropic/claude-haiku-4.5", "skills": [], "prompt_tokens": 808, "completion_tokens": 294, "total_tokens": 1102, "latency_ms": 5438, "cost_usd": 0.0}
