@@ -59,18 +59,10 @@ Keep this running in a terminal. It starts the retrieval service on port 8002.
 | Folder | What to know |
 |---|---|
 | `code-intelligence-service/` | The retrieval brain. FastAPI on port 8002. Production-ready. Do not simplify the retrieval pipeline. |
-| `prmpt-cli/src/` | Benchmark prototype of the CLI agent (Pi SDK based). Being replaced with a proper custom CLI. |
+| `prmpt-cli/src/` | CLI agent source. |
 | `prmpt-cli/harness/` | 3-arm benchmark runner. See `prmpt-cli/README.md` for how to run. |
 | `legacy/` | Old Electron desktop app. Archived. Don't edit. Read if you need reference. |
 | `.cursor/rules/prmpt.md` | Agent rules — read this to understand what the repo is and what to focus on. |
-
----
-
-## Current State
-
-- `code-intelligence-service/` is complete and battle-tested.
-- `prmpt-cli/` contains a benchmark prototype built on Pi SDK. This prototype proved PRMPT's retrieval advantage in a 3-arm benchmark against Claude Code and Codex.
-- The proper CLI coding agent is being built from scratch — custom agent loop, not forked from any existing harness, with code-intel as the retrieval layer.
 
 ---
 

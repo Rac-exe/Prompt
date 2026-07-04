@@ -4,8 +4,6 @@
 
 PRMPT indexes your codebase locally and retrieves only the files that matter — giving the agent precise context instead of burning tokens on noise. No code leaves your machine.
 
-> The proper CLI agent is currently being built. The code-intelligence retrieval service is complete and production-ready. See [Current State](#current-state) below.
-
 ---
 
 ## How It Works
@@ -20,19 +18,7 @@ prmpt --prompt "fix the auth bug" --cwd ./my-repo
 
 ---
 
-## Current State
-
-| Component | Status |
-|---|---|
-| `code-intelligence-service/` | Production-ready. Hybrid retrieval: vector + FTS + concept + graph expansion. |
-| CLI agent | In development — being built from scratch with custom agent loop. |
-| Benchmark harness (`prmpt-cli/harness/`) | Complete. 3-arm benchmark vs Claude Code and Codex available. |
-
----
-
-## Setup (Code Intelligence Service)
-
-The retrieval service is what you set up today. The CLI will be added on top once built.
+## Setup
 
 **1. Clone**
 
@@ -95,8 +81,8 @@ See `.env.example` for all options.
 │   │   └── db/                  # local SQLite store + storage backend
 │   └── requirements.txt
 │
-├── prmpt-cli/                   # Benchmark prototype + harness (Pi SDK based)
-│   ├── src/                     # Prototype CLI — retrieval integration pattern
+├── prmpt-cli/                   # CLI agent + benchmark harness
+│   ├── src/                     # Agent source
 │   └── harness/                 # 3-arm benchmark runner, bootstrap, aggregator
 │
 ├── legacy/                      # Previous Electron desktop app (archived, not deleted)
