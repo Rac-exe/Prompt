@@ -2,10 +2,10 @@
 FIND mode precision test — validates that exact function names return the correct
 backend implementation as #1, and that the result actually exists in the source.
 
-Ground truth is derived from:
-  C:/Users/aarus/OneDrive/Desktop/chai-backend-main/chai-backend-main/src/
+Ground truth is derived from a chai-backend (Express + MongoDB) checkout.
 
-Run: python test_find_functions.py
+Run: CODE_INTEL_PROJECT_ID=<id> CODE_INTEL_TEST_REPO=<path/to/chai-backend> \
+     python test_find_functions.py
 """
 
 import json
@@ -14,9 +14,9 @@ import urllib.error
 import time
 import os
 
-BASE_URL = "http://127.0.0.1:8002"
-PROJECT_ID = "c6cb5168-b909-41bf-890b-68407594bb69"
-SOURCE_ROOT = r"C:\Users\aarus\OneDrive\Desktop\chai-backend-main\chai-backend-main\src"
+BASE_URL = os.environ.get("CODE_INTEL_URL", "http://127.0.0.1:8002")
+PROJECT_ID = os.environ.get("CODE_INTEL_PROJECT_ID", "")  # GET /api/debug/projects lists ids
+SOURCE_ROOT = os.path.join(os.environ.get("CODE_INTEL_TEST_REPO", "."), "src")
 
 # (query, expected_file_fragment, expected_function_name)
 # expected_file_fragment: substring that must appear in the #1 result's file_path

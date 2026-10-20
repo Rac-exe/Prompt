@@ -6,7 +6,7 @@
 
 **Type `@prompt` in any app. Get an optimized prompt. Paste it anywhere.**
 
-[Website](https://tryprmpt.vercel.app/) · [Architecture Deep Dive](./ARCHITECTURE.md) · [Full Technical Docs](./DEEP_DOCUMENTATION.md)
+[Website](https://tryprmpt.vercel.app/) · [Architecture Deep Dive](./ARCHITECTURE.md) · [Code Intelligence (RAG) Pipeline](./code-intelligence-service/README.md)
 
 ---
 
@@ -567,7 +567,7 @@ The mac build uses `build/entitlements.mac.plist` (microphone, JIT) and runs har
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete deep-dive into every subsystem, IPC contract, data flow, and algorithm.
 
-See [DEEP_DOCUMENTATION.md](./DEEP_DOCUMENTATION.md) for the exhaustive technical monograph — every implementation detail from first principles.
+See [code-intelligence-service/README.md](./code-intelligence-service/README.md) for how the code-intelligence retrieval (RAG) pipeline works, and [GRAPH_ARCHITECTURE.md](./code-intelligence-service/GRAPH_ARCHITECTURE.md) for the knowledge-graph design.
 
 ---
 

@@ -2,16 +2,19 @@
 Reranker speed & quality test.
 Validates that ASK/BUG modes run fast (local ONNX reranker, no agentic loop)
 and that scores are real cross-encoder values (not synthetic 5%-step scores).
+Measures the one-shot path, so start the service with
+AGENTIC_RETRIEVAL_ENABLED=false (the agentic loop is on by default).
 
-Run: python test_reranker_speed.py
+Run: CODE_INTEL_PROJECT_ID=<id> python test_reranker_speed.py
 """
 
 import json
+import os
 import urllib.request
 import time
 
-BASE_URL = "http://127.0.0.1:8002"
-PROJECT_ID = "c6cb5168-b909-41bf-890b-68407594bb69"
+BASE_URL = os.environ.get("CODE_INTEL_URL", "http://127.0.0.1:8002")
+PROJECT_ID = os.environ.get("CODE_INTEL_PROJECT_ID", "")  # GET /api/debug/projects lists ids
 
 CASES = [
     # (query, mode, max_expected_ms, min_real_results)
@@ -111,7 +114,7 @@ def run():
     print(f"Results: {passed} passed  {warned} warned  {failed} failed")
     if warned or failed:
         print("\nIf timings are >5s or scores are synthetic:")
-        print("  1. Confirm AGENTIC_RETRIEVAL_ENABLED=false in .env")
+        print("  1. Start the service with AGENTIC_RETRIEVAL_ENABLED=false (on by default)")
         print("  2. Restart the server to pick up the env change")
         print("  3. Check server logs for 'Local reranker ready'")
 

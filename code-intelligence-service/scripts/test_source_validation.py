@@ -7,7 +7,8 @@ For each result it verifies:
   2. The claimed function name appears at the claimed line range
   3. The line range is within the file's actual length
 
-Run: python test_source_validation.py
+Run: CODE_INTEL_PROJECT_ID=<id> CODE_INTEL_TEST_REPO=<path/to/chai-backend> \
+     python test_source_validation.py
 """
 
 import json
@@ -16,9 +17,9 @@ import time
 import os
 import re
 
-BASE_URL = "http://127.0.0.1:8002"
-PROJECT_ID = "c6cb5168-b909-41bf-890b-68407594bb69"
-SOURCE_ROOT = r"C:\Users\aarus\OneDrive\Desktop\chai-backend-main"
+BASE_URL = os.environ.get("CODE_INTEL_URL", "http://127.0.0.1:8002")
+PROJECT_ID = os.environ.get("CODE_INTEL_PROJECT_ID", "")  # GET /api/debug/projects lists ids
+SOURCE_ROOT = os.environ.get("CODE_INTEL_TEST_REPO", ".")
 
 QUERIES = [
     # (query, mode)

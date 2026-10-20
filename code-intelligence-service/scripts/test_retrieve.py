@@ -4,12 +4,13 @@ Run: python test_retrieve.py
 """
 
 import json
+import os
 import urllib.request
 import urllib.error
 import time
 
-BASE_URL = "http://127.0.0.1:8002"
-PROJECT_ID = "c6cb5168-b909-41bf-890b-68407594bb69"
+BASE_URL = os.environ.get("CODE_INTEL_URL", "http://127.0.0.1:8002")
+PROJECT_ID = os.environ.get("CODE_INTEL_PROJECT_ID", "")  # GET /api/debug/projects lists ids
 
 QUERIES = [
     ("user login controller",         "find"),

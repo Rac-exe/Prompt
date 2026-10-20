@@ -1,6 +1,6 @@
 # Code Intelligence Service — Architecture Guide
 
-> Written for someone joining the team. No code. Just the what, why, and how.
+> How the retrieval (RAG) pipeline works: the what, why, and how, without code.
 > Last synced to source: June 2026.
 
 ---
@@ -401,14 +401,15 @@ code chunks.
 
 **Two execution modes:**
 
-1. **Agentic mode** (`AGENTIC_RETRIEVAL_ENABLED=true`, off by default): An LLM
-   drives tool calls (search, get_definition, find_callers, expand_neighbors,
-   grep, read_chunk) in a bounded loop (max 6 hops, 25s budget). It finds exactly
-   the chunks it needs instead of running a fixed recall pass. Falls back to
-   one-shot on any error or empty result.
+1. **Agentic mode** (default for ASK/BUG/OPTIMIZE; `AGENTIC_RETRIEVAL_ENABLED`):
+   An LLM drives tool calls (search, get_definition, find_callers,
+   expand_neighbors, grep, read_chunk) in a bounded loop (max 6 hops, 25s
+   budget). It finds exactly the chunks it needs instead of running a fixed
+   recall pass. Falls back to one-shot on any error or empty result.
 
-2. **One-shot mode** (default): Fixed recall → rank → rerank → refine pipeline.
-   Everything below describes this path.
+2. **One-shot mode** (always used by FIND, and the fallback for the others):
+   Fixed recall → rank → rerank → refine pipeline. Everything below describes
+   this path.
 
 ### The Four Search Paths
 
@@ -936,10 +937,10 @@ python-service optimizer receives probable_locations[]
    but the LLM call itself already ran in parallel. Cost is low (gpt-4o-mini)
    but non-zero.
 
-4. **Agentic retrieval is off by default.** The `agent_loop.py` system is a
-   promising direction (model-driven multi-hop retrieval) but it adds LLM
-   latency per hop. It's not yet measured against the one-shot pipeline on
-   accuracy metrics. Enable with `AGENTIC_RETRIEVAL_ENABLED=true` to experiment.
+4. **Agentic retrieval costs LLM calls on every ASK/BUG query.** On a 38-file
+   Express repo it raised recall@5 from 0.32 to ~0.79 and cut median latency
+   from 38s to 14s versus one-shot, so it is on by default. Set
+   `AGENTIC_RETRIEVAL_ENABLED=false` to run one-shot only (no per-query LLM cost).
 
 5. **FIND is off-thesis.** It's a navigator, not an optimizer. Useful, but the
    core business value is BUG and OPTIMIZE (context injection → token savings).

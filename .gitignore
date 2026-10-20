@@ -85,3 +85,6 @@ native/**/node_modules/
 # Docs (pitch decks, audits, generated assets)
 docs/
 supabase/migrations/20260516_cron_io_cleanup.sql
+
+# Agent skill lockfile (local tooling)
+skills-lock.json
