@@ -24,11 +24,11 @@ QUERY_DECOMPOSE_MODEL = os.environ.get("QUERY_DECOMPOSE_MODEL", "openrouter/open
 ANSWER_MODEL = os.environ.get("ANSWER_MODEL", "openrouter/deepseek/deepseek-chat")
 
 # ── Agentic multi-hop retrieval (Bet 2) ──────────────────────────────────────
-# Opt-in: when enabled, Ask/Bug/Optimize gather context with a bounded local
+# On by default: Ask/Bug/Optimize gather context with a bounded local
 # tool-calling loop (zero-network SQLite tools) before answering. Falls back to
-# one-shot RAG on any failure or cap. Off by default so the baseline pipeline
-# stays stable for benchmarking.
-AGENTIC_RETRIEVAL_ENABLED = os.environ.get("AGENTIC_RETRIEVAL_ENABLED", "false").lower() == "true"
+# one-shot RAG on any failure or cap. FIND mode never uses it. Each Ask/Bug
+# query makes LLM calls via AGENT_MODEL; set to "false" to use one-shot RAG only.
+AGENTIC_RETRIEVAL_ENABLED = os.environ.get("AGENTIC_RETRIEVAL_ENABLED", "true").lower() == "true"
 AGENT_MODEL = os.environ.get("AGENT_MODEL", ANSWER_MODEL)
 AGENT_MAX_HOPS = int(os.environ.get("AGENT_MAX_HOPS", "6"))
 AGENT_TIME_BUDGET_S = float(os.environ.get("AGENT_TIME_BUDGET_S", "25"))

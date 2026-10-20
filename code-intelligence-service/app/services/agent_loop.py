@@ -13,7 +13,7 @@ Hard caps make this safe for production:
 
 On ANY error or when nothing useful is gathered, agentic_retrieve returns None
 and the caller falls back to the one-shot pipeline. This is gated by
-AGENTIC_RETRIEVAL_ENABLED and never changes default behavior when off.
+AGENTIC_RETRIEVAL_ENABLED (on by default); FIND mode never uses it.
 """
 
 from __future__ import annotations
