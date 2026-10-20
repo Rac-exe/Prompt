@@ -11,7 +11,7 @@ import * as Sentry from '@sentry/electron/main';
 import type { FSWatcher } from 'chokidar';
 import { getLanguageForFile, parseFile } from './code-parser';
 import { getCachedHash, setCachedHash, clearFileCache } from '../database/local-project-cache';
-import type { CodeIntelClient, ChunkData, CallGraphEdge } from '../api/code-intel-client';
+import type { CodeIntelClient, ChunkData, CallGraphEdge, ChunkKey } from '../api/code-intel-client';
 
 let chokidar: typeof import('chokidar') | null = null;
 
@@ -144,6 +144,8 @@ async function handleFileChange(
       call_graph: buildCallGraph(chunks),
       language_map: { [language]: chunks.length },
       branch,
+      cleanup_scope: 'file',
+      cleanup_keys: chunkKeys(chunks),
     });
     const tIngestDone = Date.now();
 
@@ -304,31 +306,23 @@ function buildCallGraph(chunks: ChunkData[]): CallGraphEdge[] {
       }
     }
 
+    const isPython = chunk.file_path.toLowerCase().endsWith('.py');
     for (const imp of chunk.imports) {
       if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
-      const match = imp.match(/from\s+['"]([^'"]+)['"]/);
-      if (!match) continue;
-      const modulePath = match[1];
-      if (!modulePath.startsWith('.')) continue;
-
-      const resolved = path.posix.normalize(
-        path.posix.join(path.posix.dirname(chunk.file_path), modulePath),
-      );
-
-      for (const [filePath, fileChunks] of chunksByFile) {
-        const withoutExt = filePath.replace(/\.\w+$/, '');
-        if (withoutExt === resolved || filePath === resolved) {
-          const fileChunk = fileChunks.find((c) => c.chunk_type === 'file') ?? fileChunks[0];
-          if (fileChunk) {
-            edges.push({
-              from_name: chunk.name,
-              from_file: chunk.file_path,
-              to_name: fileChunk.name,
-              to_file: fileChunk.file_path,
-              relationship_type: 'imports',
-            });
-          }
-          break;
+      const targetFiles = isPython
+        ? resolvePythonImportFiles(chunk.file_path, imp, chunksByFile)
+        : resolveJsImportFiles(chunk.file_path, imp, chunksByFile);
+      for (const fileChunks of targetFiles) {
+        if (edges.length >= MAX_CALL_GRAPH_EDGES) break;
+        const fileChunk = fileChunks.find((c) => c.chunk_type === 'file') ?? fileChunks[0];
+        if (fileChunk && fileChunk.name !== chunk.name) {
+          edges.push({
+            from_name: chunk.name,
+            from_file: chunk.file_path,
+            to_name: fileChunk.name,
+            to_file: fileChunk.file_path,
+            relationship_type: 'imports',
+          });
         }
       }
     }
@@ -337,16 +331,114 @@ function buildCallGraph(chunks: ChunkData[]): CallGraphEdge[] {
   return edges;
 }
 
+/**
+ * Resolve a JS/TS import statement ("import { x } from '../foo'") to the
+ * matching project file's chunks. Only relative specifiers resolve in-project.
+ */
+function resolveJsImportFiles(
+  importerFile: string,
+  imp: string,
+  chunksByFile: Map<string, ChunkData[]>,
+): ChunkData[][] {
+  const match = imp.match(/from\s+['"]([^'"]+)['"]/);
+  if (!match) return [];
+  const modulePath = match[1];
+  if (!modulePath.startsWith('.')) return [];
+  const resolved = path.posix.normalize(
+    path.posix.join(path.posix.dirname(importerFile.replace(/\\/g, '/')), modulePath),
+  );
+  for (const [filePath, fileChunks] of chunksByFile) {
+    const fp = filePath.replace(/\\/g, '/');
+    const withoutExt = fp.replace(/\.\w+$/, '');
+    if (withoutExt === resolved || fp === resolved) return [fileChunks];
+  }
+  return [];
+}
+
+/**
+ * Resolve a Python import statement to matching project files. Handles:
+ *   from .utils import x          (relative, same package)
+ *   from ..pkg.mod import x       (relative, parent package)
+ *   from . import utils           (relative bare submodule)
+ *   from app.services.mod import x (absolute dotted — suffix-matched)
+ *   import app.services.mod        (absolute dotted)
+ * Third-party / stdlib specifiers simply don't match any project file.
+ */
+function resolvePythonImportFiles(
+  importerFile: string,
+  imp: string,
+  chunksByFile: Map<string, ChunkData[]>,
+): ChunkData[][] {
+  const importerDir = path.posix.dirname(importerFile.replace(/\\/g, '/'));
+  const candidates: Array<{ rel: boolean; dots: number; mod: string }> = [];
+
+  let m: RegExpMatchArray | null;
+  if ((m = imp.match(/^\s*from\s+(\.*)([\w.]*)\s+import\s+(.+)$/))) {
+    const dots = m[1].length;
+    const mod = m[2];
+    const names = m[3];
+    if (dots > 0 && mod) {
+      candidates.push({ rel: true, dots, mod });
+    } else if (dots > 0 && !mod) {
+      // from . import a, b  -> each name is a submodule in this package
+      for (const nm of names.split(',')) {
+        const clean = nm.trim().split(/\s+as\s+/)[0].trim().replace(/[()]/g, '');
+        if (/^\w+$/.test(clean)) candidates.push({ rel: true, dots, mod: clean });
+      }
+    } else if (mod) {
+      candidates.push({ rel: false, dots: 0, mod });
+    }
+  } else if ((m = imp.match(/^\s*import\s+(.+)$/))) {
+    for (const part of m[1].split(',')) {
+      const clean = part.trim().split(/\s+as\s+/)[0].trim();
+      if (/^[\w.]+$/.test(clean)) candidates.push({ rel: false, dots: 0, mod: clean });
+    }
+  }
+  if (!candidates.length) return [];
+
+  const out: ChunkData[][] = [];
+  for (const c of candidates) {
+    const relParts = c.mod.split('.').filter(Boolean);
+    if (!relParts.length) continue;
+    if (c.rel) {
+      let baseDir = importerDir;
+      for (let i = 0; i < c.dots - 1; i++) baseDir = path.posix.dirname(baseDir);
+      const joined = path.posix.normalize([baseDir, ...relParts].join('/'));
+      const wantA = joined + '.py';
+      const wantB = joined + '/__init__.py';
+      for (const [filePath, fileChunks] of chunksByFile) {
+        const fp = path.posix.normalize(filePath.replace(/\\/g, '/'));
+        if (fp === wantA || fp === wantB) out.push(fileChunks);
+      }
+    } else {
+      // Absolute dotted: suffix-match (file paths may be rooted differently).
+      const suffixA = relParts.join('/') + '.py';
+      const suffixB = relParts.join('/') + '/__init__.py';
+      for (const [filePath, fileChunks] of chunksByFile) {
+        const fp = filePath.replace(/\\/g, '/');
+        if (fp === suffixA || fp.endsWith('/' + suffixA) || fp === suffixB || fp.endsWith('/' + suffixB)) {
+          out.push(fileChunks);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export interface ScanSignal { cancelled: boolean; }
+
 export async function performFullScan(
   projectId: string,
   projectPath: string,
   client: CodeIntelClient,
   branch?: string,
   onProgress?: (current: number, total: number) => void,
+  signal?: ScanSignal,
 ): Promise<{ totalFiles: number; totalChunks: number }> {
   const allChunks: ChunkData[] = [];
   const callGraph: CallGraphEdge[] = [];
   const languageMap: Record<string, number> = {};
+  const pendingHashes = new Map<string, { hash: string; chunkCount: number }>();
   let totalFiles = 0;
 
   function collectFiles(dir: string): string[] {
@@ -355,7 +447,6 @@ export async function performFullScan(
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
-        const relativePath = path.relative(projectPath, fullPath);
 
         if (
           entry.name.startsWith('.') ||
@@ -387,6 +478,11 @@ export async function performFullScan(
   console.log(`[FileWatcher] Full scan: found ${total} parseable files in ${projectPath}`);
 
   for (let i = 0; i < files.length; i++) {
+    if (signal?.cancelled) {
+      console.log(`[FileWatcher] Scan cancelled for ${projectId} at file ${i}/${total}`);
+      return { totalFiles, totalChunks: allChunks.length };
+    }
+
     const filePath = files[i];
     const relativePath = path.relative(projectPath, filePath).replace(/\\/g, '/');
 
@@ -405,7 +501,7 @@ export async function performFullScan(
         allChunks.push(...chunks);
         const lang = chunks[0].language;
         languageMap[lang] = (languageMap[lang] || 0) + chunks.length;
-        setCachedHash(projectId, relativePath, fileHash, chunks.length);
+        pendingHashes.set(relativePath, { hash: fileHash, chunkCount: chunks.length });
         totalFiles++;
       }
     } catch (e) {
@@ -419,21 +515,55 @@ export async function performFullScan(
   }
 
   if (allChunks.length > 0) {
+    if (signal?.cancelled) {
+      console.log(`[FileWatcher] Scan cancelled for ${projectId} before ingest (${allChunks.length} chunks discarded)`);
+      return { totalFiles, totalChunks: allChunks.length };
+    }
+
     callGraph.push(...buildCallGraph(allChunks));
     console.log(`[FileWatcher] Built call graph: ${callGraph.length} edges from ${allChunks.length} chunks`);
 
     const batchSize = 500;
+    const allChunkKeys = chunkKeys(allChunks);
     for (let i = 0; i < allChunks.length; i += batchSize) {
+      if (signal?.cancelled) {
+        console.log(`[FileWatcher] Scan cancelled for ${projectId} at ingest batch ${i}/${allChunks.length}`);
+        return { totalFiles, totalChunks: allChunks.length };
+      }
+
       const batch = allChunks.slice(i, i + batchSize);
+      const isLastBatch = i + batchSize >= allChunks.length;
       await client.ingestSkeleton({
         project_id: projectId,
         chunks: batch,
         call_graph: i === 0 ? callGraph : [],
         language_map: i === 0 ? languageMap : {},
         branch,
+        cleanup_scope: isLastBatch ? 'project' : 'none',
+        cleanup_keys: isLastBatch ? allChunkKeys : [],
       });
+
+      const committedFiles = new Set<string>();
+      for (const chunk of batch) {
+        committedFiles.add(chunk.file_path);
+      }
+      for (const filePath of committedFiles) {
+        const pending = pendingHashes.get(filePath);
+        if (pending) {
+          setCachedHash(projectId, filePath, pending.hash, pending.chunkCount);
+          pendingHashes.delete(filePath);
+        }
+      }
     }
   }
 
   return { totalFiles, totalChunks: allChunks.length };
+}
+
+function chunkKeys(chunks: ChunkData[]): ChunkKey[] {
+  return chunks.map((chunk) => ({
+    file_path: chunk.file_path,
+    name: chunk.name,
+    chunk_type: chunk.chunk_type,
+  }));
 }

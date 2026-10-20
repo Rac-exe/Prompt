@@ -784,6 +784,12 @@ async def optimize_stream(websocket: WebSocket):
             wants_sections = data.get("wants_sections", False)
             project_id = data.get("project_id", None)
             project_branch = data.get("project_branch", None)
+            # Local code-intel DB root announced by Electron (userData/code-intel).
+            # Must be forwarded to the code-intelligence service so it reads the
+            # SAME per-project index.db that Electron writes to. Without this the
+            # service falls back to its default empty root and reports "project
+            # not found" → context unavailable.
+            code_intel_root = data.get("code_intel_root", None)
             sentry_trace = data.get("sentry_trace")
             baggage = data.get("baggage", "")
             # Use JWT-verified user id; fall back to request body only for legacy local mode
@@ -885,6 +891,7 @@ async def optimize_stream(websocket: WebSocket):
                                     user_query=prompt_text,
                                     branch=project_branch,
                                     auth_token=websocket.query_params.get("token", ""),
+                                    code_intel_root=code_intel_root,
                                 ),
                             )
                             if planner_ctx:
@@ -927,6 +934,7 @@ async def optimize_stream(websocket: WebSocket):
                             project_id=project_id,
                             project_branch=project_branch,
                             auth_token=websocket.query_params.get("token", ""),
+                            code_intel_root=code_intel_root,
                         )
                         for chunk in gen:
                             loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
@@ -978,10 +986,17 @@ async def optimize_stream(websocket: WebSocket):
                 logger.error(f"✗ Error processing request {request_id}: {e}")
                 import traceback
                 traceback.print_exc()
+                message = "Optimization failed. Please try again."
+                try:
+                    from pipeline_v2.project_context import ProjectContextUnavailableError
+                    if isinstance(e, ProjectContextUnavailableError):
+                        message = str(e)
+                except Exception:
+                    pass
                 await websocket.send_json({
                     "type": "error",
                     "request_id": request_id,
-                    "message": "Optimization failed. Please try again."
+                    "message": message
                 })
                 
     except WebSocketDisconnect:

@@ -178,3 +178,48 @@ def _extract_directory_refs(query: str, signals: QuerySignals):
         d = match.group("dir")
         if d and len(d) > 1:
             signals.directory_refs.append(d)
+
+
+# Identifier detection patterns — match tokens that look like code symbols
+# (camelCase, PascalCase, snake_case, UPPER_CASE, dotted paths, file paths).
+_IDENTIFIER_PATTERNS = [
+    # PascalCase: starts with uppercase, has at least one more uppercase or digit
+    re.compile(r'\b([A-Z][a-z]+(?:[A-Z][a-z0-9]*)+)\b'),
+    # camelCase: starts with lowercase, contains at least one uppercase
+    re.compile(r'\b([a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+)\b'),
+    # UPPER_CASE with underscores (constants)
+    re.compile(r'\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+)\b'),
+    # snake_case: at least two parts separated by underscore
+    re.compile(r'\b([a-z][a-z0-9]+(?:_[a-z0-9]+)+)\b'),
+    # Dotted path: e.g. module.method or Class.method
+    re.compile(r'\b([A-Za-z]\w+\.[A-Za-z]\w+)\b'),
+    # file/path patterns with slashes
+    re.compile(r'(?:^|[\s`\'"])([\w.-]+/[\w.-]+)(?:[\s`\'"]|$)'),
+]
+
+_IDENTIFIER_STOP_WORDS = frozenset({
+    "the", "and", "or", "is", "are", "can", "could", "would", "should",
+    "this", "that", "from", "with", "have", "been", "will", "not",
+})
+
+
+def extract_code_identifiers(query: str) -> list[str]:
+    """
+    Extract code identifiers (camelCase, PascalCase, snake_case, UPPER_CASE,
+    dotted paths, file paths) from a query as atomic strings.
+
+    These are returned un-split so they can be matched exactly against chunk
+    names without FTS tokenization mangling them (e.g. verifyJWT → verifyjwt).
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+    for pattern in _IDENTIFIER_PATTERNS:
+        for match in pattern.finditer(query):
+            token = match.group(1)
+            low = token.lower()
+            if low in _IDENTIFIER_STOP_WORDS or len(token) < 3:
+                continue
+            if low not in seen:
+                seen.add(low)
+                found.append(token)
+    return found

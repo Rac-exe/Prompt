@@ -3,6 +3,10 @@ from supabase import create_client, Client
 from app.config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 logger = logging.getLogger("code-intel.db")
+#
+# DEPRECATED (Phase 1 local migration):
+# Code-intel chunk/graph runtime no longer uses Supabase. This client remains
+# for auth/registry metadata flows and rollback safety only.
 
 _client: Client | None = None
 

@@ -80,3 +80,8 @@ python-service/pipeline_v2/storage/usage/*.jsonl
 # so a fresh clone or a deleted/abandoned crate folder never spams git status)
 native/**/target/
 native/**/node_modules/
+.commandcode/taste/taste.md
+
+# Docs (pitch decks, audits, generated assets)
+docs/
+supabase/migrations/20260516_cron_io_cleanup.sql

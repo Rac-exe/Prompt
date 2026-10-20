@@ -180,7 +180,16 @@ declare global {
       // ============================================
       // APP WINDOW API
       // ============================================
-      optimizePrompt: (text: string, isRegenerate?: boolean, chatId?: string, mode?: string, source?: 'chat' | 'space') => void;
+      optimizePrompt: (
+        text: string,
+        isRegenerate?: boolean,
+        chatId?: string,
+        mode?: string,
+        source?: 'chat' | 'space',
+        spaceId?: string,
+        projectId?: string,
+        projectBranch?: string,
+      ) => void;
       saveToChat: (originalText: string, optimizedText: string) => void;
       requestUserData: () => void;
       onUserDataLoaded: (callback: (user: any) => void) => void;
@@ -359,7 +368,12 @@ declare global {
         sync: (projectId?: string) => Promise<void>;
         toggleWatching: (projectId: string, localPath: string, enable: boolean) => Promise<{ watching: boolean }>;
         isWatching: (projectId: string) => Promise<boolean>;
-        retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => Promise<any>;
+        retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => Promise<any>;
+        context: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => Promise<any>;
+        contextStream: (
+          params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' },
+          handlers: { onLocations?: (data: any) => void; onToken?: (delta: string) => void; onDone?: (data: any) => void; onError?: (message: string) => void },
+        ) => () => void;
         ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => Promise<{ triggered: number; total?: number }>;
         onStatusUpdate: (callback: (data: any) => void) => () => void;
         onOverlayStatus: (callback: (data: any) => void) => () => void;
@@ -552,8 +566,8 @@ const electronAPI = {
   // ============================================
   // APP WINDOW API
   // ============================================
-  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat') => {
-    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source);
+  optimizePrompt: (text: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string, projectId?: string, projectBranch?: string) => {
+    ipcRenderer.send('app:optimize-prompt', text, isRegenerate, chatId, mode, source, spaceId, projectId, projectBranch);
   },
   saveToChat: (originalText: string, optimizedText: string) => {
     ipcRenderer.send('app:save-to-chat', originalText, optimizedText);
@@ -1024,7 +1038,26 @@ const electronAPI = {
     sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
     toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
     isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
-    retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number }) => ipcRenderer.invoke('project:retrieve', params),
+    isScanning: (projectId: string) => ipcRenderer.invoke('project:is-scanning', projectId),
+    retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => ipcRenderer.invoke('project:retrieve', params),
+    context: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => ipcRenderer.invoke('project:context', params),
+    contextStream: (
+      params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' },
+      handlers: { onLocations?: (data: any) => void; onToken?: (delta: string) => void; onDone?: (data: any) => void; onError?: (message: string) => void },
+    ) => {
+      const requestId = `ctx-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const listener = (_e: any, payload: { requestId: string; type: string; data?: any; delta?: string; message?: string }) => {
+        if (payload.requestId !== requestId) return;
+        if (payload.type === 'locations') handlers.onLocations?.(payload.data);
+        else if (payload.type === 'token') handlers.onToken?.(payload.delta ?? '');
+        else if (payload.type === 'done') { handlers.onDone?.(payload.data); cleanup(); }
+        else if (payload.type === 'error') { handlers.onError?.(payload.message ?? 'stream error'); cleanup(); }
+      };
+      const cleanup = () => ipcRenderer.removeListener('project:context-stream:event', listener);
+      ipcRenderer.on('project:context-stream:event', listener);
+      ipcRenderer.send('project:context-stream', { requestId, ...params });
+      return () => { ipcRenderer.send('project:context-stream:abort', requestId); cleanup(); };
+    },
     ensureFresh: (projects: Array<{ projectId: string; localPath: string }>) => ipcRenderer.invoke('project:ensure-fresh', projects),
     onStatusUpdate: (callback: (data: any) => void) => {
       const handler = (_event: any, data: any) => callback(data);
@@ -1058,6 +1091,10 @@ const electronAPI = {
       ipcRenderer.on('spaces:apply-append', handler);
       return () => ipcRenderer.removeListener('spaces:apply-append', handler);
     },
+    /** Returns the in-progress stream state for a space if one is active,
+     *  or null if the space is idle. Used by SpaceWorkspace on mount to
+     *  resume rendering when the user navigates back mid-generation. */
+    getActiveStream: (spaceId: string) => ipcRenderer.invoke('spaces:get-active-stream', spaceId),
   },
 };
 

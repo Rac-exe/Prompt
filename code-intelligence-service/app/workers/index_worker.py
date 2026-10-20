@@ -1,106 +1,122 @@
 """
-Async indexing worker — processes chunks from the ingest queue.
-Pipeline: filter unchanged → batch summarize → batch embed → batch upsert
+Async indexing worker.
+
+Pipeline: filter unchanged -> enrich context -> batch summarize -> multi-vector
+embed -> batch upsert -> stale cleanup -> project summary.
 """
 
+from __future__ import annotations
+
 import asyncio
-import time
 import logging
-import sentry_sdk
+import time
 from datetime import datetime, timezone
-from app.db.models import ChunkInput
+
+import sentry_sdk
+
+from app.config import GRAPH_BUILDER_ENABLED, SPLADE_ENABLED, SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
+from app.db.models import CallGraphEdge, ChunkInput, ChunkKey
 from app.db.queries import (
-    get_existing_chunk_hashes, upsert_chunks_batch,
-    update_project_status, cleanup_stale_chunks,
+    active_embedding_signature,
+    cleanup_stale_chunks,
+    cleanup_stale_chunks_for_files,
+    get_all_project_chunk_ids,
+    get_all_project_relationships,
+    get_existing_chunk_hashes,
+    update_chunks_graph_data,
+    update_project_embedding_config,
+    update_project_status,
+    update_relationship_embeddings,
+    upsert_chunks_batch,
+    upsert_communities,
 )
-from app.services.summarizer import (
-    summarize_chunk_batch, ChunkSummaryInput, SummaryResult,
-)
-from app.services.embedding import embed_texts
-from app.config import SUMMARIZER_CONCURRENCY, MAX_CODE_BODY_LEN, SUMMARIZER_BATCH_SIZE
+from app.db.local_store import get_project_embedding_config
+from app.services import cache as _cache
+from app.services.community import invalidate_community_cache
+from app.services.context_builder import EnrichedChunk, build_enriched_chunks
+from app.services.embedding import embed_structure_texts, embed_texts
+from app.services.graph_builder import run_graph_pipeline
+from app.services.project_summary import generate_project_summary
+from app.services.summarizer import ChunkSummaryInput, SummaryResult, summarize_chunk_batch
 
 logger = logging.getLogger("code-intel.worker.index")
-
-EMBED_BODY_LIMIT = 600
-
-
-def _build_embedding_text(chunk: ChunkInput, summary: SummaryResult) -> str:
-    """Build embedding input with semantic signal first, reduced code body."""
-    parts = [summary.summary]
-    if summary.concepts:
-        parts.append(f"Concepts: {', '.join(summary.concepts)}")
-    parts.append(chunk.name)
-    if chunk.signature:
-        parts.append(chunk.signature)
-    if chunk.code_body:
-        parts.append(chunk.code_body[:EMBED_BODY_LIMIT])
-    return "\n".join(parts)
+GRAPH_RETRY_DELAY_SEC = 3.0
 
 
-def _filter_unchanged(
-    project_id: str,
-    chunks: list[ChunkInput],
-) -> list[ChunkInput]:
-    """Return only chunks whose content_hash differs from the DB copy."""
+def _filter_unchanged(project_id: str, chunks: list[ChunkInput]) -> list[ChunkInput]:
     existing = get_existing_chunk_hashes(project_id)
     new: list[ChunkInput] = []
     for chunk in chunks:
-        cached = existing.get((chunk.file_path, chunk.name))
-        if cached and cached["content_hash"] == chunk.content_hash and cached.get("embedding") is not None:
+        cached = existing.get((chunk.file_path, chunk.name, chunk.chunk_type.value))
+        if cached and cached["content_hash"] == chunk.content_hash:
             continue
         new.append(chunk)
     return new
 
 
-async def _summarize_batched(chunks: list[ChunkInput]) -> list[SummaryResult]:
-    """Run LLM summarization in batches of SUMMARIZER_BATCH_SIZE, with concurrency control."""
+async def _summarize_batched(enriched: list[EnrichedChunk]) -> list[SummaryResult]:
     sem = asyncio.Semaphore(SUMMARIZER_CONCURRENCY)
-    batch_size = SUMMARIZER_BATCH_SIZE
-
     inputs = [
         ChunkSummaryInput(
-            name=c.name, signature=c.signature, callees=c.callees,
-            docstring=c.docstring, language=c.language, code_body=c.code_body,
+            name=item.chunk.name,
+            signature=item.chunk.signature,
+            callees=item.chunk.callees,
+            docstring=item.chunk.docstring,
+            language=item.chunk.language,
+            code_body=item.chunk.code_body,
+            context_header=item.context_header,
+            context_before=item.context_before,
+            context_after=item.context_after,
+            parent_summary=item.parent_summary,
+            sibling_names=item.sibling_names,
         )
-        for c in chunks
+        for item in enriched
     ]
+    batches = [inputs[i:i + SUMMARIZER_BATCH_SIZE] for i in range(0, len(inputs), SUMMARIZER_BATCH_SIZE)]
 
-    batches = [inputs[i:i + batch_size] for i in range(0, len(inputs), batch_size)]
-    logger.info(
-        f"Starting batch summarization: {len(chunks)} chunks in {len(batches)} batches "
-        f"(batch_size={batch_size}, concurrency={SUMMARIZER_CONCURRENCY})"
-    )
-
-    async def _one_batch(batch: list[ChunkSummaryInput]) -> list[SummaryResult]:
+    async def _one(batch: list[ChunkSummaryInput]) -> list[SummaryResult]:
         async with sem:
             return await asyncio.to_thread(summarize_chunk_batch, batch)
 
-    t0 = time.perf_counter()
-    batch_results = await asyncio.gather(
-        *[_one_batch(b) for b in batches],
-        return_exceptions=True,
-    )
-
+    results = await asyncio.gather(*[_one(batch) for batch in batches], return_exceptions=True)
     final: list[SummaryResult] = []
-    failures = 0
-    for i, result in enumerate(batch_results):
+    for i, result in enumerate(results):
         if isinstance(result, BaseException):
-            logger.error(f"Batch {i} summarization failed: {result}")
-            failures += len(batches[i])
-            final.extend(
-                SummaryResult(summary=c.name, concepts=[]) for c in batches[i]
-            )
+            logger.error(f"Summarizer batch {i} failed: {result}")
+            final.extend(SummaryResult(summary_code=c.name) for c in batches[i])
         else:
             final.extend(result)
-
-    elapsed = time.perf_counter() - t0
-    with_concepts = sum(1 for s in final if s.concepts)
-    logger.info(
-        f"Summarization complete: {len(chunks)} chunks in {elapsed:.1f}s "
-        f"({failures} failures, {with_concepts} with concepts, "
-        f"{len(batches)} LLM calls instead of {len(chunks)})"
-    )
     return final
+
+
+def _summary_embedding_text(chunk: ChunkInput, summary: SummaryResult) -> str:
+    parts = [summary.summary_code]
+    if summary.summary_purpose:
+        parts.append(f"Purpose: {summary.summary_purpose}")
+    if summary.concepts:
+        parts.append(f"Concepts: {', '.join(summary.concepts)}")
+    return "\n".join(parts)
+
+
+def _structure_embedding_text(item: EnrichedChunk, summary: SummaryResult) -> str:
+    chunk = item.chunk
+    parts = [
+        chunk.file_path,
+        chunk.name,
+        chunk.chunk_type.value,
+        chunk.language,
+    ]
+    if chunk.signature:
+        parts.append(chunk.signature)
+    if chunk.parent_scope_name:
+        parts.append(f"Parent: {chunk.parent_scope_name}")
+    if item.context_header:
+        parts.append(f"Imports/context: {item.context_header[:1000]}")
+    if item.sibling_names:
+        parts.append(f"Siblings: {', '.join(item.sibling_names[:20])}")
+    if summary.concepts:
+        parts.append(f"Concepts: {', '.join(summary.concepts)}")
+    return "\n".join(parts)
 
 
 async def process_ingest_batch(
@@ -108,75 +124,161 @@ async def process_ingest_batch(
     user_id: str,
     chunks: list[ChunkInput],
     branch: str | None = None,
+    language_map: dict[str, int] | None = None,
+    cleanup_scope: str = "none",
+    cleanup_keys: list[ChunkKey] | None = None,
+    call_graph: list[CallGraphEdge] | None = None,
 ):
-    """Process a full ingest batch with batch summarization, batch embedding, and batch upsert."""
     t_start = time.perf_counter()
     update_project_status(project_id, "indexing")
 
-    has_bodies = sum(1 for c in chunks if c.code_body)
     logger.info(
-        f"[project={project_id}] Ingest started: {len(chunks)} chunks received "
-        f"({has_bodies} with code bodies), branch={branch}"
+        f"[project={project_id}] Ingest started: chunks={len(chunks)}, branch={branch}, "
+        f"languages={language_map or {}}, cleanup_scope={cleanup_scope}, "
+        f"cleanup_keys={len(cleanup_keys or [])}"
     )
 
-    new_chunks = _filter_unchanged(project_id, chunks)
+    active_model, active_dim, active_structure_dim = active_embedding_signature()
+    stored_embedding = get_project_embedding_config(project_id)
+    embedding_mismatch = bool(
+        stored_embedding
+        and (
+            stored_embedding.get("embedding_model") != active_model
+            or int(stored_embedding.get("embedding_dimensions") or 0) != int(active_dim)
+            or int(stored_embedding.get("structure_embedding_dimensions") or 0) != int(active_structure_dim)
+        )
+    )
+    if embedding_mismatch:
+        logger.warning(
+            "[project=%s] Embedding config mismatch detected; re-embedding all chunks. "
+            "stored=%s active=(%s,%s,%s)",
+            project_id,
+            stored_embedding,
+            active_model,
+            active_dim,
+            active_structure_dim,
+        )
+        new_chunks = chunks
+    else:
+        new_chunks = _filter_unchanged(project_id, chunks)
     skipped = len(chunks) - len(new_chunks)
     logger.info(
-        f"[project={project_id}] Hash filter: {len(new_chunks)} new, {skipped} unchanged"
+        f"[project={project_id}] Hash filter: new={len(new_chunks)}, skipped={skipped}"
     )
-
     if not new_chunks:
-        valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
-        stale_count = cleanup_stale_chunks(project_id, valid_keys)
-        if stale_count:
-            logger.info(f"[project={project_id}] Cleaned up {stale_count} stale chunks")
+        stale_count = _cleanup_if_project_snapshot(project_id, cleanup_scope, cleanup_keys)
+        _generate_summary(project_id, language_map or {}, chunks)
+        # Edges still need to be refreshed before the graph pipeline even when
+        # no chunks changed — ensures new call-graph data from this session is in DB.
+        from app.services.graph import process_call_graph, process_import_edges
+        if call_graph:
+            logger.info(f"[project={project_id}] Processing {len(call_graph)} call graph edges (unchanged path)")
+            process_call_graph(project_id, call_graph)
+        chunks_with_imports = sum(1 for c in chunks if c.imports)
+        if chunks_with_imports:
+            process_import_edges(project_id, chunks)
 
+        # Graph pipeline still needs to run if it hasn't produced community data yet,
+        # or if the graph builder was just enabled. Pass empty summaries/rows — PageRank
+        # and Leiden operate on the full DB snapshot, concept phrases are just skipped.
+        graph_ok = True
+        if GRAPH_BUILDER_ENABLED:
+            logger.info(
+                "[GRAPH_PIPELINE] All chunks unchanged — running graph pipeline on existing "
+                "DB data to ensure PageRank/communities are populated."
+            )
+            graph_ok = await _run_graph_pipeline(project_id, [], [])
+            if not graph_ok:
+                logger.warning(
+                    "[project=%s] Graph pipeline failed on unchanged path; scheduling one retry",
+                    project_id,
+                )
+                asyncio.create_task(_retry_graph_pipeline_once(project_id))
+        final_status = "partial" if not graph_ok else "ready"
         now = datetime.now(timezone.utc).isoformat()
-        update_project_status(project_id, "ready", last_indexed_at=now)
+        update_project_status(project_id, final_status, last_indexed_at=now)
+        if final_status == "ready":
+            _cache.invalidate(f"project_summary:{project_id}")
+        update_project_embedding_config(project_id)
         logger.info(
-            f"[project={project_id}] Ingest complete: "
-            f"0 processed, {skipped} skipped (all unchanged), "
-            f"{stale_count} stale removed, took {time.perf_counter() - t_start:.1f}s"
+            f"[project={project_id}] Ingest complete: all unchanged, status={final_status}, "
+            f"skipped={skipped}, stale={stale_count}"
         )
         return
 
-    summaries = await _summarize_batched(new_chunks)
-
-    for i, (c, s) in enumerate(zip(new_chunks[:3], summaries[:3])):
-        logger.info(
-            f"[project={project_id}] [SAMPLE SUMMARY {i+1}] "
-            f"{c.name} → \"{s.summary[:80]}\" concepts={s.concepts}"
-        )
-    if len(new_chunks) > 3:
-        logger.info(
-            f"[project={project_id}] ... and {len(new_chunks) - 3} more summaries"
-        )
-
-    embed_inputs = [_build_embedding_text(c, s) for c, s in zip(new_chunks, summaries)]
-    avg_len = sum(len(e) for e in embed_inputs) // max(len(embed_inputs), 1)
+    enriched = build_enriched_chunks(new_chunks)
     logger.info(
-        f"[project={project_id}] Starting batch embedding for {len(embed_inputs)} chunks "
-        f"(avg embed text={avg_len} chars)"
+        f"[project={project_id}] Context enrichment: enriched={len(enriched)}, "
+        f"with_headers={sum(1 for e in enriched if e.context_header)}, "
+        f"with_siblings={sum(1 for e in enriched if e.sibling_names)}"
     )
-    t_embed = time.perf_counter()
+    summaries = await _summarize_batched(enriched)
+    fallback_count = sum(1 for s in summaries if s.used_fallback)
+    llm_count = max(len(summaries) - fallback_count, 0)
+    summary_empty_count = sum(1 for s in summaries if not (s.summary_code or "").strip())
+    logger.info(
+        "[project=%s] Summary quality: llm=%d fallback=%d summary_empty_count=%d",
+        project_id, llm_count, fallback_count, summary_empty_count,
+    )
+    logger.info(
+        f"[project={project_id}] Summaries generated: count={len(summaries)}, "
+        f"with_purpose={sum(1 for s in summaries if s.summary_purpose)}, "
+        f"with_concepts={sum(1 for s in summaries if s.concepts)}"
+    )
+
+    summary_texts = [
+        _summary_embedding_text(item.chunk, summary)
+        for item, summary in zip(enriched, summaries)
+    ]
+    structure_texts = [
+        _structure_embedding_text(item, summary)
+        for item, summary in zip(enriched, summaries)
+    ]
+
     try:
-        embeddings = await embed_texts(embed_inputs)
         logger.info(
-            f"[project={project_id}] Batch embedding complete: "
-            f"{len(embeddings)} vectors in {time.perf_counter() - t_embed:.1f}s"
+            f"[project={project_id}] Embedding start: summary_texts={len(summary_texts)}, "
+            f"structure_texts={len(structure_texts)}"
+        )
+        embedding_summary = await embed_texts(summary_texts)
+        embedding_structure = await embed_structure_texts(structure_texts)
+        logger.info(
+            f"[project={project_id}] Embedding complete: summary_vectors={len(embedding_summary)}, "
+            f"structure_vectors={len(embedding_structure)}"
         )
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        logger.error(
-            f"[project={project_id}] Batch embedding failed: {e}",
-            exc_info=True,
-        )
-        now = datetime.now(timezone.utc).isoformat()
-        update_project_status(project_id, "error", last_indexed_at=now)
+        logger.error(f"[project={project_id}] Embedding failed: {e}", exc_info=True)
+        update_project_status(project_id, "error", last_indexed_at=datetime.now(timezone.utc).isoformat())
         return
 
+    # ── SPLADE sparse embeddings (opt-in) ───────────────────────────────────
+    # Computed over the same summary texts used for dense embeddings.
+    # Stored as JSON dicts {token: weight} in sparse_embedding column.
+    sparse_vecs: list[dict] = []
+    if SPLADE_ENABLED:
+        try:
+            from app.services.sparse_embedding import compute_sparse_batch
+            sparse_vecs = compute_sparse_batch(summary_texts)
+            logger.info(
+                f"[project={project_id}] SPLADE sparse embeddings computed: count={len(sparse_vecs)}"
+            )
+        except Exception as splade_err:
+            sentry_sdk.capture_exception(splade_err)
+            logger.warning(
+                f"[project={project_id}] SPLADE computation failed (continuing without): {splade_err}"
+            )
+
+    import json as _json
+
     rows = []
-    for chunk, summary_result, embedding in zip(new_chunks, summaries, embeddings):
+    for idx, (item, summary, summary_vec, structure_vec) in enumerate(zip(
+        enriched, summaries, embedding_summary, embedding_structure
+    )):
+        chunk = item.chunk
+        sparse_embedding_json: str | None = None
+        if SPLADE_ENABLED and idx < len(sparse_vecs) and sparse_vecs[idx]:
+            sparse_embedding_json = _json.dumps(sparse_vecs[idx])
         rows.append({
             "project_id": project_id,
             "user_id": user_id,
@@ -184,45 +286,393 @@ async def process_ingest_batch(
             "start_line": chunk.start_line,
             "end_line": chunk.end_line,
             "chunk_type": chunk.chunk_type.value,
+            "scope_type": chunk.scope_type or chunk.chunk_type.value,
+            "chunk_index": chunk.chunk_index,
+            "parent_scope_name": chunk.parent_scope_name,
             "name": chunk.name,
             "signature": chunk.signature,
             "language": chunk.language,
-            "semantic_summary": summary_result.summary,
-            "embedding": embedding,
+            "semantic_summary": summary.summary_code,
+            "summary_code": summary.summary_code,
+            "summary_purpose": summary.summary_purpose,
+            "embedding_summary": summary_vec,
+            "embedding_structure": structure_vec,
+            # Keep legacy embedding populated for old RPCs/fallbacks until fully retired.
+            "embedding": summary_vec,
             "content_hash": chunk.content_hash,
             "branch": branch,
             "branch_diverged": False,
             "code_body": chunk.code_body,
-            "concepts": summary_result.concepts,
+            "concepts": summary.concepts,
             "is_exported": chunk.is_exported,
+            "context_header": item.context_header,
+            "context_before": item.context_before,
+            "context_after": item.context_after,
+            "parent_summary": item.parent_summary,
+            "sparse_embedding": sparse_embedding_json,
         })
 
-    t_upsert = time.perf_counter()
     processed = upsert_chunks_batch(rows)
     errors = len(rows) - processed
     logger.info(
-        f"[project={project_id}] Batch upsert complete: "
-        f"{processed} upserted, {errors} errors, took {time.perf_counter() - t_upsert:.1f}s"
+        f"[project={project_id}] Upsert complete: rows={len(rows)}, processed={processed}, errors={errors}"
     )
 
-    valid_keys = {(c.file_path, c.name, c.chunk_type.value) for c in chunks}
-    stale_count = cleanup_stale_chunks(project_id, valid_keys)
-    if stale_count:
-        logger.info(f"[project={project_id}] Cleaned up {stale_count} stale chunks")
+    # ── Edge processing: must run BEFORE graph pipeline so PageRank sees current edges ──
+    from app.services.graph import process_call_graph, process_import_edges
+    if call_graph:
+        logger.info(f"[project={project_id}] Processing {len(call_graph)} call graph edges (pre-graph-pipeline)")
+        process_call_graph(project_id, call_graph)
+    chunks_with_imports = sum(1 for c in chunks if c.imports)
+    if chunks_with_imports:
+        logger.info(f"[project={project_id}] Processing import edges: {chunks_with_imports}/{len(chunks)} chunks have imports")
+        process_import_edges(project_id, chunks)
 
+    # ── Graph pipeline (PageRank + Leiden + community reports + concept embeddings)
+    graph_ok = True
+    if GRAPH_BUILDER_ENABLED:
+        graph_ok = await _run_graph_pipeline(project_id, summaries, rows)
+        if not graph_ok:
+            logger.warning(
+                "[project=%s] Graph pipeline failed after chunk upsert; scheduling one retry",
+                project_id,
+            )
+            asyncio.create_task(_retry_graph_pipeline_once(project_id))
+
+    stale_count = _cleanup_if_project_snapshot(project_id, cleanup_scope, cleanup_keys)
+    logger.info(
+        f"[project={project_id}] Stale cleanup complete: "
+        f"scope={cleanup_scope}, stale={stale_count}"
+    )
+
+    _generate_summary(project_id, language_map or {}, [*chunks])
+
+    final_status = "error" if processed == 0 and errors else "partial" if errors or not graph_ok else "ready"
     now = datetime.now(timezone.utc).isoformat()
-    if errors > 0 and processed == 0:
-        final_status = "error"
-    elif errors > 0:
-        final_status = "partial"
-    else:
-        final_status = "ready"
-
     update_project_status(project_id, final_status, last_indexed_at=now)
-    total_elapsed = time.perf_counter() - t_start
-
+    if final_status == "ready":
+        _cache.invalidate(f"project_summary:{project_id}")
+    if final_status != "error":
+        update_project_embedding_config(project_id)
     logger.info(
         f"[project={project_id}] Ingest complete: status={final_status}, "
-        f"{processed} processed, {skipped} skipped, {errors} errors, "
-        f"{stale_count} stale removed, took {total_elapsed:.1f}s total"
+        f"processed={processed}, skipped={skipped}, errors={errors}, stale={stale_count}, "
+        f"elapsed={time.perf_counter() - t_start:.1f}s"
     )
+
+
+async def _run_graph_pipeline(
+    project_id: str,
+    summaries: list[SummaryResult],
+    upserted_rows: list[dict],
+) -> bool:
+    """
+    Run the full knowledge-graph pipeline after a successful chunk upsert.
+
+    Steps:
+      1. Fetch ALL current project chunks + relationships from DB (not just new ones)
+         so PageRank and Leiden see the full graph.
+      2. Run graph_builder.run_graph_pipeline() → PageRank + Leiden + LLM reports.
+      3. Embed community reports.
+      4. Embed relationship summaries.
+      5. Embed concept phrases from summaries (3 per chunk).
+      6. Write everything back to the DB.
+      7. Invalidate community cache.
+    """
+    t0 = time.perf_counter()
+    logger.info("[GRAPH_PIPELINE] Starting graph pipeline for project=%s", project_id)
+
+    try:
+        # ── Step 1: Load full project graph from DB ───────────────────────────
+        t_step = time.perf_counter()
+        from app.db.local_store import get_project_db_path
+        _db_path = get_project_db_path(project_id)
+        logger.info("[GRAPH_PIPELINE] ► Step 1/9 — DB path: %s (exists=%s)", _db_path, _db_path.exists())
+        chunk_rows = get_all_project_chunk_ids(project_id)
+        relationship_rows = get_all_project_relationships(project_id)
+        logger.info(
+            "[GRAPH_PIPELINE] ► Step 1/9 — DB load: %d chunks + %d relationships (%.2fms)",
+            len(chunk_rows), len(relationship_rows),
+            (time.perf_counter() - t_step) * 1000,
+        )
+
+        # ── Step 2: Run graph pipeline (igraph + PageRank + Leiden + LLM) ─────
+        t_step = time.perf_counter()
+        pipeline_result = await run_graph_pipeline(project_id, chunk_rows, relationship_rows)
+        logger.info(
+            "[GRAPH_PIPELINE] ► Step 2/9 — Graph pipeline: communities=%d chunk_data=%d "
+            "rel_summaries=%d (%.2fs)",
+            len(pipeline_result.communities),
+            len(pipeline_result.chunk_graph_data),
+            len(pipeline_result.relationship_data),
+            time.perf_counter() - t_step,
+        )
+
+        # ── Step 3: Embed community reports ───────────────────────────────────
+        t_step = time.perf_counter()
+        community_texts = [c.summary for c in pipeline_result.communities]
+        if community_texts:
+            try:
+                community_embeddings = await embed_texts(community_texts)
+                for i, comm in enumerate(pipeline_result.communities):
+                    if i < len(community_embeddings):
+                        comm.summary_embedding = community_embeddings[i]
+                logger.info(
+                    "[GRAPH_PIPELINE] ► Step 3/9 — Community embeddings: %d vectors (%.2fms)",
+                    len(community_embeddings), (time.perf_counter() - t_step) * 1000,
+                )
+            except Exception as e:
+                logger.warning("[GRAPH_PIPELINE] Community embedding failed: %s", e)
+                sentry_sdk.capture_exception(e)
+        else:
+            logger.info("[GRAPH_PIPELINE] ► Step 3/9 — No community reports to embed")
+
+        # ── Step 4: Upsert communities to DB ──────────────────────────────────
+        t_step = time.perf_counter()
+        community_db_rows = []
+        for comm in pipeline_result.communities:
+            community_db_rows.append({
+                "project_id": project_id,
+                "label": comm.label,
+                "summary": comm.summary,
+                "summary_embedding": comm.summary_embedding or None,
+                "member_count": len(comm.member_chunk_ids),
+                "level": comm.level,
+            })
+
+        label_to_uuid: dict[str, str] = {}
+        if community_db_rows:
+            label_to_uuid = upsert_communities(project_id, community_db_rows)
+            logger.info(
+                "[GRAPH_PIPELINE] ► Step 4/9 — Communities upserted: %d rows → %d UUIDs resolved (%.2fms)",
+                len(community_db_rows), len(label_to_uuid),
+                (time.perf_counter() - t_step) * 1000,
+            )
+            # Log each community label
+            for comm in pipeline_result.communities:
+                uid = label_to_uuid.get(comm.label, "NOT_RESOLVED")
+                logger.info(
+                    "[GRAPH_PIPELINE]   community label=%r members=%d uuid=%s",
+                    comm.label, len(comm.member_chunk_ids), uid,
+                )
+        else:
+            logger.info("[GRAPH_PIPELINE] ► Step 4/9 — No communities to upsert")
+
+        # ── Step 5: Embed relationship summaries ──────────────────────────────
+        t_step = time.perf_counter()
+        rel_texts = [r.summary for r in pipeline_result.relationship_data if r.summary]
+        if rel_texts:
+            try:
+                rel_embeddings = await embed_texts(rel_texts)
+                rel_idx = 0
+                for rel in pipeline_result.relationship_data:
+                    if rel.summary and rel_idx < len(rel_embeddings):
+                        rel.embedding = rel_embeddings[rel_idx]
+                        rel_idx += 1
+                logger.info(
+                    "[GRAPH_PIPELINE] ► Step 5/9 — Relationship embeddings: %d vectors (%.2fms)",
+                    rel_idx, (time.perf_counter() - t_step) * 1000,
+                )
+            except Exception as e:
+                logger.warning("[GRAPH_PIPELINE] Relationship embedding failed: %s", e)
+                sentry_sdk.capture_exception(e)
+        else:
+            logger.info("[GRAPH_PIPELINE] ► Step 5/9 — No relationship summaries to embed")
+
+        # ── Step 6: Build concept phrase → embedding mappings ─────────────────
+        t_step = time.perf_counter()
+        chunk_id_lookup: dict[tuple[str, str], str] = {
+            (r.get("name", ""), r.get("file_path", "")): str(r["id"])
+            for r in chunk_rows
+            if r.get("name") and r.get("file_path")
+        }
+
+        phrases_to_embed: list[str] = []
+        phrase_chunk_mapping: list[tuple[str, int]] = []  # (chunk_id, slot 0/1/2)
+
+        chunks_with_phrases = 0
+        for i, summary in enumerate(summaries):
+            if not summary.concept_phrases:
+                continue
+            if i >= len(upserted_rows):
+                continue
+            row = upserted_rows[i]
+            cid = chunk_id_lookup.get((row.get("name", ""), row.get("file_path", "")))
+            if not cid:
+                continue
+            chunks_with_phrases += 1
+            for slot, phrase in enumerate(summary.concept_phrases[:3]):
+                if phrase:
+                    phrases_to_embed.append(phrase)
+                    phrase_chunk_mapping.append((cid, slot))
+
+        logger.info(
+            "[GRAPH_PIPELINE] ► Step 6/9 — Concept phrases: %d chunks → %d phrases to embed",
+            chunks_with_phrases, len(phrases_to_embed),
+        )
+        # Log a sample of concept phrases for the first 3 chunks
+        for i, summary in enumerate(summaries[:3]):
+            if summary.concept_phrases:
+                logger.info(
+                    "[GRAPH_PIPELINE]   sample chunk[%d] concept_phrases=%s",
+                    i, summary.concept_phrases,
+                )
+
+        concept_embeddings_map: dict[str, list[list[float] | None]] = {}
+        if phrases_to_embed:
+            try:
+                phrase_vecs = await embed_texts(phrases_to_embed)
+                for (cid, slot), vec in zip(phrase_chunk_mapping, phrase_vecs):
+                    if cid not in concept_embeddings_map:
+                        concept_embeddings_map[cid] = [None, None, None]
+                    concept_embeddings_map[cid][slot] = vec
+                logger.info(
+                    "[GRAPH_PIPELINE]   Concept phrase embedding done: %d vectors in %.2fms",
+                    len(phrase_vecs), (time.perf_counter() - t_step) * 1000,
+                )
+            except Exception as e:
+                logger.warning("[GRAPH_PIPELINE] Concept phrase embedding failed: %s", e)
+                sentry_sdk.capture_exception(e)
+
+        # ── Step 7: Build and write chunk graph data rows ─────────────────────
+        t_step = time.perf_counter()
+        chunk_graph_write_rows: list[dict] = []
+        chunks_with_community = 0
+        chunks_with_concept_vecs = 0
+        for cgd in pipeline_result.chunk_graph_data:
+            community_uuid = label_to_uuid.get(cgd.community_label)
+            concept_vecs = concept_embeddings_map.get(cgd.chunk_id, [None, None, None])
+            row: dict = {
+                "project_id": project_id,
+                "id": cgd.chunk_id,
+                "pagerank_score": cgd.pagerank_score,
+                "centrality_score": cgd.centrality_score,
+            }
+            if community_uuid:
+                row["community_id"] = community_uuid
+                chunks_with_community += 1
+            if concept_vecs[0] is not None:
+                row["concept_embedding_1"] = concept_vecs[0]
+                chunks_with_concept_vecs += 1
+            if len(concept_vecs) > 1 and concept_vecs[1] is not None:
+                row["concept_embedding_2"] = concept_vecs[1]
+            if len(concept_vecs) > 2 and concept_vecs[2] is not None:
+                row["concept_embedding_3"] = concept_vecs[2]
+            chunk_graph_write_rows.append(row)
+
+        logger.info(
+            "[GRAPH_PIPELINE] ► Step 7/9 — Chunk writeback prep: total=%d "
+            "with_community=%d with_concept_vecs=%d",
+            len(chunk_graph_write_rows), chunks_with_community, chunks_with_concept_vecs,
+        )
+        update_chunks_graph_data(chunk_graph_write_rows)
+        logger.info(
+            "[GRAPH_PIPELINE]   Chunk graph data written in %.2fms",
+            (time.perf_counter() - t_step) * 1000,
+        )
+
+        # ── Step 8: Write relationship embeddings ─────────────────────────────
+        t_step = time.perf_counter()
+        rel_write_rows = [
+            {
+                "project_id": project_id,
+                "from_chunk_id": r.from_chunk_id,
+                "to_chunk_id": r.to_chunk_id,
+                "relationship_type": r.relationship_type,
+                "relationship_summary": r.summary,
+                "relationship_embedding": r.embedding,
+            }
+            for r in pipeline_result.relationship_data
+            if r.embedding
+        ]
+        if rel_write_rows:
+            update_relationship_embeddings(rel_write_rows)
+            logger.info(
+                "[GRAPH_PIPELINE] ► Step 8/9 — Relationship embeddings written: %d rows in %.2fms",
+                len(rel_write_rows), (time.perf_counter() - t_step) * 1000,
+            )
+        else:
+            logger.info("[GRAPH_PIPELINE] ► Step 8/9 — No relationship embeddings to write")
+
+        # ── Step 9: Invalidate community cache ────────────────────────────────
+        invalidate_community_cache(project_id)
+        logger.info("[GRAPH_PIPELINE] ► Step 9/9 — Community cache invalidated")
+
+        logger.info(
+            "[GRAPH_PIPELINE] ═══ COMPLETE: project=%s communities=%d chunks_with_pagerank=%d "
+            "chunks_with_community=%d concept_vecs=%d rel_embeddings=%d total_elapsed=%.2fs ═══",
+            project_id,
+            len(pipeline_result.communities),
+            len(chunk_graph_write_rows),
+            chunks_with_community,
+            chunks_with_concept_vecs,
+            len(rel_write_rows),
+            time.perf_counter() - t0,
+        )
+        return True
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        logger.error("[GRAPH_PIPELINE] Pipeline failed (non-fatal): %s", e, exc_info=True)
+        return False
+
+
+async def _retry_graph_pipeline_once(project_id: str) -> None:
+    """Single delayed retry for graph pipeline startup/transient failures."""
+    await asyncio.sleep(GRAPH_RETRY_DELAY_SEC)
+    logger.info("[GRAPH_PIPELINE] Retry start for project=%s", project_id)
+    ok = await _run_graph_pipeline(project_id, [], [])
+    if ok:
+        now = datetime.now(timezone.utc).isoformat()
+        update_project_status(project_id, "ready", last_indexed_at=now)
+        _cache.invalidate(f"project_summary:{project_id}")
+        logger.info("[GRAPH_PIPELINE] Retry succeeded for project=%s", project_id)
+    else:
+        logger.warning("[GRAPH_PIPELINE] Retry failed for project=%s; status remains partial", project_id)
+
+
+def _generate_summary(project_id: str, language_map: dict[str, int], chunks: list[ChunkInput]):
+    try:
+        generate_project_summary(
+            project_id,
+            language_map,
+            [c.model_dump() for c in chunks],
+        )
+    except Exception as e:
+        logger.warning(f"[project={project_id}] Project summary generation failed: {e}")
+
+
+def _cleanup_if_project_snapshot(
+    project_id: str,
+    cleanup_scope: str,
+    cleanup_keys: list[ChunkKey] | None,
+) -> int:
+    if cleanup_scope == "file":
+        if not cleanup_keys:
+            logger.warning(
+                f"[project={project_id}] File stale cleanup skipped: missing cleanup_keys"
+            )
+            return 0
+        valid_keys = {
+            (key.file_path, key.name, key.chunk_type.value)
+            for key in cleanup_keys
+        }
+        file_paths = {key.file_path for key in cleanup_keys}
+        return cleanup_stale_chunks_for_files(project_id, file_paths, valid_keys)
+
+    if cleanup_scope != "project":
+        logger.info(
+            f"[project={project_id}] Stale cleanup skipped: cleanup_scope={cleanup_scope}"
+        )
+        return 0
+    if not cleanup_keys:
+        logger.warning(
+            f"[project={project_id}] Stale cleanup skipped: project snapshot missing cleanup_keys"
+        )
+        return 0
+
+    valid_keys = {
+        (key.file_path, key.name, key.chunk_type.value)
+        for key in cleanup_keys
+    }
+    return cleanup_stale_chunks(project_id, valid_keys)

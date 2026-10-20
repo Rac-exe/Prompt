@@ -4,6 +4,9 @@ Supports ES256 via JWKS (new Supabase default) and HS256 fallback.
 """
 
 import logging
+import os
+import socket
+import uuid
 import jwt
 from jwt import PyJWKClient
 from fastapi import HTTPException
@@ -16,13 +19,24 @@ logger = logging.getLogger("code-intel.auth")
 
 _AUTH_ENABLED = bool(SUPABASE_URL or SUPABASE_JWT_SECRET)
 
+# Stable per-process dev UUID derived from hostname + pid so two developers
+# sharing the same Supabase instance don't mix each other's data.
+_DEV_USER_ID = str(uuid.uuid5(
+    uuid.NAMESPACE_DNS,
+    f"{socket.gethostname()}-{os.getpid()}",
+))
+
 if not _AUTH_ENABLED:
     if APP_ENV == "production":
         logger.critical(
             "[Auth] FATAL: Neither SUPABASE_URL nor SUPABASE_JWT_SECRET is set in production."
         )
         raise SystemExit(1)
-    logger.warning("[Auth] Auth is DISABLED — only acceptable in development.")
+    logger.warning(
+        "[Auth] Auth is DISABLED — only acceptable in development. "
+        "Dev user ID: %s",
+        _DEV_USER_ID,
+    )
 
 _jwks_client: PyJWKClient | None = None
 if SUPABASE_URL:
@@ -76,8 +90,8 @@ async def require_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
     if not _AUTH_ENABLED:
-        logger.debug("Auth bypassed (disabled in dev mode), returning dev-user")
-        return {"sub": "dev-user", "role": "authenticated"}
+        logger.debug("Auth bypassed (disabled in dev mode), returning stable dev UUID")
+        return {"sub": _DEV_USER_ID, "role": "authenticated"}
 
     if not credentials or not credentials.credentials:
         logger.warning("Request rejected: missing Authorization header")

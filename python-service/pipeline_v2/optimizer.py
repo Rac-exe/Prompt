@@ -30,7 +30,11 @@ from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 from .document_parser import parse_files
 from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
-from .project_context import fetch_project_context, ProjectContext
+from .project_context import (
+    fetch_project_context,
+    ProjectContext,
+    ProjectContextUnavailableError,
+)
 
 litellm.set_verbose = False
 
@@ -111,27 +115,64 @@ def _extract_optimized_prompt(raw: str) -> str:
         raw, re.DOTALL | re.IGNORECASE
     )
     if match:
-        return match.group(1).strip()
-    return raw.strip()
+        return _strip_leading_meta(match.group(1).strip())
+    cleaned = raw.strip()
+    prompt_start = _find_prompt_start_after_analysis(cleaned)
+    if 0 < prompt_start < len(cleaned):
+        return _strip_leading_meta(cleaned[prompt_start:].lstrip('\n'))
+    return _strip_leading_meta(cleaned)
 
 
 # ── Analysis leak detection & stripping ──────────────────────────────────────
 _TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
 _SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
 _ANALYSIS_LEAK_RE = re.compile(
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION'
+    r'|CLASSIFICATION\b|DECISION\b|NEW\s+REQUEST\b|REFINEMENT/INVESTIGATION\b)',
     re.IGNORECASE,
 )
 _ANALYSIS_LAST_SECTION_RE = re.compile(
     r'(?:\*{0,2})'
     r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
     r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
-    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?'
+    r'|CLASSIFICATION|DECISION|NEW\s+REQUEST|REFINEMENT/INVESTIGATION)',
     re.IGNORECASE,
 )
 _STRIP_BUFFER_LIMIT_TASK = 2000
 _STRIP_BUFFER_LIMIT_SINGLE = 4000
 _QUICK_CHECK_LEN = 500
+
+# Conversational preamble leak: the model sometimes narrates before emitting the
+# prompt, e.g. "I should output the optimized prompt:" or "Here is the optimized
+# prompt:". Strip such a SHORT leading meta line (must start with a meta phrase
+# AND reference the prompt/output) so it never leaks into the user-facing result.
+_META_PREAMBLE_RE = re.compile(
+    r'^\s*(?:sure|okay|ok|alright|certainly|got\s+it|understood)?[\s,!.:-]*'
+    r'(?:here(?:\'s|\s+is)|below\s+is|the\s+following\s+is|this\s+is|let\s+me|'
+    r'i\b[^\n]*?\b(?:output|provide|give|should|will|am|have|need\s+to))'
+    r'[^\n]*?(?:optimi[sz]ed\s+prompt|prompt|output|version|rewrite|response)[^\n]*$',
+    re.IGNORECASE,
+)
+
+
+def _strip_leading_meta(text: str) -> str:
+    """Drop up to 2 leading conversational meta lines (preamble leak)."""
+    if not text:
+        return text
+    lines = text.split('\n')
+    removed = 0
+    while lines and removed < 2:
+        first = lines[0].strip()
+        if not first:
+            lines.pop(0)
+            continue
+        if len(first) <= 200 and _META_PREAMBLE_RE.match(first):
+            lines.pop(0)
+            removed += 1
+            continue
+        break
+    return '\n'.join(lines).lstrip('\n')
 
 
 def _find_prompt_start_after_analysis(buf: str) -> int:
@@ -283,6 +324,7 @@ def optimize(
     project_id: Optional[str] = None,
     project_branch: Optional[str] = None,
     auth_token: Optional[str] = None,
+    code_intel_root: Optional[str] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -315,27 +357,47 @@ def optimize(
         },
     )
 
-    # Fetch project codebase context if a project is attached
+    # Fetch project codebase context if a project is attached.
+    # POLICY: never optimize "blind" when a project is attached — if the code
+    # index genuinely can't be consulted we hard-fail with a clean message.
+    # We retry once only to absorb a transient warmup/reindex window, then stop.
     project_context_text = ""
     project_ctx: ProjectContext | None = None
     if project_id:
-        logger.info(f"Fetching project context for project={project_id}")
-        try:
-            project_ctx = fetch_project_context(
-                project_id=project_id,
-                user_query=user_input,
-                branch=project_branch,
-                auth_token=auth_token,
-            )
+        last_err: Exception | None = None
+        for attempt in range(1, 3):
+            logger.info(f"Fetching project context for project={project_id} (attempt {attempt}/2)")
+            try:
+                project_ctx = fetch_project_context(
+                    project_id=project_id,
+                    user_query=user_input,
+                    branch=project_branch,
+                    auth_token=auth_token,
+                    code_intel_root=code_intel_root,
+                )
+            except Exception as e:
+                last_err = e
+                sentry_sdk.capture_exception(e)
+                logger.error(f"Project context fetch raised on attempt {attempt}: {e}", exc_info=True)
+                project_ctx = None
+
             if project_ctx:
                 project_context_text = project_ctx.text
                 logger.info(f"Project context retrieved ({len(project_context_text)} chars), "
                             f"intent={project_ctx.intent}, concepts={project_ctx.concepts}")
-            else:
-                logger.info("Project context returned None")
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.error(f"Project context fetch failed: {e}", exc_info=True)
+                break
+
+            if attempt == 1:
+                time.sleep(1.0)  # brief backoff for warmup / transient reindex
+
+        if not project_ctx:
+            logger.warning(
+                "Project context unavailable for project=%s after retries (last_err=%s)",
+                project_id, last_err,
+            )
+            raise ProjectContextUnavailableError(
+                "Couldn't load project context for this space. The code index may be unavailable or reindexing. Retry in a few seconds."
+            ) from last_err
 
     is_regeneration = bool(previous_output and previous_output.strip())
     # Use a higher temperature for regeneration so outputs are more varied
@@ -681,10 +743,7 @@ Apply your internal analysis silently (classify, select skills, choose technique
                 )
                 cleaned = cleaned[heading_match.start():]
         # Single-prompt mode: detect and strip analysis headers
-        elif cleaned and re.search(
-            r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
-            cleaned[:500], re.IGNORECASE
-        ):
+        elif cleaned and _ANALYSIS_LEAK_RE.search(cleaned[:_QUICK_CHECK_LEN]):
             prompt_start = _find_prompt_start_after_analysis(cleaned)
             if prompt_start > 0 and prompt_start < len(cleaned):
                 sentry_sdk.add_breadcrumb(

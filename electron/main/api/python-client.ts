@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/electron/main';
 import { logger, getActiveSpan, spanToTraceHeader, getDynamicSamplingContextFromSpan, dynamicSamplingContextToSentryBaggageHeader } from '@sentry/core';
 import { EventEmitter } from "events";
 import { authState } from '../utils/auth-state';
+import { getCodeIntelRoot } from '../database/code-intel-local-store';
 const WebSocket = require('ws');
 
 export interface ModelsUsed {
@@ -364,6 +365,11 @@ export class PythonClient extends EventEmitter {
           wants_sections: wantsSections || undefined,
           project_id: projectId || undefined,
           project_branch: projectBranch || undefined,
+          // Forward the local code-intel DB root so python-service can pass it
+          // to the code-intelligence service (X-Prmpt-Code-Intel-Root). Without
+          // this, optimize/ask/bug read the service's empty default root and
+          // fail with "project context unavailable".
+          code_intel_root: projectId ? getCodeIntelRoot() : undefined,
           sentry_trace: sentryTrace,
           baggage,
           user_id: authState.currentUserId || undefined,

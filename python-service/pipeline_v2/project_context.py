@@ -21,11 +21,15 @@ import httpx
 
 logger = logging.getLogger("prmpt.project_context")
 
-CODE_INTEL_URL = os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").rstrip("/")
+# Default to the local code-intel service when unset. Electron's code-intel
+# client uses the same default, and in packaged builds both services run on
+# the same machine, so 127.0.0.1:8002 is correct across dev and prod. An
+# explicit env var still overrides this.
+CODE_INTEL_URL = (os.environ.get("CODE_INTELLIGENCE_SERVICE_URL", "").strip() or "http://127.0.0.1:8002").rstrip("/")
 
 MAX_BODY_PER_CHUNK = 2000
 MAX_PROBABLE_IN_CONTEXT = 8
-MAX_RELATED_IN_CONTEXT = 8
+MAX_RELATED_IN_CONTEXT = 4
 
 
 @dataclass
@@ -35,17 +39,30 @@ class ProjectContext:
     concepts: list[str] = field(default_factory=list)
 
 
+class ProjectContextUnavailableError(RuntimeError):
+    """Raised when project-attached optimization cannot obtain code context."""
+
+
 def fetch_project_context(
     project_id: str,
     user_query: str,
     branch: str | None = None,
     auth_token: str | None = None,
-    limit: int = 10,
+    limit: int = 20,
+    mode: str | None = None,
+    code_intel_root: str | None = None,
 ) -> ProjectContext | None:
     """
     Call the Code Intelligence Service to get probable locations.
     Tries /api/context first (structured probable_locations), falls back
     to /api/retrieve if that fails.
+
+    code_intel_root: the Electron-announced local DB root (userData/code-intel).
+    It MUST be forwarded as the X-Prmpt-Code-Intel-Root header so the service
+    reads the same per-project index.db Electron wrote to. Find requests go
+    Electron→service directly (header set there); optimize/ask/bug go
+    Electron→python-service→service, so we re-attach the header here. Relying on
+    the service's sticky global root is unsafe (resets on reload / first call).
     """
     if not CODE_INTEL_URL:
         logger.debug("CODE_INTELLIGENCE_SERVICE_URL not set — skipping project context")
@@ -57,15 +74,18 @@ def fetch_project_context(
     logger.info(
         f"[PROJECT CTX] Fetching context: project={project_id}, "
         f"query={user_query[:80]!r}, branch={branch}, limit={limit}, "
-        f"service_url={CODE_INTEL_URL or '(not set)'}"
+        f"service_url={CODE_INTEL_URL or '(not set)'}, "
+        f"db_root={'set' if code_intel_root else 'MISSING'}"
     )
 
     headers = {"Content-Type": "application/json"}
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
+    if code_intel_root:
+        headers["X-Prmpt-Code-Intel-Root"] = code_intel_root
 
     logger.info("[PROJECT CTX] Trying /api/context endpoint first...")
-    result = _try_context_endpoint(project_id, user_query, branch, limit, headers)
+    result = _try_context_endpoint(project_id, user_query, branch, limit, headers, mode)
     if result is not None:
         logger.info(
             f"[PROJECT CTX] SUCCESS via /api/context: "
@@ -92,12 +112,14 @@ def _try_context_endpoint(
     branch: str | None,
     limit: int,
     headers: dict,
+    mode: str | None = None,
 ) -> ProjectContext | None:
     """Call POST /api/context for structured probable-location retrieval."""
     body = {
         "project_id": project_id,
         "query": user_query[:5000],
         "limit": limit,
+        "mode": mode or _infer_mode(user_query),
     }
     if branch:
         body["branch"] = branch
@@ -178,6 +200,7 @@ def _fallback_retrieve_endpoint(
         "project_id": project_id,
         "query": user_query[:5000],
         "limit": limit,
+        "mode": _infer_mode(user_query),
     }
     if branch:
         params["branch"] = branch
@@ -254,10 +277,13 @@ def _chunk_to_location_dict(chunk: dict) -> dict:
         "signature": chunk.get("signature"),
         "language": chunk.get("language", ""),
         "semantic_summary": chunk.get("semantic_summary"),
+        "summary_purpose": chunk.get("summary_purpose"),
         "code_body": chunk.get("code_body"),
         "concepts": chunk.get("concepts") or [],
         "confidence_score": chunk.get("similarity_score", 0.0),
         "branch_diverged": chunk.get("branch_diverged", False),
+        "relevance_reasoning": chunk.get("relevance_reasoning"),
+        "probable_issue": chunk.get("probable_issue"),
     }
 
 
@@ -305,12 +331,20 @@ def _format_probable_locations(
             summary = loc.get("semantic_summary")
             if summary:
                 lines.append(f"  Summary: {summary}")
+            purpose = loc.get("summary_purpose")
+            if purpose:
+                lines.append(f"  Purpose: {purpose}")
+            if loc.get("relevance_reasoning"):
+                lines.append(f"  Why retrieved: {loc.get('relevance_reasoning')}")
+            if loc.get("probable_issue"):
+                lines.append(f"  Possible issue: {loc.get('probable_issue')}")
 
             if loc.get("branch_diverged"):
                 lines.append("  Note: modified in current branch")
 
             code_body = loc.get("code_body")
-            if code_body:
+            include_code_body = rank_idx < 3
+            if code_body and include_code_body:
                 lines.append(f"  ```{lang}")
                 for code_line in code_body[:MAX_BODY_PER_CHUNK].split("\n"):
                     lines.append(f"  {code_line}")
@@ -372,3 +406,14 @@ def _format_probable_locations(
 
     lines.append("[END PROBABLE LOCATIONS]")
     return "\n".join(lines)
+
+
+def _infer_mode(query: str) -> str:
+    q = (query or "").lower()
+    if any(word in q for word in ("where is", "find ", "defined", "references", "uses ")):
+        return "find"
+    if any(word in q for word in ("bug", "broken", "error", "fix", "crash", "fails", "not working")):
+        return "bug"
+    if any(word in q for word in ("how does", "explain", "what is", "why does")):
+        return "ask"
+    return "optimize"

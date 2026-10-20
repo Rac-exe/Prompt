@@ -2,7 +2,7 @@ import logging
 import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import require_auth
-from app.db.models import RetrieveResponse
+from app.db.models import ModeEnum, RetrieveResponse
 from app.db import queries
 from app.services.search import retrieve_context
 from app.config import RETRIEVAL_DEFAULT_LIMIT, RETRIEVAL_MAX_LIMIT
@@ -17,6 +17,8 @@ async def retrieve(
     query: str = Query(..., min_length=1, max_length=10_000),
     branch: str | None = Query(default=None),
     limit: int = Query(default=RETRIEVAL_DEFAULT_LIMIT, ge=1, le=RETRIEVAL_MAX_LIMIT),
+    mode: ModeEnum = Query(default=ModeEnum.BUG),
+    variant: str | None = Query(default=None, description="Named pipeline variant for A/B testing (e.g. 'no_refine', 'deep_graph')"),
     auth: dict = Depends(require_auth),
 ):
     """
@@ -44,7 +46,7 @@ async def retrieve(
     logger.info(
         f"Retrieve request: project={project_id}, user={user_id}, "
         f"query={query[:80]!r}, branch={branch}, limit={limit}, "
-        f"index_status={project.get('index_status')}"
+        f"variant={variant}, index_status={project.get('index_status')}"
     )
 
     try:
@@ -54,6 +56,8 @@ async def retrieve(
             query=query,
             branch=branch,
             limit=limit,
+            mode=mode,
+            variant=variant,
         )
 
         bodies_count = sum(1 for c in result.ranked_chunks if c.code_body)

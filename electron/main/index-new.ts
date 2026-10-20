@@ -362,6 +362,7 @@ function installCSP() {
             `font-src 'self' data:`,
             `connect-src 'self' https://${supabaseHost} wss://${supabaseHost} ${pythonHttpBase} ${pythonWsBase} https://*.sentry.io https://res.cloudinary.com`,
             `media-src 'self' blob:`,
+            `worker-src 'self' blob:`,
           ].join('; '),
         ],
       },
@@ -431,30 +432,43 @@ async function initialize() {
   // Initialize tree-sitter parser in background
   initializeParser().catch(e => console.warn('[Main] Tree-sitter init deferred:', e));
 
-  // Phase 2: Auto-detect active project from window titles
-  codeIntelClient.listProjects().then(projects => {
-    setKnownProjects(projects);
-    startDetection({
-      onDetected: (project) => {
-        console.log(`[Main] Auto-detected project: ${project.name}`);
-        overlayManager.send('overlay:project-status', {
-          projectId: project.id,
-          name: project.name,
-          status: project.index_status,
-          auto: true,
-        });
-      },
-      onLost: () => {
-        overlayManager.send('overlay:project-status', null);
-      },
-    });
-  }).catch(() => {
-    // Code intel service not available yet — detection starts when projects are loaded
-  });
+  let codeIntelProjectServicesStarted = false;
+  const startCodeIntelProjectServices = async (trigger: string): Promise<void> => {
+    if (codeIntelProjectServicesStarted) return;
+    if (!authState.currentAccessToken) {
+      console.log(`[Main] Deferring code intelligence project services (${trigger}) — auth token not ready`);
+      return;
+    }
 
-  restoreActiveProject().catch(e =>
-    console.warn('[Main] Active project restore failed:', e)
-  );
+    codeIntelProjectServicesStarted = true;
+    try {
+      const projects = await codeIntelClient.listProjects();
+      setKnownProjects(projects);
+      startDetection({
+        onDetected: (project) => {
+          console.log(`[Main] Auto-detected project: ${project.name}`);
+          overlayManager.send('overlay:project-status', {
+            projectId: project.id,
+            name: project.name,
+            status: project.index_status,
+            auto: true,
+          });
+        },
+        onLost: () => {
+          overlayManager.send('overlay:project-status', null);
+        },
+      });
+    } catch (e) {
+      codeIntelProjectServicesStarted = false;
+      console.warn('[Main] Code intelligence project detection deferred:', e);
+    }
+
+    try {
+      await restoreActiveProject();
+    } catch (e) {
+      console.warn('[Main] Active project restore failed:', e);
+    }
+  };
 
   // Transcription IPC handlers (inline — depend on transcriptionClient)
   ipcMain.on('transcription:debug', (_event, msg: string) => {
@@ -723,6 +737,9 @@ async function initialize() {
       Sentry.setUser({ id: session.user.id });
       Sentry.addBreadcrumb({ category: 'auth', message: 'Auth state: SIGNED_IN', level: 'info', data: { userId: session.user.id } });
       overlayManager.sendAuthState(true);
+      startCodeIntelProjectServices('signed-in').catch(e =>
+        console.warn('[Main] Code intelligence project startup failed after sign-in:', e)
+      );
 
       analyticsService.initialize(session.user.id);
       analyticsService.startSession(appVersion).catch((err) => {
@@ -753,6 +770,9 @@ async function initialize() {
       } catch (e) {
         Sentry.captureException(e, { level: 'warning', tags: { component: 'auth-cleanup' } });
       }
+      stopDetection();
+      setKnownProjects([]);
+      codeIntelProjectServicesStarted = false;
 
       if (appWindowManager) {
         appWindowManager.send('auth:state-changed', {
@@ -766,6 +786,9 @@ async function initialize() {
       authState.currentAccessToken = session.access_token ?? null;
       Sentry.addBreadcrumb({ category: 'auth', message: 'Token refreshed', level: 'info' });
       pythonClient.reconnect();
+      startCodeIntelProjectServices('token-refreshed').catch(e =>
+        console.warn('[Main] Code intelligence project startup failed after token refresh:', e)
+      );
     }
   });
 
@@ -777,6 +800,9 @@ async function initialize() {
       if (hasSession) {
         console.log('[Main] Session restored, user logged in');
         overlayManager.sendAuthState(true);
+        startCodeIntelProjectServices('session-restore').catch(e =>
+          console.warn('[Main] Code intelligence project startup failed after session restore:', e)
+        );
 
         if (authState.currentUserId) {
           analyticsService.initialize(authState.currentUserId);

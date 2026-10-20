@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, memo, useCallback } from "react";
 import {
   Plus, DotsThree, Trash, PencilSimple,
   Clock, MagnifyingGlass, Folder,
-  Sparkle, ChatCircleText, X,
+  FolderPlus, ChatCircleText, X, CircleNotch,
 } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,8 @@ interface SpacesListProps {
   onCreateSpace: () => void;
   onRenameSpace: (id: string, name: string) => void;
   onDeleteSpace: (id: string) => void;
+  /** True while a space creation is in-flight (folder dialog open or backend processing). */
+  isCreating?: boolean;
 }
 
 // Visual treatment for the space's "summary" status. Green = ready,
@@ -117,24 +119,24 @@ const SpaceCard = memo(function SpaceCard({
     <div
       onClick={() => !isRenaming && onSelect(space.id)}
       className={cn(
-        "group relative rounded-xl border border-border/40 bg-card/30",
-        "hover:border-border/70 hover:bg-card/55",
-        "p-3.5 cursor-pointer transition-all duration-150",
+        "group relative rounded-[20px] border border-border/50 bg-surface/40 backdrop-blur-sm",
+        "hover:border-emerald/40 hover:bg-surface/80 hover:shadow-[0_8px_32px_rgba(0,0,0,0.06),0_0_0_1px_hsl(var(--accent)/0.1)]",
+        "p-4 cursor-pointer transition-all duration-300 transform hover:-translate-y-0.5",
       )}
     >
-      <div className="flex items-start gap-2.5">
-        {/* Tight monogram tile — no gradient, just a subtle tinted square */}
+      <div className="flex items-start gap-3">
+        {/* Modern monogram tile with subtle gradient and glow */}
         <div
           className={cn(
-            "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
-            "bg-muted/40 text-foreground/80 text-[11px] font-bold tracking-tight",
-            "border border-border/30",
+            "w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0",
+            "bg-gradient-to-br from-emerald/10 to-transparent text-emerald font-bold tracking-tight shadow-inner",
+            "border border-emerald/20 group-hover:border-emerald/40 group-hover:from-emerald/20 transition-all",
           )}
         >
           {letters}
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 pt-0.5">
           {isRenaming ? (
             <div onClick={(e) => e.stopPropagation()}>
               <Input
@@ -146,7 +148,7 @@ const SpaceCard = memo(function SpaceCard({
                   if (e.key === "Escape") onCancelRename();
                 }}
                 onBlur={onCommitRename}
-                className="h-7 text-[13px] font-semibold bg-background/70 border-border/50 rounded-md"
+                className="h-8 text-[13px] font-semibold bg-surface border-emerald/40 rounded-lg shadow-sm focus-visible:ring-1 focus-visible:ring-emerald/40"
                 maxLength={40}
               />
             </div>
@@ -205,15 +207,17 @@ const SpaceCard = memo(function SpaceCard({
         </div>
       </div>
 
-      {/* Stats row — compact, no chunky pills */}
-      <div className="flex items-center gap-3 text-[10.5px] text-muted-foreground/55 font-medium mt-2.5 ml-[42px]">
-        <span className="flex items-center gap-1">
-          <Folder size={10} weight="duotone" />
-          {projectCount === 0 ? "No folder" : projectCount === 1 ? "1 folder" : `${projectCount} folders`}
-        </span>
+      {/* Stats row — modern pills */}
+      <div className="flex items-center gap-2 text-[10.5px] font-medium mt-3.5 ml-[52px]">
+        {projectCount !== 1 && (
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/40 text-muted-foreground/80 group-hover:bg-muted/60 transition-colors">
+            <Folder size={11} weight="duotone" />
+            {projectCount === 0 ? "No folder" : `${projectCount} folders`}
+          </span>
+        )}
         {messageCount > 0 && (
-          <span className="flex items-center gap-1">
-            <ChatCircleText size={10} weight="duotone" />
+          <span className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald/10 text-emerald-foreground/80 group-hover:bg-emerald/20 transition-colors">
+            <ChatCircleText size={11} weight="duotone" />
             {messageCount}
           </span>
         )}
@@ -264,21 +268,19 @@ const CreateSpaceModal = ({ open, onOpenChange, onCreate }: CreateSpaceModalProp
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="bg-card border-border/40 rounded-2xl shadow-elevated max-w-md p-0 overflow-hidden gap-0"
+        className="bg-surface/95 backdrop-blur-xl border-border/50 rounded-[24px] shadow-2xl max-w-md p-0 overflow-hidden gap-0"
       >
-        {/* Ambient header strip */}
-        <div className="relative px-6 pt-6 pb-4 border-b border-border/15">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_60%)]" />
-          <div className="relative flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald/12 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-              <Sparkle size={16} weight="duotone" className="text-emerald" />
+        <div className="px-6 pt-6 pb-4 border-b border-border/15">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-muted/40 border border-border/30 flex items-center justify-center flex-shrink-0">
+              <FolderPlus size={16} weight="duotone" className="text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
               <DialogTitle className="text-[15px] font-semibold text-foreground tracking-tight">
                 Create a new space
               </DialogTitle>
               <DialogDescription className="text-[12px] text-muted-foreground/65 mt-0.5 leading-relaxed">
-                Group prompts and a project folder into one focused workspace.
+                Group prompts and a project folder into one workspace.
               </DialogDescription>
             </div>
           </div>
@@ -345,6 +347,7 @@ const CreateSpaceModal = ({ open, onOpenChange, onCreate }: CreateSpaceModalProp
 export const SpacesList = ({
   spaces, projectStatusMap, onSelectSpace,
   onCreateSpace, onRenameSpace, onDeleteSpace,
+  isCreating = false,
 }: SpacesListProps) => {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -397,56 +400,49 @@ export const SpacesList = ({
   return (
     <>
       <div className="flex-1 flex flex-col h-full overflow-y-auto" style={{ contain: "layout paint" }}>
-        {/* ── Hero header ─────────────────────────────── */}
-        <div className="relative px-10 pt-9 pb-5">
-          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(ellipse_at_top,hsl(var(--accent)/0.05),transparent_55%)]" />
-          <div className="relative flex items-start justify-between gap-6 flex-wrap">
+        {/* ── Header ──────────────────────────────────── */}
+        <div className="px-10 pt-9 pb-5">
+          <div className="flex items-center justify-between gap-6 flex-wrap">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-1.5">
-                <div className="w-6 h-6 rounded-md bg-emerald/12 border border-emerald/20 flex items-center justify-center">
-                  <Sparkle size={11} weight="duotone" className="text-emerald" />
-                </div>
-                <h1 className="text-[19px] font-semibold text-foreground tracking-tight">Spaces</h1>
-                <span className="text-[10.5px] text-muted-foreground/40 font-medium ml-1">
-                  {spaces.length} {spaces.length === 1 ? "space" : "spaces"} · {totalProjects} {totalProjects === 1 ? "folder" : "folders"}
-                </span>
-              </div>
-              <p className="text-[12.5px] text-muted-foreground/60 leading-relaxed max-w-md">
-                Codebase-aware workspaces. Attach a folder, ask anything, and get
-                prompts tuned to your code.
+              <h1 className="text-[19px] font-semibold text-foreground tracking-tight">Spaces</h1>
+              <p className="text-[12px] text-muted-foreground/50 mt-0.5">
+                {spaces.length} {spaces.length === 1 ? "space" : "spaces"} · {totalProjects} {totalProjects === 1 ? "folder" : "folders"}
               </p>
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="relative flex items-center">
-                <MagnifyingGlass
-                  size={12}
-                  weight="bold"
-                  className="absolute left-2.5 text-muted-foreground/40 pointer-events-none"
-                />
-                <input
-                  type="text"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search spaces"
-                  className="h-8 w-52 pl-7 pr-3 text-[12px] bg-card/40 border border-border/30 rounded-lg outline-none focus:border-border/60 focus:bg-card/60 transition-colors text-foreground placeholder:text-muted-foreground/40"
-                />
-                {search && (
-                  <button
-                    onClick={() => setSearch("")}
-                    className="absolute right-2 text-muted-foreground/40 hover:text-foreground"
-                    aria-label="Clear search"
-                  >
-                    <X size={10} weight="bold" />
-                  </button>
-                )}
-              </div>
+              {spaces.length > 4 && (
+                <div className="relative flex items-center">
+                  <MagnifyingGlass
+                    size={12}
+                    weight="bold"
+                    className="absolute left-2.5 text-muted-foreground/40 pointer-events-none"
+                  />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search"
+                    className="h-8 w-40 pl-7 pr-3 text-[12px] bg-card/40 border border-border/30 rounded-lg outline-none focus:border-border/60 focus:bg-card/60 transition-colors text-foreground placeholder:text-muted-foreground/40"
+                  />
+                  {search && (
+                    <button
+                      onClick={() => setSearch("")}
+                      className="absolute right-2 text-muted-foreground/40 hover:text-foreground"
+                      aria-label="Clear search"
+                    >
+                      <X size={10} weight="bold" />
+                    </button>
+                  )}
+                </div>
+              )}
               <Button
                 size="sm"
                 className="h-8 px-3 text-[12px] font-semibold gap-1.5 bg-foreground hover:bg-foreground/90 text-background rounded-lg"
                 onClick={onCreateSpace}
+                disabled={isCreating}
               >
-                <Plus size={12} weight="bold" />
+                {isCreating ? <CircleNotch size={12} className="animate-spin" /> : <Plus size={12} weight="bold" />}
                 New space
               </Button>
             </div>
@@ -464,7 +460,7 @@ export const SpacesList = ({
           ) : (
             // Tighter, denser grid. Cards are now ~half the previous footprint
             // so a typical user can see 6–10 spaces at a glance instead of 3.
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {filteredAndSorted.map((space) => (
                 <SpaceCard
                   key={space.id}
@@ -481,7 +477,6 @@ export const SpacesList = ({
                   renameInputRef={renameInputRef}
                 />
               ))}
-
             </div>
           )}
         </div>

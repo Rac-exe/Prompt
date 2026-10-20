@@ -90,15 +90,37 @@ export interface RetrievedChunk {
   signature?: string;
   language: string;
   semantic_summary?: string;
+  summary_purpose?: string;
   code_body?: string;
   concepts?: string[];
   similarity_score: number;
+  relevance_reasoning?: string;
+  probable_issue?: string;
+}
+
+export interface ContextLocation extends Omit<RetrievedChunk, 'id' | 'similarity_score'> {
+  id?: string;
+  confidence_score?: number;
+  similarity_score?: number;
 }
 
 export interface RetrieveResult {
   ranked_chunks: RetrievedChunk[];
   related_chunks: RetrievedChunk[];
   branch_context?: Record<string, any>;
+}
+
+export interface ContextResult {
+  mode: 'find' | 'ask' | 'bug' | 'optimize';
+  probable_locations: ContextLocation[];
+  related_locations: ContextLocation[];
+  answer?: string | null;
+  sources?: ContextLocation[];
+  intent?: string;
+  concepts?: string[];
+  project_summary?: string | null;
+  branch_context?: Record<string, any>;
+  search_id?: string | null;
 }
 
 // Spaces are stored per authenticated user. Previously a single global key
@@ -234,7 +256,7 @@ export function buildTailoredPrompt(
     lines.push("Here are the most relevant parts of my codebase for this task:");
     lines.push("");
 
-    for (const chunk of chunks.slice(0, 8)) {
+    for (const chunk of chunks.slice(0, 20)) {
       const path = shortenPath(chunk.file_path);
       lines.push(
         `**${chunk.name}** (${chunk.chunk_type}) in \`${path}\` (lines ${chunk.start_line}-${chunk.end_line})`,
