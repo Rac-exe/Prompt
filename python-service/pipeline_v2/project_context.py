@@ -14,10 +14,11 @@ is broken.
 import os
 import time
 import logging
-import sentry_sdk
 from dataclasses import dataclass, field
 from collections import OrderedDict
 import httpx
+
+from .config import LLMSettings
 
 logger = logging.getLogger("prmpt.project_context")
 
@@ -47,10 +48,10 @@ def fetch_project_context(
     project_id: str,
     user_query: str,
     branch: str | None = None,
-    auth_token: str | None = None,
     limit: int = 20,
     mode: str | None = None,
     code_intel_root: str | None = None,
+    llm: LLMSettings | None = None,
 ) -> ProjectContext | None:
     """
     Call the Code Intelligence Service to get probable locations.
@@ -63,6 +64,9 @@ def fetch_project_context(
     Electron→service directly (header set there); optimize/ask/bug go
     Electron→python-service→service, so we re-attach the header here. Relying on
     the service's sticky global root is unsafe (resets on reload / first call).
+
+    llm: the user's OpenRouter key and RAG model, forwarded as headers so
+    code-intel's own LLM steps (agentic retrieval, answers) use them.
     """
     if not CODE_INTEL_URL:
         logger.debug("CODE_INTELLIGENCE_SERVICE_URL not set — skipping project context")
@@ -79,8 +83,8 @@ def fetch_project_context(
     )
 
     headers = {"Content-Type": "application/json"}
-    if auth_token:
-        headers["Authorization"] = f"Bearer {auth_token}"
+    if llm:
+        headers.update(llm.code_intel_headers())
     if code_intel_root:
         headers["X-Prmpt-Code-Intel-Root"] = code_intel_root
 
@@ -174,11 +178,9 @@ def _try_context_endpoint(
         )
 
     except httpx.TimeoutException as e:
-        sentry_sdk.capture_exception(e)
         logger.warning("/api/context timed out (30s) — falling back to /api/retrieve")
         return None
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.warning(f"/api/context failed ({e}) — falling back to /api/retrieve")
         return None
 
@@ -257,11 +259,9 @@ def _fallback_retrieve_endpoint(
         )
 
     except httpx.TimeoutException as e:
-        sentry_sdk.capture_exception(e)
         logger.warning(f"Code Intelligence Service timed out (15s) for project {project_id}")
         return None
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.error(f"Failed to fetch project context: {e}", exc_info=True)
         return None
 

@@ -6,12 +6,11 @@ Designed for consumption by scripts/graph_visualizer.html.
 """
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Header
-from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
 from app.auth import require_auth
 from app.db import queries
 from app.db import local_store
-from app.config import CACHE_TTL_SECONDS, APP_ENV
+from app.config import CACHE_TTL_SECONDS
 from app.services import cache as _cache
 
 logger = logging.getLogger("code-intel.routes.graph_viz")
@@ -151,52 +150,15 @@ def _count_edge_types(edges: list[dict]) -> dict[str, int]:
     return counts
 
 
-async def _resolve_auth(
-    project_id: str,
-    authorization: Optional[str] = Header(default=None),
-) -> str | None:
-    """
-    Resolve the user_id for the request.
-
-    In development mode the token is optional — the endpoint returns data for
-    any project_id without ownership check, which is fine for a local dev tool.
-    In production a valid Bearer JWT is required.
-    """
-    if APP_ENV != "production":
-        # Dev bypass: skip ownership check, just confirm the project exists at all
-        return None
-
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authorization header missing")
-
-    token = authorization.removeprefix("Bearer ").strip()
-    from app.auth import _decode_token  # noqa: PLC0415
-    payload = _decode_token(token)
-    return payload.get("sub")
-
-
 @router.get("/graph/data/{project_id}")
-async def get_graph_data(
-    project_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
+async def get_graph_data(project_id: str, auth: dict = Depends(require_auth)):
     """
     Return graph nodes, edges, and community data for visualization.
     Consumed by scripts/graph_visualizer.html.
-
-    Auth: required in production, optional in development.
     """
-    user_id = await _resolve_auth(project_id, authorization)
-
-    # In dev mode user_id is None — look up without ownership check
-    if user_id:
-        project = queries.get_project(project_id, user_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
-    else:
-        project = queries.get_project(project_id, "dev") or local_store.get_local_project(project_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+    project = queries.get_project(project_id, auth.get("sub"))
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
 
     if project.get("index_status") not in ("ready", "partial"):
         raise HTTPException(
@@ -214,15 +176,9 @@ async def get_graph_data(
 
 
 @router.delete("/graph/data/{project_id}/cache")
-async def invalidate_graph_cache(
-    project_id: str,
-    authorization: Optional[str] = Header(default=None),
-):
+async def invalidate_graph_cache(project_id: str, auth: dict = Depends(require_auth)):
     """Force-refresh the graph visualization cache after a re-index."""
-    user_id = await _resolve_auth(project_id, authorization)
-    if user_id:
-        project = queries.get_project(project_id, user_id)
-        if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+    if not queries.get_project(project_id, auth.get("sub")):
+        raise HTTPException(status_code=404, detail="Project not found")
     _cache.invalidate(f"graph_viz:{project_id}")
     return {"status": "cache_cleared", "project_id": project_id}

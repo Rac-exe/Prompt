@@ -1,6 +1,5 @@
 import { ReactNode, useState, useEffect } from "react";
-import * as Sentry from "@sentry/react";
-import { Minus, Square, X, WifiSlash, Warning, ArrowCircleUp } from "@phosphor-icons/react";
+import { Minus, Square, X, WifiSlash, Warning } from "@phosphor-icons/react";
 import { ZoomIndicator } from "./ZoomIndicator";
 
 interface AppLayoutProps {
@@ -17,11 +16,6 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
   const [isOnline, setIsOnline] = useState(true);
   const [isPythonAvailable, setIsPythonAvailable] = useState(true);
 
-  type UpdateState = 'idle' | 'available' | 'downloading' | 'ready';
-  const [updateState, setUpdateState] = useState<UpdateState>('idle');
-  const [updateVersion, setUpdateVersion] = useState<string>('');
-  const [downloadPercent, setDownloadPercent] = useState(0);
-
   useEffect(() => {
     window.electronAPI?.onNetworkStatus?.((data) => {
       setIsOnline(data.isOnline);
@@ -35,45 +29,6 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
     window.electronAPI?.onPythonRecovered?.(() => {
       setIsPythonAvailable(true);
     });
-
-    const unsubAvailable = window.electronAPI?.update?.onAvailable?.((data) => {
-      setUpdateVersion(data.version);
-      setUpdateState('available');
-      Sentry.addBreadcrumb({
-        category: 'updater',
-        message: 'Renderer: update available',
-        level: 'info',
-        data: { newVersion: data.version },
-      });
-    });
-    const unsubProgress = window.electronAPI?.update?.onProgress?.((data) => {
-      setDownloadPercent(data.percent);
-      setUpdateState('downloading');
-      if (data.percent === 100 || data.percent % 25 === 0) {
-        Sentry.addBreadcrumb({
-          category: 'updater',
-          message: `Renderer: download progress ${data.percent}%`,
-          level: 'info',
-          data: { percent: data.percent, transferred: data.transferred, total: data.total },
-        });
-      }
-    });
-    const unsubDownloaded = window.electronAPI?.update?.onDownloaded?.((data) => {
-      setUpdateVersion(data.version);
-      setUpdateState('ready');
-      Sentry.addBreadcrumb({
-        category: 'updater',
-        message: 'Renderer: update downloaded — showing restart banner',
-        level: 'info',
-        data: { version: data.version },
-      });
-    });
-
-    return () => {
-      unsubAvailable?.();
-      unsubProgress?.();
-      unsubDownloaded?.();
-    };
   }, []);
 
   return (
@@ -137,7 +92,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-amber-500/10 border-b border-amber-500/20 text-amber-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <WifiSlash size={12} weight="light" className="flex-shrink-0" />
-            <span>You're offline — prompt optimization is paused.</span>
+            <span>You're offline — Prmpt needs internet to reach OpenRouter.</span>
           </div>
         )}
 
@@ -147,45 +102,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-red-500/10 border-b border-red-500/20 text-red-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <Warning size={12} weight="light" className="flex-shrink-0" />
-            <span>AI service stopped — restart Prmpt to recover.</span>
-          </div>
-        )}
-
-        {/* ── Update: downloading ── */}
-        {updateState === 'downloading' && (
-          <div className="flex items-center justify-center gap-2 px-4 py-1.5
-                         bg-blue-500/10 border-b border-blue-500/20 text-blue-400
-                         text-[11px] font-medium flex-shrink-0 animate-fade-in">
-            <ArrowCircleUp size={12} weight="light" className="flex-shrink-0" />
-            <span>Downloading update {updateVersion} — {downloadPercent}%</span>
-          </div>
-        )}
-
-        {/* ── Update: ready to install ── */}
-        {updateState === 'ready' && (
-          <div className="flex items-center justify-center gap-2 px-4 py-1.5
-                         bg-emerald-500/10 border-b border-emerald-500/20 text-emerald-400
-                         text-[11px] font-medium flex-shrink-0 animate-fade-in">
-            <ArrowCircleUp size={12} weight="light" className="flex-shrink-0" />
-            <span>Prmpt {updateVersion} is ready —</span>
-            <button
-              onClick={() => {
-                Sentry.addBreadcrumb({
-                  category: 'updater',
-                  message: 'User clicked Restart & update',
-                  level: 'info',
-                  data: { version: updateVersion },
-                });
-                Sentry.withScope((scope) => {
-                  scope.setTag('updater_action', 'quit_and_install');
-                  scope.setExtra('update_version', updateVersion);
-                  window.electronAPI?.update?.install?.();
-                });
-              }}
-              className="underline underline-offset-2 hover:text-emerald-300 transition-colors"
-            >
-              Restart now
-            </button>
+            <span>The local AI service isn't running — start it with npm run python:dev.</span>
           </div>
         )}
 

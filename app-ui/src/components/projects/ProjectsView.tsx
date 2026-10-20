@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import * as Sentry from "@sentry/react";
 import { SpacesList } from "./SpacesList";
 import { SpaceWorkspace } from "./SpaceWorkspace";
 import { Folder, CircleNotch } from "@phosphor-icons/react";
@@ -66,7 +65,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
     try {
       api.publishSnapshot(spaces.map(toSpaceSummary));
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: "projects-view", op: "publish-spaces-snapshot" } });
+      console.error('[ProjectsView] publish spaces snapshot failed:', err);
     }
   }, [spaces]);
 
@@ -140,7 +139,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
           const s = await api.status(id);
           if (s?.index_status) next[id] = s.index_status;
         } catch {
-          // missing project (e.g. removed from Supabase) — leave unset so
+          // missing project (e.g. its index was deleted) — leave unset so
           // the card falls back to the persisted indexStatus or "unknown".
         }
       }
@@ -224,7 +223,7 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
       setSpaces((prev) => [...prev, newSpace]);
       setActiveSpaceId(newSpace.id);
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: "projects-view", op: "create-space-with-folder" } });
+      console.error('[ProjectsView] create space with folder failed:', err);
     } finally {
       setIsCreatingSpace(false);
     }
@@ -235,9 +234,9 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
   }, []);
 
   // Deleting a space must also tear down every project it contained — both
-  // locally (chokidar watcher) and on the backend (Supabase project + cascade-
-  // deleted code_chunks/code_relationships rows). Without this, removing a
-  // space silently left an orphan project in the user's account.
+  // locally (chokidar watcher) and in the code-intel service (the project's
+  // index database). Without this, removing a space silently left an orphan
+  // project index on disk.
   const handleDeleteSpace = useCallback(
     (id: string) => {
       setSpaces((prev) => {
@@ -245,7 +244,6 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
         if (target && api?.remove) {
           for (const proj of target.projects) {
             api.remove(proj.projectId).catch((err: unknown) => {
-              Sentry.captureException(err, { tags: { component: "projects-view", op: "delete-space-project" }, extra: { projectId: proj.projectId } });
             });
           }
         }

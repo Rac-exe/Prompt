@@ -14,25 +14,53 @@ The part that makes it different is the overlay, a small floating panel that app
 
 ## Table of Contents
 
-1. [The Overlay: how it actually works](#1-the-overlay-how-it-actually-works)
-2. [Getting results you're happy with](#2-getting-results-youre-happy-with)
-3. [Fast mode vs. Thinking mode](#3-fast-mode-vs-thinking-mode)
-4. [Skills: when to bother](#4-skills-when-to-bother)
-5. [Attaching files and images](#5-attaching-files-and-images)
-6. [Voice input](#6-voice-input)
-7. [Your chat history](#7-your-chat-history)
-8. [Saving prompts you want to keep](#8-saving-prompts-you-want-to-keep)
-9. [Sharing](#9-sharing)
-10. [Memory: how Prmpt learns your style](#10-memory-how-prmpt-learns-your-style)
-11. [Custom instructions](#11-custom-instructions)
-12. [Account and sign-in](#12-account-and-sign-in)
-13. [Keyboard shortcuts](#13-keyboard-shortcuts)
-14. [Things that catch people off guard](#14-things-that-catch-people-off-guard)
-15. [Reach us](#15-reach-us)
+1. [Getting started](#1-getting-started)
+2. [The Overlay: how it actually works](#2-the-overlay-how-it-actually-works)
+3. [Getting results you're happy with](#3-getting-results-youre-happy-with)
+4. [Fast mode vs. Thinking mode](#4-fast-mode-vs-thinking-mode)
+5. [Skills: when to bother](#5-skills-when-to-bother)
+6. [Attaching files and images](#6-attaching-files-and-images)
+7. [Voice input](#7-voice-input)
+8. [Your chat history](#8-your-chat-history)
+9. [Saving prompts you want to keep](#9-saving-prompts-you-want-to-keep)
+10. [Sharing and backups](#10-sharing-and-backups)
+11. [Memory: how Prmpt learns your style](#11-memory-how-prmpt-learns-your-style)
+12. [Custom instructions](#12-custom-instructions)
+13. [Your data and privacy](#13-your-data-and-privacy)
+14. [Keyboard shortcuts](#14-keyboard-shortcuts)
+15. [Things that catch people off guard](#15-things-that-catch-people-off-guard)
+16. [Get help](#16-get-help)
 
 ---
 
-## 1. The Overlay: how it actually works
+## 1. Getting started
+
+Prmpt is open source and runs on your computer. There's nothing to sign up for: you bring your own OpenRouter API key, and Prmpt uses it to reach the AI models.
+
+### Running Prmpt from source
+
+Prmpt has two small local services that run next to the app: one optimizes your prompts, the other powers Spaces (questions about your code). Both need to be running before you open the app, or you'll see connection errors. The [README](../README.md#getting-started) has the commands to install and start them.
+
+### First launch
+
+The first time you open Prmpt, it walks you through a short setup:
+
+1. **Pick a theme.**
+2. **Connect your AI provider.**
+   - **OpenRouter API key**: paste your key. You can get one at [openrouter.ai/keys](https://openrouter.ai/keys). Prmpt checks it with OpenRouter before saving it, and you only pay OpenRouter for what you use.
+   - **Prompt optimization model**: the model that rewrites your prompts, in the app and in the `@prompt` overlay.
+   - **Code intelligence (RAG) model**: the model that answers questions about your Spaces. It needs tool calling, so this list only shows models that support it.
+3. **Take the quick feature tour**, then you're in.
+
+Not ready to add a key yet? Click **Set this up later (Settings > AI provider)**. Until a key is saved, the overlay shows a "Connect your AI provider" message instead of the input box.
+
+### Changing your key or models later
+
+Go to **Settings → AI provider**. Paste a new key to replace the saved one, pick different models, then click **Save**. This is also where you add an optional Deepgram key for voice input (see [section 7](#7-voice-input)).
+
+---
+
+## 2. The Overlay: how it actually works
 
 The overlay is a small floating panel that appears on top of whatever you're doing. You don't have to stop working or switch apps.
 
@@ -62,12 +90,12 @@ If you want Insert, close the overlay, go to the text field where you want the r
 The overlay closes when you click anywhere outside it. If that happened before you could copy or insert the result:
 
 - Open the main Prmpt window from the tray → **Open App**
-- Go to **History** in the sidebar — your last optimization is saved there
+- Look under **Recent** in the sidebar — your last optimization is saved there
 - Open it and copy from there
 
 ---
 
-## 2. Getting results you're happy with
+## 3. Getting results you're happy with
 
 The first result you get might not be exactly what you want. That's fine. You can refine it without starting over.
 
@@ -81,7 +109,7 @@ The first result you get might not be exactly what you want. That's fine. You ca
 
 ### The result is in the wrong format
 
-If Prmpt keeps giving you bullet-point lists when you want paragraphs, or formal language when you want casual, instead of correcting it every time, set a custom instruction (see [section 11](#11-custom-instructions)). That way you only have to say it once.
+If Prmpt keeps giving you bullet-point lists when you want paragraphs, or formal language when you want casual, instead of correcting it every time, set a custom instruction (see [section 12](#12-custom-instructions)). That way you only have to say it once.
 
 ---
 
@@ -114,7 +142,7 @@ If Prmpt keeps giving you bullet-point lists when you want paragraphs, or formal
 
 ---
 
-## 3. Fast mode vs. Thinking mode
+## 4. Fast mode vs. Thinking mode
 
 Both modes do the same thing. One just takes longer and works harder.
 
@@ -126,7 +154,7 @@ Switch between them using the button at the bottom-left of the input bar. If you
 
 ---
 
-## 4. Skills: when to bother
+## 5. Skills: when to bother
 
 Skills give Prmpt a lens to look through when optimizing your prompt. Picking "Technical" makes it think like a developer. Picking "Creative" makes it think like an editor. Each one changes how the result is structured and worded.
 
@@ -147,7 +175,7 @@ Skills give Prmpt a lens to look through when optimizing your prompt. Picking "T
 
 ---
 
-## 5. Attaching files and images
+## 6. Attaching files and images
 
 **What you can attach:** PDFs, PNG, JPG, or WebP images. Up to 5 files at a time, 10 MB each.
 
@@ -167,7 +195,9 @@ You can also **paste an image directly from your clipboard** with `Ctrl+V`, usef
 
 ---
 
-## 6. Voice input
+## 7. Voice input
+
+Voice input is optional. It uses Deepgram for transcription with your own Deepgram API key: add one in **Settings → AI provider** under **Deepgram API key**. If you leave that field empty, voice input stays off. You can get a key at [console.deepgram.com](https://console.deepgram.com/).
 
 Click the microphone icon on the right side of the input bar. It turns red when recording. Speak your idea, and the text appears in real time as you talk. Click the icon again to stop, review what was captured, then hit Enter to optimize.
 
@@ -176,10 +206,11 @@ A few things worth knowing:
 - You don't need to speak slowly or formally. Normal conversational speed is fine
 - If it gets a word wrong, you can edit the text in the input box before sending
 - On Windows, make sure Prmpt has microphone permission: **Settings → Privacy & Security → Microphone**
+- While you record, your audio is streamed to Deepgram to be transcribed
 
 ---
 
-## 7. Your chat history
+## 8. Your chat history
 
 Every optimization you do is saved as a conversation.
 
@@ -192,50 +223,43 @@ Every optimization you do is saved as a conversation.
 **Version history within a chat:**
 When you edit or regenerate a message, Prmpt saves the previous version. The `← →` arrows on a message let you flip between them. This is useful when you're not sure if the new version is actually better.
 
-**Offline:** If you lose internet, your most recent chats are still readable from a local cache. You won't be able to send new optimizations until you're back online.
+**Offline:** Your chats are saved on your computer, so you can still open and read them without internet. Sending new optimizations needs a connection, because Prmpt reaches the AI models through OpenRouter.
 
 ---
 
-## 8. Saving prompts you want to keep
+## 9. Saving prompts you want to keep
 
 Chat history keeps everything, but it's not where you go when you want to *reuse* something. The library is.
 
 After getting a result you like, click the **save** icon on the response. You'll name it and put it in a collection.
 
-**Collections** are just folders. Make as many as you want — *Work Emails*, *Code Snippets*, *Image Prompts*, whatever makes sense for how you actually work. The default **All Prompts** and **Favorites** views are always there.
+**Collections** are just folders. Make as many as you want — *Work Emails*, *Code Snippets*, *Image Prompts*, whatever makes sense for how you actually work. The default **All Prompts** view always shows everything you've saved.
 
 **Things you can do with a saved prompt:**
 
 | | |
 |---|---|
-| **Open** | Load it back into chat to keep refining it |
+| **Open** | Click the card to see the full text, with a button to copy it |
 | **Copy** | Grab the text to paste somewhere |
 | **Download** | Save it as a `.txt` file on your computer |
-| **Favorite** | Star it so it shows up in the Favorites view |
-| **Edit** | Change the title, or fix something in the content |
-| **Share** | Generate a link anyone can open |
+| **Edit** | Change the title, or move it to a different collection |
 | **Delete** | Gone permanently, no undo |
 
 Deletions are permanent. If you have a prompt you worked hard on, use **Download** to keep a backup before deleting.
 
 ---
 
-## 9. Sharing
+## 10. Sharing and backups
 
-**Share a whole collection:**
-Open the Prompt Library → click the share icon next to a collection name → copy the link. Anyone with the link can view the collection and save the whole thing to their own Prmpt library.
+Prmpt doesn't create share links. Your library lives on your computer, not on a server, so there's nothing for someone else to open.
 
-**Share a single prompt:**
-Hover over any prompt card → click the share icon → copy the link. The link opens in a browser. No account needed. Anyone can read it or copy the text.
+**To share a prompt:** Hover over the prompt card and use **Copy** to paste the text into a message, or **Download** to get a `.txt` file you can send however you like.
 
-**What recipients can and can't do:**
-- They can view and copy any shared prompt or collection without signing in
-- If they have a Prmpt account, they can save a shared collection directly to their own library
-- They can't edit your originals — sharing is read-only
+**To back up a prompt:** Use **Download**. Prmpt doesn't sync anything to the cloud, so a downloaded copy is your backup.
 
 ---
 
-## 10. Memory: how Prmpt learns your style
+## 11. Memory: how Prmpt learns your style
 
 After you've used Prmpt for a bit, it starts picking up on patterns: what field you work in, how you like things written, what keeps coming up in your requests. It stores these inferences and uses them as background context for future optimizations, so results feel more like they're written for you.
 
@@ -247,13 +271,13 @@ After you've used Prmpt for a bit, it starts picking up on patterns: what field 
 - Add your own facts manually (these are always trusted over inferred ones)
 - Turn off automatic learning entirely if you'd rather it not track patterns
 
-**About privacy:** Memory data is stored in your account and not shared with anyone.
+**About privacy:** Memory is stored on your computer, in the same local database as your chats, and isn't shared with anyone. To learn, Prmpt sends one of your prompts and its result to OpenRouter (with your key) every third optimization and asks a model to pick out facts. Turn off automatic learning and that stops.
 
 **When memory isn't helping:** If you work across very different domains (developer some days, marketing writing other days), memory might pull in assumptions that don't fit. Either delete the entries that don't apply, or turn off automatic learning and add manual facts for what's always true about you.
 
 ---
 
-## 11. Custom instructions
+## 12. Custom instructions
 
 Custom instructions are a short note you write once, and Prmpt adds it to every single optimization. Most people skip this and then wonder why results don't sound like them. This is where you fix that.
 
@@ -269,22 +293,23 @@ Just tell it what you always want:
 
 ---
 
-## 12. Account and sign-in
+## 13. Your data and privacy
 
-**Sign up:** Open Prmpt → click **Sign up** → enter your email and password, or use **Continue with Google** / **Continue with GitHub** for one-click signup. No email verification step.
+**No sign-up, no sign-in.** Prmpt is a single-user app on your own computer. There's no login screen and no cloud copy of your data.
 
-**Sign in with Google or GitHub:**
-Click the button, your browser opens, sign in, and the tab closes automatically. If the tab doesn't close, you can close it manually — the session will have already been picked up.
+**Where your data lives:** Your chats, saved prompts and collections, memory, settings, profile name and avatar, attachments, and Spaces code indexes all stay on your computer, in Prmpt's data folder. Most of it is in one local database file called `prmpt.db`; attachments sit next to it in an `attachments` folder.
 
-**Sign out:** Click your name or avatar at the bottom of the sidebar → **Sign Out**.
+**Your API keys:** Your OpenRouter and Deepgram keys are saved in that same local database (encrypted with your operating system's keystore on Windows). The app's screens only ever show the last few characters.
 
-**Staying signed in:** Prmpt keeps your session active between restarts.
+**What goes over the internet:** Prmpt still needs a connection to reach the AI models. Your prompts and attachments go to OpenRouter using your key, and so do your Spaces questions and the code snippets needed to index and answer them. Voice audio goes to Deepgram, only if you've added a Deepgram key and use the microphone. Prmpt doesn't collect analytics or crash reports.
 
-**Delete account:** Settings → Profile → **Delete Account**. This permanently removes your chats, library, memory, and profile. There's no recovery.
+**Your profile:** Settings → Profile lets you change your name and avatar. Both are stored only on this computer.
+
+**Deleting things:** Delete chats from the sidebar (`⋯` → **Delete**), prompts from the library (trash icon), and memory facts from Settings → Memory. There's no account to delete. If you want to wipe everything, quit Prmpt and delete its data folder.
 
 ---
 
-## 13. Keyboard shortcuts
+## 14. Keyboard shortcuts
 
 | Shortcut | What it does |
 |---|---|
@@ -296,7 +321,7 @@ Click the button, your browser opens, sign in, and the tab closes automatically.
 
 ---
 
-## 14. Things that catch people off guard
+## 15. Things that catch people off guard
 
 **`@prompt` didn't do anything.**
 It only works in actual, editable text fields. If you typed it in a browser address bar, a read-only area, a search box, or a game, it won't trigger. Try it in something like a Gmail compose window, Notepad, or a Slack message box.
@@ -314,22 +339,21 @@ Go to Settings → Customize → Custom Instructions and describe your preferenc
 Try switching from Fast to Thinking mode, or add a note like "give me something different from last time." If your original prompt is very constrained, there's only so much variation it can introduce.
 
 **The app seems slow or unresponsive.**
-The Python service needs to be running separately. If you see connection errors, start it with `npm run python:dev` in a terminal and leave it running.
+The Python service needs to be running separately. If you see connection errors, start it with `npm run python:dev` in a terminal and leave it running. Spaces also needs the code intelligence service (`npm run code-intel:dev`). See [Getting started](#1-getting-started).
 
 **I edited a message and now I can't find the original.**
 The original is still there. Use the `←` arrow on the message to go back to the previous version.
 
-**Shared link says the content doesn't exist.**
-The collection or prompt may have been deleted after the link was generated.
+**The overlay says "Connect your AI provider", or I get an error about my key or model.**
+Open Settings → AI provider. If no key is saved, paste your OpenRouter key and click Save. If OpenRouter rejected the key, paste a fresh one from [openrouter.ai/keys](https://openrouter.ai/keys). If the model wasn't found, pick a different one from the list. A rate limit or credit limit message means it's worth checking your OpenRouter credits.
 
 ---
 
-## 15. Reach us
+## 16. Get help
 
-If something isn't working, something's confusing, or you have a suggestion, reach out.
+If something isn't working, something's confusing, or you have a suggestion, let us know.
 
-- **In the app:** Click **Help** at the bottom of the sidebar
-- **Email:** support@tryprmpt.com
-- **Website:** [tryprmpt.vercel.app](https://tryprmpt.vercel.app)
+- **GitHub issues:** [github.com/Rac-exe/Prompt/issues](https://github.com/Rac-exe/Prompt/issues). Open an issue for bugs, questions, or ideas.
+- **In the app:** Click your name at the bottom of the sidebar → **Help & Docs** to open the project README.
 
-If it's a bug, tell us what you were doing when it happened and what you expected instead.
+If it's a bug, tell us what you were doing when it happened and what you expected instead. Please don't paste your API keys into an issue.

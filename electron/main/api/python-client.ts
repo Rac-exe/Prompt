@@ -1,10 +1,20 @@
 import axios, { AxiosInstance, AxiosError } from "axios";
-import * as Sentry from '@sentry/electron/main';
-import { logger, getActiveSpan, spanToTraceHeader, getDynamicSamplingContextFromSpan, dynamicSamplingContextToSentryBaggageHeader } from '@sentry/core';
 import { EventEmitter } from "events";
-import { authState } from '../utils/auth-state';
 import { getCodeIntelRoot } from '../database/code-intel-local-store';
+import { aiSettings } from '../database/services/ai-settings-service';
 const WebSocket = require('ws');
+
+/**
+ * An error message written by python-service for the user (missing or
+ * rejected API key, unknown model, project context unavailable, ...).
+ * Callers show it as-is instead of a generic "something went wrong".
+ */
+export class ServiceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ServiceError';
+  }
+}
 
 export interface ModelsUsed {
   optimizer: string;
@@ -63,12 +73,11 @@ export class PythonClient extends EventEmitter {
       headers: { "Content-Type": "application/json" }
     });
 
-    // Attach Bearer token to every outgoing HTTP request from the current auth session
+    // Send the user's OpenRouter key and chosen models with every request
     this.client.interceptors.request.use((config) => {
-      const token = authState.currentAccessToken;
-      if (token) {
-        config.headers = config.headers ?? {};
-        config.headers['Authorization'] = `Bearer ${token}`;
+      config.headers = config.headers ?? {};
+      for (const [name, value] of Object.entries(aiSettings.pythonHeaders())) {
+        config.headers[name] = value;
       }
       return config;
     });
@@ -79,29 +88,11 @@ export class PythonClient extends EventEmitter {
       await this.ensureConnection();
     } catch (error) {
       console.error('[PythonClient] Background connection failed:', error);
-      Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-connect' } });
     }
   }
 
-  /** Close and re-open the WebSocket (called after token refresh so the new token is used). */
-  public reconnect(): void {
-    if (this.ws) {
-      console.log('[PythonClient] Reconnecting WebSocket with refreshed token…');
-      try { this.ws.close(); } catch (_) {}
-      this.ws = null;
-      this.connectionPromise = null;
-    }
-    this.connect().catch(e => {
-      console.error('[PythonClient] Reconnect failed:', e);
-      Sentry.captureException(e, { tags: { component: 'python-client', op: 'ws-reconnect' } });
-    });
-  }
-
-  /** Builds the WS URL including the auth token as a query param when available. */
   private buildWsUrl(path: string): string {
-    const base = `${this.baseUrl.replace('http', 'ws')}${path}`;
-    const token = authState.currentAccessToken;
-    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+    return `${this.baseUrl.replace('http', 'ws')}${path}`;
   }
 
   private async ensureConnection(): Promise<void> {
@@ -124,7 +115,7 @@ export class PythonClient extends EventEmitter {
     const attempt = (attemptIndex: number): Promise<void> => {
       return new Promise<void>((resolve, reject) => {
         const wsUrl = this.buildWsUrl('/ws/optimize-stream');
-        console.log(`[PythonClient] Connecting to WebSocket (attempt ${attemptIndex + 1}): ${wsUrl.split('?')[0]}`);
+        console.log(`[PythonClient] Connecting to WebSocket (attempt ${attemptIndex + 1}): ${wsUrl}`);
 
         const ws = new WebSocket(wsUrl);
         let settled = false;
@@ -184,7 +175,7 @@ export class PythonClient extends EventEmitter {
                 this.activeRequests.delete(requestId);
               } else if (message.type === 'error') {
                 console.error('[PythonClient] Received error signal:', message.message);
-                request.reject(new Error(message.message));
+                request.reject(new ServiceError(message.message));
                 this.activeRequests.delete(requestId);
               }
             } else {
@@ -194,7 +185,6 @@ export class PythonClient extends EventEmitter {
             }
           } catch (error) {
             console.error('[PythonClient] Failed to parse message:', error);
-            Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-message-parse' } });
           }
         });
 
@@ -202,7 +192,6 @@ export class PythonClient extends EventEmitter {
           console.log(`[PythonClient] WebSocket closed`);
 
           if (this.activeRequests.size > 0) {
-            Sentry.captureMessage(`Python WebSocket closed with ${this.activeRequests.size} pending request(s)`, 'warning');
           }
 
           for (const [reqId, request] of this.activeRequests.entries()) {
@@ -266,7 +255,8 @@ export class PythonClient extends EventEmitter {
         accumulated: "" // Initialize
       });
 
-      // Safety Timeout (Hard limit — generous for Render cold starts which can take 50s+)
+      // Safety timeout (hard limit). Project-attached requests run agentic
+      // retrieval in code-intel before the optimizer starts streaming.
       const timeoutMs = 90000; // 90 seconds
       const timeoutId = setTimeout(() => {
         if (this.activeRequests.has(requestId)) {
@@ -292,8 +282,6 @@ export class PythonClient extends EventEmitter {
         silenceTimeoutId = setTimeout(() => {
           if (this.activeRequests.has(requestId)) {
             console.log(`[PythonClient] Request ${requestId} silence detected (3.5s), auto-resolving`);
-            Sentry.captureMessage('Stream silence timeout', 'warning');
-            logger.warn(logger.fmt`stream.silence_timeout requestId=${requestId}`);
             const req = this.activeRequests.get(requestId);
             this.activeRequests.delete(requestId);
 
@@ -340,18 +328,6 @@ export class PythonClient extends EventEmitter {
       // Instead, we trust the map logic. The timeout checks map existence.
 
       try {
-        // Propagate the active Sentry trace so Python can link its spans to this Electron trace.
-        let sentryTrace: string | undefined;
-        let baggage: string | undefined;
-        try {
-          const activeSpan = getActiveSpan();
-          if (activeSpan) {
-            sentryTrace = spanToTraceHeader(activeSpan);
-            const dsc = getDynamicSamplingContextFromSpan(activeSpan);
-            baggage = dynamicSamplingContextToSentryBaggageHeader(dsc);
-          }
-        } catch (_) { /* non-fatal if trace API unavailable */ }
-
         this.ws.send(JSON.stringify({
           request_id: requestId,
           prompt: effectivePrompt,
@@ -370,14 +346,13 @@ export class PythonClient extends EventEmitter {
           // this, optimize/ask/bug read the service's empty default root and
           // fail with "project context unavailable".
           code_intel_root: projectId ? getCodeIntelRoot() : undefined,
-          sentry_trace: sentryTrace,
-          baggage,
-          user_id: authState.currentUserId || undefined,
+          // The user's OpenRouter key and chosen models (Settings > AI provider)
+          llm: aiSettings.llmPayload(),
         }));
       } catch (error) {
         clearTimeout(timeoutId);
         this.activeRequests.delete(requestId);
-        Sentry.captureException(error, { tags: { component: 'python-client', op: 'ws-send' } });
+        console.error('[PythonClient] WebSocket send failed:', error);
         reject(error);
       }
     });
@@ -419,30 +394,19 @@ export class PythonClient extends EventEmitter {
   }
 
   async clarify(prompt: string): Promise<ClarifyResult> {
-    return Sentry.startSpan({ name: 'python.clarify', op: 'http.client' }, async (span) => {
-      Sentry.addBreadcrumb({ category: 'python-client', message: 'Clarify request started', level: 'info', data: { promptLen: prompt.length } });
-      try {
-        const response = await this.client.post('/clarify', { prompt }, { timeout: 15000 });
-        const result: ClarifyResult = response.data;
-        span.setAttribute('should_clarify', result.should_clarify);
-        span.setAttribute('question_count', result.questions.length);
-        span.setAttribute('is_complex', result.is_complex);
-        Sentry.addBreadcrumb({ category: 'python-client', message: 'Clarify response received', level: 'info', data: { should_clarify: result.should_clarify, questions: result.questions.length, is_complex: result.is_complex } });
-        logger.info(logger.fmt`python.clarify_complete should_clarify=${result.should_clarify} questions=${result.questions.length}`);
-        return result;
-      } catch (error) {
-        Sentry.captureException(error, { tags: { component: 'python-client', op: 'clarify' }, level: 'warning' });
-        span.setStatus({ code: 2, message: 'clarify_failed' });
-        logger.warn(logger.fmt`python.clarify_failed error=${error instanceof Error ? error.message : String(error)}`);
-        return {
-          should_clarify: false,
-          is_complex: false,
-          complexity_reason: '',
-          suggested_sections: [],
-          questions: [],
-        };
-      }
-    });
+    try {
+      const response = await this.client.post('/clarify', { prompt }, { timeout: 15000 });
+      return response.data as ClarifyResult;
+    } catch (error) {
+      console.warn('[PythonClient] clarify failed (continuing without clarification):', error instanceof Error ? error.message : error);
+      return {
+        should_clarify: false,
+        is_complex: false,
+        complexity_reason: '',
+        suggested_sections: [],
+        questions: [],
+      };
+    }
   }
 
   // Legacy method for non-streaming requests (retaining for backward compatibility)
@@ -460,11 +424,9 @@ export class PythonClient extends EventEmitter {
         messages: messages || null,
         mode,
         custom_instructions: customInstructions,
-        user_id: authState.currentUserId || undefined,
       });
       return response.data.optimized;
     } catch (error) {
-      Sentry.captureException(error);
       console.error('[PythonClient] Optimization failed:', error);
       throw error;
     }
@@ -473,11 +435,8 @@ export class PythonClient extends EventEmitter {
   async healthCheck(): Promise<boolean> {
     try {
       const response = await this.client.get("/health", { timeout: 5000 });
-      const ok = response.data && response.data.status === "ok";
-      Sentry.addBreadcrumb({ category: 'python', message: `Health check ${ok ? 'passed' : 'failed'}`, level: ok ? 'info' : 'warning' });
-      return ok;
+      return response.data && response.data.status === "ok";
     } catch (error) {
-      Sentry.addBreadcrumb({ category: 'python', message: 'Health check unreachable', level: 'error' });
       return false;
     }
   }
@@ -509,7 +468,7 @@ export class PythonClient extends EventEmitter {
 
   /**
    * Generate a short smart title for a new chat from the first user message.
-   * Calls /generate-title on the Python service (GPT-4o-mini via OpenRouter).
+   * Calls /generate-title on the Python service (a small model via OpenRouter).
    * Returns the generated title, or "New Chat" as a fallback.
    */
   async generateTitle(prompt: string): Promise<string> {
@@ -523,42 +482,6 @@ export class PythonClient extends EventEmitter {
     }
   }
 
-  /**
-   * Upload an image to Cloudinary via the Python service.
-   *
-   * Returns the secure CDN URL and the Cloudinary public_id. The public_id
-   * is the canonical handle used for direct asset deletion (account-deletion
-   * cron, manual cleanup, etc).
-   */
-  async uploadImage(
-    base64: string,
-    filename: string,
-    mimeType: string = 'image/jpeg',
-  ): Promise<{ url: string; publicId: string }> {
-    try {
-      const response = await this.client.post('/upload/image', {
-        base64,
-        filename,
-        mime_type: mimeType,
-      }, { timeout: 30000 });
-      Sentry.addBreadcrumb({
-        category: 'file-upload',
-        message: `Image uploaded via Python proxy: ${filename}`,
-        level: 'info',
-      });
-      return {
-        url: response.data.url,
-        publicId: response.data.public_id ?? '',
-      };
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'image-upload' },
-        extra: { filename, mimeType },
-      });
-      throw error;
-    }
-  }
-
   async transcribeAudio(audioBase64: string): Promise<string> {
     try {
       const response = await this.client.post(
@@ -569,7 +492,6 @@ export class PythonClient extends EventEmitter {
       const text = response.data?.text;
       return typeof text === 'string' ? text : '';
     } catch (error) {
-      Sentry.captureException(error);
       const message = error instanceof AxiosError
         ? error.response?.data?.detail || error.message
         : error instanceof Error

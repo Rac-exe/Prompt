@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Sentry from '@sentry/react';
+import { StoredImage } from '@/components/chat/StoredImage';
 import darkLogo from "@/assets/logos/dark-logo-svg.svg";
 import lightLogo from "@/assets/logos/light-logo-svg.svg";
 import { useIsDark } from "@/hooks/useIsDark";
@@ -55,14 +55,11 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
       {files.map((f, i) => {
-        const cloudinaryUrl: string | undefined = (f as any).cloudinaryUrl;
         const storagePath: string | undefined = (f as any).storagePath;
 
         if (f.mimeType.startsWith('image/')) {
-          // Prefer Cloudinary URL, fall back to base64 data-URI
-          const src = cloudinaryUrl
-            ? cloudinaryUrl
-            : f.base64 ? `data:${f.mimeType};base64,${f.base64}` : null;
+          // In-session base64, else the local attachment store
+          const src = f.base64 ? `data:${f.mimeType};base64,${f.base64}` : null;
           if (src) {
             return (
               <div key={i} style={{ position: 'relative', width: 48, height: 48, flexShrink: 0 }}>
@@ -74,12 +71,25 @@ const FilesDisplay: React.FC<{ files?: AttachedFile[] }> = ({ files }) => {
               </div>
             );
           }
-          // Image with no src yet — placeholder chip
-          return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8, background: 'hsl(var(--accent)/0.06)', border: '1px solid hsl(var(--accent)/0.15)', maxWidth: 160, flexShrink: 0 }}>
+          const placeholder = (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 8px', borderRadius: 8, background: 'hsl(var(--accent)/0.06)', border: '1px solid hsl(var(--accent)/0.15)', maxWidth: 160, flexShrink: 0 }}>
               <span style={{ fontSize: 11, fontWeight: 500, color: 'hsl(var(--foreground))', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
             </div>
           );
+          if (storagePath) {
+            return (
+              <div key={i} style={{ position: 'relative', flexShrink: 0 }}>
+                <StoredImage
+                  storagePath={storagePath}
+                  alt={f.name}
+                  style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 8, border: '1px solid hsl(var(--accent)/0.2)', display: 'block' }}
+                  fallback={placeholder}
+                />
+              </div>
+            );
+          }
+          // Image with no src yet — placeholder chip
+          return <React.Fragment key={i}>{placeholder}</React.Fragment>;
         }
 
         // PDF — clickable if storagePath available
@@ -300,7 +310,6 @@ const OverlaySectionCopyButton: React.FC<{ text: string }> = ({ text }) => {
   return (
     <button
       onClick={() => {
-        Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Section copy', level: 'info', data: { textLen: text.length } });
         navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -333,7 +342,6 @@ const OverlaySectionInsertButton: React.FC<{
   const [inserting, setInserting] = useState(false);
 
   const handleInsert = useCallback(async () => {
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Section insert clicked', level: 'info', data: { textLen: text.length } });
     setInserting(true);
     onInsert(text);
     setTimeout(() => setInserting(false), 2000);
@@ -457,21 +465,18 @@ const AssistantMessage: React.FC<AssistantMessageProps> = ({
   const hasSections = sections !== null && sections.length >= 2;
 
   const handleCopy = useCallback(() => {
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Copy prompt', level: 'info', data: { msgId: msg.id, hasSections } });
     onCopy(msg.id);
     setCopyState('copied');
     setTimeout(() => setCopyState('idle'), 1800);
   }, [msg.id, onCopy, hasSections]);
 
   const handleReplace = useCallback(async () => {
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: hasSections ? 'Replace All' : 'Replace', level: 'info', data: { msgId: msg.id, hasSections, sectionCount: sections?.length ?? 0 } });
     setReplaceState('replacing');
     onReplace(msg.id);
     setTimeout(() => setReplaceState('idle'), 3000);
   }, [msg.id, onReplace, hasSections, sections]);
 
   const handleSaveLibrary = useCallback(() => {
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Save to library', level: 'info', data: { msgId: msg.id } });
     onSaveLibrary(msg.id);
     // NOTE: We deliberately do NOT flip a local "saved" state here.
     // The badge below is driven by `isSaved`, which the parent only

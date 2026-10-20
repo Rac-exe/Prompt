@@ -13,9 +13,8 @@ import time
 from typing import Any, Dict
 
 import litellm
-import sentry_sdk
 
-from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
+from .config import SUMMARIZER_MODEL, MissingAPIKeyError, provider_kwargs
 from .usage_logger import log_usage
 
 logger = logging.getLogger("prmpt.clarifier")
@@ -70,139 +69,107 @@ _FAIL_SAFE: Dict[str, Any] = {
 }
 
 
-def _get_litellm_kwargs(model: str) -> tuple[str, dict]:
-    if model.startswith("openrouter/"):
-        key = OPENROUTER_API_KEY
-        if not key:
-            raise RuntimeError("OPENROUTER_API_KEY is not set.")
-        return model, {"api_key": key}
-    return model, {}
+def _get_litellm_kwargs(model: str, api_key: str = "") -> tuple[str, dict]:
+    return model, provider_kwargs(model, api_key)
 
 
-def clarify(user_input: str, model: str | None = None) -> Dict[str, Any]:
+def clarify(user_input: str, model: str | None = None, api_key: str = "") -> Dict[str, Any]:
     """
     Analyze a prompt and return clarification questions as structured JSON.
     Returns the fail-safe (should_clarify=False) on any error.
     """
-    with sentry_sdk.start_span(op="ai.clarifier", description="Clarify prompt") as span:
-        resolved_model = model or SUMMARIZER_MODEL
-        resolved_model_name, extra = _get_litellm_kwargs(resolved_model)
-        span.set_data("model", resolved_model_name)
-        span.set_data("input_length", len(user_input))
+    resolved_model = model or SUMMARIZER_MODEL
+    try:
+        resolved_model_name, extra = _get_litellm_kwargs(resolved_model, api_key)
+    except MissingAPIKeyError as exc:
+        logger.warning(f"Clarifier skipped: {exc}")
+        return dict(_FAIL_SAFE)
 
-        sentry_sdk.add_breadcrumb(
-            category="clarifier", message="Clarification started",
-            level="info", data={"model": resolved_model_name, "input_length": len(user_input)},
+
+    t0 = time.perf_counter()
+    try:
+        response = litellm.completion(
+            model=resolved_model_name,
+            messages=[
+                {"role": "system", "content": CLARIFIER_SYSTEM_PROMPT},
+                {"role": "user", "content": user_input},
+            ],
+            max_tokens=512,
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            **extra,
+        )
+    except Exception as exc:
+        logger.warning(f"LLM call failed: {exc}")
+        return dict(_FAIL_SAFE)
+
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    if response.usage:
+        log_usage(
+            call_type="clarifier",
+            model=resolved_model_name,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            latency_ms=latency_ms,
         )
 
-        t0 = time.perf_counter()
-        try:
-            response = litellm.completion(
-                model=resolved_model_name,
-                messages=[
-                    {"role": "system", "content": CLARIFIER_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_input},
-                ],
-                max_tokens=512,
-                temperature=0.2,
-                response_format={"type": "json_object"},
-                **extra,
-            )
-        except Exception as exc:
-            logger.warning(f"LLM call failed: {exc}")
-            sentry_sdk.capture_exception(exc)
-            span.set_status("internal_error")
-            return dict(_FAIL_SAFE)
+    raw = response.choices[0].message.content or ""
+    logger.info(f"Clarifier response ({latency_ms}ms): {raw[:300]}")
 
-        latency_ms = int((time.perf_counter() - t0) * 1000)
-        span.set_data("latency_ms", latency_ms)
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning(f"Failed to parse JSON response: {raw[:200]}")
+        return dict(_FAIL_SAFE)
 
-        if response.usage:
-            span.set_data("prompt_tokens", response.usage.prompt_tokens)
-            span.set_data("completion_tokens", response.usage.completion_tokens)
-            log_usage(
-                call_type="clarifier",
-                model=resolved_model_name,
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-                latency_ms=latency_ms,
-            )
+    result: Dict[str, Any] = {
+        "should_clarify": bool(parsed.get("should_clarify", False)),
+        "is_complex": bool(parsed.get("is_complex", False)),
+        "complexity_reason": str(parsed.get("complexity_reason", "")),
+        "suggested_sections": list(parsed.get("suggested_sections", [])),
+        "questions": [],
+    }
 
-        raw = response.choices[0].message.content or ""
-        logger.info(f"Clarifier response ({latency_ms}ms): {raw[:300]}")
+    for q in parsed.get("questions", [])[:4]:
+        if not isinstance(q, dict) or "question" not in q:
+            continue
+        opts = [
+            o for o in list(q.get("options", []))
+            if str(o).strip().lower() != "other"
+        ]
+        result["questions"].append({
+            "id": str(q.get("id", f"q{len(result['questions'])}")),
+            "question": str(q["question"]),
+            "type": "multiple_choice" if opts else "text",
+            "options": opts,
+            "optional": bool(q.get("optional", True)),
+        })
 
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            logger.warning(f"Failed to parse JSON response: {raw[:200]}")
-            sentry_sdk.add_breadcrumb(
-                category="clarifier", message="JSON parse failed",
-                level="warning", data={"raw_preview": raw[:200]},
-            )
-            sentry_sdk.capture_exception(exc)
-            span.set_status("internal_error")
-            return dict(_FAIL_SAFE)
+    if result["should_clarify"] and not result["questions"]:
+        result["should_clarify"] = False
 
-        result: Dict[str, Any] = {
-            "should_clarify": bool(parsed.get("should_clarify", False)),
-            "is_complex": bool(parsed.get("is_complex", False)),
-            "complexity_reason": str(parsed.get("complexity_reason", "")),
-            "suggested_sections": list(parsed.get("suggested_sections", [])),
-            "questions": [],
-        }
-
-        for q in parsed.get("questions", [])[:4]:
-            if not isinstance(q, dict) or "question" not in q:
-                continue
-            opts = [
-                o for o in list(q.get("options", []))
-                if str(o).strip().lower() != "other"
-            ]
+    if result["should_clarify"] and result["is_complex"]:
+        has_delivery_q = any(
+            q["id"] == "delivery_format"
+            or "task sections" in q["question"].lower()
+            or "broken into" in q["question"].lower()
+            for q in result["questions"]
+        )
+        if not has_delivery_q:
             result["questions"].append({
-                "id": str(q.get("id", f"q{len(result['questions'])}")),
-                "question": str(q["question"]),
-                "type": "multiple_choice" if opts else "text",
-                "options": opts,
-                "optional": bool(q.get("optional", True)),
+                "id": "delivery_format",
+                "question": "How would you like the optimized prompt delivered?",
+                "type": "multiple_choice",
+                "options": [
+                    "One complete prompt",
+                    "Broken into task sections (recommended for complex builds)",
+                ],
+                "optional": False,
             })
 
-        if result["should_clarify"] and not result["questions"]:
-            result["should_clarify"] = False
 
-        if result["should_clarify"] and result["is_complex"]:
-            has_delivery_q = any(
-                q["id"] == "delivery_format"
-                or "task sections" in q["question"].lower()
-                or "broken into" in q["question"].lower()
-                for q in result["questions"]
-            )
-            if not has_delivery_q:
-                result["questions"].append({
-                    "id": "delivery_format",
-                    "question": "How would you like the optimized prompt delivered?",
-                    "type": "multiple_choice",
-                    "options": [
-                        "One complete prompt",
-                        "Broken into task sections (recommended for complex builds)",
-                    ],
-                    "optional": False,
-                })
 
-        span.set_data("should_clarify", result["should_clarify"])
-        span.set_data("is_complex", result["is_complex"])
-        span.set_data("question_count", len(result["questions"]))
-        span.set_status("ok")
-
-        sentry_sdk.add_breadcrumb(
-            category="clarifier", message="Clarification complete",
-            level="info", data={
-                "should_clarify": result["should_clarify"],
-                "is_complex": result["is_complex"],
-                "question_count": len(result["questions"]),
-                "latency_ms": latency_ms,
-            },
-        )
-
-        logger.info(f"Clarify result: should_clarify={result['should_clarify']}, questions={len(result['questions'])}, is_complex={result['is_complex']}")
-        return result
+    logger.info(f"Clarify result: should_clarify={result['should_clarify']}, questions={len(result['questions'])}, is_complex={result['is_complex']}")
+    return result

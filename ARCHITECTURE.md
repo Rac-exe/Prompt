@@ -2,13 +2,13 @@
 
 ## 1. System Overview
 
-Prmpt is a **cross-platform desktop application** for **Windows and macOS** that optimizes AI prompts in real-time. It is a coordinated system of **six distinct runtime environments**, each solving a problem the others cannot:
+Prmpt is a **cross-platform desktop application** for **Windows and macOS** that optimizes AI prompts in real-time. It is **local-first**: everything runs on the user's machine, there is no account or login, and the user brings their own OpenRouter API key. It is a coordinated system of **six distinct runtime environments**, each solving a problem the others cannot:
 
-- **Electron Main Process** — orchestrator, IPC hub, window lifecycle, analytics, offline queue, login items, dock control
+- **Electron Main Process** — orchestrator, IPC hub, window lifecycle, local SQLite database, AI provider settings (key storage), login items, dock control
 - **App Window** — React SPA for full chat, history, library, settings, and Spaces (`hiddenInset` title bar on macOS, frameless on Windows)
 - **Overlay Window** — frameless always-on-top floating panel for instant in-context optimization (`visibleOnAllWorkspaces` on macOS so it follows the user across Spaces / Mission Control)
-- **Python AI Service** — FastAPI server (port 8001): LLM streaming, clarification, task planning, voice transcription, OTP auth
-- **Code Intelligence Service** — separate FastAPI microservice (port 8002): hybrid retrieval (vector + full-text + concept + path) with HNSW pgvector, query preprocessing, call-graph expansion, GitHub sync, optional ARQ workers
+- **Python AI Service** — FastAPI server (port 8001): LLM streaming via `litellm` → OpenRouter, clarification, task planning, voice transcription (Deepgram proxy)
+- **Code Intelligence Service** — separate FastAPI microservice (port 8002), fully local: per-project SQLite index, on-device ONNX embeddings + reranker, mode-aware hybrid retrieval (vector + FTS5 full-text + concept + path), call-graph expansion, agentic multi-hop retrieval
 - **Rust Native Module (`platform-core`)** — single N-API crate, **two platform backends**: keyboard hook (`WH_KEYBOARD_LL` on Windows / `CGEventTap` on macOS) and text replacement (`SendInput` on Windows / `CGEventPost` + clipboard restore on macOS)
 
 ```
@@ -30,7 +30,7 @@ Prmpt is a **cross-platform desktop application** for **Windows and macOS** that
                              ┌───────────────────────────────▼──────┐
                              │        Electron Main Process          │
                              │  (index-new.ts — IPC Hub)             │
-                             │  Analytics · Guardrails · Offline Q   │
+                             │  Local SQLite · AI provider keys      │
                              │  LoginItems · Dock (mac)              │
                              └──┬────────────────────┬──────────────┘
                                 │                    │
@@ -41,17 +41,22 @@ Prmpt is a **cross-platform desktop application** for **Windows and macOS** that
               │  (win)              │     │  (mac)                 │
               └─────────────────────┘     └───────────────────────┘
                              │
-              ┌──────────────┼──────────────┬──────────────────┐
-              │              │              │                  │
-   ┌──────────▼──┐  ┌────────▼──────┐  ┌───▼──────────┐  ┌───▼────────────┐
-   │  Supabase    │  │ Python Service │  │ Code Intel   │  │   Cloudinary   │
-   │  Postgres +  │  │ FastAPI :8001  │  │ Service      │  │  (Avatars +    │
-   │  pgvector    │  │ Whisper + LLM  │  │ FastAPI :8002│  │   Attachments) │
-   │  HNSW + RLS  │  │ Sentry SDK     │  │ Sentry+FastApi  │             │
-   └─────────────┘  └───────────────┘  └──────────────┘  └────────────────┘
+         ┌───────────────────┼────────────────────┐
+         │                   │                    │
+┌────────▼─────────┐ ┌───────▼────────┐ ┌─────────▼─────────┐
+│ Local data       │ │ Python Service │ │ Code Intel Service│
+│ {userData}/      │ │ FastAPI :8001  │ │ FastAPI :8002     │
+│   prmpt.db       │ │ litellm        │ │ per-project SQLite│
+│   attachments/   │ │ Deepgram proxy │ │ ONNX embeddings + │
+│   code-intel/    │ │                │ │ reranker          │
+└──────────────────┘ └───────┬────────┘ └─────────┬─────────┘
+                             │  user's key, sent  │
+                             │  with each request │
+                             ▼                    ▼
+               OpenRouter (LLMs) · Deepgram (voice, optional)
 ```
 
-**Observability (Sentry) spans four runtime surfaces**: Electron main, React App Window, React Overlay (both with replay + browser tracing), the Python optimization service, and the Python Code Intelligence service (with `FastApiIntegration` for automatic route spans). PII and prompt content are scrubbed via `beforeSend` before transmission. See §14.
+**Local data, user's own key**: chats, the prompt library, settings, memory and the AI provider settings live in one SQLite file (`{userData}/prmpt.db`); attachments are files under `{userData}/attachments/`; code indexes live under `{userData}/code-intel/`. Both Python services listen on `127.0.0.1`, have no login (single local user), and receive the user's OpenRouter key with each request instead of storing it. Outbound calls go to OpenRouter (LLMs), Deepgram (voice input, only with a Deepgram key) and Hugging Face Hub (one-time ONNX model download). See §13.
 
 ---
 
@@ -65,11 +70,11 @@ There are three ways to open the overlay:
 2. The Rust native module installs a global keyboard hook — **`WH_KEYBOARD_LL` via `SetWindowsHookExW` on Windows**, **`CGEventTap` (`kCGSessionEventTap`, listen-only) attached to the main `CFRunLoop` on macOS**.
 3. A ring buffer in `buffer.rs` accumulates characters from translated key events. The same `on_char_keydown` handler is shared by both backends. When `@prompt` is detected at the buffer tail, it fires `TriggerData { hwnd, trigger_len }` to Node.js via a thread-safe N-API callback.
 4. **`TriggerData.hwnd` is platform-overloaded**: a raw HWND on Windows, the frontmost-application **PID** on macOS (resolved via `NSWorkspace.frontmostApplication`).
-5. Electron main (`index-new.ts`) receives the callback and calls `overlayManager.open()`.
-6. Simultaneously, `TextReplacer` removes `@prompt` from the text field — **Backspace via `SendInput` on Windows**, **clipboard-swap + `Cmd+V` paste via `CGEventPost` on macOS** (the Mac path saves the existing pasteboard, sends N backspaces, paste, then restores).
+5. Electron main (`index-new.ts`) receives the callback, stores the anchor with `setSourceWindow(hwnd, title)` and calls `overlayManager.open()`.
+6. The `@prompt` text stays in the source field until the user inserts a result. `overlay:insert` then calls the native `replaceAtLastAnchor(text)`, which removes the trigger and inserts the replacement in one step — **Shift+Left selection + `KEYEVENTF_UNICODE` injection via `SendInput` on Windows**, **Backspace × N via `CGEventPost` + clipboard-swap `Cmd+V` paste on macOS** (the Mac path saves the existing pasteboard and restores it afterwards). See §6.1.
 7. The overlay opens positioned near the cursor, pre-focused and ready for input.
 
-> **macOS prerequisite — Accessibility permission.** `CGEventTap` and `CGEventPost` require Accessibility access. On startup, `index-new.ts` calls `ensureAccessibilityPermission()` (in `utils/native-bridge.ts`). If missing, the user is shown a dialog with a deep-link to System Settings → Privacy & Security → Accessibility. The hook is not started until the permission is granted (the main process polls for the change).
+> **macOS prerequisite — Accessibility permission.** `CGEventTap` and `CGEventPost` require Accessibility access. Before installing the hook, `index-new.ts` runs `ensureAccessibilityPermission()`, which calls `checkAccessibilityPermission()` from `utils/native-bridge.ts`. If missing, the user is shown a dialog whose **Open System Settings** button opens System Settings → Privacy & Security → Accessibility. The hook is not started until the permission is granted (the main process polls every 2 s for up to a minute).
 
 ### 2.2. `CommandOrControl+5` Global Shortcut
 
@@ -82,9 +87,9 @@ There are three ways to open the overlay:
 1. `SystemTray` creates a tray icon with a context menu. The icon source is platform-aware:
    - **macOS**: `build/tray-iconTemplate.png` (template image — Electron auto-inverts for light/dark menu bars; `@2x` variant for Retina)
    - **Windows**: `build/tray-icon.png` (full color)
-2. Clicking "Open Overlay" calls `overlayManager.open()`.
-3. Clicking "Open App" shows the main App Window.
-4. The "Start at Login" checkbox toggles `app.setLoginItemSettings({ openAtLogin, openAsHidden: true, … })` — Windows additionally passes `path: process.execPath, args: ['--hidden']`.
+2. Clicking the tray icon or "Open Prmpt" shows the main App Window.
+3. "Toggle Overlay (Ctrl+5 / Cmd+5)" calls `overlayManager.toggle()`.
+4. The "Start at Login" checkbox stores the preference (`utils/auto-launch.ts`, `{userData}/auto-launch.json`) and applies it with `app.setLoginItemSettings({ openAtLogin, openAsHidden: true, … })` — Windows additionally passes `path: process.execPath, args: ['--hidden']`. The same toggle is in Settings → Customize → Startup (`auto-launch:get` / `auto-launch:set`). The default is enabled, and `syncAutoLaunchOnStartup()` re-applies the stored preference on every start (OS registration is skipped in unpackaged dev builds).
 
 ### 2.4. Silent Auto-Launch at Login
 
@@ -102,7 +107,7 @@ function isSilentLaunch(): boolean {
 }
 ```
 
-If `isSilentLaunch()` returns true, the main process skips `appWindowManager.show()` and the app sits in the tray only. The user opens the App Window manually from the tray. A breadcrumb is logged to Sentry (`category: 'startup', message: 'Silent launch — window hidden'`).
+If `isSilentLaunch()` returns true, the main process skips `appWindowManager.show()` and the app sits in the tray only. The user opens the App Window manually from the tray.
 
 ---
 
@@ -129,34 +134,39 @@ AppLayout
     └── renders whichever view is active
 ```
 
-### 3.2. Auth Flow
+### 3.2. Startup & Onboarding
 
-All routes inside `AppLayout` are wrapped by `AuthWrapper`. OTP-based email verification is now supported alongside email/password auth.
+There is no login. `App.tsx` wraps the routes in `ErrorBoundary` → `AuthWrapper`; `AuthWrapper` is only a startup gate for the single local user.
 
 ```
 App startup
-  └── AuthWrapper.check()
-        ├── Authenticated → load user profile → show AppLayout
-        └── Not authenticated
-              └── LoginPage
-                    ├── "Sign in" → auth:login → success → AppLayout
-                    ├── "Sign up" → SignupPage → OtpVerification → OnboardingPage → AppLayout
-                    └── "Forgot password" → OTP reset flow → AppLayout
+  └── AuthWrapper → checkAuth() (auth:check)
+        ├── main replies auth:state-changed with the local user (startLocalSession)
+        │     └── error → "Could not open the local database" + Try again
+        ├── aiSettings.get().configured === true → AppLayout
+        └── no OpenRouter key yet
+              ├── first launch → OnboardingPage:
+              │     theme picker → AI provider step (key + models, skippable) → feature tour → AppLayout
+              └── later launches → OnboardingPage aiProviderOnly (AI provider step, skippable) → AppLayout
 ```
 
-`AuthContext` holds the live session state and is consumed by all components. On login/logout, Electron main broadcasts `auth:state-changed` to all windows so the overlay stays in sync.
+Whether the full onboarding has been shown is remembered in `localStorage` (`prmpt-onboarding-completed`). `AuthContext` (the name is historical) holds `{ user, isLoading }` — the local profile and preferences — and is consumed by components such as `ProfileMenu` and `SettingsView`. On startup, `startLocalSession()` also pushes `chats-loaded` and `prompt-library:loaded`, and main tells the overlay `overlay:auth-state { isAuthenticated: true }`.
 
 ### 3.3. All Components
 
-**Auth (`components/auth/`)**
+**Startup (`components/auth/`)**
 
 | Component | Responsibility |
 |---|---|
-| `AuthWrapper.tsx` | Route guard — shows login flow if no active session |
-| `LoginPage.tsx` | Email + password sign-in form with error feedback |
-| `SignupPage.tsx` | Account creation form |
-| `OtpVerification.tsx` | OTP code entry UI for email verification and password reset |
-| `OnboardingPage.tsx` | Post-signup step — display name and custom instructions |
+| `AuthWrapper.tsx` | Startup gate — loading/error screen, then onboarding (or the AI provider step alone) until an OpenRouter key is saved, then the app |
+| `OnboardingPage.tsx` | First-run flow — theme picker, AI provider step (`AIProviderForm variant="onboarding"`, can be skipped), feature tour. With `aiProviderOnly` it shows just the AI provider step |
+
+**Shared (`components/`)**
+
+| Component | Responsibility |
+|---|---|
+| `ErrorBoundary.tsx` | Renders a fallback instead of a blank window when a child throws (wraps both the App Window and the Overlay) |
+| `NavLink.tsx` | Styled navigation link pill used in the sidebar tab bar |
 
 **Chat (`components/chat/`)**
 
@@ -164,13 +174,14 @@ App startup
 |---|---|
 | `ChatView.tsx` | Chat input bar, file attachment zone, skill picker trigger, voice input button, auto-scroll container |
 | `MessageBubble.tsx` | Renders a single user or assistant message — Markdown, image thumbnails, lightbox, edit/retry buttons |
+| `StoredImage.tsx` | `useStoredFileUrl` / `StoredImage` — load a saved attachment from the local attachment store as a data URL (`storage:get-signed-url`) |
 | `ClarificationCard.tsx` | Animated multi-choice question card shown before optimization for complex prompts; supports multi-select, "Other" freetext, delivery format selection, extra notes field |
 | `ClarificationSummaryCard.tsx` | Read-only summary card showing submitted clarification answers with edit capability |
 | `PlusMenu.tsx` | Popover triggered by `+` button — file upload and skill selection |
 | `SkillPicker.tsx` | Searchable, keyboard-navigable skill list; opens via Plus menu or `/` slash command |
 | `VersionNavigator.tsx` | `← 1/3 →` navigator shown on messages with edit/retry versions |
-| `SavePromptModal.tsx` | Modal to save an optimized result to a library collection |
-| `FeedbackWidget.tsx` | Thumbs-up / thumbs-down reaction on assistant messages |
+| `SavePromptModal.tsx` | Modal to save an optimized result to a library collection (also used by the overlay in `compact` mode) |
+| `FeedbackWidget.tsx` | Thumbs-up / thumbs-down reaction on assistant messages (stored in the message metadata via `app:save-feedback`) |
 | `FilePreviewModal.tsx` | Full-screen lightbox for image attachments |
 
 **History (`components/history/`)**
@@ -185,17 +196,17 @@ App startup
 |---|---|
 | `AppLayout.tsx` | Outer shell — sidebar + content area + custom frameless title-bar controls |
 | `Sidebar.tsx` | Navigation tabs (Chat / History / Spaces / Library / Settings), recent chat list with rename/delete context menus, new chat button |
-| `ProfileMenu.tsx` | Dropdown in the sidebar footer — shows avatar, display name, links to Settings, sign-out |
+| `ProfileMenu.tsx` | Dropdown in the sidebar footer — shows avatar and display name ("Stored on this computer"), links to Settings and Help & Docs |
 | `ZoomIndicator.tsx` | Floating indicator showing current zoom level when the user adjusts font size |
-| `NavLink.tsx` | Styled navigation link pill used in the sidebar tab bar |
 
 **Spaces / Projects (`components/projects/`)**
 
 | Component | Responsibility |
 |---|---|
-| `ProjectsView.tsx` | Root orchestrator for the Spaces feature — renders SpacesList or SpaceWorkspace; persists spaces to `localStorage` |
+| `ProjectsView.tsx` | Root orchestrator for the Spaces feature — renders SpacesList or SpaceWorkspace; persists spaces to `localStorage` and publishes a snapshot to main for the overlay (`spaces:publish-snapshot`) |
 | `SpacesList.tsx` | Grid of all created spaces with create/rename/delete; sorts by `lastUsedAt` |
-| `SpaceWorkspace.tsx` | Inside a space: attach local code projects, query the Code Intelligence Service for relevant code chunks, compose a context-rich prompt, and optionally send to the main chat optimizer |
+| `SpaceWorkspace.tsx` | Inside a space: attach local code projects, query the Code Intelligence Service (Find / Ask / Bug / Optimize modes; Ask streams over SSE), compose a context-rich prompt, and optionally send it to the optimizer |
+| `IndexingProgressBar.tsx` | Indeterminate progress bar shown while a project is being indexed |
 | `types.ts` | `Space`, `SpaceProject`, `SpaceMessage`, `RetrievedChunk` interfaces; `loadSpaces`/`saveSpaces` localStorage helpers; `buildTailoredPrompt` that assembles a context-rich prompt from code chunks |
 
 **Library (`components/library/`)**
@@ -207,46 +218,35 @@ App startup
 | `PromptPreviewModal.tsx` | Full-content view of a saved prompt |
 | `EditPromptModal.tsx` | Edit title and content of a saved prompt |
 | `DeleteConfirmModal.tsx` | Confirmation dialog for destructive delete actions |
-| `SharePromptModal.tsx` | Generates and displays a shareable link for a prompt |
-| `SharePromptLinkModal.tsx` | Displays the generated share URL with a copy button |
-| `ShareCollectionModal.tsx` | Generates and displays a shareable link for an entire collection |
-| `SharedLibraryView.tsx` | Read-only view of a shared collection accessed via share token |
-| `SharedPromptPage.tsx` | Stand-alone view for a single shared prompt |
 
 **Settings (`components/settings/`)**
 
 | Component | Responsibility |
 |---|---|
-| `SettingsView.tsx` | Theme, font size, optimizer model selection, custom optimization instructions, account deletion request |
+| `SettingsView.tsx` | Four tabs: **Profile** (name, avatar — stored only on this computer), **AI provider** (`AIProviderForm`), **Customize** (custom instructions, launch at login, theme, font size, font family), **Memory** (`MemoryView`) |
+| `AIProviderForm.tsx` | OpenRouter API key (masked preview of the saved key only), optimizer model and RAG model pickers, optional Deepgram key (settings variant only); saving validates the key with OpenRouter. Used by onboarding and Settings |
+| `ModelPicker.tsx` | Searchable picker over OpenRouter's model list with prices; free text allowed; `requireTools` limits the RAG picker to models that support tool calling |
 | `MemoryView.tsx` | Table of inferred user memory entries with inline edit and delete |
 
 **Profile (`components/profile/`)**
 
 | Component | Responsibility |
 |---|---|
-| `AvatarUploadModal.tsx` | Drag-and-drop or file-picker avatar upload — resizes client-side before `avatar:upload` IPC |
-
-**Feedback (`components/feedback/`)**
-
-| Component | Responsibility |
-|---|---|
-| `FeedbackModal.tsx` | Multi-step feedback form (rating + freetext) triggered from `FeedbackWidget` |
+| `AvatarUploadModal.tsx` | Drag-and-drop or file-picker avatar upload — resizes client-side before `avatar:upload` IPC (stored on the local profile as a data URL) |
 
 **Pages (`pages/`)**
 
 | Page | Route | Description |
 |---|---|---|
-| `Index.tsx` | `/*` | Root orchestrator — owns all IPC listeners, global chat state, view routing |
+| `Index.tsx` | `/` | Root orchestrator — owns all IPC listeners, global chat state, view routing |
 | `NotFound.tsx` | `*` | 404 fallback |
-| `SharePage.tsx` | `/share/:token` | Public shared collection viewer — no auth required |
-| `SharePromptPage.tsx` | `/share/prompt/:token` | Public shared individual prompt viewer — no auth required |
 
 ### 3.4. Key Hooks
 
 | Hook | Purpose |
 |---|---|
 | `useSmoothStreaming` | Adaptive buffered streaming engine — drains tokens at variable speed via `requestAnimationFrame` |
-| `useInitializeSettings` | Loads user preferences after login and applies them to document root |
+| `useInitializeSettings` | Applies cached preferences from `localStorage` immediately on startup, then loads them from the local database and applies them to the document root |
 | `useMessageTree` | Manages the branching message tree for edit/retry version history |
 | `useScrollController` | Smart auto-scroll — follows stream output, pauses when user scrolls up |
 | `useChatUIState` | All transient chat UI state: loading flags, streaming flag, selected skill, attached files |
@@ -267,16 +267,17 @@ The overlay is a separate, always-on-top `BrowserWindow` (520 × 600 px, transpa
 
 | Component | Role |
 |---|---|
-| `overlay/App.tsx` | Root — mounts AuthGate, routing between ChatArea and ChatPicker |
-| `overlay/components/AuthGate.tsx` | Shows login prompt if user is not authenticated |
+| `overlay/App.tsx` | Root — shows SetupGate until an AI provider is configured, then routes between ChatArea and ChatPicker (chat mode) and the Spaces mode |
+| `overlay/components/SetupGate.tsx` | Shown instead of the composer until an OpenRouter key is saved ("Connect your AI provider"); its **Open Prmpt** button sends `overlay:open-app` |
 | `overlay/components/Header.tsx` | App logo, Fast/Thinking mode toggle, close button |
 | `overlay/components/ChatArea.tsx` | Message list, streaming display, save-to-library and insert buttons |
 | `overlay/components/InputSection.tsx` | Text input, file attachments, voice button, skill picker, send/stop |
 | `overlay/components/ChatPicker.tsx` | List of recent chats to continue in the overlay |
-| `overlay/components/CollectionPicker.tsx` | Pick a library collection when saving an optimized prompt |
+| `overlay/components/SpacePicker.tsx` | Pick a Space (from the snapshot relayed by `spaces:list`) whose projects provide codebase context |
+| `SavePromptModal` (from `components/chat/`, `compact`) | Pick a library collection when saving an optimized prompt |
 | `overlay/components/OfflineBanner.tsx` | Amber banner shown when offline |
 | `overlay/components/ProjectStatus.tsx` | Shows currently active Space/project context and indexed status |
-| `overlay/lib/constants.ts` | Overlay-specific constants (window dimensions, animation timings) |
+| `overlay/lib/constants.ts` | Overlay-specific constants (window dimensions, animation timings, attachment limits) |
 | `overlay/lib/types.ts` | Overlay-specific TypeScript interfaces |
 | `overlay/lib/utils.ts` | Overlay utility functions |
 
@@ -286,27 +287,28 @@ The overlay is a separate, always-on-top `BrowserWindow` (520 × 600 px, transpa
 
 | Channel | Payload | Purpose |
 |---|---|---|
-| `overlay:optimize` | `{ text, isRegenerate, mode, chatId, attachedFiles, forcedSkill, previousOutput, wantsSections, clarificationAnswers, … }` | Start streaming optimization |
+| `overlay:optimize` | `{ text, isRegenerate, mode, chatId, attachedFiles, forcedSkill, previousOutput, wantsSections, clarificationAnswers, spaceMode, spaceId, … }` | Start streaming optimization. Refused with an error if no OpenRouter key is configured or the app is offline |
 | `overlay:submit-clarification` | `{ answers, wantsSections, clarificationChoices }` | Resume paused optimization with clarification answers |
 | `overlay:copy` | `{ text }` | Copy text to system clipboard |
 | `overlay:close` | — | Hide the overlay window |
-| `overlay:open-app` | — | Show main app window (e.g. for unauthenticated users) |
+| `overlay:open-app` | — | Show main app window (e.g. from SetupGate to add an API key) |
 | `overlay:new-session` | — | Clear in-memory overlay conversation history |
 | `overlay:truncate-history` | `{ keepCount }` | Sync backend history after user edits/retries |
 | `overlay:stop-generation` | — | Abort current streaming optimization |
+| `overlay:ready` | — | Renderer has mounted and painted (ends the pre-heat fallback timer) |
 
 #### Renderer → Main (invoke — returns a value)
 
 | Channel | Payload | Return | Purpose |
 |---|---|---|---|
 | `overlay:insert` | `{ text }` | `{ success }` | Close overlay + replace `@prompt` in source window via `replaceAtLastAnchor`, fallback to `pasteTextToWindow` |
-| `overlay:insert-section` | `{ text }` | `{ success }` | Paste one task section without closing overlay; auto-sends Enter in chat windows |
-| `overlay:save` | `{ title, content, collectionId? }` | `{ promptId, collectionId }` | Save to prompt library (offline-queued if disconnected) |
-| `overlay:check-auth` | — | `{ isAuthenticated }` | Check current auth state |
-| `overlay:get-settings` | — | user settings | Fetch + cache user settings for overlay styling |
-| `overlay:get-collections` | — | collections[] | Collections for save picker (offline falls back to cache) |
-| `overlay:create-collection` | `{ name, icon? }` | collection | Create new collection (offline-queued) |
-| `overlay:get-chats` | — | `{ id, title }[]` | Chat list for context picker (offline falls back to cache) |
+| `overlay:insert-section` | `{ text }` | `{ success }` | Paste one task section without closing overlay (first insert replaces `@prompt`, later ones paste at the caret); never auto-presses Enter |
+| `overlay:save` | `{ title, content, collectionId? }` | `{ promptId, collectionId }` | Save to prompt library (auto-creates a "Quick Saves" collection when none is given); refreshes the App Window library |
+| `overlay:check-auth` | — | `{ isAuthenticated }` | Always `true` (single local user) |
+| `overlay:get-settings` | — | user settings | Fetch user settings for overlay styling |
+| `overlay:get-collections` | — | collections[] | Collections for save picker |
+| `overlay:create-collection` | `{ name, icon? }` | collection | Create new collection |
+| `overlay:get-chats` | — | `{ id, title }[]` | Chat list for context picker |
 | `overlay:save-to-chat` | `{ chatId, content }` | `{ messageId }` | Append optimized prompt as assistant message to an existing chat |
 | `overlay:get-source-info` | — | `{ hwnd, title, detectedMode, confidence, appName }` | Source window metadata (used for UI mode detection) |
 
@@ -314,14 +316,17 @@ The overlay is a separate, always-on-top `BrowserWindow` (520 × 600 px, transpa
 
 | Channel | Payload | Purpose |
 |---|---|---|
-| `overlay:opened` | `{ isAuthenticated, user }` | Auth state pushed on every open |
-| `overlay:auth-state` | `{ isAuthenticated }` | Auth state change while overlay is open |
+| `overlay:opened` | `{ isAuthenticated, prefill, triggeredByHook }` | Sent on every open; `triggeredByHook` enables the Replace button |
+| `overlay:auth-state` | `{ isAuthenticated }` | Session state (always authenticated as the local user) |
+| `ai-settings:changed` | `AISettingsView` | AI provider settings changed; SetupGate is shown while `configured` is false |
+| `overlay:settings-update` | settings | Theme / font changes relayed from the App Window |
+| `overlay:project-status` | `{ projectId, name, status, auto }` or `null` | Project auto-detected (or lost) by `ActiveWindowDetector` |
 | `overlay:clarification-required` | `{ should_clarify, questions[], is_complex, suggested_sections }` | Pauses optimization, presents clarification UI |
 | `overlay:optimization-chunk` | `{ chunk, accumulated }` | Streaming token delta |
 | `overlay:optimization-complete` | `{ original, optimized }` | Optimization finished |
 | `overlay:optimization-error` | `{ error }` | Humanized error message |
 | `overlay:cursor-pos` | `{ x, y }` | Global cursor pos relative to overlay (60fps, drives emerald glow) |
-| `overlay:upload-partial-failure` | `{ failedFiles }` | Some file uploads failed; partial success |
+| `overlay:upload-partial-failure` | `{ failedFiles }` | Some attachments could not be saved; partial success |
 | `overlay:messages-appended` | `{ chatId, messages[] }` | Real-time push to app window when overlay saves into a context chat |
 
 ---
@@ -333,111 +338,128 @@ The overlay is a separate, always-on-top `BrowserWindow` (520 × 600 px, transpa
 ### 5.1. Startup Sequence
 
 ```
+dotenv: .env from the project root (dev) or resourcesPath/.env (packaged) — optional
+PRMPT_USER_DATA_DIR set? → app.setPath('userData', …)
+app.requestSingleInstanceLock()            (a second launch focuses the existing window)
 app.whenReady()
+  → [macOS packaged] ask for microphone access; pre-flight Automation (System Events) check
+  → installApplicationMenu()               (no default reload / zoom / devtools accelerators)
   → [macOS only] app.dock.setIcon(build/dock-icon.png in dev,
                                    resourcesPath/icon.icns in packaged)
-  → [macOS only] ensureAccessibilityPermission()   (poll → guided dialog if missing)
-  → SupabaseClientManager.initialize()
-  → AppWindowManager.preload()             (hidden BrowserWindow)
-  → OverlayWindowManager.preload()         (hidden BrowserWindow;
+  → initialize():
+      → installCSP()                       (connect-src: 'self' + python-service HTTP/WS)
+      → getDb()                            (open + migrate {userData}/prmpt.db)
+      → new AppWindowManager / OverlayWindowManager / PythonClient /
+        TranscriptionClient / CodeIntelClient
+      → register all IPC handlers          (session, ai-settings, user, settings, chat, overlay,
+                                            skills, avatar, storage, project, spaces bridge,
+                                            prompt library, transcription, window, auto-launch)
+      → initializeParser()                 (tree-sitter WASM, in background)
+      → AppWindowManager.preload()         (hidden BrowserWindow)
+      → OverlayWindowManager.preload()     (hidden BrowserWindow;
                                             visibleOnAllWorkspaces=true on macOS)
-  → PythonClient.healthCheck() + .connect()
-  → CodeIntelClient.healthCheck()          (optional — Spaces feature)
-  → networkMonitor.start()
-  → TranscriptionClient.initialize()
-  → checkAndRestoreSession()               (auto-login if session cookie exists)
-  → analyticsService.initialize(userId)    (starts EventBuffer + session)
-  → register all IPC handlers
-  → startKeystrokeDetection()              (Rust native hook — gated on accessibility on macOS)
-  → globalShortcut.register('CommandOrControl+5')
-  → SystemTray.create()                    (template image on macOS, full color on Windows)
-  → if (!isSilentLaunch()) appWindowManager.show()
-                                          (silent launch → stay in tray)
+      → PythonClient.connect() (background) + healthCheck()
+      → 30 s health loop                   (python:unavailable / python:recovered)
+      → networkMonitor.start()
+      → startKeystrokeDetection()          (Rust native hook — gated on Accessibility on macOS)
+      → globalShortcut.register('CommandOrControl+5')
+      → SystemTray.create()                (template image on macOS, full color on Windows)
+      → syncAutoLaunchOnStartup()
+      → if (!isSilentLaunch()) appWindowManager.show()
+                                           (silent launch → stay in tray)
+      → startLocalSession()                (auth:state-changed with the local user,
+                                            chats-loaded, prompt-library:loaded)
+      → overlayManager.sendAuthState(true)
+      → startCodeIntelProjectServices()    (listProjects → ActiveWindowDetector,
+                                            restoreActiveProject)
 ```
 
 ### 5.2. IPC Handlers (`electron/main/ipc-handlers/`)
 
 | File | IPC Channels Handled |
 |---|---|
-| `chat-handlers.ts` | `chat:send`, `chat:load`, `chat:list`, `chat:create`, `chat:delete`, `chat:rename`, `chat:stop`, `chat:get-message-versions` |
+| `session-handlers.ts` | `auth:check` → `startLocalSession()`, which sends `auth:state-changed` (the local user), `chats-loaded`, `prompt-library:loaded`. There is no login |
+| `ai-settings-handlers.ts` | `ai-settings:get`, `ai-settings:save`, `ai-settings:validate-key`, `ai-settings:list-models`; broadcasts `ai-settings:changed` to both windows (see §5.4) |
+| `chat-handlers.ts` | `app:send-message`, `app:regenerate-response`, `app:submit-clarification`, `app:optimize-prompt`, `app:stop-generation`, `app:get-generation-status`, `app:load-chats`, `app:create-chat`, `app:load-messages`, `app:rename-chat`, `app:delete-chat`, `app:save-to-chat`, `app:copy-to-clipboard`, `app:save-feedback`, `spaces:get-active-stream`. Validates attachments (max 5 files, 10 MB each, MIME detected from magic bytes) and refuses to send without an OpenRouter key or while offline |
 | `overlay-ipc-handlers.ts` | `overlay:optimize`, `overlay:submit-clarification`, `overlay:save`, `overlay:insert`, `overlay:insert-section`, `overlay:copy`, `overlay:close`, `overlay:open-app`, `overlay:check-auth`, `overlay:get-settings`, `overlay:get-collections`, `overlay:create-collection`, `overlay:get-chats`, `overlay:save-to-chat`, `overlay:get-source-info`, `overlay:new-session`, `overlay:truncate-history`, `overlay:stop-generation`, cursor polling |
-| `auth-handlers.ts` | `auth:login`, `auth:signup`, `auth:logout`, `auth:check`, session restoration, OTP send/verify |
-| `prompt-library-handlers.ts` | Collections CRUD, prompt CRUD, share token generation and resolution |
-| `skill-handlers.ts` | `skill:list` — reads `python-service/app/skills/skill_*.md` |
-| `settings-handlers.ts` | `settings:load`, `settings:save` |
-| `user-handlers.ts` | `user:get-profile`, `user:update-profile` |
-| `avatar-handlers.ts` | `avatar:upload` — resize + upload to Cloudinary |
-| `feedback-handlers.ts` | `feedback:submit` — stores rating + freetext feedback in Supabase |
-| `deletion-handlers.ts` | `account:request-deletion`, `account:cancel-deletion` — GDPR deletion scheduling |
-| `project-handlers.ts` | `project:create`, `project:list`, `project:index`, `project:retrieve`, `project:watch`, `project:unwatch`, `project:git-info` — Spaces + Code Intelligence IPC |
-| `file-upload-service.ts` | File validation: allowed MIME types, max 10 MB each, max 5 files, magic-byte verification |
-| `network-monitor-singleton.ts` | Singleton `networkMonitor` — broadcasts `network-status` to all windows |
+| `prompt-library-handlers.ts` | `prompt-library:get-all`, `prompt-library:get-collections`, `prompt-library:create-collection`, `prompt-library:rename-collection`, `prompt-library:delete-collection`, `prompt-library:save-prompt`, `prompt-library:create-collection-and-save`, `prompt-library:update-prompt`, `prompt-library:delete-prompt`, `prompt-library:toggle-favorite` (registered on import) |
+| `skill-handlers.ts` | `skills:list` — reads `files/skill_*.md` (`resourcesPath/files` in packaged builds) |
+| `settings-handlers.ts` | `settings:load`, `settings:save`; relays `overlay:settings-update` to the overlay |
+| `user-handlers.ts` | `app:request-user-data`, `user:update-profile`, `user:update-preferences`, `user:set-personalization-prompt`, `memory:get`, `memory:upsert`, `memory:delete`, `memory:get-enabled`, `memory:set-enabled` |
+| `avatar-handlers.ts` | `avatar:upload` — validates a base64 image data URL (≤ 2 MB) and stores it on the local profile |
+| `file-upload-service.ts` | Local attachment store — `saveAttachment()` (content-addressed under `{userData}/attachments/`), `storage:get-signed-url` (returns the file as a data URL), `storage:open-pdf` (opens it in the default viewer); paths outside the attachments folder are refused |
+| `project-handlers.ts` | `project:add`, `project:remove`, `project:list`, `project:status`, `project:set-active`, `project:get-active`, `project:reindex`, `project:toggle-watching`, `project:is-watching`, `project:is-scanning`, `project:retrieve`, `project:context`, `project:context-stream` (+ `:abort`), `project:ensure-fresh` — Spaces + Code Intelligence IPC |
+| `spaces-bridge-handlers.ts` | `spaces:publish-snapshot`, `spaces:list`, `spaces:append-messages` → `spaces:apply-append` — relays Spaces state between the App Window and the overlay |
+| `network-monitor-singleton.ts` | Singleton `networkMonitor` — broadcasts `network:status` to all windows |
+
+Handled inline in `index-new.ts`: `transcription:start`, `transcription:audio-chunk`, `transcription:stop`, `transcription:debug`, `window:minimize` / `window:maximize` / `window:close`, `shell:openExternal` (http/https only), `auto-launch:get` / `auto-launch:set`. `AppWindowManager` handles `zoom:get` / `zoom:set`.
 
 ### 5.3. Services (`electron/main/database/services/`)
 
+All services read and write the local SQLite database (`database/local-db.ts`, §9.1) as the single local user.
+
 | Service | Responsibility |
 |---|---|
-| `ChatService` | CRUD for chats and messages in Supabase |
-| `PromptLibraryService` | Collections, saved prompts, share tokens |
-| `MemoryService` | Read/write/delete user memory entries |
-| `MemoryAnalyzer` | Infer domain expertise and writing style from prompt history; exponential recency decay scoring |
-| `UserService` | Profile reads and updates |
-| `SettingsService` | Persist user settings to Supabase |
-| `AuthService` | Supabase auth — sign in, sign up, sign out, session, OTP |
-| `OptimizationService` | Track optimization metadata (model, skill, token count) |
-| `DeletionService` | GDPR account deletion: schedule, cancel, and execute deletion requests |
-| `RateLimitService` | Daily usage cap enforcement — checks and increments per-user daily counters |
+| `ChatService` | Chats and messages (`chats`, `messages`); message `metadata` holds attachments, edit/retry version info and feedback |
+| `PromptLibraryService` | Collections and saved prompts (`prompt_collections`, `saved_prompts`); favorites are a flag in the prompt metadata |
+| `MemoryService` | Read/write/delete `user_memory` entries; `buildMemoryContext()` for the optimizer |
+| `MemoryAnalyzer` | Every 3rd optimization, sends the prompt + output to `/extract-memory-facts` and upserts the returned facts (explicit entries take priority) |
+| `UserService` | The local `profile` row — name, avatar (data URL), personalization prompt, UI settings; created on first use |
+| `SettingsService` | The `user_settings` row — theme, font size/family, custom instructions, memory toggle |
+| `OptimizationService` | Local log of optimizations in `prompt_optimizations` (messages reference rows via `optimization_id`) |
+| `AISettingsService` (`aiSettings`) | OpenRouter key, optimizer + RAG models, optional Deepgram key (§5.4) |
 
-### 5.4. Analytics System (`electron/main/analytics/`)
+### 5.4. AI Provider Settings (`ai-settings-service.ts`)
 
-| Module | Responsibility |
-|---|---|
-| `AnalyticsService` | Singleton — manages app sessions in `app_sessions` Supabase table; calls `startSession()` on login, `endSession()` on logout/quit; crash-recovery: closes any sessions left open by a previous crash (sets `duration_seconds: null` to distinguish clean vs crash endings) |
-| `EventBuffer` | In-memory queue for `usage_events`; auto-flushes every 10 s or when 50 events accumulate; on flush failure, serializes events to a per-user JSON file in `userData/offline-cache/`; drains offline file on next successful connection |
+Prmpt has no managed keys: the user enters their own OpenRouter API key, at first launch (onboarding AI provider step) or in Settings → AI provider.
 
-Analytics is fire-and-forget — no analytics failure can break the user-facing app flow.
+| Setting | Default | Used for |
+|---|---|---|
+| OpenRouter API key | — (required for any LLM call) | Every LLM call in both Python services |
+| Optimizer model | `anthropic/claude-haiku-4.5` | Prompt optimization (python-service) |
+| RAG model | `anthropic/claude-haiku-4.5` | Code-intel answers and the agentic retrieval loop — must support tool calling |
+| Deepgram API key | — (optional) | Voice input (`/ws/transcribe-stream`) |
 
-### 5.5. Optimization Subsystem (`electron/main/optimization/`)
+- **Storage** — one JSON value under the `app_kv` key `ai_settings` in `prmpt.db`. Keys are encrypted with Electron `safeStorage` (OS keystore) on Windows/Linux when available, and stored as plain text on macOS (avoids Keychain prompts). A key that can no longer be decrypted is treated as missing.
+- **Renderer view** — keys never leave the main process. The renderer only receives `AISettingsView`: `configured`, `hasApiKey`, `apiKeyPreview` (`…` + last 4 characters), the two models, `hasDeepgramKey`, `deepgramKeyPreview`.
+- **Validation** — `ai-settings:save` with a new OpenRouter key first calls `GET https://openrouter.ai/api/v1/key`; a 401/403 rejects the save, so a typo cannot replace a working key.
+- **Model list** — `ai-settings:list-models` fetches OpenRouter's public `GET https://openrouter.ai/api/v1/models` (cached for an hour) and maps it to id, name, context length, tool support and price per million tokens.
+- **Change events** — every save broadcasts `ai-settings:changed` to the App Window and the overlay (the overlay's SetupGate reacts to it).
+- **Readiness checks** — `chat-handlers.ts` (`aiReadinessError()`) and `overlay:optimize` refuse to send a request when no key is configured or `networkMonitor` reports offline.
+- **Transport** — `pythonHeaders()`, `codeIntelHeaders()` and `llmPayload()` attach the key and models to each request (§13.2).
 
-| Module | Responsibility |
-|---|---|
-| `AIGuardrails` | Prevents spam and duplicate requests: enforces 10-char minimum, 90% Levenshtein similarity threshold (skips near-duplicate prompts), 3-second cooldown between requests, max 1 in-flight request per session |
-| `ResponseValidator` | Validates that the optimization response is substantively different from the input and meets quality criteria |
-| `SessionState` | Session state machine (`IDLE → CLARIFYING → OPTIMIZING → COMPLETE → ERROR`) managing the lifecycle of a single optimization turn |
-| `StabilityTracker` | Tracks connection stability to the Python service; adjusts retry strategy based on consecutive failure counts |
-
-### 5.6. Code Intelligence System (`electron/main/services/` + `api/code-intel-client.ts`)
+### 5.5. Code Intelligence System (`electron/main/services/` + `api/code-intel-client.ts`)
 
 The Code Intelligence system enables Spaces — a feature where users attach local code repositories to a workspace and receive semantically-retrieved code context that is automatically injected into their prompts.
 
 | Module | Responsibility |
 |---|---|
-| `CodeIntelClient` | Axios HTTP client for the Code Intelligence Service (port 8002); attaches the user's Supabase JWT on every request; methods: `createProject`, `listProjects`, `getProject`, `deleteProject`, `ingestSkeleton`, `retrieve`, `syncProject`, `deleteChunksForFile` |
+| `CodeIntelClient` | Axios HTTP client for the Code Intelligence Service (port 8002, 300 s timeout); sends `X-Prmpt-Code-Intel-Root` plus the user's key and RAG model (`aiSettings.codeIntelHeaders()`) on every request; methods: `healthCheck`, `createProject`, `listProjects`, `getProject`, `deleteProject`, `deleteChunksForFile`, `ingestSkeleton`, `retrieve`, `context`, `contextStream` (SSE) |
 | `CodeParser` | Tree-sitter WASM-based code parser; lazy-loads language grammars (TypeScript, Python, Go, Rust, Java, Ruby, C/C++, C#); extracts function/class/method definitions with signatures, line ranges, imports, and callee references as `ChunkData` objects; computes SHA-256 content hashes |
-| `FileWatcher` | Chokidar-based directory watcher; debounces file changes (2 s); skips `node_modules`, `.git`, `dist`, `build`, `venv`, `target`; checks content hash against `LocalProjectCache` before re-sending to avoid redundant re-indexing; handles file add/change/delete events |
+| `FileWatcher` | Chokidar-based directory watcher; debounces file changes (1.5 s); skips `node_modules`, `.git`, `dist`, `build`, `venv`/`.venv`, `target` and other build/cache folders; checks content hash against `LocalProjectCache` before re-sending to avoid redundant re-indexing; handles file add/change/delete events |
 | `GitService` | Executes `git` CLI commands in a child process; reads `currentBranch`, `defaultBranch`, `aheadCount`, `behindCount`, and recent commit history; used to provide branch context to the Code Intelligence Service |
-| `LocalProjectCache` | SQLite-backed (better-sqlite3) per-project hash cache: stores file path → content hash pairs; checked before every re-index to skip unchanged files; cleared on project deletion |
-| `ActiveWindowDetector` | Polls the currently focused window title using the Rust native module; used by the overlay to surface project context relevant to the user's current application |
+| `LocalProjectCache` | Per-project file path → content hash cache, stored in the `file_cache` table of that project's `index.db` (shared with the service); checked before every re-index to skip unchanged files; cleared on project deletion |
+| `code-intel-local-store` | Opens `{userData}/code-intel/projects/<project_id>/index.db` (better-sqlite3, WAL) with the same schema the service uses; `getCodeIntelRoot()` is the root announced to the services |
+| `ActiveWindowDetector` | Polls the focused window title every 2 s via the `active-win` npm package and matches it against known project names; used by the overlay to surface project context relevant to the user's current application |
 
-### 5.7. Other Modules
+### 5.6. Other Modules
 
 | Module | Path | Purpose |
 |---|---|---|
+| `local-db` | `electron/main/database/local-db.ts` | Opens `{userData}/prmpt.db` (better-sqlite3, WAL, foreign keys on), runs the schema migration (`user_version`), exports `LOCAL_USER_ID` and the `app_kv` helpers (`kvGet` / `kvSet` / `kvDelete`) |
 | `OverlayWindowManager` | `electron/main/overlay/overlay-window-manager.ts` | Create, position, show, hide, toggle the overlay `BrowserWindow`. On macOS sets `visibleOnAllWorkspaces`, `setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })`, uses `showInactive()` and `moveTop()` so the overlay appears above whatever app the user is in without stealing focus from the source app's caret |
 | `AppWindowManager` | `electron/main/windows/app-window-manager.ts` | Create and manage the main app `BrowserWindow`. **macOS** uses `titleBarStyle: 'hiddenInset'` + `trafficLightPosition: { x: 12, y: 12 }`; **Windows** uses `frame: false`. Wires `app.dock.show()` on `create()`/`show()` and `app.dock.hide()` on `hide()` and the `close` event so the App Window appears in the macOS Dock and `Cmd+Tab` switcher only while visible |
-| `SystemTray` | `electron/main/windows/system-tray.ts` | Cross-platform system tray. Loads `tray-iconTemplate.png` on macOS (template image) or `tray-icon.png` on Windows. Menu includes Open Overlay, Open App, **Start at Login** (checkbox bound to `app.getLoginItemSettings().openAtLogin`), Quit. Menu label dynamically shows `Cmd+5` (macOS) or `Ctrl+5` (Windows) |
-| `PythonClient` | `electron/main/api/python-client.ts` | WebSocket client to Python service (`/ws/optimize-stream`); exposes `optimizeStream()`, `clarify()`, `generateTitle()`, `abortLatestStream()` |
-| `CodeIntelClient` | `electron/main/api/code-intel-client.ts` | HTTP client for the Code Intelligence Service (port 8002). All public methods wrapped in `Sentry.startSpan` (`codeIntel.ingestSkeleton`, `codeIntel.retrieve`); health check sets `Sentry.setTag('code_intel.healthy', …)`; successful retrieval emits a `code-intel` breadcrumb with project_id and chunk count |
-| `TranscriptionClient` | `electron/main/api/transcription-client.ts` | WebSocket client to Python transcription endpoint |
-| `localCache` | `electron/main/database/local-cache.ts` | In-memory + disk JSON cache (top 5 recent chats) |
-| `LocalProjectCache` | `electron/main/database/local-project-cache.ts` | SQLite-backed (better-sqlite3) per-project file content hash store. `Sentry.captureException` if `better-sqlite3` fails to load |
-| `offlineQueue` | `electron/main/database/offline-queue.ts` | Buffers Supabase writes when offline; flushes on reconnect |
-| `authState` | `electron/main/utils/auth-state.ts` | Singleton — current auth state (userId, email, isAuthenticated, accessToken) shared across handlers |
+| `SystemTray` | `electron/main/windows/system-tray.ts` | Cross-platform system tray. Loads `tray-iconTemplate.png` on macOS (template image) or `tray-icon.png` on Windows. Menu: Open Prmpt, Toggle Overlay (`Cmd+5` / `Ctrl+5`), **Start at Login** (checkbox bound to the stored auto-launch preference), Quit |
+| `PythonClient` | `electron/main/api/python-client.ts` | WebSocket client to Python service (`/ws/optimize-stream`, sends the `llm` settings object in every message) plus an HTTP client whose interceptor adds the key/model headers; exposes `optimizeStream()`, `clarify()`, `optimize()`, `generateTitle()`, `extractMemoryFacts()`, `healthCheck()`, `abortLatestStream()` |
+| `TranscriptionClient` | `electron/main/api/transcription-client.ts` | WebSocket client to the Python transcription endpoint; the start message carries the user's Deepgram key |
+| `authState` | `electron/main/utils/auth-state.ts` | Fixed session object — always authenticated as `LOCAL_USER_ID`; kept so handlers that read it stay unchanged |
 | `native-bridge` | `electron/main/utils/native-bridge.ts` | Wraps the Rust `native/platform-core/` module via `index.js` (which loads the correct `.node` per platform). Provides `checkAccessibilityPermission()` (macOS-only) and graceful fallback if the binary is unavailable |
-| `TextReplacer` | `electron/main/text/text-replacer.ts` | Removes `@prompt` trigger text. On Windows: `replaceAtLastAnchor` via `SendInput` (Backspace + Unicode injection). On macOS: clipboard-swap paste via `CGEventPost` (saves pasteboard, deletes N chars, paste, restores) |
-| `WindowTracker` | `electron/main/context/window-tracker.ts` | Tracks the last focused non-Prmpt window (used for overlay insert target) |
-| `ActiveWindowDetector` | `electron/main/services/active-window-detector.ts` | Polls active window via the **`active-win`** npm package (not a separate native module). Used to surface project context relevant to the user's current application; lazy-required, with `Sentry.captureException` on require failure and breadcrumbs on start/stop |
-| `ErrorLog` | `electron/main/database/error-log.ts` | Local error log file written to `userData/error-log.json`; surfaces critical errors that can't reach Sentry |
+| `window-detector` | `electron/main/utils/window-detector.ts` | Classifies the source window as "chat" or "document" from its title (drives the section-insert UI) |
+| `NetworkMonitor` | `electron/main/utils/network-monitor.ts` | Polls `net.isOnline()` every 5 s; broadcasts `network:status` and fires `network:reconnected` |
+| `auto-launch` | `electron/main/utils/auto-launch.ts` | Start-at-login preference in `{userData}/auto-launch.json`; applies it to the OS login item (packaged builds only) |
+| `application-menu` | `electron/main/menu/application-menu.ts` | Custom app menu: shows "Prmpt" on macOS, drops the View menu (no reload / zoom / devtools accelerators); no menu on Windows |
+| `space-stream-store` | `electron/main/services/space-stream-store.ts` | In-memory buffer of the active Space stream per space, so SpaceWorkspace can resume rendering after remounting |
+| `ErrorLog` | `electron/main/database/error-log.ts` | Local append-only error log written to `{userData}/error-log.json` (capped at 200 entries); captures non-fatal errors such as failed background saves |
 
 ---
 
@@ -464,7 +486,7 @@ There is **one** Rust crate at `native/platform-core/` — a **cross-platform N-
 | `sendEnterToWindow(hwnd)` | Sends an Enter keystroke (auto-submit in chat apps) |
 | `forceFocusWindow(hwnd)` | Brings a window to the foreground. Windows: `SetForegroundWindow` with attach-thread-input dance. macOS: `osascript` `tell process X to activate` against the PID |
 
-> **`TriggerData.hwnd` is platform-overloaded.** On Windows it's a raw HWND. On macOS it's the **PID** of the frontmost application (resolved via `NSWorkspace.frontmostApplication`). Code paths in Electron (`overlay:insert`, `overlay:insert-section`, `WindowTracker`) treat it as an opaque integer "anchor" and forward it back to the same native function, so the abstraction holds.
+> **`TriggerData.hwnd` is platform-overloaded.** On Windows it's a raw HWND. On macOS it's the **PID** of the frontmost application (resolved via `NSWorkspace.frontmostApplication`). Code paths in Electron (`setSourceWindow`, `overlay:insert`, `overlay:insert-section`) treat it as an opaque integer "anchor" and forward it back to the same native function, so the abstraction holds.
 
 ### 6.2. Source Layout
 
@@ -505,24 +527,20 @@ There is **one** Rust crate at `native/platform-core/` — a **cross-platform N-
 
 ### 7.1. HTTP / WebSocket Endpoints
 
-| Endpoint | Type | Auth | Description |
+| Endpoint | Type | Provider settings from | Description |
 |---|---|---|---|
 | `GET /` | HTTP | — | Service info and endpoint listing |
 | `GET /health` | HTTP | — | Liveness probe — `{ status: "ok" }` |
-| `GET /health/ready` | HTTP | — | Readiness probe — checks LLM API key, model, Whisper model |
-| `POST /optimize` | HTTP | JWT | Single-shot (non-streaming) prompt optimization with TTL cache |
-| `WS /ws/optimize-stream` | WebSocket | JWT | **Primary** streaming optimization — receives chunks over WebSocket |
-| `WS /ws/transcribe-stream` | WebSocket | JWT | Deepgram Nova-2 streaming transcription proxy (primary voice path) |
-| `POST /transcribe-audio` | HTTP | JWT | Batch WAV transcription via local faster-Whisper (upload mode) |
-| `POST /clarify` | HTTP | JWT | LLM-driven clarification question generation |
-| `POST /generate-title` | HTTP | JWT | Auto-generate 3-5 word chat title (TITLE_MODEL, temp 0.3, 20 tokens) |
-| `POST /extract-memory-facts` | HTTP | JWT | Extract user/behavioral/context memory facts (MEMORY_MODEL, temp 0.1) |
-| `POST /auth/send-signup-otp` | HTTP | — | Send OTP for email verification during signup |
-| `POST /auth/verify-signup-otp` | HTTP | — | Verify OTP and complete signup |
-| `POST /auth/send-reset-otp` | HTTP | — | Send OTP for password reset |
-| `POST /auth/reset-password` | HTTP | — | Reset password with valid OTP |
+| `GET /health/ready` | HTTP | — | Readiness probe — checks the optimizer model config and, if `torch` is installed, the Whisper model (the API key arrives per request, so it is not checked) |
+| `POST /optimize` | HTTP | Headers | Single-shot (non-streaming) prompt optimization with TTL cache |
+| `WS /ws/optimize-stream` | WebSocket | `llm` object in each message | **Primary** streaming optimization — receives chunks over WebSocket |
+| `WS /ws/transcribe-stream` | WebSocket | `deepgram_api_key` in the start message | Deepgram Nova-2 streaming transcription proxy (the voice path the app uses) |
+| `POST /transcribe-audio` | HTTP | — | Batch WAV transcription via local faster-Whisper; returns 501 unless `torch` is installed |
+| `POST /clarify` | HTTP | Headers | LLM-driven clarification question generation |
+| `POST /generate-title` | HTTP | Headers | Auto-generate 3-5 word chat title (TITLE_MODEL, temp 0.3, 20 tokens) |
+| `POST /extract-memory-facts` | HTTP | Headers | Extract user/behavioral/context memory facts (MEMORY_MODEL, temp 0.1) |
 
-All authenticated endpoints verify the user's Supabase JWT (ES256 / HS256) via `app/auth.py`. Rate limiting via SlowAPI (`60/minute` default per IP, `10000/minute` application-wide). CORS is restricted to `localhost`/`127.0.0.1` by default (override via `ALLOWED_ORIGINS` env var). In production, `/docs`, `/redoc`, and `/openapi.json` are disabled.
+There is no authentication: the service binds to `127.0.0.1` and serves a single local user. `BrowserOriginGuard` (`app/origin_guard.py`, §13.3) rejects requests from web pages, and `RequestIDMiddleware` echoes/sets `X-Request-ID`. Provider settings are read per request (`X-Prmpt-OpenRouter-Key`, `X-Prmpt-Optimizer-Model`, `X-Prmpt-Rag-Model` headers, or the WebSocket `llm` object) and never stored; `OPENROUTER_API_KEY` from `.env` is only a fallback for calling the service directly. Errors are mapped to user-facing messages by `user_facing_error()` in `pipeline_v2/config.py` (missing key, rejected key, unknown model, rate/credit limit). In production (`APP_ENV=production`), `/docs`, `/redoc`, and `/openapi.json` are disabled.
 
 ### 7.2. Optimization Pipeline (`pipeline_v2/`)
 
@@ -557,12 +575,12 @@ User Prompt + Chat History + Files + Clarification Answers + Project Context
 | `optimizer.py` | Orchestrates all four pipeline steps; injects clarification answers, project context, and user memory into the system prompt |
 | `clarifier.py` | LLM-driven clarification question generator: analyzes the prompt for missing context, returns 2–4 structured multiple-choice questions; detects complex multi-part builds and adds a delivery format question; temperature=0.2, `json_object` response format |
 | `task_planner.py` | Pre-pass for complex builds: when the user wants sectioned output, produces a structured task graph (3–12 ordered tasks with dependencies, concrete outputs, and state-after descriptions) before the optimizer writes sectioned output |
-| `project_context.py` | Calls the Code Intelligence Service `/api/retrieve` to fetch semantically-relevant code chunks and formats them as a structured `[CODEBASE CONTEXT]` block injected into the optimizer's system prompt |
+| `project_context.py` | Calls the Code Intelligence Service `/api/context` (falling back to `/api/retrieve`) to fetch relevant code chunks, forwarding the user's key, RAG model and `X-Prmpt-Code-Intel-Root`; formats the result as a structured `[CODEBASE CONTEXT]` block injected into the optimizer's system prompt |
 | `document_parser.py` | PDF text extraction (PyMuPDF), image vision API calls, 10 MB / 8 K token limits, magic-byte validation |
 | `fast_mode.py` | Keyword-based prompt type detection; applies a targeted system prompt |
 | `context.py` | `ChatContext` — maintains ordered message history for the pipeline |
-| `config.py` | Reads `OPTIMIZER_MODEL`, `SUMMARIZER_MODEL`, `TITLE_MODEL`, `MEMORY_MODEL`, `OPENROUTER_API_KEY` from env |
-| `skills.py` | Loads and parses `skill_*.md` files from `python-service/app/skills/` |
+| `config.py` | Default models from env (`OPTIMIZER_MODEL`, `SUMMARIZER_MODEL`, `TITLE_MODEL`, `MEMORY_MODEL`); `LLMSettings` (per-request key + models from headers or the WebSocket `llm` object); `provider_kwargs()` (request key, else the `OPENROUTER_API_KEY` fallback); `user_facing_error()` |
+| `skills.py` | Loads and parses `skill_*.md` files from the repo-root `files/` directory |
 | `usage_logger.py` | Appends per-request token usage to daily `.jsonl` log files in `pipeline_v2/storage/usage/` |
 
 ### 7.3. Clarification Flow
@@ -614,39 +632,30 @@ Detected automatically from the model name string. Supported models for image in
 - Anthropic: `claude-3-5-sonnet`, `claude-3-5-haiku`, `claude-haiku-4`, `claude-sonnet-4`
 - Google: `gemini-1.5-flash`, `gemini-1.5-pro`
 
-### 7.6. OTP Email Auth (`app/email_otp.py`)
-
-Self-contained OTP service for email verification and password reset:
-- Generates a 6-digit OTP, stores it in an in-memory dict with expiry (10 min).
-- Sends the OTP via email using configured SMTP credentials.
-- `verify_signup_otp` — verifies OTP, creates the Supabase user, and deletes the OTP record.
-- `reset_password` — verifies OTP, calls Supabase Admin API to update password.
-- `cleanup_expired` — runs every 5 minutes in a background asyncio task to remove expired OTPs.
-
-### 7.7. Prompt Cache & Server-Side Rate Limiting
+### 7.6. Prompt Cache & Concurrency
 
 **Prompt Cache**: `TTLCache(maxsize=200, ttl=300)` — identical prompts within 5 minutes return the cached result instantly. Cache is bypassed for regeneration requests (which append a microsecond-precision `[REGENERATE_{id}]` suffix). Cache key is the raw prompt text; result is the cleaned optimized text.
 
-**Rate Limiter**: In-memory per-user daily counter (`_rate_counters`, keyed as `"{user_id}:{YYYY-MM-DD}"`). Resets automatically at UTC midnight. Default limit: `DAILY_REQUEST_LIMIT=50` (env-configurable). Enforced both on `POST /optimize` (HTTP) and `/ws/optimize-stream` (WebSocket) — the WebSocket path checks the limit per-request inside the `while True:` receive loop, allowing the connection to stay alive and serving error frames rather than closing.
-
 **Concurrency Semaphore**: `_optimize_semaphore = Semaphore(MAX_CONCURRENT_OPTIMIZATIONS=50)` — caps simultaneous LLM inference calls to prevent resource exhaustion.
 
-### 7.8. Voice Transcription — Dual Stack
+There are no request quotas or rate limits in the service; usage is bounded only by the user's own OpenRouter account.
 
-Prmpt supports two transcription backends depending on hardware availability:
+### 7.7. Voice Transcription — Dual Stack
+
+Prmpt has two transcription backends. The desktop app uses Path A; Path B is an optional local fallback.
 
 #### Path A: Deepgram Nova-2 (Primary — `/ws/transcribe-stream`)
-Real-time streaming proxy. FastAPI acts as a relay between the Electron WebSocket and Deepgram's cloud STT.
+Real-time streaming proxy. FastAPI acts as a relay between the Electron WebSocket and Deepgram's cloud STT, using the **user's own Deepgram key** (optional; entered in Settings → AI provider). Without a key, the service answers with "Voice input needs a Deepgram API key. Add one in Prmpt Settings > AI provider."
 
 **Flow**:
-1. Client sends `{ action: "start", session_id, sample_rate }` to establish the session.
-2. Python opens a connection to `wss://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&interim_results=true&utterance_end_ms=1000&endpointing=300`.
+1. Client sends `{ action: "start", session_id, sample_rate, deepgram_api_key }` to establish the session (`DEEPGRAM_API_KEY` from `.env` is only a fallback for local testing).
+2. Python opens a connection to `wss://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true&interim_results=true&utterance_end_ms=1000&vad_events=true&endpointing=300` with `Authorization: Token <key>`. A rejected key is reported as "Deepgram rejected the API key."
 3. Audio binary frames from Electron are forwarded directly to Deepgram.
 4. `_deepgram_relay()` reads Deepgram JSON results, accumulates finalized segments, and pushes `{ type: "transcription", text, accumulated, is_final, speech_final }` back to the client.
 5. Client sends `{ action: "stop" }` → Python sends `{ type: "CloseStream" }` to Deepgram → relay drains remaining results.
 
 #### Path B: Local faster-Whisper (Fallback — `/transcribe-audio`)
-Batch WAV upload path used when `torch` is not installed or for upload mode.
+Batch WAV upload path. It only works when `torch`, `faster-whisper` and `scipy` are installed separately — none of them are in `requirements.txt` — and returns 501 otherwise. The desktop app does not call it (`PythonClient.transcribeAudio()` has no callers).
 
 **Stack**: faster-Whisper `small` model (int8 quantization, CPU) + Silero VAD
 
@@ -665,7 +674,7 @@ Batch WAV upload path used when `torch` is not installed or for upload mode.
 - `MAX_SPEECH_S = 30s` — hard cap to prevent memory growth
 - `OVERLAP_SECONDS = 1.0s` — sliding window overlap for phonetic continuity at chunk boundaries
 
-Both Whisper and Silero VAD models are preloaded at startup to eliminate cold-start latency.
+When `torch` is installed, the Whisper and Silero VAD models are preloaded in the background at startup to eliminate cold-start latency.
 
 ---
 
@@ -673,85 +682,103 @@ Both Whisper and Silero VAD models are preloaded at startup to eliminate cold-st
 
 **Technology**: Separate FastAPI microservice — `code-intelligence-service/`
 **Port**: `127.0.0.1:8002`
-**Database**: Supabase PostgreSQL + `pgvector` extension (HNSW index)
-**Optional**: Redis (`REDIS_URL`) for ARQ background workers; the service runs without it but ingest is then inline async
+**Storage**: one local SQLite file per project (`<code-intel-root>/projects/<project_id>/index.db`) with FTS5 full-text search; no server database and no job queue
+**Models**: embeddings and reranker run on-device via ONNX (`onnxruntime`, weights downloaded once from Hugging Face Hub); LLM steps go to OpenRouter through `litellm` with the user's key
 
 ### 8.1. Architecture
 
 The service is a thin FastAPI app (`app/main.py`) with:
-- `RequestIDMiddleware` (echoes/sets `X-Request-ID`)
-- `SlowAPIMiddleware` rate limiter (`120/min` default per IP)
-- CORS limited to `localhost`/`127.0.0.1` (override via `ALLOWED_ORIGINS`)
-- **Sentry** initialized with `LoggingIntegration` + **`FastApiIntegration`** — every route gets an automatic span; logs at ERROR level become Sentry events
-- Six route groups under `/api`, plus `/health`, `/health/ready`, `/`
+- `RequestContextMiddleware` — echoes/sets `X-Request-ID`, applies the index root announced in `X-Prmpt-Code-Intel-Root`, and puts the user's provider settings from `X-Prmpt-OpenRouter-Key` / `X-Prmpt-Rag-Model` into a contextvar for the request (`app/llm.py`)
+- `BrowserOriginGuard` (`app/origin_guard.py`) — rejects requests from web pages (§13.3)
+- No authentication — `app/auth.py` returns a fixed local user for every request
+- Startup warmup — `warmup_local_store()` checks the index root is writable (ingest returns 503 until it succeeds); with `RERANKER_BACKEND=local` the ONNX reranker is loaded (falling back to the LLM reranker if it fails)
+- Eight route groups under `/api`, plus `/health`, `/health/ready` (service ready + writable SQLite root + local reranker loaded), `/`
 
 ### 8.2. Routes
 
 | Method · Path | Module | Purpose |
 |---|---|---|
-| `POST/GET /api/projects` | `routes/projects.py` | Create / list / get / delete a Space project |
-| `POST /api/index/ingest` | `routes/ingest.py` | Receive a parsed skeleton from Electron and enqueue chunks for embedding |
-| `GET /api/retrieve` | `routes/retrieve.py` | Hybrid retrieval — query + project_id + branch → ranked chunks + related |
-| `POST /api/context` | `routes/context.py` | Higher-level context assembly call used by the optimizer service |
-| `POST /api/sync` | `routes/sync.py` | Manual GitHub sync trigger (alternative to webhooks) |
-| `POST /api/webhooks/github` | `routes/webhooks.py` | GitHub webhook endpoint (push events trigger background re-sync) |
+| `POST/GET /api/projects`, `GET/DELETE /api/projects/{id}` | `routes/projects.py` | Create / list / get / delete a Space project (project ids are UUIDs) |
+| `GET /api/projects/{id}/graph-health` | `routes/projects.py` | Graph statistics for a project |
+| `DELETE /api/projects/{id}/chunks` | `routes/projects.py` | Delete the chunks of one file (FileWatcher unlink events) |
+| `POST /api/index/ingest` | `routes/ingest.py` | Receive a parsed skeleton from Electron; returns 202 and indexes in a background task |
+| `GET /api/retrieve` | `routes/retrieve.py` | Mode-aware hybrid retrieval — query + project_id + branch + mode → ranked chunks + related + branch context |
+| `POST /api/context` | `routes/context.py` | Probable code locations (plus a generated answer in Ask mode) — used by the optimizer service and `project:context` |
+| `POST /api/context/stream` | `routes/context.py` | Streaming Ask over Server-Sent Events: `locations`, then `token` deltas, then `done` (or `error`) |
+| `POST /api/chunks/expand` | `routes/context.py` | Full source for a list of chunk ids (read from disk) |
+| `POST /api/feedback` | `routes/feedback.py` | Record retrieval feedback for a search (`retrieval_feedback`) |
+| `GET /api/pipeline/status`, `GET /api/pipeline/compare` | `routes/pipeline.py` | Pipeline fingerprint and config values; compare retrieval across pipeline variants |
+| `GET /api/graph/data/{id}`, `DELETE /api/graph/data/{id}/cache` | `routes/graph_viz.py` | Nodes, edges and communities for `scripts/graph_visualizer.html` |
+| `GET /api/debug/projects`, `POST /api/debug/retrieve` | `routes/debug.py` | List locally indexed projects; full score breakdown for a retrieval |
 
 ### 8.3. Embeddings & Storage
 
-- **Model**: OpenAI `text-embedding-3-small`
-- **Dimensions**: **512** (reduced from the default 1536 — see migration `20260414_reduce_embedding_dims.sql` — for HNSW efficiency at small project scales)
-- **Vector index**: pgvector **HNSW** with `m = 16, ef_construction = 64` (migration `20260414_fix_vector_index.sql`; replaced the original IVFFlat index which suffered poor recall on small projects)
-- **Per-ingest budget**: `MAX_CHUNKS_PER_INGEST = 10_000`, `UPSERT_BATCH_SIZE = 50`, `SUMMARIZER_BATCH_SIZE = 5`, `SUMMARIZER_CONCURRENCY = 15`
-- **Summarization**: `SUMMARIZER_MODEL` (default `openrouter/openai/gpt-4.1-nano`), `SUMMARY_MAX_TOKENS = 150`
+- **Embedding model**: `Xenova/bge-small-en-v1.5` via ONNX (`EMBEDDING_LOCAL_MODEL`), **384** dimensions by default (768 for a `base` model). `EMBEDDING_BACKEND` must be `local`; no API key or network is needed after the model download
+- **Reranker**: `Xenova/bge-reranker-base` via ONNX (`RERANKER_BACKEND=local`, default); any other backend uses an LLM reranker (`RERANKER_MODEL`)
+- **Vectors**: each chunk stores a summary embedding and a structure embedding (plus concept-phrase embeddings when the graph builder runs); vector search is an in-process cosine scan over the project's chunks (numpy) — no vector extension
+- **Full-text**: SQLite FTS5 table `chunks_fts` (porter + unicode61) over file path, name, signature, summaries and concepts; optional SPLADE sparse vectors (`SPLADE_ENABLED`, off by default) with FTS5 fallback
+- **No source bodies stored**: code bodies are sent at ingest for summarizing/embedding only; snippets are read back from disk via the project's `local_path` + `file_path` + line range
+- **Per-ingest budget**: `MAX_CHUNKS_PER_INGEST = 10_000`, `UPSERT_BATCH_SIZE = 50`, `SUMMARIZER_BATCH_SIZE = 8`, `SUMMARIZER_CONCURRENCY = 10`
+- **Summarization**: `SUMMARIZER_MODEL` (default `openrouter/deepseek/deepseek-chat`), `SUMMARY_MAX_TOKENS = 240`; when the LLM call fails (e.g. no key), a heuristic fallback summary is used
 
 ### 8.4. Services Layer (`app/services/`)
 
 | Module | Role |
 |---|---|
-| `embedding.py` | Batched calls to the embedding provider with retries + Sentry capture |
-| `summarizer.py` | Per-chunk natural-language summary generation (used as an additional retrievable signal) |
-| `code_analyzer.py` | Server-side code analysis utilities (additional metadata extraction beyond the Electron parser) |
-| `query_preprocessor.py` | Cleans and normalizes user queries before retrieval (strips noise, expands acronyms, etc.) |
-| `query_analyzer.py` | Decides retrieval strategy: simple (≤ `SIMPLE_QUERY_WORD_THRESHOLD` words) vs decomposed-multi-query for complex prompts (uses `QUERY_DECOMPOSE_MODEL`) |
-| `search.py` | The hybrid retrieval pipeline (next section) |
-| `project_summary.py` | Caches a project-level summary used as a fallback when retrieval is empty |
+| `embedding.py` | On-device ONNX embeddings (batched, query-embedding LRU cache) |
+| `reranker.py` | Cross-encoder reranking — local ONNX model, or an LLM reranker |
+| `summarizer.py` | Per-chunk natural-language summary + concept tags (used as additional retrievable signals) |
+| `context_builder.py` | Adds file and hierarchy context to Electron's symbol-level chunks before summarizing/embedding |
+| `query_preprocessor.py` | Extracts structured signals from raw queries (stack traces, file paths, error types, function names) |
+| `query_analyzer.py` | Query decomposition into sub-queries + concept/intent tags (uses `QUERY_DECOMPOSE_MODEL`; fast path skips the LLM for simple queries) |
+| `mode_router.py` | Per-mode retrieval config (FIND / ASK / BUG / OPTIMIZE): recall limits, rerank, MMR, graph expansion, refinement, answer generation |
+| `search.py` | The retrieval pipeline (§8.6) |
+| `agent_loop.py` + `agent_tools.py` | Agentic multi-hop retrieval: the RAG model calls local SQLite tools (`search_symbols`, `get_definition`, `find_callers`, `find_callees`, `expand_neighbors`, `grep`, `read_chunk`) within `AGENT_MAX_HOPS`, `AGENT_TIME_BUDGET_S` and `AGENT_MAX_CHUNKS` |
+| `answer_generator.py` | Answers over the retrieved chunks (blocking or streamed) using the RAG model |
+| `graph.py` / `graph_builder.py` / `community.py` | Call/import edges; knowledge-graph pipeline (PageRank, Leiden communities, LLM community reports and relationship summaries) when `GRAPH_BUILDER_ENABLED`; community report cache |
+| `concepts.py` | Canonical concept vocabulary shared by the summarizer and the query analyzer |
+| `prompt_cache.py` | Anthropic prompt-cache breakpoints for the repeated agent-loop prefix |
+| `project_summary.py` | Deterministic tech-stack summary per project (no LLM) |
+| `feedback.py` / `cache.py` | Search logging + feedback recording; in-process TTL cache |
 
-### 8.5. Workers (`app/workers/`)
+### 8.5. Indexing Worker (`app/workers/index_worker.py`)
 
-| Worker | Trigger | Role |
-|---|---|---|
-| `arq_worker.py` | `arq` runner | Hosts the async task queue (Redis-backed). Initializes its own Sentry SDK because it runs in a separate process |
-| `index_worker.py` | Enqueued by `ingest.py` | Batch-embeds new/changed chunks, upserts to `code_chunks` and `chunk_embeddings`, dedup by content hash |
-| `sync_worker.py` | Polled / webhook | Pulls latest from GitHub for projects with a remote, enqueues re-ingest |
+There is no separate worker process or queue. `POST /api/index/ingest` validates the request, marks the project `indexing`, and schedules `process_ingest_batch()` as a FastAPI background task in the same process. Because the task runs after the response is sent, the request's LLM settings (key + RAG model) are captured and re-applied inside the task. Pipeline: filter unchanged chunks (by content hash) → enrich context → batch summarize → multi-vector embed → batch upsert → call/import edges → stale cleanup → project summary → graph pipeline (when enabled) → project status `ready` (`partial` / `error` on failure).
 
 ### 8.6. Hybrid Retrieval Pipeline
 
 When a user sends a prompt in a Space with attached projects:
 
 ```
-User prompt (in SpaceWorkspace)
+User prompt (in SpaceWorkspace, or optimizer project context)
         │
         ▼
-CodeIntelClient.retrieve({ project_id, query, branch, limit })
-  → GET /api/retrieve
+CodeIntelClient.retrieve / context / contextStream({ project_id, query, branch, mode })
+  → GET /api/retrieve · POST /api/context · POST /api/context/stream
         │
-        ▼  query_preprocessor.normalize(query)
-        ▼  query_analyzer.classify(query)
-        │       ├── simple → single-query path
-        │       └── complex → QUERY_DECOMPOSE_MODEL → 2-4 sub-queries
-        ▼
-  Parallel retrieval (all sub-queries):
-    1. Vector ANN  (pgvector HNSW; ef_search tuned per query)
-    2. Full-text   (Postgres tsvector on chunk bodies + signatures)
-    3. Concept     (signatures, names, types via similarity)
-    4. File-path   (path-substring + identifier-in-path heuristics)
+        ▼  mode config (mode_router): FIND / ASK / BUG / OPTIMIZE
         │
-        ▼  Reciprocal Rank Fusion (RRF)
-        ▼  Rerank top-K by composite score
-        ▼  Call-graph expansion (depth ≤ GRAPH_MAX_DEPTH=2,
-                                  ≤ GRAPH_MAX_RELATED=20,
-                                  similarity ≥ GRAPH_SIMILARITY_THRESHOLD=0.25)
-        ▼  Branch overlay — flag chunks modified in current branch (GitService input)
+        ├── AGENTIC_RETRIEVAL_ENABLED (default on) and mode ≠ FIND
+        │       → agent_loop: RAG model drives local SQLite tools over a few hops
+        │       → hydrate the chunks it relied on (falls back to one-shot on error/empty)
+        │
+        └── one-shot pipeline
+              ▼  query_preprocessor signals + concept detection
+              ▼  graph search paths when GRAPH_BUILDER_ENABLED (falls back to flat)
+              ▼  Broad recall (per sub-query):
+                   1. Vector       (cosine over local embeddings; not used in FIND)
+                   2. Full-text    (SQLite FTS5, or SPLADE when enabled)
+                   3. Concept      (concept-tag overlap)
+                   4. File-path    (path patterns from query signals)
+                   5. Identifier   (exact symbol-name match, FIND only)
+              ▼  Reciprocal Rank Fusion (RRF)
+              ▼  FIND: lexical/path scorer + PageRank weight
+                 ASK/BUG/OPTIMIZE: ONNX rerank + structure similarity + MMR
+              ▼  Low top score → decomposed sub-queries (QUERY_DECOMPOSE_MODEL)
+                 or refined queries (QUERY_REFINER_MODEL) → second recall pass
+              ▼  Call-graph expansion (seeds and depth per mode,
+                                       e.g. depth 2 / ≤ 20 related for ASK and BUG)
+              ▼  Answer generation (ASK only; streamed for /context/stream)
         │
         ▼
   Returns { ranked_chunks, related_chunks, branch_context }
@@ -763,123 +790,87 @@ project_context.py (server-side via Python optimization service)
   → formats as [CODEBASE CONTEXT] block → optimizer system prompt
 ```
 
-Defaults: `RETRIEVAL_DEFAULT_LIMIT = 15`, `RETRIEVAL_MAX_LIMIT = 50`, `MAX_CODE_BODY_LEN = 3000`.
+Defaults: `RETRIEVAL_DEFAULT_LIMIT = 15`, `RETRIEVAL_MAX_LIMIT = 50`, `MAX_CODE_BODY_LEN = 3000`. The RAG model chosen in the app overrides `ANSWER_MODEL` and `AGENT_MODEL`; the other steps use small helper models from env.
 
 ### 8.7. Ingestion Pipeline (Cross-Process)
 
-The Electron main process owns parsing and watching; the service owns embedding, indexing, and storage:
+The Electron main process owns parsing and watching; the service owns summarizing, embedding, and indexing. Both write to the same per-project `index.db`:
 
 ```
 Local Project Directory
         │
-        ▼  [Electron]  FileWatcher (chokidar, debounced 2s)
-        │              skips node_modules / .git / dist / build / venv / target
+        ▼  [Electron]  FileWatcher (chokidar, debounced 1.5s)
+        │              skips node_modules / .git / dist / build / venv / target / …
         │
         ▼  [Electron]  CodeParser (tree-sitter WASM)
         │              extracts ChunkData[] (functions, classes, methods, imports, callees, signatures)
         │              computes SHA-256 content hash
         │
-        ▼  [Electron]  LocalProjectCache (SQLite) — skip if hash unchanged
+        ▼  [Electron]  LocalProjectCache (file_cache in index.db) — skip if hash unchanged
         │
-        ▼  [Electron]  CodeIntelClient.ingestSkeleton(payload)  ← Sentry span: codeIntel.ingestSkeleton
-        │              POST /api/index/ingest  (Bearer JWT)
+        ▼  [Electron]  CodeIntelClient.ingestSkeleton(payload)
+        │              POST /api/index/ingest  (X-Prmpt-Code-Intel-Root + key/RAG-model headers)
         │
-        ▼  [Service]   routes/ingest.py
-        │              ── if Redis available: enqueue to arq → index_worker.py
-        │              ── else: inline asyncio task
+        ▼  [Service]   routes/ingest.py → 202, FastAPI background task (same process)
         │
-        ▼  [Service]   index_worker
-        │              dedup vs existing content_hash → embedding.py batch call
-        │              upsert into code_chunks + chunk_embeddings (HNSW)
-        │              update call_graph_edges
+        ▼  [Service]   index_worker.process_ingest_batch
+        │              dedup vs existing content_hash → summarize (OpenRouter) → embed (ONNX)
+        │              upsert into code_chunks + chunks_fts
+        │              update code_relationships (call/import edges)
+        │              graph pipeline when enabled (PageRank, communities)
         │              mark project index_status=ready
 ```
 
 ### 8.8. Supported Languages
 
-Driven by **Electron-side** Tree-sitter WASM grammars under `tree-sitter-wasms/`. Currently bundled: TypeScript/JavaScript, Python, Go, Rust, Java, Ruby, C, C++, C# (10 grammars across 11 file extensions). The service itself is language-agnostic — it just stores chunks and embeddings.
+Driven by **Electron-side** Tree-sitter WASM grammars under `tree-sitter-wasms/`. Currently bundled: TypeScript/JavaScript, Python, Go, Rust, Java, Ruby, C, C++, C# (10 grammars across 14 file extensions). The service itself is language-agnostic — it just stores chunk metadata, summaries and embeddings.
 
 ### 8.9. Branch Awareness
 
-The `GitService` (Electron) reads `currentBranch`, `defaultBranch`, `aheadCount`, `behindCount`, and recent commit history. The branch is sent on every `retrieve` call. Chunks modified in the current branch (diverged from default) are flagged with `branch_diverged: true` in the response and surface a `⚠ Modified in current branch` warning in the formatted context.
-
-### 8.10. Observability
-
-- `app/main.py` initializes Sentry with `FastApiIntegration` — every route automatically becomes a span
-- Every route handler has its `except` block calling `sentry_sdk.capture_exception(e)`
-- Each service module (`search`, `embedding`, `summarizer`, `code_analyzer`, `query_analyzer`, `query_preprocessor`) does the same
-- `arq_worker.py` initializes a separate Sentry SDK because it runs in a separate process
-- `index_worker.py` captures exceptions on batch embedding failures
-- Electron's `CodeIntelClient` wraps every call in `Sentry.startSpan` with operation tags (`code-intel.ingest`, `code-intel.search`)
+The `GitService` (Electron) reads `currentBranch`, `defaultBranch`, `aheadCount`, `behindCount`, and recent commit history. The branch is sent with ingest and with every `retrieve` call; the service records the project's `current_branch` and returns `branch_context` (current + default branch). Chunks carry a `branch_diverged` field, and the optimizer context adds a "modified in current branch" note when it is set, but the local indexer currently always writes it as `false`.
 
 ---
 
 ## 9. Data Persistence
 
-### 9.1. Supabase (PostgreSQL)
+All user data is stored locally under Electron's `userData` folder (overridable with `PRMPT_USER_DATA_DIR`). Nothing is synced to a server, and there is no account to delete — removing the folder removes the data.
 
-All cloud data is stored in Supabase with Row-Level Security (RLS) enforced on every table.
+### 9.1. Local App Database (`{userData}/prmpt.db`)
 
-**Core Tables**
-
-| Table | Key Columns | Purpose |
-|---|---|---|
-| `user_profiles` | `id`, `email`, `display_name`, `avatar_url`, `role` | User identity and avatar |
-| `user_preferences` | `user_id`, `theme`, `font_size`, `model`, `custom_instructions`, `memory_enabled` | Synced UI preferences |
-| `chats` | `id`, `user_id`, `title`, `created_at`, `updated_at` | Chat session metadata |
-| `messages` | `id`, `chat_id`, `role`, `content`, `metadata`, `parent_id`, `version` | Messages with branching support |
-| `prompt_collections` | `id`, `user_id`, `name`, `share_token` | Named prompt collections |
-| `saved_prompts` | `id`, `collection_id`, `title`, `content`, `share_token`, `is_favorite` | Individual saved prompts |
-| `user_memory` | `id`, `user_id`, `domain`, `style`, `score`, `observation_count` | Inferred user expertise/style |
-| `deletion_requests` | `id`, `user_id`, `scheduled_for`, `cancelled_at` | GDPR deletion queue |
-
-**Analytics Tables**
+One SQLite file opened by `electron/main/database/local-db.ts` (better-sqlite3, WAL, `foreign_keys = ON`, schema version in `PRAGMA user_version`). Rows keep a `user_id` column set to the single `LOCAL_USER_ID`.
 
 | Table | Key Columns | Purpose |
 |---|---|---|
-| `app_sessions` | `id`, `user_id`, `app_version`, `platform`, `ended_at`, `duration_seconds` | Per-login session tracking; `duration_seconds: null` = crash-recovered |
-| `usage_events` | `id`, `user_id`, `event_type`, `metadata`, `created_at` | Granular feature usage events (batched via EventBuffer) |
-| `daily_usage_summaries` | `user_id`, `date`, `optimization_count`, `total_sessions` | Daily rollup; updated by a Supabase trigger; crash-recovered sessions excluded from `total_sessions` |
-| `download_events` | `id`, `platform`, `version`, `user_agent`, `created_at` | App installer download tracking |
+| `profile` | `id`, `name`, `email`, `avatar_url`, `personalization_prompt`, `ui_settings` (JSON) | The local profile; the avatar is stored as a data URL |
+| `user_settings` | `user_id`, `theme`, `font_size`, `font_family`, `prompt_instructions`, `memory_enabled` | UI preferences and custom instructions |
+| `chats` | `id`, `user_id`, `title`, `is_pinned`, `metadata`, `created_at`, `updated_at` | Chat session metadata |
+| `messages` | `id`, `chat_id` (cascade delete), `role`, `content`, `optimization_id`, `metadata` | Messages; `metadata` holds attachments, `groupId` / `versionIndex` for edit/retry branches, and feedback |
+| `prompt_optimizations` | `id`, `original_text`, `optimized_text`, `source`, `applied`, `rating`, `metadata` | Local log of optimizations |
+| `prompt_collections` | `id`, `user_id`, `name` (unique per user), `icon` | Named prompt collections |
+| `saved_prompts` | `id`, `collection_id` (cascade delete), `title`, `content`, `metadata` | Individual saved prompts (favorite flag in `metadata`) |
+| `user_memory` | `id`, `memory_type` (`user` / `behavioral` / `context`), `key`, `value`, `confidence`, `source` (`inferred` / `explicit`), `observation_count` | Inferred and user-edited memory |
+| `app_kv` | `key`, `value` | App-level key/value state — holds the AI provider settings (`ai_settings`, §5.4) |
 
-**Code Intelligence Tables** (created by `supabase/migrations/20260407_add_project_context.sql` and later migrations)
+Data from the earlier hosted version of Prmpt is not migrated into this file.
 
-| Table | Key Columns | Purpose |
-|---|---|---|
-| `projects` | `id`, `user_id`, `name`, `local_path`, `index_status`, `current_branch`, `default_branch` | Indexed Space project registry |
-| `code_chunks` | `id`, `project_id`, `file_path`, `start_line`, `end_line`, `chunk_type`, `name`, `signature`, `language`, `code_body`, `summary`, `content_hash` | AST-extracted code chunks (with optional summary from `summarizer.py`) |
-| `chunk_embeddings` | `chunk_id`, `embedding` (`vector(512)`) | pgvector embeddings; **HNSW index** (`m=16, ef_construction=64`) per `20260414_fix_vector_index.sql` |
-| `call_graph_edges` | `from_name`, `from_file`, `to_name`, `to_file`, `relationship_type` | Function call graph (`calls`, `imports`, `inherits`, `implements`) |
+### 9.2. Attachments & Avatars
 
-**Views**:
-- `user_full_profile` — joins `user_profiles` + `user_preferences` for a single-fetch profile load
+- **Attachments** (images, PDFs) are saved by `file-upload-service.ts` under `{userData}/attachments/<sha256-16>/<sanitized filename>` — content-addressed, so the same file attached twice is stored once. Messages store `{ name, mimeType, sizeBytes, storagePath }`; the renderer loads them through `storage:get-signed-url` (data URL) or opens PDFs with `storage:open-pdf`. Paths that resolve outside the attachments folder are refused.
+- **Avatars** are resized client-side and stored on the `profile` row as a data URL (max 2 MB).
 
-**Storage Buckets** (Supabase Storage):
-- `attachments` — user file uploads (PDFs, images), per-user prefixed
+### 9.3. Code Intelligence Indexes (`{userData}/code-intel/`)
 
-**Migrations**: `supabase/migrations/` — applied in order via `npm run supabase:migrate`.
+- One SQLite file per project: `{userData}/code-intel/projects/<project_id>/index.db`. Electron (`code-intel-local-store.ts`) and the service (`app/db/local_store.py`) open the same file and create the same schema.
+- Tables: `projects_local` (the project's registry row: name, local path, branches, index status, summary, embedding config), `file_cache` (file path → content hash, written by Electron's `LocalProjectCache`), `code_chunks` (chunk metadata, summaries, embeddings, concepts, PageRank/centrality, community), `code_relationships`, `communities`, `retrieval_searches`, `retrieval_feedback`, and the FTS5 table `chunks_fts`.
+- The project list is built by scanning `projects/*/index.db`; project ids must be UUIDs (anything else is rejected so it cannot escape the projects folder).
+- Index root resolution in the service: `CODE_INTEL_DB_ROOT` env → the root announced by the app in `X-Prmpt-Code-Intel-Root` → a per-OS default (`%APPDATA%/Prmpt/code-intel`, `~/Library/Application Support/Prmpt/code-intel`, `$XDG_CONFIG_HOME/Prmpt/code-intel`).
 
-### 9.2. Cloudinary
+### 9.4. Other Local State
 
-Used for avatars (resized to 200 × 200 px before upload) and attachment thumbnails. The Electron main process handles uploads via `avatar-handlers.ts`.
-
-### 9.3. Local Cache (Offline)
-
-`localCache` (`electron/main/database/local-cache.ts`):
-- In-memory store backed by a JSON file on disk.
-- On every online chat load, the top 5 most recent chats and messages are written to cache.
-- On offline, `ChatService` falls back to cache reads.
-- `offlineQueue` buffers Supabase writes and flushes when connectivity is restored.
-
-`LocalProjectCache` (`electron/main/database/local-project-cache.ts`):
-- SQLite database (better-sqlite3) storing per-project file path → content hash mappings.
-- Checked before every file re-index to skip unchanged files.
-- Cleared on project deletion.
-
-`EventBuffer` offline cache:
-- Per-user JSON file at `userData/offline-cache/analytics-{userId}.json`.
-- Events persisted here when Supabase is unreachable.
-- Drained and replayed on next successful flush.
+- `{userData}/auto-launch.json` — start-at-login preference (§2.3).
+- `{userData}/error-log.json` — local error log (`ErrorLog`, capped at 200 entries).
+- Renderer `localStorage` — the Spaces list (`ProjectsView`), a cached copy of UI settings for flash-free startup, and the onboarding-completed flag.
+- `python-service/pipeline_v2/storage/usage/` — per-request token usage logs (`usage_logger.py`).
 
 ---
 
@@ -908,7 +899,8 @@ POST /clarify (SUMMARIZER_MODEL)
                         └── wantsSections: true
                                 │
                                 ▼
-                        POST /plan-tasks (SUMMARIZER_MODEL)
+                        task_planner.plan_tasks() (SUMMARIZER_MODEL),
+                        run inside the /ws/optimize-stream request
                         → 3-12 ordered task graph
                                 │
                                 ▼
@@ -942,67 +934,36 @@ IPC: overlay:optimization-chunk
 User opens Spaces → Creates a Space → Attaches a local project
         │
         ▼
-project-handlers.ts → CodeIntelClient.createProject()
-  → FileWatcher.startWatching(projectPath)
-  → Initial full-index: CodeParser parses all files
+project:add → CodeIntelClient.createProject()   (git default branch detected)
+  → performFullScan(): CodeParser parses all files
   → CodeIntelClient.ingestSkeleton(chunks, callGraph)
+  → status poll until the index settles (project:status-update)
         │
-        ▼ (on file save)
-FileWatcher detects change (debounced 2s)
+        ▼ (on file save, when watching is on — project:toggle-watching)
+FileWatcher detects change (debounced 1.5s)
   → CodeParser.parseFile(changedFile)
   → LocalProjectCache.getCachedHash() — skip if unchanged
   → CodeIntelClient.ingestSkeleton(updatedChunk)
         │
         ▼ (when user sends a prompt in SpaceWorkspace)
-CodeIntelClient.retrieve({ project_id, query: userPrompt })
-  → Service performs pgvector ANN search
-  → Returns ranked + related chunks with code bodies
-  → buildTailoredPrompt() assembles context-rich prompt
-  → User can send to main chat for full optimization
+Find / Bug / Optimize → CodeIntelClient.retrieve({ project_id, query, mode })
+  → Service runs mode-aware hybrid retrieval over the local index (§8.6)
+  → Returns ranked + related chunks with code read from disk
+  → buildTailoredPrompt() assembles context-rich prompt → optimizer
+Ask → project:context-stream → POST /api/context/stream (SSE locations + answer tokens)
 ```
 
-### 10.4. Analytics Session Lifecycle
+### 10.4. User Memory System
 
-```
-User logs in
-  → analyticsService.initialize(userId)
-  → EventBuffer.drainOfflineQueue()    (replay any offline events)
-  → analyticsService.startSession(appVersion)
-       → Close any open sessions from previous crash (duration: null)
-       → INSERT into app_sessions
-  → Sentry.setTag('analytics_session', sessionId)
-        │
-User interacts
-  → analyticsService.logEvent('optimization_run', { model, skill })
-  → EventBuffer.push(event)
-  → Auto-flush every 10s or 50 events
-  → On flush failure: persist to offline-cache/analytics-{userId}.json
-        │
-User quits / logs out
-  → analyticsService.shutdown()
-       → analyticsService.endSession()   (UPDATE app_sessions with duration)
-       → EventBuffer.flushSync()         (drain remaining events)
-```
+Runs automatically in the background:
 
-### 10.5. User Memory System
+1. After each optimization, `MemoryAnalyzer.onNewOptimization()` is called.
+2. Every 3rd call (and only while the Memory toggle is on), it sends the raw prompt, the optimized output and the skill to `POST /extract-memory-facts` (MEMORY_MODEL).
+3. The returned facts (`user` / `behavioral` / `context`, each with key, value, confidence) are upserted into `user_memory` as `inferred` entries; entries the user set explicitly are not overwritten.
+4. The updated memory is pushed to the App Window (`memory:updated`).
+5. On the next optimization, `MemoryService.buildMemoryContext()` is appended to the custom instructions sent to the optimizer.
 
-Runs automatically in the background every 5 optimizations:
-
-1. After each optimization, `MemoryAnalyzer.maybeRun(userId)` is called.
-2. Every 5th call, fetches the 50 most recent user prompts.
-3. Applies **exponential recency decay**: `weight = e^(-0.06 × index)` where index 0 is most recent.
-4. Detects domains (Backend Dev, ML Engineering, Frontend, Data Science, DevOps, etc.) and writing styles (concise, technical, verbose, creative, formal).
-5. Upserts top-scoring entries into `user_memory` with `observation_count` increment.
-6. On next optimization, memory entries are prepended to the system prompt.
-
-### 10.6. GDPR Account Deletion
-
-1. User clicks "Delete Account" in Settings → `account:request-deletion` IPC.
-2. `DeletionService` inserts a row into `deletion_requests` with `scheduled_for = now() + 30 days`.
-3. A Supabase edge function (cron) checks daily for past-due deletion requests and permanently removes all user data.
-4. User can cancel within the 30-day window via `account:cancel-deletion`.
-
-### 10.7. Overlay Cursor Glow
+### 10.5. Overlay Cursor Glow
 
 1. When the overlay opens, `startCursorPolling()` starts a `setInterval` at ~16 ms (~60 fps).
 2. Each tick: `screen.getCursorScreenPoint()` → translated to overlay-relative coordinates.
@@ -1011,18 +972,22 @@ Runs automatically in the background every 5 optimizations:
 5. After 1.5 s of cursor inactivity, glow opacity fades to 0 via CSS transition.
 6. Polling stops when the overlay is hidden.
 
-### 10.8. Offline Mode
+### 10.6. Connectivity
 
-1. `networkMonitor` polls `https://www.google.com` every 10 s.
-2. On connectivity loss: broadcasts `network-status: { online: false }` to all windows → UI shows amber offline banner; send button disabled.
-3. Chat/message loads fall back to `localCache`.
-4. Write operations queued in `offlineQueue`.
-5. On reconnect: `network:reconnected` fires → queue flushed → Supabase writes replayed.
+All data is local, so nothing is queued or cached for offline use; an internet connection is only needed to reach OpenRouter (and Deepgram for voice).
 
-### 10.9. Silent Auto-Launch at Login
+1. `networkMonitor` checks `net.isOnline()` every 5 s.
+2. On a change it broadcasts `network:status: { isOnline }` to both windows → the UI shows the amber offline banner.
+3. While offline, `app:send-message` / `overlay:optimize` return "You're offline. Prmpt needs an internet connection to reach OpenRouter." instead of calling the services. Chats, the library and settings keep working from the local database.
+4. On reconnect, `network:reconnected` is sent to the App Window.
+
+### 10.7. Silent Auto-Launch at Login
 
 ```
-[Tray menu] User toggles "Start at Login"
+[Tray menu or Settings → Customize → Startup] User toggles "Start at Login"
+        ▼
+setAutoLaunchPreference(checked)          → {userData}/auto-launch.json
+applyAutoLaunchToOS(checked)              (skipped in unpackaged dev builds)
         ▼
 app.setLoginItemSettings({
   openAtLogin: checked,
@@ -1032,8 +997,6 @@ app.setLoginItemSettings({
     args: ['--hidden'],
   }),
 })
-        ▼
-[Sentry] addBreadcrumb({ category: 'auto-launch', message: 'Start at login enabled/disabled' })
 
 ──── Next boot ────
 
@@ -1051,110 +1014,103 @@ isSilentLaunch():
 
 ## 11. IPC Bridge (`preload.ts`)
 
-[`electron/preload.ts`](electron/preload.ts) uses Electron's `contextBridge` to expose a typed `window.electronAPI` object. All renderer ↔ main communication flows through this bridge — direct `ipcRenderer` calls are never exposed.
+[`electron/preload.ts`](electron/preload.ts) uses Electron's `contextBridge` to expose a typed `window.electronAPI` object. All renderer ↔ main communication flows through this bridge — direct `ipcRenderer` calls are never exposed. The preload also captures microphone audio for voice input and streams it to main (`transcription:audio-chunk`).
 
 ### Namespace Map
 
-| Namespace | Methods |
+| Namespace / members | Methods |
 |---|---|
-| `window.electronAPI.chat.*` | `send`, `load`, `list`, `create`, `delete`, `rename`, `stop`, `getMessageVersions` |
-| `window.electronAPI.overlay.*` | `optimize`, `save`, `insert`, `close`, `getChats` |
-| `window.electronAPI.auth.*` | `login`, `signup`, `logout`, `check`, `sendSignupOtp`, `verifySignupOtp`, `sendResetOtp`, `resetPassword` |
-| `window.electronAPI.promptLibrary.*` | `getCollections`, `createCollection`, `savePrompt`, `deletePrompt`, `getShareLink`, `getSharedCollection`, `saveSharedCollection` |
-| `window.electronAPI.memory.*` | `getMemory`, `updateMemory`, `deleteMemory` |
-| `window.electronAPI.settings.*` | `load`, `save` |
-| `window.electronAPI.user.*` | `getProfile`, `updateProfile` |
-| `window.electronAPI.avatar.*` | `upload` |
-| `window.electronAPI.transcription.*` | `start`, `stop` |
-| `window.electronAPI.feedback.*` | `submit` |
-| `window.electronAPI.account.*` | `requestDeletion`, `cancelDeletion` |
-| `window.electronAPI.project.*` | `create`, `list`, `index`, `retrieve`, `watch`, `unwatch`, `gitInfo`, `deleteProject` |
+| `window.electronAPI.platform` | `'darwin'`, `'win32'` or `'linux'` |
+| `window.electronAPI.overlay.*` | `optimize`, `submitClarification`, `save`, `copy`, `close`, `openApp`, `insert`, `insertSection`, `getSourceInfo`, `checkAuth`, `getCollections`, `createCollection`, `getChats`, `saveToChat`, `getSettings`, `newSession`, `stopGeneration`, `truncateHistory`, `notifyReady`; events `onOpened`, `onAuthState`, `onClarificationRequired`, `onOptimizationChunk`, `onOptimizationComplete`, `onOptimizationError`, `onUploadPartialFailure`, `onCursorPos`, `onSettingsUpdate` |
+| Chat (top-level) | `sendMessage`, `regenerateResponse`, `submitClarification`, `optimizePrompt`, `stopGeneration`, `getGenerationStatus`, `loadChats`, `createChat`, `loadMessages`, `renameChat`, `deleteChat`, `saveToChat`, `copyToClipboard`, `saveFeedback`; events `onChatsLoaded`, `onChatCreated`, `onMessagesLoaded`, `onMessageSent`, `onMessageReceived`, `onMessageSendError`, `onClarificationRequired`, `onOptimizationChunk`, `onOptimizationComplete`, `onOptimizationError`, `onUploadPartialFailure`, `onChatRenamed`, `onChatRenameError`, `onChatDeleted`, `onChatDeleteError`, `onChatSaved`, `onOverlayMessagesAppended` |
+| Session & profile (top-level) | `checkAuth` (asks main for the local session), `onAuthStateChange`, `requestUserData`, `onUserDataLoaded`, `updateProfile`, `uploadAvatar`, `updatePreferences`, `setPersonalizationPrompt`, `onProfileUpdated`, `onPreferencesUpdated` |
+| `window.electronAPI.aiSettings.*` | `get`, `save`, `validateKey`, `listModels`, `onChanged` — returns `AISettingsView` only (no raw keys) |
+| Settings (top-level) | `loadSettings`, `saveSettings` |
+| `window.electronAPI.promptLibrary.*` | `getAll`, `getCollections`, `createCollection`, `renameCollection`, `deleteCollection`, `savePrompt`, `createCollectionAndSave`, `updatePrompt`, `deletePrompt`, `toggleFavorite`; plus top-level `onPromptLibraryLoaded` |
+| `window.electronAPI.memory.*` | `get`, `upsert`, `delete`, `getEnabled`, `setEnabled`, `onUpdated` |
+| `window.electronAPI.storage.*` | `getSignedUrl` (stored attachment → data URL), `openPdf` |
+| `window.electronAPI.transcription.*` | `start`, `stop`, `onTranscription`, `onStatus`, `onError` |
+| `window.electronAPI.skills.*` | `list` |
+| `window.electronAPI.zoom.*` | `get`, `set`, `onChanged` |
+| `window.electronAPI.autoLaunch.*` | `get`, `set` |
+| `window.electronAPI.project.*` | `add`, `remove`, `list`, `status`, `setActive`, `getActive`, `reindex`, `toggleWatching`, `isWatching`, `isScanning`, `retrieve`, `context`, `contextStream`, `ensureFresh`, `onStatusUpdate`, `onOverlayStatus` |
+| `window.electronAPI.spaces.*` | `publishSnapshot`, `list`, `appendMessages`, `onApplyAppend`, `getActiveStream` |
 | `window.electronAPI.windowControls.*` | `minimize`, `maximize`, `close` |
-| `window.electronAPI.onNetworkStatus` | Event listener — `{ online: boolean }` |
-| `window.electronAPI.onAuthStateChange` | Event listener — `{ isAuthenticated, user }` |
-| `window.electronAPI.onSentryUser` | Event listener — Sentry user identity propagation (forwarded from main on auth state change) |
-| `window.electronAPI.onActiveProjectChanged` | Event listener — fires when `ActiveWindowDetector` resolves a different Space project from the focused app |
+| Misc (top-level) | `openExternal` (http/https only), `send` (allow-list: `overlay:settings-update`, `overlay:close`, `overlay:ready`), `onNetworkStatus` (`{ isOnline }`), `onNetworkReconnected`, `onPythonUnavailable`, `onPythonRecovered` |
 
 ---
 
-## 12. Environment Variables
+## 12. Configuration & Environment Variables
+
+Everything is optional. The OpenRouter key and models are entered in the app (§5.4), not in env files. The root `.env` (template: `.env.example`) is read by the Electron app (project root in dev, `resourcesPath/.env` if present in packaged builds) and by the Python optimizer service; the code-intelligence service reads `code-intelligence-service/.env`.
 
 | Variable | Used by | Description |
 |---|---|---|
-| `SUPABASE_URL` | Electron main | Supabase project URL |
-| `SUPABASE_ANON_KEY` | Electron main | Supabase anonymous (public) key |
 | `PYTHON_SERVICE_URL` | Electron main | Python service base URL (default: `http://127.0.0.1:8001`) |
 | `CODE_INTELLIGENCE_SERVICE_URL` | Electron main + Python service | Code Intelligence Service URL (default: `http://127.0.0.1:8002`) |
-| `OPENROUTER_API_KEY` | Python service | API key for OpenRouter LLM gateway |
-| `OPTIMIZER_MODEL` | Python service | Main streaming model (e.g. `openrouter/anthropic/claude-haiku-4.5`) |
-| `SUMMARIZER_MODEL` | Python service | Cheap model for clarification/summaries/titles/memory (e.g. `openrouter/openai/gpt-4o-mini`) |
-| `TITLE_MODEL` | Python service | Model for chat title generation |
-| `MEMORY_MODEL` | Python service | Model for user memory extraction |
-| `DEEPGRAM_API_KEY` | Python service | Deepgram API key for cloud speech-to-text (fallback for Whisper) |
-| `VITE_CLOUDINARY_CLOUD_NAME` | React renderer | Cloudinary cloud name (inlined at build time) |
-| `VITE_CLOUDINARY_UPLOAD_PRESET` | React renderer | Cloudinary unsigned upload preset |
-| `CLOUDINARY_API_KEY` | Electron main | Cloudinary API key (signed uploads) |
-| `CLOUDINARY_API_SECRET` | Electron main | Cloudinary API secret |
-| `NODE_ENV` | Electron main + renderer | `development` or `production` — controls Sentry sample rate |
-| `APP_ENV` | Python service | `development` or `production` — disables /docs in production |
-| `APP_VERSION` | Python service | Semantic version string injected at build time for Sentry release tracking |
-| `SENTRY_DSN` | Electron main · Code Intelligence service | Each reads its own `SENTRY_DSN` from its own `.env` (root for Electron, `code-intelligence-service/.env` for the service) |
-| `VITE_SENTRY_DSN` | React renderer | Sentry DSN for renderer errors (inlined at build time; used by both App Window and Overlay entry points with replay enabled) |
-| `SENTRY_PYTHON_DSN` | Python optimization service | Distinct DSN for the optimization service (port 8001). Note: the Code Intelligence service uses `SENTRY_DSN` from its own env file, not this var |
-| `SENTRY_AUTH_TOKEN` | Build pipeline | For source-map upload during production builds |
-| `SENTRY_ORG` | Build pipeline | Sentry organization slug |
-| `SENTRY_PROJECT` | Build pipeline | Sentry project slug |
-| `OPENAI_API_KEY` | Code Intelligence service | Required for `text-embedding-3-small` (512-dim) |
-| `SUPABASE_SERVICE_ROLE_KEY` | Code Intelligence service | Service-role key (server-side) for upserting chunks/embeddings |
-| `SUPABASE_JWT_SECRET` | Code Intelligence service | For verifying user JWTs forwarded by the Electron client |
-| `REDIS_URL` | Code Intelligence service | Optional — enables ARQ background workers; falls back to inline async if absent |
-| `GITHUB_WEBHOOK_SECRET` | Code Intelligence service | Optional — verifies GitHub webhook payloads |
-| `QUERY_DECOMPOSE_MODEL` | Code Intelligence service | Model used for multi-query decomposition (default `openrouter/openai/gpt-4o-mini`) |
-| `ALLOWED_ORIGINS` | Both Python services | Comma-separated CORS allowlist; defaults to `localhost`/`127.0.0.1` |
+| `PRMPT_USER_DATA_DIR` | Electron main | Overrides Electron's `userData` folder (portable installs, testing) |
+| `OPENROUTER_API_KEY` | Both Python services | Fallback only — used when a request carries no key (scripts, curl) |
+| `DEEPGRAM_API_KEY` | Python service | Fallback only — used when the transcription start message has no `deepgram_api_key` |
+| `OPTIMIZER_MODEL` | Python service | Default optimizer model when the app sends none (default `openrouter/openai/gpt-4o-mini`); the model chosen in the app overrides it |
+| `SUMMARIZER_MODEL` | Python service | Helper model for clarification, task planning and context compaction (default `openrouter/openai/gpt-4o-mini`) |
+| `TITLE_MODEL` / `MEMORY_MODEL` | Python service | Chat title generation / memory extraction (default: `SUMMARIZER_MODEL`) |
+| `MAX_CONCURRENT_OPTIMIZATIONS` | Python service | Concurrency semaphore size (default 50) |
+| `APP_ENV` | Both Python services | `production` disables `/docs`, `/redoc` and `/openapi.json` in the optimizer service |
+| `ALLOWED_ORIGINS` | Both Python services | Extra browser origins allowed by `BrowserOriginGuard` (comma-separated, `*` is ignored); empty by default |
+| `PORT` | Both Python services | Port when started with `python -m app.main` (8001 / 8002); the npm scripts pass `--port` to uvicorn |
+| `CODE_INTEL_DB_ROOT` | Code Intelligence service | Overrides the index root (otherwise the app's `X-Prmpt-Code-Intel-Root`, then a per-OS default) |
+| `EMBEDDING_BACKEND` / `EMBEDDING_LOCAL_MODEL` / `EMBEDDING_DIMENSIONS` | Code Intelligence service | Must be `local` / default `Xenova/bge-small-en-v1.5` / default 384 |
+| `RERANKER_BACKEND` / `RERANKER_LOCAL_MODEL` / `RERANKER_MODEL` | Code Intelligence service | `local` (default) uses `Xenova/bge-reranker-base` via ONNX; otherwise the LLM reranker `RERANKER_MODEL` |
+| `ANSWER_MODEL` / `AGENT_MODEL` | Code Intelligence service | Default answer / agent-loop models (`openrouter/deepseek/deepseek-chat`); overridden by the RAG model chosen in the app |
+| `SUMMARIZER_MODEL` | Code Intelligence service | Chunk summaries at ingest (default `openrouter/deepseek/deepseek-chat`) |
+| `QUERY_DECOMPOSE_MODEL` / `QUERY_REFINER_MODEL` / `COMMUNITY_MODEL` | Code Intelligence service | Helper models for query decomposition (default `openrouter/openai/gpt-4o-mini`), query refinement and community reports |
+| `AGENTIC_RETRIEVAL_ENABLED` | Code Intelligence service | Agentic multi-hop retrieval for Ask/Bug/Optimize (default `true`; Find never uses it). Limits: `AGENT_MAX_HOPS` (6), `AGENT_TIME_BUDGET_S` (25), `AGENT_MAX_CHUNKS` (15) |
+| `GRAPH_BUILDER_ENABLED` | Code Intelligence service | Knowledge-graph pipeline after each index (default `true`; set `false` for flat retrieval) |
+| `SPLADE_ENABLED` | Code Intelligence service | Optional SPLADE sparse recall (default `false`; FTS5 otherwise) |
 
 ---
 
-## 13. Observability (Sentry)
+## 13. Local-First Boundaries (Keys, Origins, Network)
 
-Sentry instruments **four runtime surfaces**. Each has its own DSN; each scrubs PII via `beforeSend` before transmission.
+### 13.1. API Keys
 
-### 13.1. Surfaces
+- The OpenRouter key and the optional Deepgram key are stored only in `prmpt.db` (`app_kv` → `ai_settings`), encrypted with `safeStorage` on Windows/Linux (§5.4).
+- They stay in the Electron main process; the renderer sees `AISettingsView` (configured flags, masked previews, model ids).
+- The Python services never persist them: each request carries the settings it needs, and they live only for that request (plus any background indexing the request started).
 
-| Surface | Init site | DSN env | Notable integrations |
-|---|---|---|---|
-| Electron main | `electron/main/index-new.ts` (top of file) | `SENTRY_DSN` (root `.env`) | `@sentry/electron/main` — process errors, IPC traces, child-process capture |
-| React App Window | `app-ui/src/main.tsx` | `VITE_SENTRY_DSN` | `@sentry/react` — `browserTracingIntegration`, `replayIntegration`, `ErrorBoundary` |
-| React Overlay | `app-ui/src/overlay/main.tsx` | `VITE_SENTRY_DSN` | Same as App Window — separate Sentry client, separate session replay |
-| Python optimization service | `python-service/app/main.py` | `SENTRY_PYTHON_DSN` | `LoggingIntegration` (ERROR → events), WebSocket trace continuation from incoming `sentry-trace` headers |
-| Python Code Intelligence service | `code-intelligence-service/app/main.py` | `SENTRY_DSN` (service `.env`) | `LoggingIntegration` + **`FastApiIntegration`** — every route is automatically a span. Workers initialize their own SDK |
+### 13.2. How Provider Settings Travel
 
-### 13.2. Spans, Tags, Breadcrumbs
+| Hop | Carrier | Fields |
+|---|---|---|
+| Electron → python-service HTTP (`/clarify`, `/generate-title`, `/extract-memory-facts`, `/optimize`) | Axios request interceptor (`aiSettings.pythonHeaders()`) | `X-Prmpt-OpenRouter-Key`, `X-Prmpt-Optimizer-Model`, `X-Prmpt-Rag-Model` |
+| Electron → python-service `WS /ws/optimize-stream` | `llm` field in every request message (`aiSettings.llmPayload()`) | `{ api_key, optimizer_model, rag_model }`, plus `code_intel_root` when a project is attached |
+| Electron → python-service `WS /ws/transcribe-stream` | Start message | `deepgram_api_key` |
+| Electron → code-intel HTTP + SSE | Axios interceptor / `fetch` headers (`aiSettings.codeIntelHeaders()`) | `X-Prmpt-OpenRouter-Key`, `X-Prmpt-Rag-Model`, `X-Prmpt-Code-Intel-Root` |
+| python-service → code-intel (`project_context.py`) | `LLMSettings.code_intel_headers()` | The same headers, built from the WebSocket `llm` object, plus `X-Prmpt-Code-Intel-Root` |
 
-Selected named spans / tags / breadcrumb categories actually emitted by the codebase:
+Inside the services: python-service builds `LLMSettings` (`pipeline_v2/config.py`) and passes the key to `litellm` via `provider_kwargs()`; code-intel keeps the settings in a contextvar (`app/llm.py`) read by `completion_kwargs()` / `with_key()`. A missing key produces "No OpenRouter API key configured. Add one in Prmpt Settings > AI provider."; a rejected key, unknown model or rate/credit limit is mapped to a clear message.
 
-| Where | Operation / Tag / Category |
-|---|---|
-| `CodeIntelClient.ingestSkeleton` | span `codeIntel.ingestSkeleton` (op `code-intel.ingest`) |
-| `CodeIntelClient.retrieve` | span `codeIntel.retrieve` (op `code-intel.search`) + breadcrumb `code-intel: Context retrieved` |
-| `CodeIntelClient.healthCheck` | tag `code_intel.healthy = true|false` |
-| `CodeParser.initialize` | tag `parser.initialized = true|false` |
-| `FileWatcher.startWatching` | breadcrumb `file-watcher: Watch start/stop` |
-| `ActiveWindowDetector` | breadcrumbs `active-window: Detection start/stop` |
-| `GitService.getBranchInfo` | breadcrumb `git: branch info` |
-| `project-handlers.setActiveProject` | tag `active_project = <project_id>` + breadcrumb on creation |
-| `analyticsService.startSession` | tag `analytics_session = <sessionId>` |
-| `system-tray.startAtLogin` | breadcrumb `auto-launch: Start at login enabled/disabled` |
-| `index-new.initialize` | breadcrumb `startup: Silent launch — window hidden` (when applicable) |
-| `code-intelligence-service` routes | every `except` block calls `sentry_sdk.capture_exception(e)` |
+### 13.3. `BrowserOriginGuard`
 
-### 13.3. PII Scrubbing
+Both services listen on `127.0.0.1` without a login, so a web page open in the user's browser must not be able to call them. `BrowserOriginGuard` (`app/origin_guard.py`, identical in both services) is a pure ASGI middleware:
 
-`beforeSend` hooks remove prompt content and user-identifying fields from every event before it leaves the machine:
-- breadcrumbs scrubbed of `prompt`, `text`, `content`, `messages` keys
-- request bodies redacted
-- stack frame local variables redacted for the same keys
+- Requests without an `Origin` header pass — Node/Electron (`axios`, `fetch`, `ws`) sends none.
+- An `Origin` equal to the service's own host (`http(s)://<Host>`) passes.
+- Origins listed in `ALLOWED_ORIGINS` pass (`*` is ignored).
+- Anything else gets HTTP 403 `{"detail": "Requests from web pages are not allowed"}`, or a WebSocket close with code 1008.
 
-Sentry user identity is propagated to renderers via the `sentry:set-user` IPC channel (`onSentryUser` in the preload namespace).
+There is no CORS middleware. In the renderer, the main process installs a Content-Security-Policy whose `connect-src` allows only `'self'` and the python-service HTTP/WebSocket origins; the renderer never calls the code-intelligence service or OpenRouter directly.
+
+### 13.4. Network Calls That Leave the Machine
+
+| Destination | From | When |
+|---|---|---|
+| `openrouter.ai/api/v1/key`, `/api/v1/models` | Electron main (`ai-settings-service.ts`) | Validating a key on save; loading the model list (cached 1 h) |
+| OpenRouter (via `litellm`) | Python service, Code Intelligence service | Optimization, clarification, task planning, titles, memory extraction; chunk summaries, query decomposition/refinement, agentic loop, answers, graph community reports (and reranking only if `RERANKER_BACKEND` is not `local`) |
+| `api.deepgram.com` (WebSocket) | Python service | Voice input, only when a Deepgram key is set |
+| Hugging Face Hub | Code Intelligence service | First use of the ONNX embedding / reranker (and SPLADE, if enabled) models; cached afterwards. `HF_HUB_DISABLE_TELEMETRY=1` is set |
+
+Both Python services set `LITELLM_LOCAL_MODEL_COST_MAP=True` so `litellm` uses its bundled model price list instead of fetching it on import. A non-OpenRouter `litellm` model id set via env uses that provider's own key from the environment.
 
 ---
 
@@ -1178,7 +1134,7 @@ Sentry user identity is propagated to renderers via the `sentry:set-user` IPC ch
 | Dock icon (packaged) | n/a | Set from `process.resourcesPath/icon.icns` |
 | Login items | `setLoginItemSettings({ openAtLogin, path: process.execPath, args: ['--hidden'] })` | `setLoginItemSettings({ openAtLogin, openAsHidden: true })` |
 | Silent-launch detection | `process.argv.includes('--hidden')` | `app.getLoginItemSettings().wasOpenedAsHidden` |
-| Installer | NSIS (`npm run package:win`) — x64 | DMG (`npm run package:mac`) — uses `build/entitlements.mac.plist` (microphone, JIT) and `hardenedRuntime: true` |
+| Installer | NSIS (`npm run package:win`) — x64 | DMG (`npm run package:mac`) — x64 + arm64; uses `build/entitlements.mac.plist` (microphone, JIT); `hardenedRuntime: false` |
 | Native binary shipped | `platform-core.win32-x64-msvc.node` | `platform-core.darwin-arm64.node` |
 
 ---
@@ -1198,10 +1154,12 @@ All assets live under `build/` and are declared in `package.json` → `build.ext
 
 `electron-builder` config in `package.json` declares:
 - `productName: "Prmpt"`
-- `appId: "com.prmpt.app"`
-- `mac.target: dmg`, `mac.icon: build/icon.icns`, `mac.hardenedRuntime: true`, `mac.entitlements: build/entitlements.mac.plist`
+- `appId: "com.prmpt.desktop"`
+- `mac.target: dmg` (x64 + arm64), `mac.icon: build/icon.icns`, `mac.hardenedRuntime: false`, `mac.entitlements: build/entitlements.mac.plist`
 - `win.target: nsis`, `win.icon: build/icon.ico`
-- `extraResources` lists the native `.node` binaries plus tray and dock icons so they're discoverable at `process.resourcesPath` in packaged builds
+- `extraResources` lists the native `.node` binaries, the `files/` skills folder, `tree-sitter-wasms/`, and the tray and app icons so they're discoverable at `process.resourcesPath` in packaged builds
+
+There is no `build.publish` target and no auto-updater; installers are built locally with `npm run package:win` / `npm run package:mac`. The two Python services are not bundled into the installer — they run from their own virtual environments (`npm run python:dev`, `npm run code-intel:dev`).
 
 ---
 
@@ -1232,4 +1190,4 @@ All design tokens are defined in [`app-ui/src/index.css`](app-ui/src/index.css) 
 
 ### Typography
 
-The app uses `Inter` (UI) and `Space Grotesk` (headings) loaded via Google Fonts. Font size and line-height are controlled by the `font_size` user preference and applied as a CSS variable at the root element.
+The app uses `Geist` (UI and display) and `Geist Mono`, bundled with the `@fontsource-variable/geist` and `@fontsource-variable/geist-mono` packages (no font CDN at runtime). The `font_size` and `font_family` user preferences are applied as Tailwind classes on the root element (`text-sm` / `text-base` / `text-lg`, `font-sans` / `font-mono` / `font-serif`).

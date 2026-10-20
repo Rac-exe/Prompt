@@ -18,18 +18,8 @@ vi.mock('electron', () => {
   };
 });
 
-vi.mock('@sentry/electron/main', () => ({
-  setTag: vi.fn(),
-  addBreadcrumb: vi.fn(),
-  captureException: vi.fn(),
-}));
-
 vi.mock('../../electron/main/utils/native-bridge', () => ({
   forceFocusWindow: vi.fn(),
-}));
-
-vi.mock('../../electron/main/analytics/analytics-service', () => ({
-  analyticsService: { logEvent: vi.fn() },
 }));
 
 class MockBrowserWindow extends EventEmitter {

@@ -12,7 +12,6 @@ import logging
 import time
 from datetime import datetime, timezone
 
-import sentry_sdk
 
 from app.config import GRAPH_BUILDER_ENABLED, SPLADE_ENABLED, SUMMARIZER_BATCH_SIZE, SUMMARIZER_CONCURRENCY
 from app.db.models import CallGraphEdge, ChunkInput, ChunkKey
@@ -247,7 +246,6 @@ async def process_ingest_batch(
             f"structure_vectors={len(embedding_structure)}"
         )
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.error(f"[project={project_id}] Embedding failed: {e}", exc_info=True)
         update_project_status(project_id, "error", last_indexed_at=datetime.now(timezone.utc).isoformat())
         return
@@ -264,7 +262,6 @@ async def process_ingest_batch(
                 f"[project={project_id}] SPLADE sparse embeddings computed: count={len(sparse_vecs)}"
             )
         except Exception as splade_err:
-            sentry_sdk.capture_exception(splade_err)
             logger.warning(
                 f"[project={project_id}] SPLADE computation failed (continuing without): {splade_err}"
             )
@@ -423,7 +420,6 @@ async def _run_graph_pipeline(
                 )
             except Exception as e:
                 logger.warning("[GRAPH_PIPELINE] Community embedding failed: %s", e)
-                sentry_sdk.capture_exception(e)
         else:
             logger.info("[GRAPH_PIPELINE] ► Step 3/9 — No community reports to embed")
 
@@ -475,7 +471,6 @@ async def _run_graph_pipeline(
                 )
             except Exception as e:
                 logger.warning("[GRAPH_PIPELINE] Relationship embedding failed: %s", e)
-                sentry_sdk.capture_exception(e)
         else:
             logger.info("[GRAPH_PIPELINE] ► Step 5/9 — No relationship summaries to embed")
 
@@ -532,7 +527,6 @@ async def _run_graph_pipeline(
                 )
             except Exception as e:
                 logger.warning("[GRAPH_PIPELINE] Concept phrase embedding failed: %s", e)
-                sentry_sdk.capture_exception(e)
 
         # ── Step 7: Build and write chunk graph data rows ─────────────────────
         t_step = time.perf_counter()
@@ -612,7 +606,6 @@ async def _run_graph_pipeline(
         return True
 
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.error("[GRAPH_PIPELINE] Pipeline failed (non-fatal): %s", e, exc_info=True)
         return False
 

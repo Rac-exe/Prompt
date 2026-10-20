@@ -32,36 +32,20 @@ export interface UserPreferences {
     updated_at: string;
 }
 
-export interface UserIdentity {
-    id: string;
-    provider: string;
-    identity_data: {
-        email?: string;
-        full_name?: string;
-        avatar_url?: string;
-        [key: string]: any;
-    };
-    created_at: string;
-    updated_at: string;
-}
-
 export interface CompleteUserData {
     profile: UserProfile;
     preferences: UserPreferences;
-    identities?: UserIdentity[];
-    hasEmailPassword?: boolean;
 }
 
+/** The local user (there is no login) and its profile/preferences. */
 interface AuthContextType {
     user: CompleteUserData | null;
     isLoading: boolean;
-    signOut: () => void;
 }
 
 export const AuthContext = createContext<AuthContextType>({
     user: null,
     isLoading: true,
-    signOut: () => { },
 });
 
 export const useAuth = () => useContext(AuthContext);

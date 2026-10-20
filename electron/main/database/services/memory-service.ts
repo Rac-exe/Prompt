@@ -1,4 +1,4 @@
-import { SupabaseClientManager } from '../supabase-client';
+import { getDb, LOCAL_USER_ID, newId, nowIso } from '../local-db';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -31,27 +31,16 @@ export interface UserMemoryMap {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export class MemoryService {
-  private client = SupabaseClientManager.getClient();
-
   /**
-   * Fetch all memory entries for the authenticated user,
-   * grouped by memory_type.
+   * Fetch all memory entries, grouped by memory_type.
    */
   async getMemory(): Promise<UserMemoryMap> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    const { data, error } = await this.client
-      .from('user_memory')
-      .select('*')
-      .eq('user_id', userData.user.id)
-      .order('memory_type', { ascending: true })
-      .order('key', { ascending: true });
-
-    if (error) throw error;
+    const rows = getDb()
+      .prepare('SELECT * FROM user_memory WHERE user_id = ? ORDER BY memory_type ASC, key ASC')
+      .all(LOCAL_USER_ID) as MemoryEntry[];
 
     const result: UserMemoryMap = { user: {}, behavioral: {}, context: {} };
-    for (const entry of (data ?? []) as MemoryEntry[]) {
+    for (const entry of rows) {
       result[entry.memory_type][entry.key] = entry;
     }
     return result;
@@ -68,25 +57,8 @@ export class MemoryService {
     source: MemorySource = 'inferred',
     confidence = 1.0,
   ): Promise<void> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    const { error } = await this.client
-      .from('user_memory')
-      .upsert(
-        {
-          user_id: userData.user.id,
-          memory_type: memoryType,
-          key,
-          value,
-          source,
-          confidence,
-          observation_count: 1, // Reset to 1 for explicit entries
-        },
-        { onConflict: 'user_id,memory_type,key' },
-      );
-
-    if (error) throw error;
+    // observation_count resets to 1 for explicit entries
+    MemoryService.upsertRow(memoryType, key, value, source, confidence, 1);
   }
 
   /**
@@ -94,20 +66,12 @@ export class MemoryService {
    * Used by the analyzer to skip overwriting user-defined facts with inferred ones.
    */
   async hasExplicitEntry(memoryType: MemoryType, key: string): Promise<boolean> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) return false;
-
-    const { data, error } = await this.client
-      .from('user_memory')
-      .select('id')
-      .eq('user_id', userData.user.id)
-      .eq('memory_type', memoryType)
-      .eq('key', key)
-      .eq('source', 'explicit')
-      .maybeSingle();
-
-    if (error) return false;
-    return !!data;
+    const row = getDb()
+      .prepare(
+        "SELECT id FROM user_memory WHERE user_id = ? AND memory_type = ? AND key = ? AND source = 'explicit'",
+      )
+      .get(LOCAL_USER_ID, memoryType, key);
+    return !!row;
   }
 
   /**
@@ -121,49 +85,20 @@ export class MemoryService {
     value: string,
     confidence = 0.7,
   ): Promise<boolean> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    // Check explicit priority
-    const isExplicit = await this.hasExplicitEntry(memoryType, key);
-    if (isExplicit) {
+    if (await this.hasExplicitEntry(memoryType, key)) {
       console.log(`[MemoryService] Skipping inferred upsert for "${key}" — explicit entry exists`);
       return false;
     }
-
-    // Check if entry already exists (to increment observation_count)
-    const { data: existing } = await this.client
-      .from('user_memory')
-      .select('id, observation_count')
-      .eq('user_id', userData.user.id)
-      .eq('memory_type', memoryType)
-      .eq('key', key)
-      .maybeSingle();
-
+    const existing = getDb()
+      .prepare('SELECT observation_count FROM user_memory WHERE user_id = ? AND memory_type = ? AND key = ?')
+      .get(LOCAL_USER_ID, memoryType, key);
     const newCount = existing ? (existing.observation_count || 1) + 1 : 1;
-
-    const { error } = await this.client
-      .from('user_memory')
-      .upsert(
-        {
-          user_id: userData.user.id,
-          memory_type: memoryType,
-          key,
-          value,
-          source: 'inferred' as MemorySource,
-          confidence,
-          observation_count: newCount,
-        },
-        { onConflict: 'user_id,memory_type,key' },
-      );
-
-    if (error) throw error;
+    MemoryService.upsertRow(memoryType, key, value, 'inferred', confidence, newCount);
     return true;
   }
 
   /**
-   * Batch upsert multiple inferred memory entries in 3 DB round-trips regardless
-   * of fact count (fetch explicit set → fetch existing counts → batch upsert).
+   * Batch upsert multiple inferred memory entries in one transaction.
    * Respects explicit priority: any key that has an explicit entry is skipped.
    * Returns the number of rows actually written.
    */
@@ -171,77 +106,73 @@ export class MemoryService {
     facts: Array<{ memoryType: MemoryType; key: string; value: string; confidence: number }>,
   ): Promise<number> {
     if (facts.length === 0) return 0;
+    const conn = getDb();
 
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-    const userId = userData.user.id;
+    const explicitRows = conn
+      .prepare("SELECT memory_type, key FROM user_memory WHERE user_id = ? AND source = 'explicit'")
+      .all(LOCAL_USER_ID);
+    const explicitSet = new Set(explicitRows.map((r: any) => `${r.memory_type}::${r.key}`));
 
-    // 1. Fetch all explicit entries in one query
-    const { data: explicitRows } = await this.client
-      .from('user_memory')
-      .select('memory_type, key')
-      .eq('user_id', userId)
-      .eq('source', 'explicit');
-
-    const explicitSet = new Set(
-      (explicitRows ?? []).map((r) => `${r.memory_type}::${r.key}`),
-    );
-
-    // 2. Filter out facts blocked by explicit priority
-    const eligible = facts.filter(
-      (f) => !explicitSet.has(`${f.memoryType}::${f.key}`),
-    );
+    const eligible = facts.filter((f) => !explicitSet.has(`${f.memoryType}::${f.key}`));
     if (eligible.length === 0) return 0;
 
-    // 3. Fetch existing inferred entries to increment observation_count
-    const { data: existing } = await this.client
-      .from('user_memory')
-      .select('memory_type, key, observation_count')
-      .eq('user_id', userId)
-      .in('key', eligible.map((f) => f.key));
-
-    const existingMap = new Map(
-      (existing ?? []).map((r) => [`${r.memory_type}::${r.key}`, r.observation_count as number]),
+    const existingRows = conn
+      .prepare('SELECT memory_type, key, observation_count FROM user_memory WHERE user_id = ?')
+      .all(LOCAL_USER_ID);
+    const existingMap = new Map<string, number>(
+      existingRows.map((r: any) => [`${r.memory_type}::${r.key}`, r.observation_count as number]),
     );
 
-    // 4. Build batch upsert payload — sanitize key/value before writing to DB
+    // Sanitize key/value before writing (they are later injected into prompts)
     const rows = eligible
       .map((f) => ({
-        user_id: userId,
-        memory_type: f.memoryType,
+        memoryType: f.memoryType,
         key: MemoryService.sanitizeField(f.key, MemoryService.MAX_KEY_LEN),
         value: MemoryService.sanitizeField(f.value, MemoryService.MAX_VALUE_LEN),
-        source: 'inferred' as MemorySource,
         confidence: f.confidence,
-        observation_count: (existingMap.get(`${f.memoryType}::${f.key}`) ?? 0) + 1,
+        count: (existingMap.get(`${f.memoryType}::${f.key}`) ?? 0) + 1,
       }))
       .filter((r) => r.key.length > 0 && r.value.length > 0);
 
-    // 5. Single batch upsert — 3 queries total regardless of fact count
-    const { error } = await this.client
-      .from('user_memory')
-      .upsert(rows, { onConflict: 'user_id,memory_type,key' });
-
-    if (error) throw error;
+    conn.transaction(() => {
+      for (const r of rows) {
+        MemoryService.upsertRow(r.memoryType, r.key, r.value, 'inferred', r.confidence, r.count);
+      }
+    })();
     return rows.length;
   }
 
   /**
    * Delete a specific memory entry.
-   * Only deletes entries belonging to the authenticated user (RLS enforced server-side too).
    */
   async deleteMemoryEntry(memoryType: MemoryType, key: string): Promise<void> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
+    getDb()
+      .prepare('DELETE FROM user_memory WHERE user_id = ? AND memory_type = ? AND key = ?')
+      .run(LOCAL_USER_ID, memoryType, key);
+  }
 
-    const { error } = await this.client
-      .from('user_memory')
-      .delete()
-      .eq('user_id', userData.user.id)
-      .eq('memory_type', memoryType)
-      .eq('key', key);
-
-    if (error) throw error;
+  private static upsertRow(
+    memoryType: MemoryType,
+    key: string,
+    value: string,
+    source: MemorySource,
+    confidence: number,
+    observationCount: number,
+  ): void {
+    const now = nowIso();
+    getDb()
+      .prepare(
+        `INSERT INTO user_memory
+           (id, user_id, memory_type, key, value, confidence, source, observation_count, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, memory_type, key) DO UPDATE SET
+           value = excluded.value,
+           confidence = excluded.confidence,
+           source = excluded.source,
+           observation_count = excluded.observation_count,
+           updated_at = excluded.updated_at`,
+      )
+      .run(newId(), LOCAL_USER_ID, memoryType, key, value, confidence, source, observationCount, now, now);
   }
 
   /** Max character lengths for stored fact fields. */

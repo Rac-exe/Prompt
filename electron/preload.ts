@@ -130,6 +130,17 @@ async function stopLocalTranscription() {
   ipcRenderer.send('transcription:stop');
 }
 
+/** AI provider settings as the renderer sees them (no raw keys). */
+interface AISettingsView {
+  configured: boolean;
+  hasApiKey: boolean;
+  apiKeyPreview: string;
+  optimizerModel: string;
+  ragModel: string;
+  hasDeepgramKey: boolean;
+  deepgramKeyPreview: string;
+}
+
 // Declare window type for TypeScript
 declare global {
   interface Window {
@@ -207,7 +218,6 @@ declare global {
       renameChat: (chatId: string, title: string) => void;
       onChatRenamed: (callback: (data: { chatId: string; title: string }) => void) => (() => void);
       onChatRenameError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
-      signOut: () => void;
       copyToClipboard: (text: string) => void;
       saveFeedback: (messageId: string, rating: 'positive' | 'negative') => void;
       stopGeneration: () => void;
@@ -219,27 +229,25 @@ declare global {
       submitClarification: (data: { chatId: string; answers: Record<string, string>; wantsSections: boolean }) => void;
       onClarificationRequired: (callback: (data: { chatId: string; should_clarify: boolean; is_complex: boolean; complexity_reason: string; suggested_sections: string[]; questions: Array<{ id: string; question: string; type: string; options: string[]; allow_other: boolean; optional: boolean }> }) => void) => (() => void);
 
-      // Auth API
-      signUp: (data: { name: string; dob: string; email: string; password: string }) => void;
-      signIn: (data: { email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
-      signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
+      // Session API (local user — there is no login)
       checkAuth: () => void;
       onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => void;
-      getIdentities: () => Promise<{ identities: any[]; error?: string | null }>;
-      linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
-      unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
-      resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
-      // OTP API
-      sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
-      verifySignupOtp: (email: string, otp: string) => Promise<{ success?: boolean; error?: string }>;
-      sendResetOtp: (email: string) => Promise<{ success?: boolean; error?: string }>;
-      verifyResetOtp: (email: string, otp: string, newPassword: string) => Promise<{ success?: boolean; error?: string }>;
       updateProfile: (updates: any) => void;
       uploadAvatar: (imageData: string, filename: string) => Promise<{ success: boolean; url?: string; error?: string }>;
       updatePreferences: (updates: any) => void;
       setPersonalizationPrompt: (prompt: string) => void;
       onProfileUpdated: (callback: () => void) => void;
       onPreferencesUpdated: (callback: () => void) => void;
+
+      // AI provider API (OpenRouter key + models; keys never reach the renderer)
+      aiSettings: {
+        get: () => Promise<AISettingsView>;
+        save: (update: { openrouterApiKey?: string | null; optimizerModel?: string; ragModel?: string; deepgramApiKey?: string | null }) =>
+          Promise<{ ok: boolean; error?: string; settings: AISettingsView }>;
+        validateKey: (key: string) => Promise<{ valid: boolean; error?: string; label?: string; limitRemaining?: number | null }>;
+        listModels: () => Promise<{ models: Array<{ id: string; name: string; contextLength: number | null; supportsTools: boolean; promptPricePerMillion: number | null; completionPricePerMillion: number | null }>; error?: string }>;
+        onChanged: (callback: (settings: AISettingsView) => void) => () => void;
+      };
 
       // Settings API
       loadSettings: () => Promise<any>;
@@ -257,13 +265,6 @@ declare global {
         updatePrompt: (promptId: string, updates: any) => Promise<any>;
         deletePrompt: (promptId: string) => Promise<any>;
         toggleFavorite: (promptId: string) => Promise<any>;
-        // Sharing
-        getShareLink: (collectionId: string) => Promise<{ shareToken: string; shareUrl: string }>;
-        getSharedCollection: (token: string) => Promise<any>;
-        saveSharedCollection: (originalCollectionId: string) => Promise<{ collection: any; alreadyExisted: boolean }>;
-        // Prompt sharing
-        getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string }>;
-        getSharedPrompt: (token: string) => Promise<any>;
       };
       onPromptLibraryLoaded: (callback: (data: any) => void) => void;
 
@@ -290,12 +291,6 @@ declare global {
         openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
       };
 
-      // Sentry user sync
-      onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => void;
-
-      // Rate Limit API
-      getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
-
       // Memory API
       memory: {
         get: () => Promise<{
@@ -308,22 +303,6 @@ declare global {
         getEnabled: () => Promise<boolean>;
         setEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
         onUpdated: (callback: (memory: any) => void) => (() => void);
-      };
-
-      // Feedback API
-      feedback: {
-        submit: (data: { rating: 'positive' | 'negative'; comment?: string }) => Promise<{ success: boolean; error?: string }>;
-      };
-
-      // GDPR Account Deletion API (Option C — hard lockout)
-      deletion: {
-        request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
-        status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
-        restore: {
-          request: (email: string) => Promise<{ success: boolean; error?: string }>;
-          confirm: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
-        };
-        onRequested: (callback: (data: { scheduledAt: string }) => void) => () => void;
       };
 
       // Skills API
@@ -342,14 +321,6 @@ declare global {
         onChanged: (callback: (data: { percent: number }) => void) => () => void;
       };
 
-      // Auto-update API
-      update: {
-        onAvailable: (callback: (data: { version: string }) => void) => () => void;
-        onProgress: (callback: (data: { percent: number; transferred: number; total: number }) => void) => () => void;
-        onDownloaded: (callback: (data: { version: string }) => void) => () => void;
-        install: () => void;
-      };
-
       // Auto-launch (start at login) API — per-machine preference
       autoLaunch: {
         get: () => Promise<{ enabled: boolean; osState: boolean }>;
@@ -365,7 +336,6 @@ declare global {
         setActive: (projectId: string, localPath?: string) => Promise<void>;
         getActive: () => Promise<{ projectId: string | null; branch: string | null }>;
         reindex: (projectId: string, localPath: string) => Promise<{ totalFiles: number; totalChunks: number }>;
-        sync: (projectId?: string) => Promise<void>;
         toggleWatching: (projectId: string, localPath: string, enable: boolean) => Promise<{ watching: boolean }>;
         isWatching: (projectId: string) => Promise<boolean>;
         retrieve: (params: { project_id: string; query: string; branch?: string; limit?: number; mode?: 'find' | 'ask' | 'bug' | 'optimize' }) => Promise<any>;
@@ -691,16 +661,6 @@ const electronAPI = {
     ipcRenderer.on('upload-partial-failure', handler);
     return () => ipcRenderer.removeListener('upload-partial-failure', handler);
   },
-  onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => {
-    const handler = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('send-message-queued', handler);
-    return () => ipcRenderer.removeListener('send-message-queued', handler);
-  },
-  onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => {
-    const handler = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('offline-message-synced', handler);
-    return () => ipcRenderer.removeListener('offline-message-synced', handler);
-  },
   copyToClipboard: (text: string) => {
     ipcRenderer.send('app:copy-to-clipboard', text);
   },
@@ -711,9 +671,6 @@ const electronAPI = {
     ipcRenderer.send('app:stop-generation');
   },
   getGenerationStatus: (chatId: string) => ipcRenderer.invoke('app:get-generation-status', chatId),
-  signOut: () => {
-    ipcRenderer.send('app:sign-out');
-  },
 
   // Streaming optimization (app window uses these channels)
   onOptimizationComplete: (callback: (data: { optimized: string; original: string }) => void) => {
@@ -733,40 +690,10 @@ const electronAPI = {
   },
 
   // ============================================
-  // AUTH API
+  // SESSION API (local user — there is no login)
   // ============================================
-  signIn: (data: { email: string; password: string }) => {
-    return ipcRenderer.invoke('auth:sign-in', data);
-  },
-  signInWithOAuth: (provider: 'google' | 'github') => {
-    return ipcRenderer.invoke('auth:oauth-sign-in', { provider });
-  },
   checkAuth: () => {
     ipcRenderer.send('auth:check');
-  },
-  getIdentities: () => {
-    return ipcRenderer.invoke('auth:get-identities');
-  },
-  linkIdentity: (provider: 'google' | 'github') => {
-    return ipcRenderer.invoke('auth:link-identity', { provider });
-  },
-  unlinkIdentity: (identityId: string) => {
-    return ipcRenderer.invoke('auth:unlink-identity', { identityId });
-  },
-  resetPassword: (email: string) => {
-    return ipcRenderer.invoke('auth:reset-password', { email });
-  },
-  sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => {
-    return ipcRenderer.invoke('auth:send-signup-otp', data);
-  },
-  verifySignupOtp: (email: string, otp: string) => {
-    return ipcRenderer.invoke('auth:verify-signup-otp', { email, otp });
-  },
-  sendResetOtp: (email: string) => {
-    return ipcRenderer.invoke('auth:send-reset-otp', { email });
-  },
-  verifyResetOtp: (email: string, otp: string, newPassword: string) => {
-    return ipcRenderer.invoke('auth:verify-reset-otp', { email, otp, newPassword });
   },
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any }) => void) => {
     const handler = (_event: any, data: any) => callback(data);
@@ -791,6 +718,22 @@ const electronAPI = {
   },
   onPreferencesUpdated: (callback: () => void) => {
     ipcRenderer.on('user:preferences-updated', () => callback());
+  },
+
+  // ============================================
+  // AI PROVIDER API (OpenRouter key + models; keys never reach the renderer)
+  // ============================================
+  aiSettings: {
+    get: () => ipcRenderer.invoke('ai-settings:get'),
+    save: (update: { openrouterApiKey?: string | null; optimizerModel?: string; ragModel?: string; deepgramApiKey?: string | null }) =>
+      ipcRenderer.invoke('ai-settings:save', update),
+    validateKey: (key: string) => ipcRenderer.invoke('ai-settings:validate-key', key),
+    listModels: () => ipcRenderer.invoke('ai-settings:list-models'),
+    onChanged: (callback: (settings: any) => void) => {
+      const handler = (_event: any, data: any) => callback(data);
+      ipcRenderer.on('ai-settings:changed', handler);
+      return () => ipcRenderer.removeListener('ai-settings:changed', handler);
+    },
   },
 
   // ============================================
@@ -831,18 +774,6 @@ const electronAPI = {
       ipcRenderer.invoke('prompt-library:delete-prompt', { promptId }),
     toggleFavorite: (promptId: string) =>
       ipcRenderer.invoke('prompt-library:toggle-favorite', { promptId }),
-    // Sharing
-    getShareLink: (collectionId: string) =>
-      ipcRenderer.invoke('prompt-library:get-share-link', { collectionId }),
-    getSharedCollection: (token: string) =>
-      ipcRenderer.invoke('prompt-library:get-shared-collection', { token }),
-    saveSharedCollection: (originalCollectionId: string) =>
-      ipcRenderer.invoke('prompt-library:save-shared-collection', { originalCollectionId }),
-    // Prompt sharing
-    getPromptShareLink: (promptId: string) =>
-      ipcRenderer.invoke('prompt-library:get-prompt-share-link', { promptId }),
-    getSharedPrompt: (token: string) =>
-      ipcRenderer.invoke('prompt-library:get-shared-prompt', { token }),
   },
   onPromptLibraryLoaded: (callback: (data: any) => void) => {
     ipcRenderer.on('prompt-library:loaded', (_event, data) => callback(data));
@@ -886,23 +817,6 @@ const electronAPI = {
   },
 
   // ============================================
-  // SENTRY USER SYNC
-  // ============================================
-  onSentryUser: (callback: (user: { id: string; email: string } | null) => void) => {
-    const handler = (_event: any, user: any) => callback(user);
-    ipcRenderer.removeAllListeners('sentry:set-user');
-    ipcRenderer.on('sentry:set-user', handler);
-    return () => ipcRenderer.removeListener('sentry:set-user', handler);
-  },
-
-  // ============================================
-  // RATE LIMIT API
-  // ============================================
-  getRateLimitStatus: () => {
-    return ipcRenderer.invoke('app:get-rate-limit-status');
-  },
-
-  // ============================================
   // MEMORY API
   // ============================================
   memory: {
@@ -928,40 +842,6 @@ const electronAPI = {
       ipcRenderer.invoke('storage:get-signed-url', { storagePath }),
     openPdf: (storagePath: string) =>
       ipcRenderer.invoke('storage:open-pdf', { storagePath }),
-  },
-
-  // ============================================
-  // FEEDBACK API
-  // ============================================
-  feedback: {
-    submit: (data: { rating: 'positive' | 'negative'; comment?: string }) =>
-      ipcRenderer.invoke('feedback:submit', data),
-  },
-
-  // ============================================
-  // GDPR ACCOUNT DELETION API (Option C — hard lockout)
-  // ============================================
-  deletion: {
-    request: (reason?: string) => ipcRenderer.invoke('deletion:request', { reason }),
-    status: () => ipcRenderer.invoke('deletion:status'),
-    restore: {
-      request: (email: string) => ipcRenderer.invoke('deletion:restore-request', { email }),
-      confirm: (email: string, otp: string) => ipcRenderer.invoke('deletion:restore-confirm', { email, otp }),
-    },
-    onRequested: (callback: (data: { scheduledAt: string }) => void) => {
-      const handler = (_event: any, data: any) => callback(data);
-      ipcRenderer.on('deletion:requested', handler);
-      return () => ipcRenderer.removeListener('deletion:requested', handler);
-    },
-  },
-
-  // ============================================
-  // DEEP LINK NAVIGATION
-  // ============================================
-  onNavigateToShare: (callback: (routePath: string) => void): (() => void) => {
-    const handler = (_event: any, routePath: string) => callback(routePath);
-    ipcRenderer.on('navigate-to-share', handler);
-    return () => ipcRenderer.removeListener('navigate-to-share', handler);
   },
 
   // ============================================
@@ -995,28 +875,6 @@ const electronAPI = {
   },
 
   // ============================================
-  // AUTO-UPDATE API
-  // ============================================
-  update: {
-    onAvailable: (callback: (data: { version: string }) => void) => {
-      const handler = (_event: any, data: any) => callback(data);
-      ipcRenderer.on('update:available', handler);
-      return () => ipcRenderer.removeListener('update:available', handler);
-    },
-    onProgress: (callback: (data: { percent: number; transferred: number; total: number }) => void) => {
-      const handler = (_event: any, data: any) => callback(data);
-      ipcRenderer.on('update:progress', handler);
-      return () => ipcRenderer.removeListener('update:progress', handler);
-    },
-    onDownloaded: (callback: (data: { version: string }) => void) => {
-      const handler = (_event: any, data: any) => callback(data);
-      ipcRenderer.on('update:downloaded', handler);
-      return () => ipcRenderer.removeListener('update:downloaded', handler);
-    },
-    install: () => ipcRenderer.send('update:install'),
-  },
-
-  // ============================================
   // AUTO-LAUNCH API (start at login — per-machine preference)
   // ============================================
   autoLaunch: {
@@ -1035,7 +893,6 @@ const electronAPI = {
     setActive: (projectId: string, localPath?: string) => ipcRenderer.invoke('project:set-active', projectId, localPath),
     getActive: () => ipcRenderer.invoke('project:get-active'),
     reindex: (projectId: string, localPath: string) => ipcRenderer.invoke('project:reindex', projectId, localPath),
-    sync: (projectId?: string) => ipcRenderer.invoke('project:sync', projectId),
     toggleWatching: (projectId: string, localPath: string, enable: boolean) => ipcRenderer.invoke('project:toggle-watching', projectId, localPath, enable),
     isWatching: (projectId: string) => ipcRenderer.invoke('project:is-watching', projectId),
     isScanning: (projectId: string) => ipcRenderer.invoke('project:is-scanning', projectId),

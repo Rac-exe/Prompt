@@ -1,16 +1,13 @@
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 
-vi.mock('@sentry/electron/main', () => ({
-  addBreadcrumb: vi.fn(),
-  captureException: vi.fn(),
-  startSpan: vi.fn((_opts, cb) => cb({ setStatus: vi.fn(), end: vi.fn() })),
-}));
-
-vi.mock('../../electron/main/utils/auth-state', () => ({
-  authState: {
-    isAuthenticated: true,
-    currentAccessToken: 'mock-token',
-    currentUserId: 'mock-user-id',
+// The client reads the user's Deepgram key from the local settings DB
+vi.mock('../../electron/main/database/services/ai-settings-service', () => ({
+  aiSettings: {
+    get: () => ({ openrouterApiKey: 'sk-or-test', optimizerModel: 'mock/optimizer', ragModel: 'mock/rag', deepgramApiKey: null }),
+    isConfigured: () => true,
+    pythonHeaders: () => ({ 'X-Prmpt-OpenRouter-Key': 'sk-or-test' }),
+    codeIntelHeaders: () => ({ 'X-Prmpt-OpenRouter-Key': 'sk-or-test' }),
+    llmPayload: () => ({ api_key: 'sk-or-test', optimizer_model: 'mock/optimizer', rag_model: 'mock/rag' }),
   },
 }));
 

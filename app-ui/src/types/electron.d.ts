@@ -26,9 +26,7 @@ export interface AttachedFile {
   /** Present only in-session (not persisted to DB). */
   base64?: string;
   sizeBytes: number;
-  /** Cloudinary secure_url for images (persisted instead of base64). */
-  cloudinaryUrl?: string;
-  /** Supabase Storage path for PDFs (used to generate signed URLs). */
+  /** Path in the local attachment store (read via storage.getSignedUrl / openPdf). */
   storagePath?: string;
 }
 
@@ -39,50 +37,45 @@ export interface SkillInfo {
   description: string;
 }
 
-export interface SharedCollectionView {
-  id: string;
-  name: string;
-  icon?: string;
-  share_token: string;
-  owner_name: string;
-  owner_id: string;
-  prompts: Array<{
-    id: string;
-    title: string;
-    content: string;
-    collection_id: string;
-    created_at: string;
-  }>;
+// ── AI provider ───────────────────────────────────────────────────────────────
+/** AI provider settings as the renderer sees them (keys never leave the main process). */
+export interface AISettingsView {
+  configured: boolean;
+  hasApiKey: boolean;
+  apiKeyPreview: string;
+  optimizerModel: string;
+  ragModel: string;
+  hasDeepgramKey: boolean;
+  deepgramKeyPreview: string;
 }
 
-export interface SharedPromptView {
+/** An entry from OpenRouter's public model list. */
+export interface OpenRouterModel {
   id: string;
-  title: string;
-  content: string;
-  share_token: string;
-  owner_name: string;
-  owner_id: string;
-  created_at: string;
+  name: string;
+  contextLength: number | null;
+  supportsTools: boolean;
+  promptPricePerMillion: number | null;
+  completionPricePerMillion: number | null;
 }
 
 export interface ElectronAPI {
   // Platform
   platform: 'darwin' | 'win32' | 'linux';
 
-  // Auth
-  signIn: (data: { email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
-  signInWithOAuth: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
+  // Session (local user — there is no login)
   checkAuth: () => void;
   onAuthStateChange: (callback: (data: { isAuthenticated: boolean; user: any; error?: string }) => void) => void;
-  getIdentities: () => Promise<{ identities: any[]; error?: string | null }>;
-  linkIdentity: (provider: 'google' | 'github') => Promise<{ success?: boolean; error?: string }>;
-  unlinkIdentity: (identityId: string) => Promise<{ success?: boolean; error?: string }>;
-  resetPassword: (email: string) => Promise<{ success?: boolean; error?: string }>;
-  sendSignupOtp: (data: { name: string; dob: string; email: string; password: string }) => Promise<{ success?: boolean; error?: string }>;
-  verifySignupOtp: (email: string, otp: string) => Promise<{ success?: boolean; error?: string }>;
-  sendResetOtp: (email: string) => Promise<{ success?: boolean; error?: string }>;
-  verifyResetOtp: (email: string, otp: string, newPassword: string) => Promise<{ success?: boolean; error?: string }>;
-  signOut: () => void;
+
+  // AI provider (OpenRouter key + models)
+  aiSettings: {
+    get: () => Promise<AISettingsView>;
+    save: (update: { openrouterApiKey?: string | null; optimizerModel?: string; ragModel?: string; deepgramApiKey?: string | null }) =>
+      Promise<{ ok: boolean; error?: string; settings: AISettingsView }>;
+    validateKey: (key: string) => Promise<{ valid: boolean; error?: string; label?: string; limitRemaining?: number | null }>;
+    listModels: () => Promise<{ models: OpenRouterModel[]; error?: string }>;
+    onChanged: (callback: (settings: AISettingsView) => void) => () => void;
+  };
 
   // Chat
   optimizePrompt: (
@@ -129,8 +122,6 @@ export interface ElectronAPI {
   onMessageReceived: (callback: (data: { chatId: string; message: any }) => void) => void;
   onMessageSendError: (callback: (data: { error: string; details?: string }) => void) => void;
   onUploadPartialFailure?: (callback: (data: { failedFiles: string[] }) => void) => (() => void);
-  onSendMessageQueued: (callback: (data: { chatId: string; content: string; message: string }) => void) => (() => void);
-  onOfflineMessageSynced: (callback: (data: { chatId: string; userMessage: any; assistantMessage: any }) => void) => (() => void);
   deleteChat: (chatId: string) => void;
   onChatDeleted: (callback: (data: { chatId: string }) => void) => (() => void);
   onChatDeleteError: (callback: (data: { chatId: string; error: string }) => void) => (() => void);
@@ -155,13 +146,6 @@ export interface ElectronAPI {
     updatePrompt: (promptId: string, updates: any) => Promise<any>;
     deletePrompt: (promptId: string) => Promise<any>;
     toggleFavorite: (promptId: string) => Promise<any>;
-    // Sharing
-    getShareLink: (collectionId: string) => Promise<{ shareToken: string; shareUrl: string }>;
-    getSharedCollection: (token: string) => Promise<SharedCollectionView>;
-    saveSharedCollection: (originalCollectionId: string) => Promise<{ collection: any; alreadyExisted: boolean }>;
-    // Prompt sharing
-    getPromptShareLink: (promptId: string) => Promise<{ shareToken: string; shareUrl: string; webUrl: string }>;
-    getSharedPrompt: (token: string) => Promise<SharedPromptView>;
   };
   onPromptLibraryLoaded: (callback: (data: any) => void) => void;
 
@@ -204,14 +188,11 @@ export interface ElectronAPI {
   // Open URL in default system browser
   openExternal: (url: string) => void;
 
-  // Rate Limit
-  getRateLimitStatus: () => Promise<{ allowed: boolean; remaining: number; limit: number; role: string }>;
-
   // Network status
   onNetworkStatus: (callback: (data: { isOnline: boolean }) => void) => void;
   onNetworkReconnected: (callback: () => void) => void;
 
-  // Storage (file attachments — Cloudinary/Supabase Storage)
+  // Storage (file attachments saved in the local attachment store)
   storage: {
     getSignedUrl: (storagePath: string) => Promise<{ signedUrl?: string; error?: string }>;
     openPdf: (storagePath: string) => Promise<{ success: boolean; error?: string }>;
@@ -232,17 +213,6 @@ export interface ElectronAPI {
     list: () => Promise<SkillInfo[]>;
   };
 
-  // GDPR Account Deletion (Option C — hard lockout)
-  deletion: {
-    request: (reason?: string) => Promise<{ success: boolean; scheduledAt?: string; message?: string; error?: string }>;
-    status: () => Promise<{ pending: boolean; request: { scheduled_deletion_at: string } | null }>;
-    restore: {
-      request: (email: string) => Promise<{ success: boolean; error?: string }>;
-      confirm: (email: string, otp: string) => Promise<{ success: boolean; error?: string }>;
-    };
-    onRequested: (callback: (data: { scheduledAt: string }) => void) => () => void;
-  };
-
   // Stop generation
   stopGeneration: () => void;
 
@@ -251,17 +221,6 @@ export interface ElectronAPI {
     get: () => Promise<{ percent: number }>;
     set: (percent: number) => Promise<void>;
     onChanged: (callback: (data: { percent: number }) => void) => () => void;
-  };
-
-  // Deep link navigation — receives the full React Router route path (e.g. /share/c/<token>)
-  onNavigateToShare: (callback: (routePath: string) => void) => (() => void);
-
-  // Auto-update
-  update?: {
-    onAvailable: (callback: (data: { version: string }) => void) => () => void;
-    onProgress: (callback: (data: { percent: number; transferred: number; total: number }) => void) => () => void;
-    onDownloaded: (callback: (data: { version: string }) => void) => () => void;
-    install: () => void;
   };
 
   // Auto-launch (start at login) — per-machine preference

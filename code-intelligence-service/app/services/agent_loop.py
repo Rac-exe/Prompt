@@ -24,18 +24,17 @@ import logging
 import time
 
 import litellm
-import sentry_sdk
 
+from app import llm
 from app.config import (
     AGENT_MAX_CHUNKS,
     AGENT_MAX_HOPS,
     AGENT_MODEL,
     AGENT_TIME_BUDGET_S,
-    OPENROUTER_API_KEY,
 )
 from app.db import queries
-from app.services import prmpt_ai_client
 from app.services.agent_tools import TOOL_SCHEMAS, run_tool
+from app.services.prompt_cache import apply_prompt_cache
 
 logger = logging.getLogger("code-intel.agent-loop")
 
@@ -55,17 +54,15 @@ ids that matter (the system reads them from your tool usage)."""
 
 
 def _completion_kwargs(messages: list[dict]) -> dict:
-    kwargs: dict = {
-        "model": AGENT_MODEL,
-        "messages": prmpt_ai_client.apply_prompt_cache(messages, AGENT_MODEL),
+    model = llm.rag_model(AGENT_MODEL)
+    return {
+        **llm.completion_kwargs(model),
+        "messages": apply_prompt_cache(messages, model),
         "tools": TOOL_SCHEMAS,
         "tool_choice": "auto",
         "temperature": 0.1,
         "max_tokens": 700,
     }
-    if OPENROUTER_API_KEY and "openrouter" in AGENT_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
-    return kwargs
 
 
 async def agentic_retrieve(
@@ -172,5 +169,4 @@ async def agentic_retrieve(
 
     except Exception as e:
         logger.warning("[AGENT] loop failed (%s) — falling back to one-shot", e)
-        sentry_sdk.capture_exception(e)
         return None

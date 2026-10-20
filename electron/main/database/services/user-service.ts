@@ -1,6 +1,5 @@
-import * as Sentry from '@sentry/electron/main';
-import { SupabaseClientManager } from '../supabase-client';
-import { DeletionService } from './deletion-service';
+import * as os from 'os';
+import { getDb, LOCAL_USER_ID, nowIso, toJson, fromJson } from '../local-db';
 
 export interface UserProfile {
   id: string;
@@ -8,7 +7,6 @@ export interface UserProfile {
   dob: string | null;
   email: string;
   avatar_url: string | null;
-  /** Cloudinary public_id for the avatar — used for direct cleanup on deletion. */
   avatar_public_id: string | null;
   created_at: string;
   updated_at: string;
@@ -42,382 +40,132 @@ export interface CompleteUserData {
   hasEmailPassword: boolean;
 }
 
+const DEFAULT_UI_SETTINGS: UserPreferences['ui_settings'] = {
+  theme: 'dark',
+  default_model: '',
+  shortcuts: { overlay_toggle: 'Ctrl+5' },
+  optimization_preferences: { auto_optimize: true, show_diff: true, min_prompt_length: 10 },
+  privacy: { store_history: true, sync_across_devices: false },
+};
+
+function defaultName(): string {
+  try {
+    const name = os.userInfo().username;
+    if (name) return name;
+  } catch {
+    // userInfo can throw when the account has no username entry
+  }
+  return 'You';
+}
+
 /**
  * User Service
- * Handles user profile and preferences management
+ * The single local profile and its preferences, stored in the local SQLite
+ * database. The profile row is created on first use.
  */
 export class UserService {
-  private client = SupabaseClientManager.getClient();
+  private getRow(): any {
+    const conn = getDb();
+    let row = conn.prepare('SELECT * FROM profile WHERE id = ?').get(LOCAL_USER_ID);
+    if (!row) {
+      const now = nowIso();
+      conn
+        .prepare(
+          `INSERT INTO profile (id, name, email, avatar_url, personalization_prompt, ui_settings, created_at, updated_at)
+           VALUES (?, ?, '', NULL, NULL, ?, ?, ?)`,
+        )
+        .run(LOCAL_USER_ID, defaultName(), toJson(DEFAULT_UI_SETTINGS), now, now);
+      row = conn.prepare('SELECT * FROM profile WHERE id = ?').get(LOCAL_USER_ID);
+    }
+    return row;
+  }
 
   /**
-   * Get current user's profile
+   * Get the local profile
    */
   async getUserProfile(): Promise<UserProfile | null> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) return null;
-
-      const { data, error } = await this.client
-        .from('profiles')
-        .select('*')
-        .eq('id', userData.user.id)
-        .single();
-
-      if (error) {
-        console.error('[UserService] Error fetching profile:', error);
-        return null;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('[UserService] Unexpected error fetching profile:', error);
-      return null;
-    }
+    const row = this.getRow();
+    return {
+      id: row.id,
+      name: row.name,
+      dob: null,
+      email: row.email || '',
+      avatar_url: row.avatar_url ?? null,
+      avatar_public_id: null,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
   }
 
   /**
-   * Get current user's preferences
+   * Get the local preferences
    */
   async getUserPreferences(): Promise<UserPreferences | null> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) return null;
-
-      const { data, error } = await this.client
-        .from('user_preferences')
-        .select('*')
-        .eq('user_id', userData.user.id)
-        .single();
-
-      if (error) {
-        console.error('[UserService] Error fetching preferences:', error);
-        return null;
-      }
-
-      return data;
-    } catch (error) {
-      console.error('[UserService] Unexpected error fetching preferences:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Re-create profile and preferences rows when they've been deleted
-   * but the auth.users entry still exists (e.g. manual DB cleanup).
-   */
-  private async ensureProfileExists(user: { id: string; email?: string; user_metadata?: Record<string, any> }): Promise<void> {
-    const { error: profileError } = await this.client
-      .from('profiles')
-      .upsert({
-        id: user.id,
-        email: user.email ?? '',
-        name: user.user_metadata?.name || user.user_metadata?.full_name || 'User',
-      }, { onConflict: 'id', ignoreDuplicates: true });
-
-    if (profileError) {
-      console.error('[UserService] Error ensuring profile exists:', profileError);
-      Sentry.captureException(profileError, {
-        tags: { component: 'user-service', op: 'ensure-profile:profile-upsert' },
-        extra: { userId: user.id },
-      });
-    }
-
-    const { error: prefsError } = await this.client
-      .from('user_preferences')
-      .upsert({ user_id: user.id }, { onConflict: 'user_id', ignoreDuplicates: true });
-
-    if (prefsError) {
-      console.error('[UserService] Error ensuring preferences exist:', prefsError);
-      Sentry.captureException(prefsError, {
-        tags: { component: 'user-service', op: 'ensure-profile:prefs-upsert' },
-        extra: { userId: user.id },
-      });
-    }
-  }
-
-  /**
-   * Get complete user data (profile + preferences).
-   * When called without a userId, resolves it via auth.getUser() (network call).
-   * Hot-path callers (startup) should pass userId from the cached session to skip that round-trip.
-   */
-  async getCompleteUserData(userId?: string): Promise<CompleteUserData | null> {
-    try {
-      return await Sentry.startSpan(
-        { name: 'user.get-complete-user-data', op: 'db', attributes: { userIdProvided: !!userId } },
-        async (span) => {
-          let resolvedId = userId;
-          if (!resolvedId) {
-            const { data: userData } = await Sentry.startSpan(
-              { name: 'user.auth-get-user', op: 'http.client' },
-              () => this.client.auth.getUser(),
-            );
-            if (!userData.user) return null;
-            resolvedId = userData.user.id;
-          }
-
-          span.setAttribute('userId', resolvedId);
-
-          const [profileResult, passwordResult] = await Sentry.startSpan(
-            { name: 'user.profile-and-password', op: 'db.parallel' },
-            () => Promise.all([
-              this._fetchProfile(resolvedId!),
-              this._checkEmailPassword(resolvedId!),
-            ]),
-          );
-
-          if (!profileResult) return null;
-
-          return { ...profileResult, hasEmailPassword: passwordResult };
-        },
-      );
-    } catch (error) {
-      console.error('[UserService] Unexpected error fetching complete user data:', error);
-      Sentry.captureException(error, { tags: { component: 'user-service', op: 'get-complete-user-data' } });
-      return null;
-    }
-  }
-
-  private async _fetchProfile(userId: string): Promise<{ profile: UserProfile; preferences: UserPreferences } | null> {
-    let { data, error } = await Sentry.startSpan(
-      { name: 'user.fetch-profile', op: 'db.query', attributes: { userId } },
-      () => this.client
-        .from('user_full_profile')
-        .select('*')
-        .eq('id', userId)
-        .single(),
-    );
-
-    if (error || !data) {
-      console.warn('[UserService] Profile missing — re-creating for user', userId);
-      Sentry.addBreadcrumb({
-        category: 'user',
-        message: 'Zombie profile detected — re-creating',
-        level: 'warning',
-        data: { userId },
-      });
-      await this.ensureProfileExists({ id: userId } as any);
-
-      const retry = await this.client
-        .from('user_full_profile')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
-      data = retry.data;
-      error = retry.error;
-
-      if (error || !data) {
-        console.error('[UserService] Still cannot fetch profile after re-creation:', error);
-        Sentry.captureException(error ?? new Error('Profile missing after re-creation'), {
-          tags: { component: 'user-service', op: 'get-complete-user-data:retry-failed' },
-          extra: { userId },
-        });
-        return null;
-      }
-    }
-
-    const profile: UserProfile = {
-      id: data.id,
-      name: data.name,
-      dob: data.dob,
-      email: data.email,
-      avatar_url: data.avatar_url,
-      avatar_public_id: data.avatar_public_id ?? null,
-      created_at: data.created_at,
-      updated_at: data.updated_at,
+    const row = this.getRow();
+    return {
+      user_id: row.id,
+      personalization_prompt: row.personalization_prompt ?? null,
+      ui_settings: { ...DEFAULT_UI_SETTINGS, ...fromJson(row.ui_settings, {}) },
+      updated_at: row.updated_at,
     };
-
-    const preferences: UserPreferences = {
-      user_id: data.id,
-      personalization_prompt: data.personalization_prompt,
-      ui_settings: data.ui_settings,
-      updated_at: data.updated_at,
-    };
-
-    return { profile, preferences };
-  }
-
-  private async _checkEmailPassword(userId: string): Promise<boolean> {
-    try {
-      return await Sentry.startSpan(
-        { name: 'user.check-email-password', op: 'db.rpc', attributes: { userId } },
-        async (span) => {
-          const { data: hasPw, error: pwError } = await this.client.rpc('user_has_email_password');
-          if (pwError) {
-            span.setAttribute('result', 'error');
-            Sentry.captureException(pwError, {
-              tags: { component: 'user-service', op: 'check-email-password' },
-              extra: { userId },
-            });
-            return false;
-          }
-          const result = hasPw === true;
-          span.setAttribute('result', result ? 'has-password' : 'no-password');
-          Sentry.addBreadcrumb({
-            category: 'user',
-            message: `user_has_email_password: ${result}`,
-            level: 'info',
-            data: { userId, hasEmailPassword: result },
-          });
-          return result;
-        },
-      );
-    } catch (pwErr) {
-      Sentry.captureException(pwErr, {
-        tags: { component: 'user-service', op: 'check-email-password', severity: 'non-fatal' },
-        extra: { userId },
-      });
-      return false;
-    }
   }
 
   /**
-   * Update user profile
+   * Profile + preferences in the shape the renderer expects.
+   */
+  async getCompleteUserData(_userId?: string): Promise<CompleteUserData | null> {
+    const profile = await this.getUserProfile();
+    const preferences = await this.getUserPreferences();
+    if (!profile || !preferences) return null;
+    return { profile, preferences, hasEmailPassword: false };
+  }
+
+  /**
+   * Update profile fields (name, avatar_url)
    */
   async updateProfile(updates: Partial<Omit<UserProfile, 'id' | 'created_at' | 'updated_at'>>): Promise<void> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) throw new Error('Not authenticated');
-
-      const { error } = await this.client
-        .from('profiles')
-        .update(updates)
-        .eq('id', userData.user.id);
-
-      if (error) {
-        console.error('[UserService] Error updating profile:', error);
-        throw error;
-      }
-
-      console.log('[UserService] ✅ Profile updated');
-    } catch (error) {
-      console.error('[UserService] Unexpected error updating profile:', error);
-      throw error;
-    }
+    const current = this.getRow();
+    const name = typeof updates.name === 'string' && updates.name.trim() ? updates.name.trim() : current.name;
+    const avatarUrl = updates.avatar_url !== undefined ? updates.avatar_url : current.avatar_url;
+    getDb()
+      .prepare('UPDATE profile SET name = ?, avatar_url = ?, updated_at = ? WHERE id = ?')
+      .run(name, avatarUrl, nowIso(), LOCAL_USER_ID);
   }
 
   /**
-   * Update user preferences
+   * Update preferences (personalization prompt and/or ui_settings)
    */
   async updatePreferences(updates: Partial<Omit<UserPreferences, 'user_id' | 'updated_at'>>): Promise<void> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) throw new Error('Not authenticated');
-
-      const { error } = await this.client
-        .from('user_preferences')
-        .update(updates)
-        .eq('user_id', userData.user.id);
-
-      if (error) {
-        console.error('[UserService] Error updating preferences:', error);
-        throw error;
-      }
-
-      console.log('[UserService] ✅ Preferences updated');
-    } catch (error) {
-      console.error('[UserService] Unexpected error updating preferences:', error);
-      throw error;
-    }
+    const current = await this.getUserPreferences();
+    const prompt = updates.personalization_prompt !== undefined
+      ? updates.personalization_prompt
+      : current?.personalization_prompt ?? null;
+    const uiSettings = updates.ui_settings ?? current?.ui_settings ?? DEFAULT_UI_SETTINGS;
+    getDb()
+      .prepare('UPDATE profile SET personalization_prompt = ?, ui_settings = ?, updated_at = ? WHERE id = ?')
+      .run(prompt, toJson(uiSettings), nowIso(), LOCAL_USER_ID);
   }
 
   /**
-   * Update UI settings (nested in preferences)
+   * Update UI settings (merged into the current ones)
    */
   async updateUISettings(settings: Partial<UserPreferences['ui_settings']>): Promise<void> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) throw new Error('Not authenticated');
-
-      // Get current preferences
-      const currentPrefs = await this.getUserPreferences();
-      if (!currentPrefs) throw new Error('Preferences not found');
-
-      // Merge settings
-      const newUISettings = { ...currentPrefs.ui_settings, ...settings };
-
-      const { error } = await this.client
-        .from('user_preferences')
-        .update({ ui_settings: newUISettings })
-        .eq('user_id', userData.user.id);
-
-      if (error) {
-        console.error('[UserService] Error updating UI settings:', error);
-        throw error;
-      }
-
-      console.log('[UserService] ✅ UI settings updated');
-    } catch (error) {
-      console.error('[UserService] Unexpected error updating UI settings:', error);
-      throw error;
-    }
+    const current = await this.getUserPreferences();
+    await this.updatePreferences({ ui_settings: { ...(current?.ui_settings ?? DEFAULT_UI_SETTINGS), ...settings } });
   }
 
   /**
    * Set personalization prompt
    */
   async setPersonalizationPrompt(prompt: string): Promise<void> {
-    try {
-      const { data: userData } = await this.client.auth.getUser();
-      if (!userData.user) throw new Error('Not authenticated');
-
-      const { error } = await this.client
-        .from('user_preferences')
-        .update({ personalization_prompt: prompt })
-        .eq('user_id', userData.user.id);
-
-      if (error) {
-        console.error('[UserService] Error setting personalization prompt:', error);
-        throw error;
-      }
-
-      console.log('[UserService] ✅ Personalization prompt updated');
-    } catch (error) {
-      console.error('[UserService] Unexpected error setting personalization prompt:', error);
-      throw error;
-    }
+    await this.updatePreferences({ personalization_prompt: prompt });
   }
 
   /**
    * Get personalization prompt (for use in optimizations)
    */
   async getPersonalizationPrompt(): Promise<string | null> {
-    try {
-      const preferences = await this.getUserPreferences();
-      return preferences?.personalization_prompt || null;
-    } catch (error) {
-      console.error('[UserService] Error getting personalization prompt:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Check if user is authenticated
-   */
-  async isAuthenticated(): Promise<boolean> {
-    const { data } = await this.client.auth.getUser();
-    return !!data.user;
-  }
-
-  /**
-   * Submit a 30-day deferred deletion request via the GDPR flow.
-   * Actual data wipe is handled server-side by the process-deletions Edge Function.
-   */
-  async deleteAccount(reason?: string): Promise<{ scheduledAt: string }> {
-    Sentry.addBreadcrumb({ category: 'user', message: 'Account deletion requested', level: 'info' });
-    try {
-      const svc = new DeletionService();
-      const req = await svc.requestDeletion(reason);
-      Sentry.addBreadcrumb({
-        category: 'user',
-        message: 'Account deletion scheduled',
-        level: 'info',
-        data: { scheduledAt: req.scheduled_deletion_at },
-      });
-      return { scheduledAt: req.scheduled_deletion_at };
-    } catch (error) {
-      Sentry.captureException(error, { tags: { component: 'user-service', op: 'delete-account' } });
-      throw error;
-    }
+    const preferences = await this.getUserPreferences();
+    return preferences?.personalization_prompt || null;
   }
 }

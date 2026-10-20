@@ -1,6 +1,4 @@
 import { ipcMain } from 'electron';
-import * as Sentry from '@sentry/electron/main';
-import { logger } from '@sentry/core';
 import crypto from 'crypto';
 import FileType from 'file-type';
 import { spaceStreamStore } from '../services/space-stream-store';
@@ -8,17 +6,14 @@ import { ChatService } from '../database/services/chat-service';
 import { OptimizationService } from '../database/services/optimization-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { PythonClient, ModelsUsed, ClarifyResult } from '../api/python-client';
+import { aiSettings } from '../database/services/ai-settings-service';
 import { authState } from '../utils/auth-state';
 import { SettingsService } from '../database/services/settings-service';
 import { UserService } from '../database/services/user-service';
 import { MemoryService } from '../database/services/memory-service';
 import { MemoryAnalyzer } from '../database/services/memory-analyzer';
-import { localCache } from '../database/local-cache';
 import { networkMonitor } from '../ipc-handlers/network-monitor-singleton';
-import { uploadAttachment } from './file-upload-service';
-import { offlineQueue } from '../database/offline-queue';
-import { RateLimitService } from '../database/services/rate-limit-service';
-import { analyticsService } from '../analytics/analytics-service';
+import { saveAttachment } from './file-upload-service';
 import { getActiveProjectId, getActiveProjectBranch } from './project-handlers';
 
 // ── Model metadata helper ─────────────────────────────────────────────────────
@@ -91,10 +86,14 @@ export const GENERIC_TITLES = new Set(['New Chat', 'Greeting']);
  * "connect ECONNREFUSED 127.0.0.1:8001" are meaningless to end-users.
  */
 function humanizeLlmError(err: any): string {
+  // Messages python-service wrote for the user (missing/rejected API key,
+  // unknown model, project context unavailable) are shown as-is.
+  if (err?.name === 'ServiceError' && err.message) return err.message;
+
   const raw: string = (err?.message ?? err?.code ?? String(err)).toLowerCase();
 
   if (raw.includes('econnrefused') || raw.includes('econnreset') || raw.includes('enotfound')) {
-    return 'The AI service is not reachable. Please restart the application and try again.';
+    return 'The local AI service is not reachable. Make sure python-service is running (npm run python:dev) and try again.';
   }
   if (raw.includes('etimedout') || raw.includes('timeout')) {
     return 'The AI service timed out. It may be overloaded — please try again in a moment.';
@@ -104,6 +103,19 @@ function humanizeLlmError(err: any): string {
   }
   // Fallback — still better than a raw stack-trace fragment
   return 'The AI service encountered an error. Please try again.';
+}
+
+/**
+ * Why an AI request can't be sent right now (no API key, or offline), or null.
+ */
+function aiReadinessError(): string | null {
+  if (!aiSettings.isConfigured()) {
+    return 'Add your OpenRouter API key in Settings > AI provider to start optimizing prompts.';
+  }
+  if (!networkMonitor.isOnline) {
+    return "You're offline. Prmpt needs an internet connection to reach OpenRouter.";
+  }
+  return null;
 }
 
 export function buildTitlePrompt(
@@ -188,7 +200,6 @@ let userService: UserService | null = null;
 let settingsService: SettingsService | null = null;
 let memoryService: MemoryService | null = null;
 let memoryAnalyzer: MemoryAnalyzer | null = null;
-let rateLimitService: RateLimitService | null = null;
 
 function getServices(pythonClient?: PythonClient, appWindowManager?: AppWindowManager) {
     if (!chatService) chatService = new ChatService();
@@ -196,11 +207,10 @@ function getServices(pythonClient?: PythonClient, appWindowManager?: AppWindowMa
     if (!userService) userService = new UserService();
     if (!settingsService) settingsService = new SettingsService();
     if (!memoryService) memoryService = new MemoryService();
-    if (!rateLimitService) rateLimitService = new RateLimitService();
     if (!memoryAnalyzer && pythonClient) {
         memoryAnalyzer = new MemoryAnalyzer(pythonClient, memoryService, settingsService, userService, appWindowManager);
     }
-    return { chatService, optimizationService, userService, settingsService, memoryService, memoryAnalyzer, rateLimitService };
+    return { chatService, optimizationService, userService, settingsService, memoryService, memoryAnalyzer };
 }
 
 // Module-level state for optimization context
@@ -247,13 +257,12 @@ export function registerChatHandlers(
     appWindowManager: AppWindowManager,
     pythonClient: PythonClient
 ) {
-    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer, rateLimitService } = getServices(pythonClient, appWindowManager);
+    const { chatService, optimizationService, userService, settingsService, memoryService: memory, memoryAnalyzer: analyzer } = getServices(pythonClient, appWindowManager);
 
     // ============================================
     // APP WINDOW: Optimize prompt request
     // ============================================
     ipcMain.on('app:optimize-prompt', async (event, promptText: string, isRegenerate: boolean = false, chatId?: string, mode: string = 'thinking', source: 'chat' | 'space' = 'chat', spaceId?: string, projectId?: string, projectBranch?: string) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Optimize prompt (legacy)', level: 'info', data: { mode } });
         try {
             // Retrieve chat history for context-aware optimization
             let chatHistory: Array<{ role: string; content: string }> | null = null;
@@ -368,7 +377,6 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization to DB:', dbError);
-                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-legacy' } });
                 }
             }
 
@@ -381,9 +389,7 @@ export function registerChatHandlers(
                 });
             }
 
-            analyticsService.logEvent('optimization', { source: 'app' });
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Optimization failed:', error);
             if (source === 'space' && spaceId) {
                 spaceStreamStore.error(spaceId);
@@ -401,7 +407,6 @@ export function registerChatHandlers(
     // APP WINDOW: Save to chat
     // ============================================
     ipcMain.on('app:save-to-chat', async (event, originalText: string, optimizedText: string) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Save to chat', level: 'info' });
         try {
             const chat = await chatService.getOrCreateQuickOptimizationsChat();
             await chatService.addMessage(chat.id, originalText, 'user');
@@ -416,7 +421,6 @@ export function registerChatHandlers(
                 appWindowManager.send('chat-saved', { chatId: chat.id });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to save to chat:', error);
         }
     });
@@ -424,42 +428,13 @@ export function registerChatHandlers(
     // ============================================
     // APP WINDOW: Load chats
     // ============================================
-    ipcMain.on('app:load-chats', async (event) => {
+    ipcMain.on('app:load-chats', async () => {
         try {
-            const userId = authState.currentUserId;
-            if (!networkMonitor.isOnline) {
-                // Serve from cache when offline
-                const cached = userId ? localCache.getChats(userId) : [];
-                console.warn('[Chat] Offline — returning', cached.length, 'cached chats');
-                if (appWindowManager) appWindowManager.send('chats-loaded', { chats: cached });
-                return;
-            }
-
             const chats = await chatService.getChats();
-
-            // Update cache
-            if (userId) localCache.setChats(userId, chats as any);
-
             if (appWindowManager) appWindowManager.send('chats-loaded', { chats });
-
-            // ╠═══ Pre-fetch messages for top 5 recent chats (background) ════
-            if (userId && chats.length > 0) {
-                const top5 = chats.slice(0, 5);
-                Promise.all(
-                    top5.map(async (chat: any) => {
-                        try {
-                            const msgs = await chatService.getMessages(chat.id);
-                            localCache.setMessages(userId, chat.id, msgs as any);
-                        } catch (_) { /* best-effort */ }
-                    })
-                ).then(() => console.log('[Chat] Pre-cached messages for top 5 recent chats'));
-            }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to load chats:', error);
-            const userId = authState.currentUserId;
-            const cached = userId ? localCache.getChats(userId) : [];
-            if (appWindowManager) appWindowManager.send('chats-loaded', { chats: cached, error: String(error) });
+            if (appWindowManager) appWindowManager.send('chats-loaded', { chats: [], error: String(error) });
         }
     });
 
@@ -467,7 +442,6 @@ export function registerChatHandlers(
     // APP WINDOW: Create new chat
     // ============================================
     ipcMain.on('app:create-chat', async (event, title?: string) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Create chat', level: 'info' });
         try {
             const chat = await chatService.createChat(title);
             if (appWindowManager) {
@@ -476,7 +450,6 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to create chat:', error);
         }
     });
@@ -485,34 +458,12 @@ export function registerChatHandlers(
     // APP WINDOW: Load messages for a chat
     // ============================================
     ipcMain.on('app:load-messages', async (event, chatId: string) => {
-        const userId = authState.currentUserId;
         try {
-            if (!networkMonitor.isOnline) {
-                // Serve from cache when offline
-                const cached = userId ? localCache.getMessages(userId, chatId) : [];
-                console.warn('[Chat] Offline — returning', cached.length, 'cached messages for chat', chatId);
-                if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages: cached });
-                return;
-            }
-
             const messages = await chatService.getMessages(chatId);
-
-            // Cache every chat the user opens while online
-            if (userId) localCache.setMessages(userId, chatId, messages as any);
-
             if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages });
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to load messages:', error);
-            // Fallback to cache on any error (e.g. "Not authenticated" when offline)
-            const cached = userId ? localCache.getMessages(userId, chatId) : [];
-            if (appWindowManager) {
-                appWindowManager.send('messages-loaded', {
-                    chatId,
-                    messages: cached,
-                    ...(cached.length === 0 && { error: String(error) })
-                });
-            }
+            if (appWindowManager) appWindowManager.send('messages-loaded', { chatId, messages: [], error: String(error) });
         }
     });
 
@@ -520,7 +471,6 @@ export function registerChatHandlers(
     // APP WINDOW: Rename chat
     // ============================================
     ipcMain.on('app:rename-chat', async (event, data: { chatId: string; title: string }) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Rename chat', level: 'info', data: { chatId: data.chatId } });
         try {
             await chatService.updateChatTitle(data.chatId, data.title);
             if (appWindowManager) {
@@ -530,7 +480,6 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to rename chat:', error);
             const errorMessage = 'Something went wrong. Please try again.';
             if (appWindowManager) {
@@ -543,7 +492,6 @@ export function registerChatHandlers(
     // APP WINDOW: Delete chat
     // ============================================
     ipcMain.on('app:delete-chat', async (event, chatId: string) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Delete chat', level: 'info', data: { chatId } });
         try {
             await chatService.deleteChat(chatId);
             if (appWindowManager) {
@@ -552,7 +500,6 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to delete chat:', error);
             const errorMessage = 'Something went wrong. Please try again.';
             if (appWindowManager) {
@@ -573,73 +520,11 @@ export function registerChatHandlers(
         groupId?: string;
         versionIndex?: number;
     }) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Message sent', level: 'info', data: { mode: data.mode, skill: data.forcedSkill, chatId: data.chatId } });
-        logger.info(logger.fmt`chat.message_sent chatId=${data.chatId ?? 'new'} mode=${data.mode ?? 'thinking'} skill=${data.forcedSkill ?? 'none'}`);
-        await Sentry.startSpan({ name: 'optimize-prompt', op: 'ai.optimization', attributes: { mode: data.mode || 'thinking', skill: data.forcedSkill || 'none' } }, async () => {
         try {
-            // ── Offline guard ─────────────────────────────────────────────────
-            // File uploads require network access. Reject early with a clear error
-            // so the user doesn't lose their message silently.
-            if (!networkMonitor.isOnline) {
-                const hasFiles = (data.attachedFiles?.length ?? 0) > 0;
-                if (hasFiles) {
-                    if (appWindowManager) {
-                        appWindowManager.send('message-send-error', {
-                            error: 'You are offline. File attachments cannot be sent without a network connection.',
-                        });
-                    }
-                    return;
-                }
-
-                // Text-only to an EXISTING chat → queue for retry when back online.
-                // The queue op.id doubles as the stable message UUID so duplicate
-                // replays produce a DB conflict and are safely ignored.
-                if (data.chatId) {
-                    offlineQueue.enqueue('send-message', {
-                        chatId: data.chatId,
-                        content: data.content,
-                        mode: data.mode,
-                        forcedSkill: data.forcedSkill,
-                        groupId: data.groupId,
-                        versionIndex: data.versionIndex,
-                    });
-                    if (appWindowManager) {
-                        appWindowManager.send('send-message-queued', {
-                            chatId: data.chatId,
-                            content: data.content,
-                            message: "You're offline — your message has been queued and will be sent automatically when the connection is restored.",
-                        });
-                    }
-                    return;
-                }
-
-                // New chat while offline — can't create chat without network.
-                if (appWindowManager) {
-                    appWindowManager.send('message-send-error', {
-                        error: "You're offline. New chats can't be created without a network connection.",
-                    });
-                }
+            const readinessError = aiReadinessError();
+            if (readinessError) {
+                if (appWindowManager) appWindowManager.send('message-send-error', { error: readinessError });
                 return;
-            }
-
-            // ── Rate limit guard ──────────────────────────────────────────────
-            if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
-                try {
-                    const rl = await rateLimitService.checkRateLimit(authState.currentUserId);
-                    if (!rl.allowed) {
-                        console.warn(`[Chat] Rate limit exceeded for user ${authState.currentUserId} (${rl.limit - rl.remaining}/${rl.limit})`);
-                        if (appWindowManager) {
-                            appWindowManager.send('message-send-error', {
-                                error: `Daily message limit reached (${rl.limit}/${rl.limit}). Your limit resets at midnight UTC.`,
-                            });
-                        }
-                        return;
-                    }
-                } catch (rlErr) {
-                    console.warn('[Chat] Rate limit check failed (allowing message):', rlErr);
-                    Sentry.captureMessage('Rate limit fail-open', 'warning');
-                    logger.warn('chat.rate_limit_check_failed — allowing message through');
-                }
             }
 
             // Validate attached files if present
@@ -713,7 +598,7 @@ export function registerChatHandlers(
             const preGeneratedMessageId = crypto.randomUUID();
 
             // Insert message to DB with file metadata only (name/type/size).
-            // Cloudinary URLs are backfilled asynchronously after upload completes.
+            // Local storage paths are backfilled once the files are saved.
             const filesMetadataOnly = attachedFiles.map(f => ({
                 name: f.name, mimeType: f.mimeType, sizeBytes: f.sizeBytes,
             }));
@@ -749,35 +634,28 @@ export function registerChatHandlers(
                 });
             }
 
-            // Fire-and-forget: upload files to Cloudinary/Supabase Storage in background.
-            // Results are written back to the DB for future sessions; current session
-            // displays thumbnails from in-memory base64.
-            if (attachedFiles.length > 0 && authState.currentUserId) {
-                const userId = authState.currentUserId;
+            // Fire-and-forget: save attachments to the user-data folder so they can be
+            // reopened later; the current session shows thumbnails from in-memory base64.
+            if (attachedFiles.length > 0) {
                 (async () => {
                     try {
                         const results = await Promise.allSettled(
-                            attachedFiles.map(f =>
-                                uploadAttachment(f, userId, chatId, preGeneratedMessageId, pythonClient)
-                            )
+                            attachedFiles.map(f => saveAttachment(f, chatId!, preGeneratedMessageId))
                         );
                         const filesForDb = results.map((r, i) => {
                             if (r.status === 'fulfilled') return r.value;
                             const uploadErr = (r as PromiseRejectedResult).reason;
-                            console.error(`[Chat] Upload failed for "${attachedFiles[i].name}":`, uploadErr?.message);
-                            Sentry.captureException(uploadErr, { tags: { component: 'file-upload', context: 'chat' }, extra: { fileName: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType } });
+                            console.error(`[Chat] Saving attachment "${attachedFiles[i].name}" failed:`, uploadErr?.message);
                             return { name: attachedFiles[i].name, mimeType: attachedFiles[i].mimeType, sizeBytes: attachedFiles[i].sizeBytes, uploadFailed: true };
                         });
                         await chatService.updateMessageAttachments(userMessage.id, filesForDb);
                         const succeeded = filesForDb.filter((f: any) => !f.uploadFailed).length;
                         const chatFailedNames = filesForDb.filter((f: any) => f.uploadFailed).map((f: any) => f.name);
-                        Sentry.addBreadcrumb({ category: 'chat', message: 'Background uploads complete', level: 'info', data: { messageId: userMessage.id, succeeded, failed: chatFailedNames.length } });
                         if (chatFailedNames.length > 0 && appWindowManager) {
                             appWindowManager.send('upload-partial-failure', { failedFiles: chatFailedNames });
                         }
                     } catch (bgErr) {
-                        console.error('[Chat] Background upload failed:', bgErr);
-                        Sentry.captureException(bgErr, { tags: { component: 'file-upload-bg' }, extra: { messageId: userMessage.id, chatId } });
+                        console.error('[Chat] Saving attachments failed:', bgErr);
                     }
                 })();
             }
@@ -824,8 +702,6 @@ export function registerChatHandlers(
             if (!isWeakMessage(data.content)) {
                 try {
                     const clarifyResult = await pythonClient.clarify(data.content);
-                    Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarify check complete', level: 'info', data: { chatId, should_clarify: clarifyResult.should_clarify, questions: clarifyResult.questions.length, is_complex: clarifyResult.is_complex } });
-                    logger.info(logger.fmt`chat.clarify_result chatId=${chatId ?? ''} should_clarify=${clarifyResult.should_clarify} questions=${clarifyResult.questions.length}`);
                     if (clarifyResult.should_clarify && clarifyResult.questions.length > 0) {
                         pendingClarifications.set(chatId!, {
                             data,
@@ -833,15 +709,13 @@ export function registerChatHandlers(
                             customInstructions,
                             messagesContext,
                         });
-                        Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarification required — pausing optimization', level: 'info', data: { chatId, questionCount: clarifyResult.questions.length } });
                         if (appWindowManager) {
                             appWindowManager.send('clarification-required', { chatId, ...clarifyResult });
                         }
                         return;
                     }
                 } catch (clarifyErr) {
-                    Sentry.captureException(clarifyErr, { tags: { component: 'chat-handlers', op: 'clarify' }, level: 'warning' });
-                    logger.warn(logger.fmt`chat.clarify_failed chatId=${chatId ?? ''} error=${clarifyErr instanceof Error ? clarifyErr.message : String(clarifyErr)}`);
+                    console.error(clarifyErr);
                 }
             }
 
@@ -850,8 +724,6 @@ export function registerChatHandlers(
             activeGenerations.set(chatId!, { accumulated: '' });
             let optimizedText: string;
             let modelsUsed: ModelsUsed | undefined;
-            Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming started', level: 'info', data: { chatId, mode: data.mode } });
-            logger.info(logger.fmt`chat.streaming_started chatId=${chatId ?? ''} mode=${data.mode ?? 'thinking'}`);
             try {
                 const result = await pythonClient.optimizeStream(
                     data.content,
@@ -875,8 +747,6 @@ export function registerChatHandlers(
                 );
                 optimizedText = result.text;
                 modelsUsed = result.models;
-                Sentry.addBreadcrumb({ category: 'chat', message: 'Streaming completed', level: 'info', data: { chatId } });
-                logger.info(logger.fmt`chat.streaming_complete chatId=${chatId ?? ''}`);
             } catch (llmErr: any) {
                 activeGenerations.delete(chatId!);
                 const friendlyError = humanizeLlmError(llmErr);
@@ -915,7 +785,6 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
-                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-stream' } });
                 }
             }
 
@@ -945,12 +814,7 @@ export function registerChatHandlers(
                 });
             }
 
-            analyticsService.logEvent('ai_response', { source: 'app', model: modelsUsed?.optimizer });
 
-            // Invalidate rate-limit cache so the next check reflects the new message
-            if (authState.currentUserId && rateLimitService) {
-                rateLimitService.invalidateCache(authState.currentUserId);
-            }
 
             // Reload chats list to update timestamps
             const chats = await chatService.getChats();
@@ -958,7 +822,6 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to send message:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
@@ -966,7 +829,6 @@ export function registerChatHandlers(
                 });
             }
         }
-        });
     });
 
     // ============================================
@@ -981,15 +843,12 @@ export function registerChatHandlers(
         const pending = pendingClarifications.get(data.chatId);
         if (!pending) {
             console.warn('[Chat] submit-clarification: no pending optimization for chatId', data.chatId);
-            Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'submit-clarification: no pending optimization', level: 'warning', data: { chatId: data.chatId } });
             return;
         }
         pendingClarifications.delete(data.chatId);
 
         const formattedAnswers = formatClarificationAnswers(data.answers);
 
-        Sentry.addBreadcrumb({ category: 'chat.clarify', message: 'Clarification submitted — resuming optimization', level: 'info', data: { chatId: data.chatId, wantsSections: data.wantsSections, answerCount: Object.keys(data.answers).length } });
-        logger.info(logger.fmt`chat.clarification_submitted chatId=${data.chatId} wantsSections=${data.wantsSections} answerCount=${Object.keys(data.answers).length}`);
 
         try {
             activeGenerations.set(data.chatId, { accumulated: '' });
@@ -1056,7 +915,6 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
-                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-clarify' } });
                 }
             }
 
@@ -1090,18 +948,13 @@ export function registerChatHandlers(
                 });
             }
 
-            analyticsService.logEvent('ai_response', { source: 'app', model: modelsUsed?.optimizer });
 
-            if (authState.currentUserId && rateLimitService) {
-                rateLimitService.invalidateCache(authState.currentUserId);
-            }
 
             const chats = await chatService.getChats();
             if (appWindowManager) {
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Clarification optimization failed:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
@@ -1127,27 +980,11 @@ export function registerChatHandlers(
         wantsSections?: boolean;
         clarificationChoices?: { questions: any[]; answers: Record<string, string>; mode: string };
     }) => {
-        Sentry.addBreadcrumb({ category: 'chat', message: 'Regenerate requested', level: 'info', data: { chatId: data.chatId, mode: data.mode } });
-        logger.info(logger.fmt`chat.regenerate_requested chatId=${data.chatId} mode=${data.mode ?? 'thinking'}`);
         try {
-            // ── Rate limit guard ──────────────────────────────────────────────
-            if (authState.isAuthenticated && authState.currentUserId && rateLimitService) {
-                try {
-                    const rl = await rateLimitService.checkRateLimit(authState.currentUserId);
-                    if (!rl.allowed) {
-                        console.warn(`[Chat] Rate limit exceeded for regeneration (${rl.limit - rl.remaining}/${rl.limit})`);
-                        if (appWindowManager) {
-                            appWindowManager.send('message-send-error', {
-                                error: `Daily message limit reached (${rl.limit}/${rl.limit}). Your limit resets at midnight UTC.`,
-                            });
-                        }
-                        return;
-                    }
-                } catch (rlErr) {
-                    console.warn('[Chat] Rate limit check failed (allowing regeneration):', rlErr);
-                    Sentry.captureMessage('Rate limit fail-open', 'warning');
-                    logger.warn('chat.regenerate_rate_limit_check_failed — allowing through');
-                }
+            const readinessError = aiReadinessError();
+            if (readinessError) {
+                if (appWindowManager) appWindowManager.send('message-send-error', { error: readinessError });
+                return;
             }
 
             const chatId = data.chatId;
@@ -1243,7 +1080,6 @@ export function registerChatHandlers(
                     }
                 } catch (dbError) {
                     console.error('[Chat] Failed to save optimization record:', dbError);
-                    Sentry.captureException(dbError, { tags: { component: 'chat-handlers', op: 'save-optimization-regen' } });
                 }
             }
 
@@ -1280,12 +1116,7 @@ export function registerChatHandlers(
                 });
             }
 
-            analyticsService.logEvent('ai_response', { source: 'app', regeneration: true });
 
-            // Invalidate rate-limit cache after regeneration
-            if (authState.currentUserId && rateLimitService) {
-                rateLimitService.invalidateCache(authState.currentUserId);
-            }
 
             // Reload chats list to update timestamps
             const chats = await chatService.getChats();
@@ -1293,7 +1124,6 @@ export function registerChatHandlers(
                 appWindowManager.send('chats-loaded', { chats });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to regenerate response:', error);
             if (appWindowManager) {
                 appWindowManager.send('message-send-error', {
@@ -1321,7 +1151,6 @@ export function registerChatHandlers(
                 appWindowManager.send('feedback-saved', { messageId: data.messageId, rating: data.rating });
             }
         } catch (error) {
-            Sentry.captureException(error);
             console.error('[Chat] Failed to save feedback:', error);
             const errorMessage = error instanceof Error ? error.message : 'Unknown error';
             if (appWindowManager) {
@@ -1370,129 +1199,4 @@ export function registerChatHandlers(
         return state;
     });
 
-    // ============================================
-    // APP WINDOW: Get rate limit status
-    // ============================================
-    ipcMain.handle('app:get-rate-limit-status', async () => {
-        if (!authState.isAuthenticated || !authState.currentUserId || !rateLimitService) {
-            return { allowed: true, remaining: Infinity, limit: Infinity, role: 'unknown' };
-        }
-        try {
-            return await rateLimitService.checkRateLimit(authState.currentUserId);
-        } catch (err) {
-            console.warn('[Chat] Rate limit status query failed:', err);
-            return { allowed: true, remaining: Infinity, limit: Infinity, role: 'unknown' };
-        }
-    });
-}
-
-// ============================================
-// OFFLINE QUEUE: Drain queued send-message ops
-// ============================================
-// Called by index-new.ts whenever the network comes back online.
-// Processes only `send-message` entries; other types are handled by
-// syncOfflineQueue in prompt-library-handlers.ts.
-export async function syncChatMessageQueue(
-    _appWindowManager: AppWindowManager,
-    _pythonClient: PythonClient,
-): Promise<void> {
-    const pending = offlineQueue.getAll().filter(op => op.type === 'send-message');
-    if (pending.length === 0) return;
-
-    console.log(`[ChatOfflineSync] Processing ${pending.length} queued send-message ops`);
-
-    // Use module-level service singletons (initialized when registerChatHandlers ran)
-    const { chatService: svc, optimizationService: optSvc } = getServices();
-
-    for (const op of pending) {
-        const { chatId, content, mode, forcedSkill, groupId, versionIndex } = op.payload as {
-            chatId: string;
-            content: string;
-            mode?: string;
-            forcedSkill?: string | null;
-            groupId?: string;
-            versionIndex?: number;
-        };
-
-        try {
-            if (!authState.isAuthenticated || !authState.currentUserId) {
-                console.warn('[ChatOfflineSync] Not authenticated — deferring op', op.id);
-                continue;
-            }
-
-            // Save user message — use the stable op.id as the pre-generated message UUID.
-            // If a previous sync attempt already wrote this message, the insert will
-            // conflict on the primary key and be skipped (idempotent replay).
-            const userGroupId = groupId || crypto.randomUUID();
-            const userVersionIndex = versionIndex ?? 0;
-            const userMsg = await svc.addMessage(chatId, content, 'user', undefined, {
-                groupId: userGroupId,
-                versionIndex: userVersionIndex,
-            }, op.id /* stable idempotency key */);
-
-            // Fetch context
-            let messagesContext: Array<{role: string; content: string}> = [];
-            try {
-                const history = await svc.getMessages(chatId);
-                messagesContext = history
-                    .filter(m => m.id !== userMsg.id)
-                    .slice(-10)
-                    .map(m => ({ role: m.role, content: m.content }));
-            } catch { /* non-critical */ }
-
-            // Run optimizer (background sync — no streaming)
-            const { text: optimizedText, models: modelsUsed } = await _pythonClient.optimizeStream(
-                content,
-                false,
-                messagesContext.length > 0 ? messagesContext : null,
-                () => { /* no-op chunk callback */ },
-                mode || 'thinking',
-                '',
-                [],
-                forcedSkill || null,
-                null,
-                null,
-                false,
-                getActiveProjectId(),
-                getActiveProjectBranch(),
-            );
-
-            // Save optimization record
-            let optimizationId: string | undefined;
-            try {
-                const opt = await optSvc.saveOptimization(
-                    content, optimizedText, 'app_window',
-                    { ...buildModelMeta(modelsUsed), source_context: { app: 'app_window', chat_id: chatId } }
-                );
-                optimizationId = opt.id;
-            } catch { /* non-critical */ }
-
-            // Save assistant message
-            const assistantGroupId = crypto.randomUUID();
-            const assistantMsg = await svc.addMessage(
-                chatId, optimizedText, 'assistant', optimizationId,
-                { ...buildModelMeta(modelsUsed), optimized: true, groupId: assistantGroupId, versionIndex: 0 }
-            );
-
-            // Notify the app window so it can append the messages
-            _appWindowManager.send('offline-message-synced', {
-                chatId,
-                userMessage: {
-                    id: userMsg.id, chatId, role: 'user', content,
-                    createdAt: userMsg.created_at, groupId: userGroupId, versionIndex: userVersionIndex,
-                },
-                assistantMessage: {
-                    id: assistantMsg.id, chatId, role: 'assistant', content: optimizedText,
-                    createdAt: assistantMsg.created_at, groupId: assistantGroupId, versionIndex: 0,
-                },
-            });
-
-            offlineQueue.remove(op.id);
-            console.log(`[ChatOfflineSync] ✅ Synced queued message for chat ${chatId}`);
-        } catch (err) {
-            console.warn(`[ChatOfflineSync] Failed to sync op ${op.id} — will retry:`, err);
-            Sentry.captureException(err, { tags: { component: 'offline-sync-chat' }, extra: { opId: op.id } });
-            offlineQueue.incrementRetry(op.id);
-        }
-    }
 }

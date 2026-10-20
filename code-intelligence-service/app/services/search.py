@@ -16,7 +16,6 @@ from typing import Optional
 import numpy as np
 
 import litellm
-import sentry_sdk
 
 from app.config import (
     FIND_BOOST_BODY,
@@ -35,7 +34,6 @@ from app.config import (
     GRAPH_BUILDER_ENABLED,
     ITERATIVE_REFINEMENT_THRESHOLD,
     MAX_ITERATIONS,
-    OPENROUTER_API_KEY,
     PIPELINE_TAG,
     QUERY_REFINER_MODEL,
     SPLADE_ENABLED,
@@ -67,7 +65,7 @@ from app.services.mode_router import ModeConfig, get_mode_config
 from app.services.query_analyzer import QueryAnalysis, decompose_query
 from app.services.query_preprocessor import QuerySignals, build_file_patterns, extract_code_identifiers, preprocess_query
 from app.services.reranker import is_test_chunk, query_mentions_tests, rerank_chunks
-from app.services import prmpt_ai_client
+from app import llm
 
 logger = logging.getLogger("code-intel.search")
 
@@ -232,7 +230,6 @@ async def retrieve_context_full(
             # Fall through to flat retrieval if graph search returned nothing
             logger.info("[RETRIEVE] Graph search returned no results, falling back to flat")
         except Exception as e:
-            sentry_sdk.capture_exception(e)
             logger.warning(
                 "[RETRIEVE] Graph search failed (%s), falling back to flat retrieval", e
             )
@@ -343,7 +340,6 @@ async def retrieve_context_full(
                 decompose_second_pass_ran = True
         except Exception as e:
             logger.warning("[RETRIEVE] decompose second-pass failed: %s", e)
-            sentry_sdk.capture_exception(e)
     elif decompose_task:
         if not decompose_task.done():
             decompose_task.cancel()
@@ -730,7 +726,6 @@ async def _drift_search(
             )
         except Exception as e:
             logger.warning("[DRIFT_SEARCH] Follow-up generation failed: %s", e)
-            sentry_sdk.capture_exception(e)
 
     if not follow_up_queries:
         follow_up_queries = [query]
@@ -745,7 +740,6 @@ async def _drift_search(
         logger.info("[DRIFT_SEARCH]   Embedded %d follow-up queries", len(followup_embeddings))
     except Exception as e:
         logger.warning("[DRIFT_SEARCH] Follow-up embedding failed: %s", e)
-        sentry_sdk.capture_exception(e)
         followup_embeddings = [query_embedding] * (1 + len(follow_up_queries))
 
     local_tasks = []
@@ -848,14 +842,9 @@ async def _generate_drift_followups(
         "max_tokens": 300,
         "temperature": 0.1,
     }
-    if OPENROUTER_API_KEY and "openrouter" in QUERY_REFINER_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
 
-    if prmpt_ai_client.is_configured():
-        raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-    else:
-        response = await asyncio.to_thread(litellm.completion, **kwargs)
-        raw = (response.choices[0].message.content or "").strip()
+    response = await asyncio.to_thread(litellm.completion, **llm.with_key(kwargs))
+    raw = (response.choices[0].message.content or "").strip()
     data = json.loads(_strip_json_fence(raw))
     follow_ups = data.get("follow_ups", [])
     if not isinstance(follow_ups, list):
@@ -1184,15 +1173,10 @@ async def _refine_sub_queries(query: str, top_chunks: list[dict], mode: ModeEnum
         "max_tokens": 240,
         "temperature": 0.1,
     }
-    if OPENROUTER_API_KEY and "openrouter" in QUERY_REFINER_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
 
     try:
-        if prmpt_ai_client.is_configured():
-            raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-        else:
-            response = await asyncio.to_thread(litellm.completion, **kwargs)
-            raw = (response.choices[0].message.content or "").strip()
+        response = await asyncio.to_thread(litellm.completion, **llm.with_key(kwargs))
+        raw = (response.choices[0].message.content or "").strip()
         data = json.loads(_strip_json_fence(raw))
         sub_queries = data.get("sub_queries", [])
         if not isinstance(sub_queries, list):
@@ -1208,7 +1192,6 @@ async def _refine_sub_queries(query: str, top_chunks: list[dict], mode: ModeEnum
         return cleaned[:MAX_ITERATIONS]
     except Exception as e:
         logger.warning("[REFINE] Query refinement failed: %s", e)
-        sentry_sdk.capture_exception(e)
         return []
 
 
@@ -1274,7 +1257,6 @@ async def _broad_recall(
             for results in results_list:
                 if isinstance(results, BaseException):
                     logger.warning("[RECALL] vector search task failed: %s", results)
-                    sentry_sdk.capture_exception(results)
                 elif results:
                     lists.append(results)
             logger.info(
@@ -1283,7 +1265,6 @@ async def _broad_recall(
                 len(lists),
             )
         except Exception as e:
-            sentry_sdk.capture_exception(e)
             logger.warning(
                 "[RECALL] vector skipped after embedding failure; "
                 "falling back to lexical/concept recall: %s",
@@ -1375,7 +1356,6 @@ async def _find_vector_fallback_recall(
         return [], query_embedding
     except Exception as e:
         logger.warning("[RECALL] find vector fallback failed: %s", e)
-        sentry_sdk.capture_exception(e)
         return [], None
 
 
@@ -1481,7 +1461,6 @@ async def _attach_structure_similarity(
                 chunk["structure_similarity"] = _cosine_similarity(query_vector, chunk_vector)
     except Exception as e:
         logger.warning("[RANK] structure similarity skipped: %s", e)
-        sentry_sdk.capture_exception(e)
     return chunks
 
 

@@ -8,17 +8,15 @@ from threading import Lock
 
 import litellm
 import numpy as np
-import sentry_sdk
 
+from app import llm
 from app.config import (
-    OPENROUTER_API_KEY,
     RERANKER_BACKEND,
     RERANKER_LOCAL_MAX_LENGTH,
     RERANKER_LOCAL_MODEL,
     RERANKER_MODEL,
 )
 from app.db.models import ModeEnum
-from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.reranker")
 _local_model_lock = Lock()
@@ -99,7 +97,6 @@ async def _score_with_local(query: str, chunks: list[dict]) -> list[dict] | None
         return await asyncio.to_thread(_infer_all)
     except Exception as e:
         logger.warning("Local reranker inference failed: %s", e)
-        sentry_sdk.capture_exception(e)
         return None
 
 
@@ -132,20 +129,14 @@ async def _score_with_llm(query: str, chunks: list[dict], mode: ModeEnum) -> lis
         "max_tokens": 1600,
         "temperature": 0.0,
     }
-    if OPENROUTER_API_KEY and "openrouter" in RERANKER_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
     try:
-        if prmpt_ai_client.is_configured():
-            raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-        else:
-            response = await asyncio.to_thread(litellm.completion, **kwargs)
-            raw = (response.choices[0].message.content or "").strip()
+        response = await asyncio.to_thread(litellm.completion, **llm.with_key(kwargs))
+        raw = (response.choices[0].message.content or "").strip()
         cleaned = _strip_fence(raw)
         data = json.loads(cleaned)
         return data if isinstance(data, list) else None
     except Exception as e:
         logger.warning("LLM reranker failed, using heuristic ranking: %s", e)
-        sentry_sdk.capture_exception(e)
         return None
 
 
@@ -249,7 +240,6 @@ def _get_local_reranker():
         except Exception as e:
             _local_model_failed = True
             logger.warning("Failed to initialize local reranker model=%s: %s", RERANKER_LOCAL_MODEL, e)
-            sentry_sdk.capture_exception(e)
             return None, None
 
 
@@ -296,7 +286,6 @@ def initialize_local_reranker() -> bool:
             RERANKER_LOCAL_MODEL,
             e,
         )
-        sentry_sdk.capture_exception(e)
         return False
 
 

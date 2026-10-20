@@ -1,14 +1,13 @@
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as Sentry from '@sentry/electron/main';
 
 /**
  * Auto-launch (start-at-login) preference manager.
  *
  * Stores a per-machine JSON file in app.getPath('userData')/auto-launch.json.
  * Auto-launch is a system-level concern (per-machine, not per-user), so it
- * is intentionally NOT persisted to Supabase alongside other user settings.
+ * is intentionally NOT kept in the app database alongside other user settings.
  *
  * Default is enabled — every fresh install registers itself as a login item
  * on first packaged launch. Users can opt out via the tray menu or the
@@ -38,7 +37,7 @@ function readStore(): AutoLaunchStore {
     const parsed = JSON.parse(raw) as Partial<AutoLaunchStore>;
     return { enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : DEFAULT_STORE.enabled };
   } catch (err) {
-    Sentry.captureException(err, { level: 'warning', tags: { component: 'auto-launch', op: 'read' } });
+    console.error('[AutoLaunch] read preference failed:', err);
     return { ...DEFAULT_STORE };
   }
 }
@@ -50,7 +49,7 @@ function writeStore(store: AutoLaunchStore): void {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(store, null, 2), 'utf-8');
   } catch (err) {
-    Sentry.captureException(err, { level: 'warning', tags: { component: 'auto-launch', op: 'write' } });
+    console.error('[AutoLaunch] write preference failed:', err);
   }
 }
 
@@ -90,15 +89,8 @@ export function applyAutoLaunchToOS(enabled: boolean): void {
         ? { path: process.execPath, args: ['--hidden'] }
         : {}),
     });
-    Sentry.addBreadcrumb({
-      category: 'auto-launch',
-      message: `Login item ${enabled ? 'registered' : 'unregistered'}`,
-      level: 'info',
-      data: { platform: process.platform },
-    });
     console.log(`[AutoLaunch] OS login item ${enabled ? 'enabled' : 'disabled'}`);
   } catch (err) {
-    Sentry.captureException(err, { level: 'warning', tags: { component: 'auto-launch', op: 'apply' } });
     console.error('[AutoLaunch] Failed to apply OS setting:', err);
   }
 }

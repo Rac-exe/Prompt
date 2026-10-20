@@ -1,4 +1,4 @@
-import { GearSix, Question, SignOut, ChatText } from "@phosphor-icons/react";
+import { GearSix, Question } from "@phosphor-icons/react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -10,15 +10,13 @@ import { useAuth } from "@/context/AuthContext";
 interface ProfileMenuProps {
   onSettingsClick: () => void;
   onHelpClick: () => void;
-  onFeedbackClick?: () => void;
   collapsed?: boolean;
 }
 
-export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, collapsed = false }: ProfileMenuProps) => {
-  const { user, signOut } = useAuth();
-  const userEmail = user?.profile?.email || "user@example.com";
-  const userName = user?.profile?.name || userEmail.split("@")[0];
-  const userInitial = (user?.profile?.name?.[0] || userEmail[0] || "U").toUpperCase();
+export const ProfileMenu = ({ onSettingsClick, onHelpClick, collapsed = false }: ProfileMenuProps) => {
+  const { user } = useAuth();
+  const userName = user?.profile?.name || "You";
+  const userInitial = (userName[0] || "U").toUpperCase();
   const avatarUrl = user?.profile?.avatar_url || null;
 
   return (
@@ -65,7 +63,7 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, col
             </Avatar>
             <div className="flex-1 min-w-0">
               <p className="text-[13px] font-semibold text-foreground truncate">{userName}</p>
-              <p className="text-xs text-muted-foreground truncate mt-0.5">{userEmail}</p>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">Stored on this computer</p>
             </div>
           </div>
 
@@ -89,25 +87,6 @@ export const ProfileMenu = ({ onSettingsClick, onHelpClick, onFeedbackClick, col
           Help & Docs
         </DropdownMenuItem>
 
-        {onFeedbackClick && (
-          <DropdownMenuItem
-            onClick={onFeedbackClick}
-            className="cursor-pointer text-sm text-foreground focus:bg-secondary gap-2.5 rounded-lg px-2 py-1.5 font-medium"
-          >
-            <ChatText size={14} weight="light" className="opacity-60" />
-            Send Feedback
-          </DropdownMenuItem>
-        )}
-
-        <DropdownMenuSeparator className="bg-border my-1" />
-
-        <DropdownMenuItem
-          onClick={signOut}
-          className="cursor-pointer text-sm text-destructive focus:bg-destructive/8 focus:text-destructive gap-2.5 rounded-lg px-2 py-1.5 font-medium"
-        >
-          <SignOut size={14} weight="light" />
-          Sign Out
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

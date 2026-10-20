@@ -8,7 +8,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 
 let Database: any;
 const openDbs: Map<string, any> = new Map();
@@ -22,10 +21,6 @@ function loadDatabase(): any | null {
     return Database;
   } catch (err) {
     console.warn('[CodeIntelStore] better-sqlite3 not available — local index disabled');
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'code-intel-store', op: 'load-sqlite' },
-    });
     return null;
   }
 }
@@ -65,11 +60,6 @@ export function getProjectIndexDb(projectId: string): any | null {
     return db;
   } catch (err) {
     console.warn(`[CodeIntelStore] Failed to open local index for ${projectId}:`, err);
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'code-intel-store', op: 'open-project-db' },
-      extra: { projectId },
-    });
     return null;
   }
 }
@@ -80,11 +70,7 @@ export function closeProjectIndexDb(projectId: string): void {
   try {
     db.close();
   } catch (err) {
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'code-intel-store', op: 'close-project-db' },
-      extra: { projectId },
-    });
+    console.error('[CodeIntelStore] close project DB failed:', err);
   } finally {
     openDbs.delete(projectId);
   }

@@ -1,5 +1,4 @@
 import { ipcMain, app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -76,7 +75,6 @@ export function registerSkillHandlers() {
         : path.join(__dirname, '..', '..', '..', 'files');
 
       if (!fs.existsSync(skillsDir)) {
-        Sentry.captureException(new Error(`Skills directory not found: ${skillsDir}`), { tags: { component: 'skill-handlers', op: 'skills:list' } });
         console.error('[SkillHandlers] Skills directory not found:', skillsDir);
         return [];
       }
@@ -93,7 +91,6 @@ export function registerSkillHandlers() {
           const content = fs.readFileSync(filePath, 'utf-8');
           skills.push(parseSkillMetadata(content, skillName));
         } catch (err) {
-          Sentry.captureException(err, { tags: { component: 'skill-handlers', op: 'skill-file-read' }, extra: { file } });
           console.error(`[SkillHandlers] Failed to read ${file}:`, err);
           skills.push({
             name: skillName,
@@ -107,7 +104,6 @@ export function registerSkillHandlers() {
       console.log(`[SkillHandlers] Loaded ${skills.length} skills`);
       return skills;
     } catch (error) {
-      Sentry.captureException(error, { tags: { component: 'skill-handlers', op: 'skills:list' } });
       console.error('[SkillHandlers] Error listing skills:', error);
       return [];
     }

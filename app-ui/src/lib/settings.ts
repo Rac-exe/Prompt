@@ -1,4 +1,3 @@
-import * as Sentry from '@sentry/react';
 
 export interface SettingsData {
     theme: "light" | "dark";
@@ -24,7 +23,7 @@ export const DEFAULT_SETTINGS: SettingsData = {
 // Check if running in Electron
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
-// Load settings from Supabase (via Electron) or localStorage
+// Load settings from the local database (via Electron) or localStorage
 export const loadSettings = async (userId?: string): Promise<SettingsData> => {
     const key = storageKey(userId);
     if (isElectron && window.electronAPI.loadSettings) {
@@ -39,11 +38,9 @@ export const loadSettings = async (userId?: string): Promise<SettingsData> => {
             };
 
             localStorage.setItem(key, JSON.stringify(transformed));
-            Sentry.addBreadcrumb({ category: 'settings', message: 'Loaded from Supabase', level: 'info', data: { theme: transformed.theme, fontSize: transformed.fontSize, fontFamily: transformed.fontFamily } });
             return transformed;
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'settings', op: 'load' } });
-            console.error('[Settings] Failed to load from Supabase:', error);
+            console.error('[Settings] Failed to load from the local database:', error);
         }
     }
 
@@ -58,7 +55,7 @@ export const loadSettings = async (userId?: string): Promise<SettingsData> => {
     return DEFAULT_SETTINGS;
 };
 
-// Save settings to Supabase (via Electron) and localStorage
+// Save settings to the local database (via Electron) and localStorage
 export const saveSettings = async (settings: SettingsData, userId?: string): Promise<void> => {
     localStorage.setItem(storageKey(userId), JSON.stringify(settings));
 
@@ -73,10 +70,8 @@ export const saveSettings = async (settings: SettingsData, userId?: string): Pro
             };
 
             await window.electronAPI.saveSettings(dbSettings);
-            Sentry.addBreadcrumb({ category: 'settings', message: 'Saved to Supabase', level: 'info', data: { theme: settings.theme, fontSize: settings.fontSize } });
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'settings', op: 'save' } });
-            console.error('[Settings] Failed to save to Supabase:', error);
+            console.error('[Settings] Failed to save to the local database:', error);
         }
     }
 };
@@ -84,7 +79,6 @@ export const saveSettings = async (settings: SettingsData, userId?: string): Pro
 // Apply settings to the DOM
 export const applySettings = (settings: SettingsData) => {
     const root = document.documentElement;
-    Sentry.addBreadcrumb({ category: 'settings', message: 'Applied to DOM', level: 'info', data: { theme: settings.theme, fontSize: settings.fontSize, fontFamily: settings.fontFamily } });
 
     if (settings.theme === "dark") {
         root.classList.add("dark");

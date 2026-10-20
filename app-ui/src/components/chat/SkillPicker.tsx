@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import * as Sentry from "@sentry/react";
 import { Sparkle, Check } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { SKILL_ICON_MAP } from "@/lib/skillIcons";
@@ -32,7 +31,6 @@ export const SkillPicker = ({ onToggle, activeSkills, onClose, className }: Skil
         setSkills(skillList);
       } catch (e) {
         console.error('[SkillPicker] Failed to load skills:', e);
-        Sentry.captureException(e, { tags: { component: 'skill-picker', op: 'load-skills' } });
       } finally {
         setLoading(false);
       }

@@ -119,6 +119,8 @@ export function AvatarUploadModal({
       if (isElectron && (window.electronAPI as any)?.uploadAvatar) {
         const result = await (window.electronAPI as any).uploadAvatar(imageDataUrl, selectedFile.name || "avatar.jpg");
         if (result?.success && result.url) { onAvatarUploaded(result.url); handleClose(); return; }
+        setError(result?.error || "Couldn't save the avatar. Please try again.");
+        return;
       }
       onAvatarUploaded(imageDataUrl);
       handleClose();

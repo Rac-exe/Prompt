@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import * as Sentry from '@sentry/react';
 import {
   CircleNotch,
   ArrowsClockwise, GitBranch,
@@ -360,7 +359,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       if (!proj.localPath || watchStartedRef.current.has(proj.projectId)) continue;
       watchStartedRef.current.add(proj.projectId);
       api.toggleWatching(proj.projectId, proj.localPath, true).catch((err: unknown) => {
-        Sentry.captureException(err, { tags: { component: 'space-workspace' } });
       });
     }
   }, [api, stableProjects]);
@@ -380,7 +378,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const statuses: Record<string, ProjectInfo> = {};
       for (const p of stableProjects) {
         try { const s = await api.status(p.projectId); if (s) statuses[p.projectId] = s; }
-        catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
+        catch (e) { console.error(e); }
       }
       setProjectStatuses((prev) => {
         const merged = { ...prev };
@@ -411,8 +409,8 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
               }));
               continue;
             }
-            api.reindex(p.projectId, p.localPath).catch((err: unknown) => Sentry.captureException(err, { tags: { component: 'space-workspace' } }));
-          } catch (e) { Sentry.captureException(e, { tags: { component: 'space-workspace' } }); }
+            api.reindex(p.projectId, p.localPath).catch((err: unknown) => console.error('[SpaceWorkspace] reindex failed:', err));
+          } catch (e) { console.error(e); }
         }
       }
     };
@@ -730,7 +728,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
           };
           fallbackChunks.push(...(d.probable_locations || []));
         } catch (e) {
-          Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'ask-context' } });
+          console.error('[SpaceWorkspace] ask context failed:', e);
           fails++;
         }
       }
@@ -773,7 +771,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         if (d.ranked_chunks) allRanked.push(...d.ranked_chunks);
         if (d.related_chunks) allRelated.push(...d.related_chunks);
       } catch (e) {
-        Sentry.captureException(e, { tags: { component: 'space-workspace' } });
+        console.error('[SpaceWorkspace] retrieve failed:', e);
         fails++;
       }
     }
@@ -878,7 +876,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       await runOptimization(query, generationId);
     } catch (e: any) {
       if (activeGenerationIdRef.current !== generationId) return;
-      Sentry.captureException(e, { tags: { component: 'space-workspace' } });
+      console.error('[SpaceWorkspace] optimization failed:', e);
       setIsGenerating(false);
       isStreamingRef.current = false;
       pendingPlaceholderRef.current = null;
@@ -979,14 +977,13 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
         }));
         if (r.local_path) {
           api.toggleWatching?.(r.id, r.local_path, true).catch((err: unknown) => {
-            Sentry.captureException(err, { tags: { component: "space-workspace" } });
           });
           watchStartedRef.current.add(r.id);
         }
         toast({ title: "Folder attached", description: `${r.name} \u2014 indexing in background` });
       }
     } catch (e: any) {
-      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'attach-folder' } });
+      console.error('[SpaceWorkspace] attach folder failed:', e);
       toast({ title: "Couldn't attach folder", description: friendlyError(e, "Something went wrong. Please try again."), variant: "destructive" });
     } finally {
       setAddingFolder(false);
@@ -998,13 +995,10 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
   const handleRemoveProject = (projectId: string) => {
     const proj = space.projects.find(p => p.projectId === projectId);
     if (proj?.localPath) api?.toggleWatching?.(projectId, proj.localPath, false).catch((err: unknown) => {
-      Sentry.captureException(err, { tags: { component: 'space-workspace' } });
     });
     watchStartedRef.current.delete(projectId);
-    // Cascade-delete on the backend reclaims projects/code_chunks/code_relationships
-    // rows in Supabase (FK ON DELETE CASCADE).
+    // Deleting the project in the code-intel service removes its index database.
     api?.remove?.(projectId).catch((err: unknown) => {
-      Sentry.captureException(err, { tags: { component: 'space-workspace', op: 'remove-project' }, extra: { projectId } });
     });
     setProjectStatuses((prev) => { const next = { ...prev }; delete next[projectId]; return next; });
     onUpdateSpace({ ...space, projects: space.projects.filter((p) => p.projectId !== projectId) });
@@ -1026,7 +1020,7 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
       const s = await api.status(proj.projectId);
       if (s) setProjectStatuses((prev) => ({ ...prev, [proj.projectId]: s }));
     } catch (e: any) {
-      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'reindex' } });
+      console.error('[SpaceWorkspace] reindex failed:', e);
       toast({ title: "Resync failed", description: friendlyError(e, "Something went wrong while indexing. Please restart the app and try again."), variant: "destructive" });
     } finally {
       setReindexingId(null);
@@ -1102,7 +1096,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
 
     runOptimization(newContent, generationId).catch((e: any) => {
       if (activeGenerationIdRef.current !== generationId) return;
-      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'edit' } });
       isStreamingRef.current = false;
       resetStreaming();
       setIsGenerating(false);
@@ -1154,7 +1147,6 @@ export const SpaceWorkspace = ({ space, onUpdateSpace, onSaveMessage, onBack }: 
 
     runOptimization(userMsg.content, generationId).catch((e: any) => {
       if (activeGenerationIdRef.current !== generationId) return;
-      Sentry.captureException(e, { tags: { component: 'space-workspace', op: 'regenerate' } });
       isStreamingRef.current = false;
       resetStreaming();
       setIsGenerating(false);

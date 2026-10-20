@@ -6,7 +6,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ipcMain, dialog, app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import type { CodeIntelClient, ProjectInfo } from '../api/code-intel-client';
 import type { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import type { AppWindowManager } from '../windows/app-window-manager';
@@ -97,7 +96,6 @@ function startStatusPoll(projectId: string): Promise<string> {
         }
       } catch (e) {
         // Service might be transiently down — keep polling
-        Sentry.addBreadcrumb({ category: 'project-handlers', message: 'Status poll failed (transient)', level: 'warning' });
       }
 
       if (Date.now() - startedAt > POLL_MAX_DURATION_MS) {
@@ -142,7 +140,6 @@ function persistActiveProject(): void {
     }));
   } catch (e) {
     console.warn('[ProjectHandlers] Failed to persist active project:', e);
-    Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'persist-state' } });
   }
 }
 
@@ -153,7 +150,6 @@ function loadPersistedProject(): { projectId: string | null; branch: string | nu
     }
   } catch (e) {
     console.warn('[ProjectHandlers] Failed to load persisted project:', e);
-    Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'load-state' } });
   }
   return { projectId: null, branch: null };
 }
@@ -207,11 +203,9 @@ export function registerProjectHandlers(
         }
       } catch (e) {
         console.warn('[ProjectHandlers] Failed to read git info:', e);
-        Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'git-metadata' } });
       }
     }
 
-    Sentry.addBreadcrumb({ category: 'project', message: 'Creating project', level: 'info', data: { name: projectName } });
     const project = await _client.createProject({
       name: projectName,
       local_path: projectPath,
@@ -238,7 +232,6 @@ export function registerProjectHandlers(
         activeScans.delete(project.id);
         if (signal.cancelled) return;
         console.error('[ProjectHandlers] Initial index failed:', e);
-        Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'initial-index' }, extra: { projectId: project.id } });
         broadcastProjectStatus({ projectId: project.id, status: 'stale' });
       });
 
@@ -259,7 +252,6 @@ export function registerProjectHandlers(
       // user can still purge stale references from their space.
       const status = e?.response?.status;
       if (status !== 404) {
-        Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'remove' }, extra: { projectId } });
         throw e;
       }
       console.warn(`[ProjectHandlers] Project ${projectId} already removed on backend (404) — purging local state`);
@@ -347,15 +339,9 @@ export function registerProjectHandlers(
       activeScans.delete(projectId);
       if (signal.cancelled) return { totalFiles: 0, totalChunks: 0, finalStatus: 'cancelled' };
       console.error('[ProjectHandlers] Reindex failed:', e);
-      Sentry.captureException(e, { tags: { component: 'project-handlers', op: 'reindex' }, extra: { projectId } });
       broadcastProjectStatus({ projectId, status: 'stale' });
       throw e;
     }
-  });
-
-  ipcMain.handle('project:sync', async (_event, projectId?: string) => {
-    if (!_client) throw new Error('Code intelligence client not initialized');
-    await _client.syncProject(projectId);
   });
 
   ipcMain.handle('project:toggle-watching', async (_event, projectId: string, localPath: string, enable: boolean) => {
@@ -516,7 +502,6 @@ export function registerProjectHandlers(
             activeScans.delete(projectId);
             if (efSignal.cancelled) return;
             console.error(`[ProjectHandlers] ensure-fresh scan failed for ${projectId}:`, err);
-            Sentry.captureException(err, { level: 'warning', tags: { component: 'project-handlers', op: 'ensure-fresh' }, extra: { projectId } });
             if (isUnhealthy) broadcastProjectStatus({ projectId, status: 'stale' });
           });
 
@@ -526,7 +511,6 @@ export function registerProjectHandlers(
         // notice via its next status() call and prune from the space.
         const httpStatus = e?.response?.status;
         if (httpStatus !== 404) {
-          Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'ensure-fresh' }, extra: { projectId } });
         }
       }
     }
@@ -564,11 +548,7 @@ async function ensureFreshBeforeFind(projectId: string): Promise<void> {
     await startStatusPoll(projectId);
   } catch (e) {
     activeScans.delete(projectId);
-    Sentry.captureException(e, {
-      level: 'warning',
-      tags: { component: 'project-handlers', op: 'ensure-fresh-before-find' },
-      extra: { projectId },
-    });
+    console.error('[ProjectHandlers] ensure fresh before Find failed:', e);
   }
 }
 
@@ -576,7 +556,6 @@ async function setActiveProject(projectId: string, localPath?: string): Promise<
   if (!_client) return;
 
   activeProjectId = projectId;
-  Sentry.setTag('active_project', projectId);
 
   if (localPath) {
     const isGit = await isGitRepo(localPath);
@@ -651,7 +630,6 @@ export async function restoreActiveProject(): Promise<void> {
     }
   } catch (e) {
     console.warn('[ProjectHandlers] Service unavailable during restore — persisted project ID retained:', e);
-    Sentry.captureException(e, { level: 'warning', tags: { component: 'project-handlers', op: 'restore-project' } });
   }
 }
 

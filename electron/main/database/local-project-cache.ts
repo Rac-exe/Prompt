@@ -4,7 +4,6 @@
  * filesystem freshness cache and local retrieval index share one lifecycle.
  */
 
-import * as Sentry from '@sentry/electron/main';
 import { getProjectIndexDb } from './code-intel-local-store';
 
 export function getCachedHash(projectId: string, filePath: string): string | null {
@@ -18,11 +17,7 @@ export function getCachedHash(projectId: string, filePath: string): string | nul
 
     return row?.content_hash ?? null;
   } catch (err) {
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'project-cache', op: 'getCachedHash' },
-      extra: { projectId, filePath },
-    });
+    console.error('[ProjectCache] getCachedHash failed:', err);
     return null;
   }
 }
@@ -48,11 +43,7 @@ export function setCachedHash(
       )
       .run(projectId, filePath, contentHash, chunkCount);
   } catch (err) {
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'project-cache', op: 'setCachedHash' },
-      extra: { projectId, filePath },
-    });
+    console.error('[ProjectCache] setCachedHash failed:', err);
   }
 }
 
@@ -63,11 +54,7 @@ export function clearProjectCache(projectId: string): void {
   try {
     database.prepare('DELETE FROM file_cache WHERE project_id = ?').run(projectId);
   } catch (err) {
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'project-cache', op: 'clearProjectCache' },
-      extra: { projectId },
-    });
+    console.error('[ProjectCache] clearProjectCache failed:', err);
   }
 }
 
@@ -80,11 +67,7 @@ export function clearFileCache(projectId: string, filePath: string): void {
       .prepare('DELETE FROM file_cache WHERE project_id = ? AND file_path = ?')
       .run(projectId, filePath);
   } catch (err) {
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'project-cache', op: 'clearFileCache' },
-      extra: { projectId, filePath },
-    });
+    console.error('[ProjectCache] clearFileCache failed:', err);
   }
 }
 
@@ -99,11 +82,7 @@ export function getProjectFileCount(projectId: string): number {
 
     return row?.count ?? 0;
   } catch (err) {
-    Sentry.captureException(err, {
-      level: 'warning',
-      tags: { component: 'project-cache', op: 'getProjectFileCount' },
-      extra: { projectId },
-    });
+    console.error('[ProjectCache] getProjectFileCount failed:', err);
     return 0;
   }
 }

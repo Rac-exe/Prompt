@@ -4,8 +4,7 @@ Debug endpoints — no auth required.
 POST /api/debug/retrieve  — run the retrieval pipeline and see full score breakdown
 GET  /api/debug/projects  — list all locally indexed projects and their IDs
 
-These endpoints bypass authentication so they work immediately in local dev
-without a Supabase token. Do NOT expose port 8002 publicly in production.
+Like the rest of the API they have no login and must only listen on localhost.
 
 Usage:
     # Discover your project ID
@@ -133,11 +132,10 @@ async def debug_retrieve(body: DebugRetrieveRequest):
         "[DEBUG_RETRIEVE] ═══════════════════════════════════════════════════"
     )
 
-    # Use local store directly — skips Supabase entirely so the endpoint works
-    # without a service role key or auth token.
-    from app.db.local_store import get_local_project, get_project_summary as _local_summary
+    from app.db.queries import get_project
+    from app.db.local_store import get_project_summary as _local_summary
 
-    project = get_local_project(body.project_id)
+    project = get_project(body.project_id, user_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project not found: {body.project_id!r}. Run GET /api/debug/projects to list indexed projects.")
     if project.get("index_status") == "indexing":

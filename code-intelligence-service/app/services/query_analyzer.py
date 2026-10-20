@@ -10,17 +10,16 @@ import asyncio
 import json
 import logging
 import litellm
-import sentry_sdk
 from dataclasses import dataclass, field
 
-from app.config import QUERY_DECOMPOSE_MODEL, OPENROUTER_API_KEY
+from app import llm
+from app.config import QUERY_DECOMPOSE_MODEL
 from app.services.concepts import (
     VALID_CONCEPTS_SET as CANONICAL_VALID_CONCEPTS,
     VALID_INTENTS as CANONICAL_VALID_INTENTS,
     detect_concepts_from_query,
     detect_intent_from_query,
 )
-from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.query_analyzer")
 
@@ -73,9 +72,6 @@ async def decompose_query(query: str) -> QueryAnalysis:
         "max_tokens": 200,
         "temperature": 0.1,
     }
-    if OPENROUTER_API_KEY and "openrouter" in QUERY_DECOMPOSE_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
-
     try:
         logger.info(
             f"[DECOMPOSE] LLM path: calling {QUERY_DECOMPOSE_MODEL} "
@@ -83,13 +79,9 @@ async def decompose_query(query: str) -> QueryAnalysis:
         )
         import time as _time
         t0 = _time.perf_counter()
-        if prmpt_ai_client.is_configured():
-            raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-            usage = None
-        else:
-            response = await asyncio.to_thread(litellm.completion, **kwargs)
-            raw = (response.choices[0].message.content or "").strip()
-            usage = response.usage
+        response = await asyncio.to_thread(litellm.completion, **llm.with_key(kwargs))
+        raw = (response.choices[0].message.content or "").strip()
+        usage = response.usage
         elapsed_ms = int((_time.perf_counter() - t0) * 1000)
         tokens_in = usage.prompt_tokens if usage else 0
         tokens_out = usage.completion_tokens if usage else 0
@@ -130,7 +122,6 @@ async def decompose_query(query: str) -> QueryAnalysis:
 
     except Exception as e:
         logger.warning(f"Query decomposition failed ({e}), using original query")
-        sentry_sdk.capture_exception(e)
         return QueryAnalysis(
             intent=_detect_intent_keyword(query),
             sub_queries=[query],

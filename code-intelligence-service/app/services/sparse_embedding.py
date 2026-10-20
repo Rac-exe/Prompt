@@ -17,7 +17,6 @@ from threading import Lock
 from typing import Optional
 
 import numpy as np
-import sentry_sdk
 
 from app.config import SPLADE_ENABLED, SPLADE_MIN_WEIGHT, SPLADE_MODEL
 
@@ -71,7 +70,6 @@ def _get_splade_model():
         except Exception as e:
             _model_failed = True
             logger.warning("Failed to load SPLADE model=%s: %s", SPLADE_MODEL, e)
-            sentry_sdk.capture_exception(e)
             return None, None, None
 
 
@@ -124,7 +122,6 @@ def compute_sparse_batch(texts: list[str]) -> list[dict[str, float]]:
         return [_infer_single(session, tokenizer, vocab, text) for text in texts]
     except Exception as e:
         logger.warning("SPLADE batch inference failed: %s", e)
-        sentry_sdk.capture_exception(e)
         return [{} for _ in texts]
 
 

@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import * as Sentry from "@sentry/react";
 import {
   Sparkle,
   PencilSimpleLine,
@@ -32,16 +31,13 @@ export const ClarificationSummaryCard = ({
   const visibleQuestions = questions.filter(q => !isDeliveryQ(q.question));
 
   const startEditing = useCallback(() => {
-    Sentry.addBreadcrumb({ category: 'app.clarification', message: 'Edit preferences started' });
     setEditing(true);
   }, []);
   const cancelEditing = useCallback(() => {
-    Sentry.addBreadcrumb({ category: 'app.clarification', message: 'Edit preferences cancelled' });
     setEditing(false);
   }, []);
 
   const handleReoptimize = useCallback((newAnswers: Record<string, string>, wantsSections: boolean) => {
-    Sentry.addBreadcrumb({ category: 'app.clarification', message: 'Re-optimize with new preferences', data: { answerCount: Object.keys(newAnswers).length, wantsSections } });
     setEditing(false);
     onReoptimize?.(newAnswers, wantsSections);
   }, [onReoptimize]);

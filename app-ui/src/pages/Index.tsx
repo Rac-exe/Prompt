@@ -1,13 +1,10 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import * as Sentry from "@sentry/react";
-import { LoginPage } from "@/components/auth/LoginPage";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { ChatView } from "@/components/chat/ChatView";
 import { SavePromptModal } from "@/components/chat/SavePromptModal";
 import { PromptLibrary, Collection } from "@/components/library/PromptLibrary";
 import { SavedPrompt } from "@/components/library/PromptCard";
-import { SharedLibraryView } from "@/components/library/SharedLibraryView";
 import { HistoryView, HistoryItem } from "@/components/history/HistoryView";
 import { SettingsView } from "@/components/settings/SettingsView";
 import { ProjectsView } from "@/components/projects/ProjectsView";
@@ -47,7 +44,7 @@ interface ChatSession {
 const isElectron = typeof window !== 'undefined' && window.electronAPI;
 
 const Index = () => {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
 
   // Initialize settings after authentication, scoped to user
   useInitializeSettings(user?.profile?.id);
@@ -83,7 +80,7 @@ const Index = () => {
     try {
       spaces = loadSpaces(userId);
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-load-spaces" } });
+      console.error('[Index] load spaces failed:', err);
       return;
     }
 
@@ -91,7 +88,7 @@ const Index = () => {
       try {
         spacesApi.publishSnapshot(spaces.map(toSpaceSummary));
       } catch (err) {
-        Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-spaces-snapshot" } });
+        console.error('[Index] spaces snapshot failed:', err);
       }
     }
 
@@ -104,11 +101,10 @@ const Index = () => {
         );
         if (projects.length > 0) {
           projectApi.ensureFresh(projects).catch((err: unknown) => {
-            Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-ensure-fresh" } });
           });
         }
       } catch (err) {
-        Sentry.captureException(err, { tags: { component: "index", op: "bootstrap-ensure-fresh" } });
+        console.error('[Index] ensure fresh failed:', err);
       }
     }
   }, [user?.profile?.id]);
@@ -176,14 +172,14 @@ const Index = () => {
           // ignore — main cache will catch up on next ProjectsView mount
         }
       } catch (err) {
-        Sentry.captureException(err, { tags: { component: "index", op: "spaces-apply-append" } });
+        console.error('[Index] append space messages failed:', err);
       }
     });
     return () => { unsub?.(); };
   }, []);
 
   // Navigation state
-  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "shared-library" | "projects">("chat");
+  const [currentView, setCurrentView] = useState<"chat" | "library" | "settings" | "history" | "projects">("chat");
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   // Ref always holds the latest selectedChatId — used in long-lived IPC listeners
   // to avoid stale closures when the user switches chats.
@@ -202,9 +198,6 @@ const Index = () => {
     setAttachedFiles,
     deleteChatState,
   } = useChatUIState(selectedChatId);
-
-  // Shared library token (set when opening a share link)
-  const [sharedLibraryToken, setSharedLibraryToken] = useState<string | null>(null);
 
   // Chat sessions for history
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
@@ -274,12 +267,11 @@ const Index = () => {
   const [collections, setCollections] = useState<Collection[]>(initialCollections);
   const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>(initialPrompts);
 
-  // Helper: transform raw Supabase data into local state shape
+  // Helper: transform raw database rows into local state shape
   const mapCollections = (raw: any[]) => raw.map((c: any) => ({
     id: c.id,
     name: c.name,
     icon: c.icon || 'folder',
-    originalCreatorName: c.original_creator_name || undefined,
   }));
 
   const mapPrompts = (raw: any[], _collectionList?: Collection[]) => raw.map((p: any) => {
@@ -290,28 +282,25 @@ const Index = () => {
       collectionId: p.collection_id,
       sourceChat: p.metadata?.source_chat,
       createdAt: new Date(p.created_at),
-      // Attribution is prompt-level. Only prompts copied from a shared library
-      // carry this metadata; new prompts in the same collection stay untagged.
-      originalCreatorName: p.metadata?.shared_origin_creator_name || undefined,
     };
   });
 
-  // Load prompt library from Supabase on mount
+  // Load prompt library from the local database on mount
   useEffect(() => {
     if (isElectron && window.electronAPI?.promptLibrary) {
-      // Load collections first, then prompts so we can link originalCreatorName
+      // Load collections first, then prompts
       window.electronAPI.promptLibrary.getCollections()
         .then((rawCollections) => {
-          console.log('[Index] Loaded collections from Supabase:', rawCollections.length);
+          console.log('[Index] Loaded collections from the local database:', rawCollections.length);
           const mappedCollections = mapCollections(rawCollections);
           setCollections(mappedCollections);
           // Load prompts, passing mapped collections for creator enrichment
           return window.electronAPI.promptLibrary.getAll().then((rawPrompts) => {
-            console.log('[Index] Loaded prompts from Supabase:', rawPrompts.length);
+            console.log('[Index] Loaded prompts from the local database:', rawPrompts.length);
             setSavedPrompts(mapPrompts(rawPrompts, mappedCollections));
           });
         })
-        .catch((err) => { console.error('[Index] Error loading library:', err); Sentry.captureException(err, { tags: { component: 'index-page' } }); });
+        .catch((err) => { console.error('[Index] Error loading library:', err);  });
     }
   }, [isElectron]);
 
@@ -334,19 +323,19 @@ const Index = () => {
     }
   }, []);
 
-  // Load chats from Supabase on mount
+  // Load chats from the local database on mount
   useEffect(() => {
     if (isElectron && window.electronAPI?.loadChats) {
-      console.log('[Index] Loading chats from Supabase');
+      console.log('[Index] Loading chats from the local database');
       window.electronAPI.loadChats();
     }
   }, []);
 
-  // Listen for chats loaded from Supabase
+  // Listen for chats loaded from the local database
   useEffect(() => {
     if (isElectron && window.electronAPI?.onChatsLoaded) {
       const handleChatsLoaded = (data: { chats: any[] }) => {
-        console.log('[Index] Chats loaded from Supabase:', data.chats.length);
+        console.log('[Index] Chats loaded from the local database:', data.chats.length);
         const formattedChats = data.chats.map(chat => ({
           id: chat.id,
           title: chat.title,
@@ -384,7 +373,6 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onChatRenameError) {
       const handleRenameError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat rename error:', data);
-        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'chat-rename' } });
         toast({
           title: "Couldn't rename chat",
           description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
@@ -425,7 +413,6 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onChatDeleteError) {
       const handleDeleteError = (data: { chatId: string; error: string }) => {
         console.error('[Index] Chat delete error:', data);
-        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'chat-delete' } });
         toast({
           title: "Couldn't delete chat",
           description: friendlyError({ message: data.error }, "Something went wrong. Please try again."),
@@ -536,7 +523,7 @@ const Index = () => {
   useEffect(() => {
     if (isElectron && window.electronAPI?.onMessageSent) {
       const handleMessageSent = (data: { chatId: string; chat: any; userMessage: any }) => {
-        console.log('[Index] Message sent to Supabase:', data);
+        console.log('[Index] Message sent to the local database:', data);
 
         // Ignore responses for a chat the user has already navigated away from.
         // For *new* chats selectedChatIdRef is null — accept those.
@@ -680,7 +667,6 @@ const Index = () => {
     if (isElectron && window.electronAPI?.onMessageSendError) {
       const handleMessageSendError = (data: { error: string; details?: string }) => {
         console.error('[Index] Message send error:', data);
-        Sentry.captureException(new Error(data.error), { tags: { component: 'index', op: 'message-send' }, extra: { details: data.details } });
         setIsGenerating(false);
         editInProgressRef.current = false;
         pendingPlaceholderId.current = null;
@@ -720,38 +706,7 @@ const Index = () => {
     return cleanup;
   }, []);
 
-  // Listen for offline-queued send confirmation
-  useEffect(() => {
-    if (!isElectron || !window.electronAPI?.onSendMessageQueued) return;
-    const cleanup = window.electronAPI.onSendMessageQueued((data) => {
-      console.log('[Index] Message queued for offline send:', data.chatId);
-      setSendError(data.message);
-      setTimeout(() => setSendError(null), 8000);
-    });
-    return cleanup;
-  }, []);
-
-  // Listen for offline-queued messages being synced when back online
-  useEffect(() => {
-    if (!isElectron || !window.electronAPI?.onOfflineMessageSynced) return;
-    const cleanup = window.electronAPI.onOfflineMessageSynced((data) => {
-      console.log('[Index] Offline message synced for chat:', data.chatId);
-      // If the user is viewing the chat that just got synced, append both messages
-      if (selectedChatIdRef.current === data.chatId) {
-        const um = data.userMessage;
-        const am = data.assistantMessage;
-        if (!messageTree.has(um.id)) {
-          messageTree.addChild(null, { id: um.id, role: um.role, content: um.content, createdAt: um.createdAt, groupId: um.groupId, versionIndex: um.versionIndex ?? 0 });
-        }
-        if (!messageTree.has(am.id)) {
-          messageTree.addChild(um.id, { id: am.id, role: am.role, content: am.content, createdAt: am.createdAt, groupId: am.groupId, versionIndex: am.versionIndex ?? 0 });
-        }
-      }
-    });
-    return cleanup;
-  }, [messageTree]);
-
-  // Load messages from Supabase when a chat is selected
+  // Load messages from the local database when a chat is selected
   // IMPORTANT: deps must NOT include recentChats — the backend sends
   // 'chats-loaded' after every message, which would reload messages
   // mid-stream and flatten the version tree.
@@ -799,11 +754,11 @@ const Index = () => {
     }
   }, [recentChats, selectedChatId]);
 
-  // Listen for messages loaded from Supabase
+  // Listen for messages loaded from the local database
   useEffect(() => {
     if (isElectron && window.electronAPI?.onMessagesLoaded) {
       const handleMessagesLoaded = (data: { chatId: string; messages: any[]; error?: string }) => {
-        console.log('[Index] Messages loaded from Supabase:', data.messages.length);
+        console.log('[Index] Messages loaded from the local database:', data.messages.length);
 
         if (data.chatId === selectedChatId) {
           const formattedMessages: Message[] = data.messages.map(msg => ({
@@ -994,7 +949,6 @@ const Index = () => {
   // ── Chat selection (abort any in-flight stream first) ────────
   const handleSelectChat = useCallback((chatId: string) => {
     if (chatId === selectedChatIdRef.current) return;
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Chat selected', data: { chatId } });
     detachFromActiveGeneration();
     setClarificationAnswersMap({});
     setSelectedChatId(chatId);
@@ -1002,7 +956,6 @@ const Index = () => {
 
   // Chat handlers
   const handleNewChat = () => {
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'New chat started' });
     detachFromActiveGeneration();
     // Clear current chat selection and messages
     setMessages([]);
@@ -1014,7 +967,6 @@ const Index = () => {
   };
 
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
-    Sentry.addBreadcrumb({ category: 'app.clarification', message: 'Clarification submitted', data: { answerCount: Object.keys(answers).length, wantsSections } });
     const currentClarification = clarificationDataRef.current;
     const lastUserMsg = [...messagesRef.current].reverse().find(m => m.role === 'user');
     const questions: ClarifyQuestion[] = (currentClarification?.questions || []).map((q: any) => ({
@@ -1057,7 +1009,6 @@ const Index = () => {
       return;
     }
     const skillsJoined = selectedSkills?.length ? selectedSkills.join(',') : null;
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message sent', data: { mode, hasFiles: !!(attachedFiles?.length), skills: skillsJoined || 'auto' } });
     sendingRef.current = true;
 
     const groupId = versionMeta?.groupId || crypto.randomUUID();
@@ -1127,7 +1078,6 @@ Your prompt was: "${content}"`;
   // destroying old messages. The previous version + its responses remain
   // accessible via the ← / → version navigator.
   const handleEditMessage = useCallback((messageId: string, newContent: string) => {
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message edited', data: { messageId } });
     const placeholderId = `edit-placeholder-${Date.now()}`;
 
     // Mark edit in progress so tree isn't flattened by a reload
@@ -1156,7 +1106,6 @@ Your prompt was: "${content}"`;
   // under the SAME user message (no new user version created).
   const handleRegenerateMessage = useCallback((assistantMessageId: string) => {
     if (sendingRef.current) return;
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Regenerate requested', data: { assistantMessageId } });
 
     // Walk the active path to find the user message before this assistant
     const activePath = messageTree.getActivePath();
@@ -1289,7 +1238,7 @@ Your prompt was: "${content}"`;
   const handleFeedback = (messageId: string, rating: "positive" | "negative") => {
     console.log('[Index] Feedback received:', { messageId, rating });
 
-    // Send it to Supabase via Electron IPC
+    // Send it to the local database via Electron IPC
     if (isElectron && window.electronAPI?.saveFeedback) {
       window.electronAPI.saveFeedback(messageId, rating);
     }
@@ -1308,7 +1257,7 @@ Your prompt was: "${content}"`;
     try {
       let targetCollectionId = collectionId;
 
-      // Create new collection in Supabase if needed
+      // Create the new collection first if needed
       if (collectionId === "new" && newCollectionName && isElectron && window.electronAPI?.promptLibrary) {
         const newCollection = await window.electronAPI.promptLibrary.createCollection(newCollectionName, "folder");
         targetCollectionId = newCollection.id;
@@ -1321,7 +1270,7 @@ Your prompt was: "${content}"`;
         }]);
       }
 
-      // Save prompt to Supabase
+      // Save prompt to the local database
       if (isElectron && window.electronAPI?.promptLibrary) {
         const savedPrompt = await window.electronAPI.promptLibrary.savePrompt(
           targetCollectionId,
@@ -1338,7 +1287,6 @@ Your prompt was: "${content}"`;
           collectionId: savedPrompt.collection_id,
           sourceChat: savedPrompt.metadata?.source_chat,
           createdAt: new Date(savedPrompt.created_at),
-          originalCreatorName: savedPrompt.metadata?.shared_origin_creator_name || undefined,
         }, ...prev]);
         setSavedPromptIds((prev) => [...prev, promptToSave.id]);
 
@@ -1352,7 +1300,6 @@ Your prompt was: "${content}"`;
       setPromptToSave(null);
     } catch (error: any) {
       console.error('[Index] Error saving prompt:', error);
-      Sentry.captureException(error, { tags: { component: 'index', op: 'save-prompt' } });
       toast({
         title: "Couldn't save prompt",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1380,7 +1327,6 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error creating collection:', error);
-      Sentry.captureException(error, { tags: { component: 'index', op: 'create-collection' } });
       toast({
         title: "Couldn't create collection",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1403,7 +1349,6 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error renaming collection:', error);
-      Sentry.captureException(error, { tags: { component: 'index', op: 'rename-collection' } });
       toast({
         title: "Couldn't rename collection",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1427,7 +1372,6 @@ Your prompt was: "${content}"`;
       });
     } catch (error: any) {
       console.error('[Index] Error deleting collection:', error);
-      Sentry.captureException(error, { tags: { component: 'index', op: 'delete-collection' } });
       toast({
         title: "Couldn't delete collection",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1459,7 +1403,6 @@ Your prompt was: "${content}"`;
       toast({ title: "Prompt updated" });
     } catch (error: any) {
       console.error('[Index] Error updating prompt:', error);
-      Sentry.captureException(error, { tags: { component: 'index', op: 'update-prompt' } });
       toast({
         title: "Couldn't update prompt",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1478,7 +1421,6 @@ Your prompt was: "${content}"`;
       toast({ title: "Prompt deleted" });
     } catch (error: any) {
       console.error('[Index] Error deleting prompt:', error);
-      Sentry.captureException(error, { tags: { component: 'index', op: 'delete-prompt' } });
       toast({
         title: "Couldn't delete prompt",
         description: friendlyError(error, "Something went wrong. Please try again."),
@@ -1513,39 +1455,6 @@ Your prompt was: "${content}"`;
     }
   };
 
-  // ── Shared Library handlers ────────────────────────────────────────────────
-
-  /**
-   * Open the shared-library view for a given share token.
-   * Called from the /share/:token route or a deep-link handler.
-   */
-  const handleOpenSharedLibrary = useCallback((token: string) => {
-    setSharedLibraryToken(token);
-    setCurrentView("shared-library");
-  }, []);
-
-  /**
-   * Called when the user successfully saves a shared library.
-   * Reloads the user's library and redirects to the library view.
-   */
-  const handleSharedLibrarySaved = useCallback(async (newCollectionId: string) => {
-    // Reload the full library so the new collection appears with attribution
-    if (isElectron && window.electronAPI?.promptLibrary) {
-      try {
-        const rawCollections = await window.electronAPI.promptLibrary.getCollections();
-        const mappedCollections = mapCollections(rawCollections);
-        setCollections(mappedCollections);
-        const rawPrompts = await window.electronAPI.promptLibrary.getAll();
-        setSavedPrompts(mapPrompts(rawPrompts, mappedCollections));
-      } catch (err) {
-        console.error('[Index] Error reloading library after save:', err);
-      }
-    }
-    // Navigate to the library view
-    setCurrentView("library");
-    setSharedLibraryToken(null);
-  }, [collections]);
-
   // ── Version navigation ──────────────────────────────────────
   const versionInfoMap = useMemo(() => {
     const map = new Map<string, VersionInfo>();
@@ -1563,17 +1472,6 @@ Your prompt was: "${content}"`;
   // Render current view (auth is handled by AuthWrapper, so we're always authenticated here)
   const renderView = () => {
     switch (currentView) {
-      case "shared-library":
-        return (
-          <SharedLibraryView
-            token={sharedLibraryToken || ""}
-            onBack={() => {
-              setCurrentView("library");
-              setSharedLibraryToken(null);
-            }}
-            onSaved={handleSharedLibrarySaved}
-          />
-        );
       case "library":
         return (
           <PromptLibrary

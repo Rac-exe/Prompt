@@ -11,7 +11,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/health/ready', (_req, res) => {
-  res.json({ status: 'ready', checks: { llm_api_key: true, optimizer_model: true, whisper_model: true } });
+  res.json({ status: 'ready', checks: { optimizer_model: true, whisper_model: true } });
 });
 
 // Clarify endpoint
@@ -42,21 +42,10 @@ app.post('/transcribe-audio', (_req, res) => {
   res.json({ text: 'mock transcription result' });
 });
 
-// Upload image
-app.post('/upload/image', (_req, res) => {
-  res.json({ url: 'https://mock.cloudinary.com/test-image.png', public_id: 'test-image' });
-});
-
 // Extract memory facts
 app.post('/extract-memory-facts', (_req, res) => {
   res.json({ facts: [{ category: 'preference', key: 'style', value: 'concise', confidence: 0.9 }] });
 });
-
-// Auth endpoints (simplified mocks)
-app.post('/auth/send-signup-otp', (_req, res) => res.json({ success: true }));
-app.post('/auth/verify-signup-otp', (_req, res) => res.json({ valid: true, data: { name: 'Test', dob: '2000-01-01', email: 'test@test.com', password: 'hashed' } }));
-app.post('/auth/send-reset-otp', (_req, res) => res.json({ success: true }));
-app.post('/auth/reset-password', (_req, res) => res.json({ valid: true, success: true }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });

@@ -2,7 +2,6 @@
 context.py — ChatContext management.
 
 Storage: local JSON files in pipeline_v2/storage/sessions/
-Designed so load/save functions can be swapped for Supabase later.
 """
 
 from __future__ import annotations

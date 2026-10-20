@@ -7,7 +7,6 @@
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import type { ChunkData } from '../api/code-intel-client';
 
 let Parser: any;
@@ -89,12 +88,9 @@ export async function initializeParser(): Promise<void> {
     Parser = ParserClass;
     Language = LanguageClass;
     parserReady = true;
-    Sentry.setTag('parser.initialized', 'true');
     console.log('[CodeParser] web-tree-sitter initialized');
   } catch (e) {
     console.error('[CodeParser] Failed to initialize web-tree-sitter:', e);
-    Sentry.setTag('parser.initialized', 'false');
-    Sentry.captureException(e, { tags: { component: 'code-parser', op: 'initializeParser' } });
     throw e;
   }
 }
@@ -116,7 +112,6 @@ async function getParserForLanguage(language: string): Promise<any | null> {
     return parser;
   } catch (e) {
     console.warn(`[CodeParser] Could not load grammar for ${language}:`, e);
-    Sentry.captureException(e, { level: 'warning', tags: { component: 'code-parser', op: 'loadGrammar' }, extra: { language } });
     return null;
   }
 }

@@ -1,5 +1,4 @@
-import * as Sentry from '@sentry/electron/main';
-import { SupabaseClientManager } from '../supabase-client';
+import { getDb, LOCAL_USER_ID, newId, nowIso, toJson, fromJson, toBool } from '../local-db';
 
 export interface Chat {
   id: string;
@@ -43,162 +42,104 @@ export interface Message {
   };
 }
 
-export class ChatService {
-  private client = SupabaseClientManager.getClient();
+const DEFAULT_CHAT_METADATA: Chat['metadata'] = {
+  tags: [],
+  folder: null,
+  color: '#ffffff',
+  statistics: { total_messages: 0, total_optimizations: 0, avg_response_time_ms: 0 },
+};
 
+function toChat(row: any): Chat {
+  return {
+    ...row,
+    is_pinned: toBool(row.is_pinned),
+    metadata: fromJson(row.metadata, DEFAULT_CHAT_METADATA),
+  };
+}
+
+function toMessage(row: any): Message {
+  return { ...row, metadata: fromJson(row.metadata, {}) };
+}
+
+/**
+ * Chats and messages, stored in the local SQLite database.
+ */
+export class ChatService {
   /**
-   * Get all chats for current user
+   * Get recent chats (most recently updated first)
    */
   async getChats(): Promise<Chat[]> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[ChatService] ❌ getChats: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    console.log('[ChatService] Loading chats for user:', userData.user.id);
-
-    const { data, error } = await this.client
-      .from('chats')
-      .select('*')
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('updated_at', { ascending: false })
-      .limit(100);
-
-    if (error) {
-      console.error('[ChatService] ❌ Error loading chats:', error);
-      throw error;
-    }
-
-    console.log('[ChatService] ✅ Loaded', data?.length || 0, 'chats for user:', userData.user.id);
-    return data || [];
+    const rows = getDb()
+      .prepare('SELECT * FROM chats ORDER BY updated_at DESC, rowid DESC LIMIT 100')
+      .all();
+    return rows.map(toChat);
   }
 
   /**
    * Get a single chat by ID
    */
   async getChat(chatId: string): Promise<Chat | null> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[ChatService] ❌ getChat: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { data, error } = await this.client
-      .from('chats')
-      .select('*')
-      .eq('id', chatId)
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .single();
-
-    if (error) throw error;
-    return data;
+    const row = getDb().prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+    return row ? toChat(row) : null;
   }
 
   /**
    * Create a new chat
    */
   async createChat(title?: string): Promise<Chat> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    const { data, error } = await this.client
-      .from('chats')
-      .insert({
-        user_id: userData.user.id,
-        title: title || 'New Chat',
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    const now = nowIso();
+    const chat: Chat = {
+      id: newId(),
+      user_id: LOCAL_USER_ID,
+      title: title || 'New Chat',
+      created_at: now,
+      updated_at: now,
+      is_pinned: false,
+      metadata: DEFAULT_CHAT_METADATA,
+    };
+    getDb()
+      .prepare(
+        `INSERT INTO chats (id, user_id, title, created_at, updated_at, is_pinned, metadata)
+         VALUES (?, ?, ?, ?, ?, 0, ?)`,
+      )
+      .run(chat.id, chat.user_id, chat.title, chat.created_at, chat.updated_at, toJson(chat.metadata));
+    return chat;
   }
 
   /**
    * Bump a chat's updated_at to now so it floats to the top of the recents list.
    */
   async touchChat(chatId: string): Promise<void> {
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) throw new Error('Not authenticated');
-
-    const { error } = await this.client
-      .from('chats')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', chatId)
-      .eq('user_id', userData.user.id);
-
-    if (error) throw error;
+    getDb().prepare('UPDATE chats SET updated_at = ? WHERE id = ?').run(nowIso(), chatId);
   }
 
   /**
    * Update chat title
    */
   async updateChatTitle(chatId: string, title: string): Promise<void> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[ChatService] ❌ updateChatTitle: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { error } = await this.client
-      .from('chats')
-      .update({ title })
-      .eq('id', chatId)
-      .eq('user_id', userData.user.id); // ✅ EXPLICIT user scoping
-
-    if (error) throw error;
+    getDb().prepare('UPDATE chats SET title = ?, updated_at = ? WHERE id = ?').run(title, nowIso(), chatId);
   }
 
   /**
-   * Delete a chat
+   * Delete a chat (its messages are removed by ON DELETE CASCADE)
    */
   async deleteChat(chatId: string): Promise<void> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[ChatService] ❌ deleteChat: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { error } = await this.client
-      .from('chats')
-      .delete()
-      .eq('id', chatId)
-      .eq('user_id', userData.user.id); // ✅ EXPLICIT user scoping
-
-    if (error) throw error;
+    getDb().prepare('DELETE FROM chats WHERE id = ?').run(chatId);
   }
 
   /**
-   * Get messages for a chat
+   * Get messages for a chat, oldest first
    */
   async getMessages(chatId: string): Promise<Message[]> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[ChatService] ❌ getMessages: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { data, error } = await this.client
-      .from('messages')
-      .select('*')
-      .eq('chat_id', chatId)
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('created_at', { ascending: true })
-      .limit(500);
-
-    if (error) throw error;
-    return data || [];
+    const rows = getDb()
+      .prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 500')
+      .all(chatId);
+    return rows.map(toMessage);
   }
 
   /**
    * Add a message to a chat.
-   * Pass `id` to use a pre-generated UUID (avoids a separate PATCH after upload).
+   * Pass `id` to use a pre-generated UUID (keeps retries idempotent).
    */
   async addMessage(
     chatId: string,
@@ -208,81 +149,48 @@ export class ChatService {
     metadata?: any,
     id?: string,
   ): Promise<Message> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    const { data, error } = await this.client
-      .from('messages')
-      .insert({
-        ...(id ? { id } : {}),          // use caller-supplied ID when provided
-        chat_id: chatId,
-        user_id: userData.user.id,
-        content,
-        role,
-        optimization_id: optimizationId || null,
-        metadata: metadata || {},
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    const message = {
+      id: id || newId(),
+      chat_id: chatId,
+      user_id: LOCAL_USER_ID,
+      content,
+      role,
+      created_at: nowIso(),
+      optimization_id: optimizationId || null,
+      metadata: metadata || {},
+    };
+    getDb()
+      .prepare(
+        `INSERT INTO messages (id, chat_id, user_id, content, role, created_at, optimization_id, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        message.id,
+        message.chat_id,
+        message.user_id,
+        message.content,
+        message.role,
+        message.created_at,
+        message.optimization_id,
+        toJson(message.metadata),
+      );
+    return message as Message;
   }
 
   /**
    * Find or create a default "Quick Optimizations" chat
    */
   async getOrCreateQuickOptimizationsChat(): Promise<Chat> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    // Try to find existing quick optimizations chat
-    const { data: existingChats } = await this.client
-      .from('chats')
-      .select('*')
-      .eq('user_id', userData.user.id)
-      .eq('title', 'Quick Optimizations')
-      .limit(1);
-
-    if (existingChats && existingChats.length > 0) {
-      return existingChats[0];
-    }
-
-    // Create new one
+    const row = getDb().prepare("SELECT * FROM chats WHERE title = 'Quick Optimizations' LIMIT 1").get();
+    if (row) return toChat(row);
     return this.createChat('Quick Optimizations');
   }
+
   /**
    * Save user feedback to a message
    */
   async saveFeedback(messageId: string, rating: 'positive' | 'negative'): Promise<void> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    // First fetch current metadata
-    const { data: currentMessage, error: fetchError } = await this.client
-        .from('messages')
-        .select('metadata')
-        .eq('id', messageId)
-        .eq('user_id', userData.user.id)
-        .single();
-        
-    if (fetchError) throw fetchError;
-    
-    // Merge new feedback into existing metadata
-    const currentMetadata = currentMessage?.metadata || {};
-    const updatedMetadata = {
-        ...currentMetadata,
-        feedback: { rating }
-    };
-
-    // Update the message
-    const { error: updateError } = await this.client
-        .from('messages')
-        .update({ metadata: updatedMetadata })
-        .eq('id', messageId)
-        .eq('user_id', userData.user.id);
-        
-    if (updateError) throw updateError;
+    this.updateMetadata(messageId, (current) => ({ ...current, feedback: { rating } }));
   }
 
   /**
@@ -290,49 +198,25 @@ export class ChatService {
    * Used to decide whether the title should still be updated on follow-up messages.
    */
   async countUserMessages(chatId: string): Promise<number> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
-
-    const { count, error } = await this.client
-      .from('messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('chat_id', chatId)
-      .eq('user_id', userData.user.id)
-      .eq('role', 'user');
-
-    if (error) throw error;
-    return count ?? 0;
+    const row = getDb()
+      .prepare("SELECT COUNT(*) AS n FROM messages WHERE chat_id = ? AND role = 'user'")
+      .get(chatId);
+    return row ? Number(row.n) : 0;
   }
 
   /**
    * Update only the attachedFiles metadata on an existing message.
-   * Used to backfill Cloudinary/Supabase URLs after background uploads complete.
+   * Used to backfill stored attachment paths after they are saved.
    */
   async updateMessageAttachments(messageId: string, attachedFiles: any[]): Promise<void> {
-    const { data: userData } = await this.client.auth.getUser();
-    if (!userData.user) throw new Error('Not authenticated');
+    this.updateMetadata(messageId, (current) => ({ ...current, attachedFiles }));
+  }
 
-    const { data: current, error: fetchError } = await this.client
-        .from('messages')
-        .select('metadata')
-        .eq('id', messageId)
-        .eq('user_id', userData.user.id)
-        .single();
-
-    if (fetchError) {
-      Sentry.captureException(fetchError, { tags: { component: 'chat-service', op: 'updateMessageAttachments-fetch' }, extra: { messageId } });
-      throw fetchError;
-    }
-
-    const { error: updateError } = await this.client
-        .from('messages')
-        .update({ metadata: { ...(current?.metadata || {}), attachedFiles } })
-        .eq('id', messageId)
-        .eq('user_id', userData.user.id);
-
-    if (updateError) {
-      Sentry.captureException(updateError, { tags: { component: 'chat-service', op: 'updateMessageAttachments-update' }, extra: { messageId } });
-      throw updateError;
-    }
+  private updateMetadata(messageId: string, update: (current: any) => any): void {
+    const conn = getDb();
+    const row = conn.prepare('SELECT metadata FROM messages WHERE id = ?').get(messageId);
+    if (!row) throw new Error('Message not found');
+    const next = update(fromJson(row.metadata, {}));
+    conn.prepare('UPDATE messages SET metadata = ? WHERE id = ?').run(toJson(next), messageId);
   }
 }

@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import * as Sentry from '@sentry/react';
 import { CaretRight, Sparkle } from '@phosphor-icons/react';
 import type { AttachedFile, SkillInfo } from '../lib/types';
 import { SKILL_ICON_SVGS, DEFAULT_SKILL_ICON, MAX_ATTACHED_FILES, MAX_FILE_SIZE, ALLOWED_MIME_TYPES } from '../lib/constants';
@@ -426,13 +425,11 @@ const InputSection: React.FC<InputSectionProps> = ({
     const text = inputValue.trim();
     if (!text || isOptimizing) return;
     if (isListening) {
-      Sentry.addBreadcrumb({ category: 'transcription', message: 'Send pressed while voice active — stopping transcription', level: 'info', data: { window: 'overlay' } });
       voiceActiveRef.current = false;
       setIsListening(false);
       window.electronAPI?.transcription?.stop?.();
       transcriptionSessionIdRef.current = null;
     }
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Message sent', level: 'info' });
     onSend(text);
     setInputValue('');
     if (inputRef.current) {
@@ -533,13 +530,11 @@ const InputSection: React.FC<InputSectionProps> = ({
   // Voice input
   const toggleVoice = useCallback(() => {
     if (isListening) {
-      Sentry.addBreadcrumb({ category: 'transcription', message: 'Mic toggled off by user', level: 'info', data: { window: 'overlay' } });
       voiceActiveRef.current = false;
       setIsListening(false);
       window.electronAPI?.transcription?.stop?.();
       transcriptionSessionIdRef.current = null;
     } else {
-      Sentry.addBreadcrumb({ category: 'transcription', message: 'Mic toggled on by user', level: 'info', data: { window: 'overlay' } });
       voiceActiveRef.current = true;
       setIsListening(true);
       const sessionId = Date.now().toString();
@@ -559,7 +554,6 @@ const InputSection: React.FC<InputSectionProps> = ({
       }
     });
     api.onStatus?.((status) => {
-      Sentry.addBreadcrumb({ category: 'transcription', message: `Voice status: ${status}`, level: 'info', data: { window: 'overlay' } });
       if (status === 'listening') {
         voiceActiveRef.current = true;
       } else {
@@ -568,7 +562,6 @@ const InputSection: React.FC<InputSectionProps> = ({
       setIsListening(status === 'listening');
     });
     api.onError?.((error) => {
-      Sentry.addBreadcrumb({ category: 'transcription', message: 'Voice transcription error', level: 'error', data: { error, window: 'overlay' } });
       voiceActiveRef.current = false;
       setIsListening(false);
     });

@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import * as Sentry from "@sentry/react";
 import { PaperPlaneRight, Sparkle, Microphone, MicrophoneSlash, Atom, WarningCircle, Plus, WifiSlash, Square, X, FileText, ImageSquare, MagnifyingGlassPlus, CircleNotch, ArrowDown, CaretRight } from "@phosphor-icons/react";
 import { Logo } from "@/components/ui/Logo";
 import { useScrollController } from "@/hooks/useScrollController";
@@ -124,7 +123,6 @@ export const ChatView = ({
       if (text) {
         setInput(text);
         if (data.type === "final") {
-          Sentry.addBreadcrumb({ category: "transcription", message: "Final transcription received (ChatView)", level: "info" });
           voiceActiveRef.current = false;
           setVoiceState("idle");
         }
@@ -132,7 +130,6 @@ export const ChatView = ({
     });
 
     window.electronAPI?.transcription?.onStatus?.((status) => {
-      Sentry.addBreadcrumb({ category: "transcription", message: `Voice status: ${status}`, level: "info", data: { window: "main" } });
       if (status === "listening") {
         voiceActiveRef.current = true;
         setVoiceState("listening");
@@ -146,7 +143,6 @@ export const ChatView = ({
     });
 
     window.electronAPI?.transcription?.onError?.((error) => {
-      Sentry.addBreadcrumb({ category: "transcription", message: "Voice transcription error", level: "error", data: { error, window: "main" } });
       setVoiceState("idle");
       setVoiceError(error || "Transcription failed.");
       setTimeout(() => setVoiceError(null), 5000);
@@ -157,12 +153,10 @@ export const ChatView = ({
   const handleSubmit = () => {
     if (!input.trim() || isGenerating || !isOnline) return;
     if (voiceState === "listening") {
-      Sentry.addBreadcrumb({ category: "transcription", message: "Send pressed while voice active — stopping transcription", level: "info", data: { window: "main" } });
       voiceActiveRef.current = false;
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("idle");
     }
-    Sentry.addBreadcrumb({ category: "app.action", message: "Message sent", level: "info", data: { mode, hasFiles: attachedFiles.length > 0, skills: selectedSkills.length > 0 ? selectedSkills.join(',') : 'auto' } });
     onSendMessage(input.trim(), mode, attachedFiles, selectedSkills);
     setInput("");
     setAttachedFiles([]);
@@ -196,11 +190,9 @@ export const ChatView = ({
     const isElectron = !!(window as any).electronAPI;
     if (!isElectron) return;
     if (voiceState === "listening") {
-      Sentry.addBreadcrumb({ category: "transcription", message: "Mic toggled off by user", level: "info", data: { window: "main" } });
       window.electronAPI?.transcription?.stop?.();
       setVoiceState("processing");
     } else if (voiceState === "idle") {
-      Sentry.addBreadcrumb({ category: "transcription", message: "Mic toggled on by user", level: "info", data: { window: "main" } });
       setVoiceError(null);
       window.electronAPI?.transcription?.start?.(Date.now().toString());
     }

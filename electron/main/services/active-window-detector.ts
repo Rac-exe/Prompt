@@ -5,7 +5,6 @@
  */
 
 import type { ProjectInfo } from '../api/code-intel-client';
-import * as Sentry from '@sentry/electron/main';
 
 let activeWin: any = null;
 let pollInterval: NodeJS.Timeout | null = null;
@@ -20,7 +19,6 @@ try {
   activeWin = require('active-win');
 } catch (err) {
   console.warn('[ActiveWindowDetector] active-win not available — auto-detect disabled');
-  Sentry.captureException(err, { level: 'warning', tags: { component: 'active-window-detector', op: 'load-module' } });
 }
 
 export function setKnownProjects(projects: ProjectInfo[]): void {
@@ -74,11 +72,9 @@ export function startDetection(
       }
     } catch (e) {
       console.error('[ActiveWindowDetector] Poll error:', e);
-      Sentry.captureException(e, { level: 'warning', tags: { component: 'active-window-detector', op: 'poll' } });
     }
   }, POLL_INTERVAL_MS);
 
-  Sentry.addBreadcrumb({ category: 'active-window-detector', message: 'Detection started', level: 'info' });
   console.log('[ActiveWindowDetector] Started polling');
 }
 
@@ -86,7 +82,6 @@ export function stopDetection(): void {
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;
-    Sentry.addBreadcrumb({ category: 'active-window-detector', message: 'Detection stopped', level: 'info' });
     console.log('[ActiveWindowDetector] Stopped polling');
   }
   currentMatchedProjectId = null;

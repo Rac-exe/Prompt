@@ -1,36 +1,24 @@
 """
-Embedding service using LiteLLM — routes through OpenRouter so no
-separate OpenAI API key is needed. Falls back to direct OpenAI if
-OPENAI_API_KEY is set.
-
-OpenRouter's embedding endpoint can be flaky, so we retry with
-exponential backoff.
+Embedding service. Runs on-device via ONNX (EMBEDDING_LOCAL_MODEL, default
+bge-small-en-v1.5): no API key and no network after the model download.
 """
 
 import asyncio
-import time
 import logging
 import os
 from collections import OrderedDict
 from threading import Lock
-import litellm
 import numpy as np
-import sentry_sdk
 from app.config import (
     EMBEDDING_BACKEND,
     EMBEDDING_DIMENSIONS,
     EMBEDDING_LOCAL_MODEL,
     EMBEDDING_MODEL,
-    OPENAI_API_KEY,
-    OPENROUTER_API_KEY,
     STRUCTURE_EMBEDDING_DIMENSIONS,
 )
-from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.embedding")
 
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 1.0
 QUERY_EMBED_CACHE_MAX = 512
 _query_embed_cache: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
 _query_embed_lock = Lock()
@@ -41,92 +29,13 @@ _local_embed_session = None
 _local_embed_tokenizer = None
 
 
-def _get_model_and_kwargs() -> tuple[str, dict]:
-    """Pick the right model string and auth kwargs for litellm.embedding()."""
-    if OPENAI_API_KEY:
-        logger.debug(f"Using direct OpenAI for embeddings (model={EMBEDDING_MODEL})")
-        return EMBEDDING_MODEL, {"api_key": OPENAI_API_KEY}
-
-    if OPENROUTER_API_KEY:
-        model = f"openrouter/openai/{EMBEDDING_MODEL}"
-        logger.debug(f"Using OpenRouter for embeddings (model={model})")
-        return model, {"api_key": OPENROUTER_API_KEY}
-
-    raise RuntimeError(
-        "Neither OPENAI_API_KEY nor OPENROUTER_API_KEY is set. "
-        "At least one is required for embeddings."
-    )
-
-
 async def _embed_with_retry(texts: list[str], dimensions: int = EMBEDDING_DIMENSIONS) -> list[list[float]]:
-    """Embed texts. Local-first: ONNX on-device is the only live path.
-
-    The remote (OpenRouter / direct OpenAI) implementation is intentionally
-    disabled and preserved below for easy revert. To re-enable remote, restore
-    the commented block and set EMBEDDING_BACKEND=remote in the environment.
-    """
+    """Embed texts on-device. EMBEDDING_BACKEND must be "local"."""
     if EMBEDDING_BACKEND == "local":
         return await asyncio.to_thread(_embed_with_local, texts, dimensions)
-
-    # ── REMOTE EMBEDDINGS DISABLED (local-first) ──────────────────────────────
-    # Guard so a stray EMBEDDING_BACKEND value can never silently bill/stall on
-    # the network. Local is the only supported backend right now.
     raise RuntimeError(
-        f"Remote embeddings are disabled (local-first). EMBEDDING_BACKEND="
-        f"{EMBEDDING_BACKEND!r}; set it to 'local'. To restore remote, un-comment "
-        f"the preserved block in embedding.py._embed_with_retry."
+        f"Unsupported EMBEDDING_BACKEND={EMBEDDING_BACKEND!r}; only 'local' is available."
     )
-
-    # --- PRESERVED REMOTE IMPLEMENTATION (commented for revert) ----------------
-    # if prmpt_ai_client.is_configured():
-    #     last_error: Exception | None = None
-    #     for attempt in range(MAX_RETRIES):
-    #         try:
-    #             return await prmpt_ai_client.embed_texts(texts, EMBEDDING_MODEL, dimensions)
-    #         except Exception as e:
-    #             last_error = e
-    #             delay = RETRY_BASE_DELAY * (2 ** attempt)
-    #             logger.warning(
-    #                 "Prmpt AI proxy embedding attempt %d/%d failed (%s), retrying in %.1fs",
-    #                 attempt + 1, MAX_RETRIES, str(e)[:120], delay,
-    #             )
-    #             sentry_sdk.capture_exception(e)
-    #             if attempt < MAX_RETRIES - 1:
-    #                 await asyncio.sleep(delay)
-    #     raise RuntimeError(
-    #         f"Proxy embedding failed after {MAX_RETRIES} attempts: {last_error}"
-    #     ) from last_error
-    #
-    # model, kwargs = _get_model_and_kwargs()
-    # last_error: Exception | None = None
-    # for attempt in range(MAX_RETRIES):
-    #     try:
-    #         t0 = time.perf_counter()
-    #         response = await asyncio.to_thread(
-    #             litellm.embedding,
-    #             model=model,
-    #             input=texts,
-    #             dimensions=dimensions,
-    #             **kwargs,
-    #         )
-    #         elapsed = time.perf_counter() - t0
-    #         logger.debug(
-    #             f"Embedding batch ok: {len(texts)} texts, dim={dimensions}, took {elapsed:.2f}s"
-    #         )
-    #         return [d["embedding"] for d in response.data]
-    #     except Exception as e:
-    #         last_error = e
-    #         delay = RETRY_BASE_DELAY * (2 ** attempt)
-    #         logger.warning(
-    #             "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
-    #             attempt + 1, MAX_RETRIES, str(e)[:120], delay,
-    #         )
-    #         sentry_sdk.capture_exception(e)
-    #         if attempt < MAX_RETRIES - 1:
-    #             await asyncio.sleep(delay)
-    # raise RuntimeError(
-    #     f"Embedding failed after {MAX_RETRIES} attempts: {last_error}"
-    # ) from last_error
 
 
 _ONNX_BATCH_SIZE = 16  # max texts per ONNX inference call
@@ -226,7 +135,6 @@ def _get_local_embedder():
         except Exception as e:
             _local_embed_failed = True
             logger.warning("Failed to initialize local embedding model=%s: %s", EMBEDDING_LOCAL_MODEL, e)
-            sentry_sdk.capture_exception(e)
             return None, None
 
 

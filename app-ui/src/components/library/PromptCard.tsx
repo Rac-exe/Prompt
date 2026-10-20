@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { Copy, Check, PencilSimple, Trash, CalendarBlank, ChatText, DownloadSimple, User, ShareNetwork } from "@phosphor-icons/react";
+import { Copy, Check, PencilSimple, Trash, CalendarBlank, ChatText, DownloadSimple } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { EditPromptModal, EditableCollection } from "./EditPromptModal";
 import { DeleteConfirmModal } from "./DeleteConfirmModal";
-import { SharePromptLinkModal } from "./SharePromptLinkModal";
 
 export interface SavedPrompt {
   id: string;
@@ -16,7 +15,6 @@ export interface SavedPrompt {
   createdAt: Date;
   isFavorite?: boolean;
   /** Set when this prompt belongs to a library forked from another user */
-  originalCreatorName?: string;
 }
 
 interface PromptCardProps {
@@ -32,7 +30,6 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -96,15 +93,6 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
             <Button
               variant="ghost" size="icon"
               className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-smooth"
-              onClick={(e) => { e.stopPropagation(); setShareOpen(true); }}
-              data-testid="prompt-share-button"
-              title="Share prompt"
-            >
-              <ShareNetwork size={12} weight="light" />
-            </Button>
-            <Button
-              variant="ghost" size="icon"
-              className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-smooth"
               onClick={(e) => { e.stopPropagation(); setEditOpen(true); }}
               data-testid="prompt-edit-button"
             >
@@ -138,23 +126,8 @@ export const PromptCard = ({ prompt, collections, onCopy, onEdit, onDelete, onOp
               <span className="truncate max-w-[160px]">{prompt.sourceChat}</span>
             </div>
           )}
-          {prompt.originalCreatorName && (
-            <div className="flex items-center gap-1 text-[10px] text-emerald/70 min-w-0">
-              <User size={10} weight="light" className="flex-shrink-0" />
-              <span className="truncate max-w-[160px]">
-                Original by <span className="font-semibold">{prompt.originalCreatorName}</span>
-              </span>
-            </div>
-          )}
         </div>
       </div>
-
-      {/* Share link modal */}
-      <SharePromptLinkModal
-        open={shareOpen}
-        onOpenChange={setShareOpen}
-        prompt={{ id: prompt.id, title: prompt.title }}
-      />
 
       {/* Edit modal */}
       <EditPromptModal

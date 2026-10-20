@@ -1,6 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import * as Sentry from '@sentry/electron/main';
-import { authState } from '../utils/auth-state';
+import { aiSettings } from '../database/services/ai-settings-service';
 import { getCodeIntelRoot } from '../database/code-intel-local-store';
 
 export interface IngestPayload {
@@ -141,11 +140,11 @@ export class CodeIntelClient {
       },
     });
 
+    // Send the user's OpenRouter key and chosen RAG model with every request
     this.client.interceptors.request.use((config) => {
-      const token = authState.currentAccessToken;
-      if (token) {
-        config.headers = config.headers ?? {};
-        config.headers['Authorization'] = `Bearer ${token}`;
+      config.headers = config.headers ?? {};
+      for (const [name, value] of Object.entries(aiSettings.codeIntelHeaders())) {
+        config.headers[name] = value;
       }
       return config;
     });
@@ -160,11 +159,9 @@ export class CodeIntelClient {
     try {
       const resp = await this.client.get('/health');
       const healthy = resp.data?.status === 'ok';
-      Sentry.setTag('code_intel.healthy', String(healthy));
       return healthy;
     } catch (err) {
-      Sentry.setTag('code_intel.healthy', 'false');
-      Sentry.captureException(sanitizeAxiosError(err), { level: 'warning', tags: { component: 'code-intel-client', op: 'healthCheck' } });
+      console.error(sanitizeAxiosError(err));
       return false;
     }
   }
@@ -202,12 +199,8 @@ export class CodeIntelClient {
   }
 
   async ingestSkeleton(payload: IngestPayload): Promise<{ status: string; chunks_queued: number }> {
-    return Sentry.startSpan({ name: 'codeIntel.ingestSkeleton', op: 'code-intel.ingest' }, async (span) => {
-      span.setAttribute('project_id', payload.project_id);
-      span.setAttribute('chunks_count', payload.chunks.length);
-      const resp = await this.client.post('/api/index/ingest', payload, { timeout: 300_000 });
-      return resp.data;
-    });
+    const resp = await this.client.post('/api/index/ingest', payload, { timeout: 300_000 });
+    return resp.data;
   }
 
   async retrieve(params: {
@@ -217,12 +210,8 @@ export class CodeIntelClient {
     limit?: number;
     mode?: 'find' | 'ask' | 'bug' | 'optimize';
   }): Promise<RetrieveResult> {
-    return Sentry.startSpan({ name: 'codeIntel.retrieve', op: 'code-intel.search' }, async (span) => {
-      span.setAttribute('project_id', params.project_id);
-      const resp = await this.client.get('/api/retrieve', { params });
-      Sentry.addBreadcrumb({ category: 'code-intel', message: 'Context retrieved', level: 'info', data: { project_id: params.project_id, chunks: resp.data?.ranked_chunks?.length ?? 0 } });
-      return resp.data;
-    });
+    const resp = await this.client.get('/api/retrieve', { params });
+    return resp.data;
   }
 
   async context(params: {
@@ -232,26 +221,8 @@ export class CodeIntelClient {
     limit?: number;
     mode?: 'find' | 'ask' | 'bug' | 'optimize';
   }): Promise<ContextResult> {
-    return Sentry.startSpan({ name: 'codeIntel.context', op: 'code-intel.context' }, async (span) => {
-      span.setAttribute('project_id', params.project_id);
-      span.setAttribute('mode', params.mode || 'bug');
-      const resp = await this.client.post('/api/context', params);
-      Sentry.addBreadcrumb({
-        category: 'code-intel',
-        message: 'Context retrieved',
-        level: 'info',
-        data: {
-          project_id: params.project_id,
-          mode: params.mode,
-          chunks: resp.data?.probable_locations?.length ?? 0,
-        },
-      });
-      return resp.data;
-    });
-  }
-
-  async syncProject(projectId?: string): Promise<void> {
-    await this.client.post('/api/sync', { project_id: projectId });
+    const resp = await this.client.post('/api/context', params);
+    return resp.data;
   }
 
   /**
@@ -274,9 +245,8 @@ export class CodeIntelClient {
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream',
       'X-Prmpt-Code-Intel-Root': getCodeIntelRoot(),
+      ...aiSettings.codeIntelHeaders(),
     };
-    const token = authState.currentAccessToken;
-    if (token) headers['Authorization'] = `Bearer ${token}`;
 
     (async () => {
       try {
@@ -323,7 +293,7 @@ export class CodeIntelClient {
       } catch (err) {
         if (controller.signal.aborted) return;
         const safe = sanitizeAxiosError(err);
-        Sentry.captureException(safe, { level: 'warning', tags: { component: 'code-intel-client', op: 'contextStream' } });
+        console.error(safe);
         handlers.onError?.(safe.message);
       }
     })();

@@ -1,27 +1,14 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 
-// Mock Electron-specific modules
-vi.mock('@sentry/electron/main', () => ({
-  addBreadcrumb: vi.fn(),
-  captureException: vi.fn(),
-  startSpan: vi.fn((_opts, cb) => cb({ setStatus: vi.fn(), setAttribute: vi.fn() })),
-  setTag: vi.fn(),
-}));
-
-vi.mock('@sentry/core', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fmt: (s: any) => s },
-  getActiveSpan: vi.fn(),
-  spanToTraceHeader: vi.fn().mockReturnValue(''),
-  getDynamicSamplingContextFromSpan: vi.fn().mockReturnValue({}),
-  dynamicSamplingContextToSentryBaggageHeader: vi.fn().mockReturnValue(''),
-}));
-
-vi.mock('../../electron/main/utils/auth-state', () => ({
-  authState: {
-    isAuthenticated: true,
-    currentAccessToken: 'mock-token',
-    currentUserId: 'mock-user-id',
+// The client reads the user's key/models from the local settings DB
+vi.mock('../../electron/main/database/services/ai-settings-service', () => ({
+  aiSettings: {
+    get: () => ({ openrouterApiKey: 'sk-or-test', optimizerModel: 'mock/optimizer', ragModel: 'mock/rag', deepgramApiKey: null }),
+    isConfigured: () => true,
+    pythonHeaders: () => ({ 'X-Prmpt-OpenRouter-Key': 'sk-or-test' }),
+    codeIntelHeaders: () => ({ 'X-Prmpt-OpenRouter-Key': 'sk-or-test' }),
+    llmPayload: () => ({ api_key: 'sk-or-test', optimizer_model: 'mock/optimizer', rag_model: 'mock/rag' }),
   },
 }));
 

@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import * as Sentry from '@sentry/react';
 import { loadSettings, applySettings, STORAGE_KEY, storageKey } from "@/lib/settings";
 
 /**
@@ -7,7 +6,7 @@ import { loadSettings, applySettings, STORAGE_KEY, storageKey } from "@/lib/sett
  *
  * Strategy:
  *   1. Apply whatever is in localStorage immediately (no flash on startup).
- *   2. Then load from Supabase in the background and apply + persist the
+ *   2. Then load from the local database in the background and apply + persist the
  *      authoritative server value. This self-heals any stale localStorage
  *      without a visible flash because the window is typically still hidden
  *      or the themes already match.
@@ -29,7 +28,6 @@ export const useInitializeSettings = (userId?: string) => {
         loadSettings(userId)
             .then(applySettings)
             .catch((error) => {
-                Sentry.captureException(error, { tags: { component: 'settings', op: 'init' } });
                 console.error("[Settings] Initialization error:", error);
             });
     }, [userId]);

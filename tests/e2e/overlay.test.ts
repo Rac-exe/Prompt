@@ -22,20 +22,18 @@ vi.mock('electron', () => {
   };
 });
 
-vi.mock('@sentry/electron/main', () => ({
-  addBreadcrumb: vi.fn(),
-  captureException: vi.fn(),
-  captureMessage: vi.fn(),
-  startSpan: vi.fn((_opts, cb) => cb({ setStatus: vi.fn(), setAttribute: vi.fn() })),
-  setTag: vi.fn(),
-}));
-
-vi.mock('@sentry/core', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fmt: (...args: any[]) => args.join('') },
-}));
-
 vi.mock('../../electron/main/utils/auth-state', () => ({
-  authState: { isAuthenticated: true, currentAccessToken: 'mock', currentUserId: 'user1' },
+  authState: { isAuthenticated: true, currentUserId: 'user1', currentUserEmail: null },
+}));
+
+vi.mock('../../electron/main/database/services/ai-settings-service', () => ({
+  aiSettings: {
+    get: () => ({ openrouterApiKey: 'sk-or-test', optimizerModel: 'mock/optimizer', ragModel: 'mock/rag', deepgramApiKey: null }),
+    isConfigured: () => true,
+    pythonHeaders: () => ({ 'X-Prmpt-OpenRouter-Key': 'sk-or-test' }),
+    codeIntelHeaders: () => ({ 'X-Prmpt-OpenRouter-Key': 'sk-or-test' }),
+    llmPayload: () => ({ api_key: 'sk-or-test', optimizer_model: 'mock/optimizer', rag_model: 'mock/rag' }),
+  },
 }));
 
 vi.mock('../../electron/main/utils/native-bridge', () => ({
@@ -102,46 +100,16 @@ vi.mock('../../electron/main/database/services/memory-analyzer', () => ({
   })),
 }));
 
-vi.mock('../../electron/main/database/services/rate-limit-service', () => ({
-  RateLimitService: vi.fn().mockImplementation(() => ({
-    checkRateLimit: vi.fn().mockResolvedValue({ allowed: true, limit: 100, remaining: 99 }),
-    invalidateCache: vi.fn(),
-  })),
-}));
-
-vi.mock('../../electron/main/database/local-cache', () => ({
-  localCache: {
-    setMessages: vi.fn(),
-    setChats: vi.fn(),
-    getChats: vi.fn().mockReturnValue([]),
-    setCollections: vi.fn(),
-    getCollections: vi.fn().mockReturnValue([]),
-    addOrUpdateCollection: vi.fn(),
-    addOrUpdatePrompt: vi.fn(),
-    getPrompts: vi.fn().mockReturnValue([]),
-    getSettings: vi.fn().mockReturnValue(null),
-    setSettings: vi.fn(),
-  },
-}));
-
 vi.mock('../../electron/main/ipc-handlers/network-monitor-singleton', () => ({
   networkMonitor: { isOnline: true },
 }));
 
-vi.mock('../../electron/main/database/offline-queue', () => ({
-  offlineQueue: { enqueue: vi.fn() },
-}));
-
 vi.mock('../../electron/main/ipc-handlers/file-upload-service', () => ({
-  uploadAttachment: vi.fn().mockResolvedValue({ name: 'test', url: 'http://test.com' }),
+  saveAttachment: vi.fn().mockResolvedValue({ name: 'test', mimeType: 'image/png', sizeBytes: 4, storagePath: 'abc/test.png' }),
 }));
 
 vi.mock('../../electron/main/database/error-log', () => ({
   errorLog: { append: vi.fn() },
-}));
-
-vi.mock('../../electron/main/analytics/analytics-service', () => ({
-  analyticsService: { logEvent: vi.fn() },
 }));
 
 vi.mock('../../electron/main/ipc-handlers/project-handlers', () => ({

@@ -1,8 +1,6 @@
 import { BrowserWindow, screen, app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 import { forceFocusWindow } from '../utils/native-bridge';
-import { analyticsService } from '../analytics/analytics-service';
 
 /**
  * OverlayWindowManager
@@ -118,7 +116,6 @@ export class OverlayWindowManager {
 
     if (process.platform === 'darwin') {
       this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      Sentry.setTag('overlay.visible_all_workspaces', 'true');
     }
 
     // ── Disable zoom + reload completely ───────────────────────────────────
@@ -251,7 +248,7 @@ export class OverlayWindowManager {
         'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))',
       );
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'overlay-window-manager', op: 'preheatCompositor' } });
+      console.error('[OverlayWindowManager] preheatCompositor failed:', err);
     }
 
     // Guard: window may have been destroyed during the await
@@ -280,8 +277,8 @@ export class OverlayWindowManager {
    * @param prefill          - Optional: pre-fill the input with text + attach a chat context.
    * @param triggeredByHook  - True when opened via @prompt keyboard hook (enables Replace button).
    */
-  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }, triggeredByHook?: boolean, sentryUser?: { id: string; email: string } | null) {
-    const openedPayload = { isAuthenticated, prefill: prefill || null, triggeredByHook: !!triggeredByHook, sentryUser: sentryUser ?? null };
+  open(isAuthenticated: boolean, anchorHwnd?: number, prefill?: { text?: string; chatId?: string; chatName?: string }, triggeredByHook?: boolean) {
+    const openedPayload = { isAuthenticated, prefill: prefill || null, triggeredByHook: !!triggeredByHook };
 
     if (!this.window || this.window.isDestroyed()) {
       this.createWindow();
@@ -337,10 +334,7 @@ export class OverlayWindowManager {
       this.window.show();
       this.window.moveTop();
       this.window.focus();
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS panel show + moveTop + focus', level: 'info' });
     }
-    Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay opened', level: 'info' });
-    analyticsService.logEvent('overlay_open');
     this.focusWindow();
   }
 
@@ -358,7 +352,6 @@ export class OverlayWindowManager {
       // needed — the panel accepts keyboard input without app activation.
       this.window.focus();
       this.window.moveTop();
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS panel focus + moveTop', level: 'info' });
     } else {
       const overlayHwnd = this.window.getNativeWindowHandle().readBigInt64LE(0);
       const focused = forceFocusWindow(Number(overlayHwnd));
@@ -416,10 +409,8 @@ export class OverlayWindowManager {
   close() {
     if (this.window && !this.window.isDestroyed()) {
       this.isOpen = false;
-      Sentry.addBreadcrumb({ category: 'overlay', message: 'Overlay closed', level: 'info' });
       if (process.platform === 'darwin') {
         this.window.hide();
-        Sentry.addBreadcrumb({ category: 'overlay', message: 'macOS overlay hidden', level: 'info' });
       } else {
         this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
         this.window.blur();
@@ -430,11 +421,11 @@ export class OverlayWindowManager {
   /**
    * Toggle overlay visibility.
    */
-  toggle(isAuthenticated: boolean, sentryUser?: { id: string; email: string } | null) {
+  toggle(isAuthenticated: boolean) {
     if (this.isOpen) {
       this.close();
     } else {
-      this.open(isAuthenticated, undefined, undefined, undefined, sentryUser);
+      this.open(isAuthenticated);
     }
   }
 
@@ -454,7 +445,7 @@ export class OverlayWindowManager {
         this.window.webContents.send(channel, data);
       }
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'overlay-window-manager', op: 'send' }, extra: { channel } });
+      console.error('[OverlayWindowManager] send failed:', err);
     }
   }
 

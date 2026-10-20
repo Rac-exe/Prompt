@@ -20,17 +20,15 @@ from typing import Optional
 import igraph as ig
 import leidenalg
 import litellm
-import sentry_sdk
 
+from app import llm
 from app.config import (
     COMMUNITY_MODEL,
     CONCEPT_PHRASE_PER_CHUNK,
-    OPENROUTER_API_KEY,
     RELATIONSHIP_EMBED_TOP_N,
     SUMMARIZER_MODEL,
     SUMMARY_MAX_TOKENS,
 )
-from app.services import prmpt_ai_client
 
 logger = logging.getLogger("code-intel.graph_builder")
 
@@ -203,10 +201,8 @@ def _run_leiden(graph: ig.Graph) -> list[int]:
 # ── LLM helpers ──────────────────────────────────────────────────────────────
 
 def _llm_kwargs(model: str) -> dict:
-    kwargs: dict = {"model": model, "temperature": 0.1}
-    if OPENROUTER_API_KEY and "openrouter" in model.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
-    return kwargs
+    # The API key is added at call time (llm.with_key) inside each try block.
+    return {"model": model, "temperature": 0.1}
 
 
 def _strip_fence(raw: str) -> str:
@@ -263,11 +259,8 @@ async def _generate_community_reports(
         kwargs["max_tokens"] = min(300 * len(batch_ids), 3000)
 
         try:
-            if prmpt_ai_client.is_configured():
-                raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-            else:
-                response = await asyncio.to_thread(litellm.completion, **kwargs)
-                raw = (response.choices[0].message.content or "").strip()
+            response = await asyncio.to_thread(litellm.completion, **llm.with_key(kwargs))
+            raw = (response.choices[0].message.content or "").strip()
             data = json.loads(_strip_fence(raw))
             if isinstance(data, list):
                 for entry in data:
@@ -279,7 +272,6 @@ async def _generate_community_reports(
                         reports[f"label_{cid}"] = label  # type: ignore[index]
         except Exception as e:
             logger.warning("[GRAPH_BUILDER] Community report batch failed: %s", e)
-            sentry_sdk.capture_exception(e)
             for cid in batch_ids:
                 if cid not in reports:
                     members = communities_raw[cid]
@@ -330,11 +322,8 @@ async def _generate_relationship_summaries(
         kwargs["max_tokens"] = min(80 * len(edges), 2000)
 
         try:
-            if prmpt_ai_client.is_configured():
-                raw = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-            else:
-                response = await asyncio.to_thread(litellm.completion, **kwargs)
-                raw = (response.choices[0].message.content or "").strip()
+            response = await asyncio.to_thread(litellm.completion, **llm.with_key(kwargs))
+            raw = (response.choices[0].message.content or "").strip()
             data = json.loads(_strip_fence(raw))
             summaries_by_idx: dict[int, str] = {}
             if isinstance(data, list):
@@ -354,7 +343,6 @@ async def _generate_relationship_summaries(
                     ))
         except Exception as e:
             logger.warning("[GRAPH_BUILDER] Relationship summary batch failed: %s", e)
-            sentry_sdk.capture_exception(e)
 
     batches = [top_edges[i:i + BATCH_SIZE] for i in range(0, len(top_edges), BATCH_SIZE)]
     await asyncio.gather(*[_one_batch(b) for b in batches])

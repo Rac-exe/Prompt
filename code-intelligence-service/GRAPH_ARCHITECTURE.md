@@ -2,6 +2,16 @@
 
 > Proposed evolution from flat vector retrieval to a multi-layer graph-aware system.
 > Everything discussed, validated, and designed from first principles.
+>
+> **Status:** implemented (`app/services/graph_builder.py`, `app/services/graph.py`,
+> `app/services/community.py`, the graph paths in `app/services/search.py`), gated by
+> `GRAPH_BUILDER_ENABLED` (on by default; set it to `false` to turn it off). All of it lives in the project's local SQLite `index.db`
+> (section 9). This document keeps the design rationale; where the implementation
+> differs from the plan, the text says so. Two differences apply throughout: the
+> search path is chosen by the user's mode (see README, Layer 3), not by classifying
+> the query, and with `AGENTIC_RETRIEVAL_ENABLED` (on by default) ASK/BUG/OPTIMIZE try
+> the agentic tool-calling loop first and use these graph paths as the one-shot
+> fallback. The README is the source of truth for current behavior.
 
 ---
 
@@ -82,7 +92,7 @@ Result of PageRank:
 | `video.routes` | 0 | Low — it just uses things |
 | `loginUser` | 1 | Medium |
 
-**Personalized PageRank:** Give chunks whose name/signature matches the query a 10× starting boost, then let relevance flow outward through the graph. The implementation floats to #1 automatically.
+**Personalized PageRank:** Give chunks whose name/signature matches the query a 10× starting boost, then let relevance flow outward through the graph. The implementation floats to #1 automatically. (As built, the local search paths double the stored PageRank of chunks whose name matches a query term rather than re-running PageRank per query.)
 
 ### Community Detection (Leiden Algorithm)
 
@@ -152,7 +162,9 @@ The 25 fixed concepts are **kept as well** — they give fast exact matching as 
 │  "What is the raw content?"                                          │
 │  • code_body — the actual implementation                             │
 │  • context_header — imports and file context                         │
-│  Already indexed, no change needed                                   │
+│  Not stored in the index: code_body is re-read from the file on      │
+│  disk (path + line range); context_header is built at ingest for     │
+│  the summarizer and the structure embedding                          │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -275,11 +287,11 @@ flowchart TD
 | PageRank computation | ~50ms for 271 nodes | Every ingest |
 | Leiden clustering | ~100ms for 271 nodes | Every ingest |
 | Concept phrase generation | 1 LLM call per 8 chunks — adds to existing summarization batch | First index only, then hash-deduped |
-| Relationship summaries | 1 LLM call for top-50 edges (not all 1000) | First index only |
-| Community report generation | 1 LLM call per community (est. 8-12 communities) | When community membership changes |
+| Relationship summaries | Top-50 edges by in-degree (not all 1000), 10 edges per LLM call | Every ingest (as built) |
+| Community report generation | 1 LLM call per 5 communities | Every ingest (as built) |
 | All writeback | 1 batch upsert | Every ingest |
 
-**Total added latency per ingest: ~200ms + a few extra LLM batches on first index.** Subsequent ingests are fast because hash deduplication skips unchanged chunks.
+**Total added latency per ingest: ~200ms + a few extra LLM batches.** Subsequent ingests skip summarization for unchanged chunks thanks to hash deduplication, but as built the graph pipeline (community reports and relationship summaries included) re-runs on every ingest; see README, Known Limitations. All LLM calls run on the user's own OpenRouter key.
 
 ---
 
@@ -412,6 +424,8 @@ Result: complete causal chain, not just the top 5 similar chunks.
 **Goal:** Locate the exact implementation of a named concept.
 
 **Strategy:** Local search + personalized PageRank
+
+*As built:* FIND uses the `flat` path instead: multi-channel recall, RRF, and a lexical scorer that adds rank-normalized PageRank and betweenness centrality as signals, with zero LLM calls (README, Path A).
 
 **Graph's role:**
 - PageRank distinguishes **implementer** (high in-degree, high rank) from **caller** (low in-degree, low rank)
@@ -642,127 +656,112 @@ Query: "refresh token fails on second use"
 
 ## 9. Storage Schema
 
-### New tables
+The graph lives in the same local SQLite database as the rest of the index: one `index.db` per project, at `<code-intel root>/projects/<project_id>/index.db`. The tables are defined in `_ensure_schema()` in `app/db/local_store.py` and are created (or extended) automatically whenever a project database is opened, so there is no migration step.
+
+Vectors (community report, concept and relationship embeddings) are JSON float arrays in `TEXT` columns, `EMBEDDING_DIMENSIONS` long (384 with the default `Xenova/bge-small-en-v1.5`). There is no vector index: similarity is a numpy cosine over the project's rows, computed in Python.
+
+### Communities table
 
 ```sql
 -- Community clusters produced by Leiden
-CREATE TABLE communities (
-  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  project_id      UUID REFERENCES projects(id) ON DELETE CASCADE,
-  level           INT NOT NULL DEFAULT 0,  -- 0=leaf, 1=mid, 2=top
-  label           TEXT,                    -- human-readable name (LLM-generated)
-  summary         TEXT,                    -- full LLM community report
-  summary_embedding VECTOR(1536),          -- embedded community report
-  member_count    INT,
-  created_at      TIMESTAMPTZ DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS communities (
+  id                TEXT PRIMARY KEY,           -- uuid5 of project id + label
+  project_id        TEXT NOT NULL,
+  label             TEXT NOT NULL,              -- LLM label + cluster number, e.g. "auth-backend-0"
+  summary           TEXT,                       -- full LLM community report
+  summary_embedding TEXT,                       -- embedded report (JSON float array)
+  member_count      INTEGER NOT NULL DEFAULT 0,
+  level             INTEGER NOT NULL DEFAULT 0, -- always 0 (leaf) as built; no hierarchy yet
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(project_id, label)
 );
 
-CREATE INDEX ON communities USING ivfflat (summary_embedding vector_cosine_ops);
-CREATE INDEX ON communities (project_id, level);
+CREATE INDEX IF NOT EXISTS idx_communities_project ON communities(project_id);
 ```
 
-### New columns on existing tables
+### Graph columns on the chunk and relationship tables
+
+These are part of the `CREATE TABLE` statements for `code_chunks` (other columns omitted) and `code_relationships`:
 
 ```sql
--- code_chunks additions
-ALTER TABLE code_chunks ADD COLUMN community_id UUID REFERENCES communities(id);
-ALTER TABLE code_chunks ADD COLUMN pagerank_score FLOAT DEFAULT 0.0;
-ALTER TABLE code_chunks ADD COLUMN centrality_score FLOAT DEFAULT 0.0;
--- Concept embeddings: store as 3 separate columns for simplicity
--- (avoids array-of-vectors complexity in pgvector)
-ALTER TABLE code_chunks ADD COLUMN concept_embedding_1 VECTOR(1536);
-ALTER TABLE code_chunks ADD COLUMN concept_embedding_2 VECTOR(1536);
-ALTER TABLE code_chunks ADD COLUMN concept_embedding_3 VECTOR(1536);
+-- code_chunks: graph columns
+  pagerank_score      REAL NOT NULL DEFAULT 0,
+  centrality_score    REAL NOT NULL DEFAULT 0,
+  community_id        TEXT,                     -- communities.id (no foreign key)
+  -- Concept embeddings: 3 separate columns, one per concept phrase
+  concept_embedding_1 TEXT,
+  concept_embedding_2 TEXT,
+  concept_embedding_3 TEXT,
 
-CREATE INDEX ON code_chunks (community_id);
-CREATE INDEX ON code_chunks (project_id, pagerank_score DESC);
-CREATE INDEX ON code_chunks USING ivfflat (concept_embedding_1 vector_cosine_ops);
-CREATE INDEX ON code_chunks USING ivfflat (concept_embedding_2 vector_cosine_ops);
-CREATE INDEX ON code_chunks USING ivfflat (concept_embedding_3 vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_chunks_community ON code_chunks(community_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_pagerank  ON code_chunks(project_id, pagerank_score DESC);
 
--- code_relationships additions
-ALTER TABLE code_relationships ADD COLUMN relationship_summary TEXT;
-ALTER TABLE code_relationships ADD COLUMN relationship_embedding VECTOR(1536);
+-- code_relationships: the whole table
+CREATE TABLE IF NOT EXISTS code_relationships (
+  id                     TEXT PRIMARY KEY,
+  project_id             TEXT NOT NULL,
+  from_chunk_id          TEXT NOT NULL,
+  to_chunk_id            TEXT NOT NULL,
+  relationship_type      TEXT NOT NULL,         -- calls / imports / parent_of / child_of /
+                                                -- inherits / implements / sibling_next
+  relationship_summary   TEXT,                  -- LLM description (top-50 edges by in-degree)
+  relationship_embedding TEXT,                  -- embedded summary (JSON float array)
+  created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(from_chunk_id, to_chunk_id, relationship_type)
+);
 
-CREATE INDEX ON code_relationships USING ivfflat (relationship_embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_relationships_project ON code_relationships(project_id);
+CREATE INDEX IF NOT EXISTS idx_relationships_from    ON code_relationships(from_chunk_id, relationship_type);
+CREATE INDEX IF NOT EXISTS idx_relationships_to      ON code_relationships(to_chunk_id, relationship_type);
 ```
 
-### New RPCs needed
+Edge weights (calls=3.0, imports=2.0, ...) are not stored: `graph_builder.py` derives them from `relationship_type` when it builds the igraph.
 
-```sql
--- Get all members of a community, ordered by PageRank
-CREATE FUNCTION get_community_members(p_community_id UUID, p_limit INT)
-RETURNS TABLE(...) AS $$
-  SELECT * FROM code_chunks 
-  WHERE community_id = p_community_id
-  ORDER BY pagerank_score DESC
-  LIMIT p_limit;
-$$ LANGUAGE SQL;
+### Query functions (in place of RPCs)
 
--- Search community reports by semantic similarity
-CREATE FUNCTION match_community_reports(
-  query_embedding VECTOR(1536),
-  filter_project_id UUID,
-  match_count INT
-) RETURNS TABLE(...) AS $$
-  SELECT *, 1 - (summary_embedding <=> query_embedding) AS similarity
-  FROM communities
-  WHERE project_id = filter_project_id
-  ORDER BY summary_embedding <=> query_embedding
-  LIMIT match_count;
-$$ LANGUAGE SQL;
+The planned database RPCs became plain Python functions in `app/db/local_store.py`, re-exported by `app/db/queries.py`:
 
--- Search by concept embeddings (any of the 3 concept vectors)
-CREATE FUNCTION match_by_concept_embeddings(
-  query_embedding VECTOR(1536),
-  filter_project_id UUID,
-  match_count INT
-) RETURNS TABLE(...) AS $$
-  SELECT DISTINCT ON (id) *, 
-    GREATEST(
-      1 - (concept_embedding_1 <=> query_embedding),
-      1 - (concept_embedding_2 <=> query_embedding),
-      1 - (concept_embedding_3 <=> query_embedding)
-    ) AS concept_similarity
-  FROM code_chunks
-  WHERE project_id = filter_project_id
-  ORDER BY id, concept_similarity DESC
-  LIMIT match_count;
-$$ LANGUAGE SQL;
-```
+| Function | What it does |
+|---|---|
+| `get_community_members_ranked(community_id, limit)` | Members of a community, ordered by `pagerank_score DESC` |
+| `match_community_reports(project_id, query_embedding, match_count)` | Cosine of the query against every `communities.summary_embedding` in the project |
+| `match_concept_embeddings(project_id, query_embedding, match_count)` | Best cosine across `concept_embedding_1/2/3` for each chunk |
+| `update_chunks_graph_data(rows)` | Writes PageRank, centrality, community id and concept vectors back to `code_chunks` |
+| `update_relationship_embeddings(rows)` | Writes relationship summaries and embeddings back to `code_relationships` |
+| `get_graph_health(project_id)` | Edge, PageRank and community counts (`GET /api/projects/{project_id}/graph-health`) |
 
 ---
 
 ## 10. What Changes vs. What Stays
 
 ### Stays exactly the same
-- Supabase + pgvector as the database
+- The existing database: the project's local SQLite `index.db` (no separate graph database)
 - FastAPI service structure
 - Electron parser (already emits imports and call graph)
-- LiteLLM for all LLM calls
+- LiteLLM for all LLM calls (sent to OpenRouter on the user's own key)
 - Dual embeddings (summary + structure) on chunks
 - Mode config system (FIND/BUG/ASK/OPTIMIZE)
 - Pipeline versioning and A/B testing
 - TTL cache
 - Feedback tracking
-- Authentication and all routes
+- All existing routes (the service has no login; it is a single-user API on `127.0.0.1`)
 
 ### Changes in the index pipeline
 - `index_worker.py` — after upsert, run import graph resolution → PageRank → Leiden → write back
 - `graph.py` — import graph construction in addition to call graph
-- `context_builder.py` — pass community context to summarizer
+- `context_builder.py` — pass community context to summarizer (not built: the summarizer gets imports, sibling names, parent summary and neighboring excerpts, but no community context)
 - `summarizer.py` — extend batch prompt to also generate 3 concept phrases per chunk, embed them
 
 ### Changes in retrieval
 - `search.py` — three search path functions: `_local_search()`, `_global_search()`, `_drift_search()`
 - `mode_router.py` — each mode mapped to a primary search path
-- `queries.py` — new RPCs: community report retrieval, concept embedding search, PageRank-ordered community member retrieval
+- `local_store.py` (re-exported by `queries.py`) — community report matching, concept embedding search, PageRank-ordered community member retrieval (section 9)
 
 ### New files
-- `app/services/graph_builder.py` — import graph construction + PageRank + Leiden using `igraph`
-- `app/services/community.py` — community report generation and caching
-- `app/routes/community.py` — optional: `GET /api/communities/{project_id}` for debugging
+- `app/services/graph_builder.py` — igraph construction + PageRank + betweenness + Leiden, plus the LLM community reports and relationship summaries
+- `app/services/community.py` — community report caching and formatting
+- No `app/routes/community.py` was built. For debugging, `app/routes/graph_viz.py` serves `GET /api/graph/data/{project_id}` (nodes, edges and communities for `scripts/graph_visualizer.html`), and `GET /api/projects/{project_id}/graph-health` returns graph counts
 
 ### New dependencies
 ```
@@ -787,7 +786,7 @@ No Neo4j. No LlamaIndex. No new infrastructure.
 
 **Impact:** FIND and BUG modes become community-scoped — dramatically less noise. ASK mode gets architectural context from community reports.
 
-**Risk:** Medium. Requires new Supabase table and schema migration. Community quality depends on graph density — Phase 1 must be done first.
+**Risk:** Medium. Requires a new `communities` table and new chunk columns (in the local SQLite schema these are created automatically when a project database is opened). Community quality depends on graph density — Phase 1 must be done first.
 
 ### Phase 3: Concept Embeddings (1 week)
 **What:** Extend summarizer to generate 3 concept phrases per chunk. Embed and store. Add concept embedding search to retrieval.
@@ -811,7 +810,7 @@ This question deserves a direct answer.
 
 **LlamaIndex** is built for unstructured text documents — PDFs, articles, notes. It extracts entities like "Apple Inc" from prose. Our data is already structured: functions, call edges, line numbers, type signatures. LlamaIndex's data model fights our data model. You'd spend more time adapting than benefiting.
 
-**Neo4j** is a purpose-built graph database with Cypher query language. It's excellent for graphs but it means: a new service to run, a new cost center, a new failure point, and a completely different query language from the PostgREST/SQL you already use. For 270-10,000 node graphs (which is our scale), **Postgres with igraph is faster and simpler**.
+**Neo4j** is a purpose-built graph database with Cypher query language. It's excellent for graphs but it means: a separate database server to install and run next to a local desktop app, a new failure point, and a completely different query language from the SQL the service already uses. For 270-10,000 node graphs (which is our scale), **SQLite with igraph in-process is faster and simpler**.
 
 **The honest math:**
 

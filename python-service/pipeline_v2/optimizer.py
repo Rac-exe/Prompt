@@ -10,7 +10,6 @@ Implements:
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 import time
@@ -20,7 +19,6 @@ from typing import Tuple, List, Dict, Union, Optional, Generator
 import logging
 
 import litellm
-import sentry_sdk
 
 from .context import ChatContext
 
@@ -29,7 +27,7 @@ from .skills import load_selected_skills, load_skill_file
 from .usage_logger import log_usage
 from .fast_mode import detect_prompt_type, get_optimization_strategy, SYSTEM_PROMPT as FAST_SYSTEM_PROMPT
 from .document_parser import parse_files
-from .config import SUMMARIZER_MODEL, OPENROUTER_API_KEY
+from .config import SUMMARIZER_MODEL, LLMSettings, provider_kwargs
 from .project_context import (
     fetch_project_context,
     ProjectContext,
@@ -90,16 +88,11 @@ def supports_vision(model: str) -> bool:
 
 
 # ── Provider config ───────────────────────────────────────────────────────────
-def _get_litellm_kwargs(provider: str, model: str) -> Tuple[str, dict]:
+def _get_litellm_kwargs(provider: str, model: str, api_key: str = "") -> Tuple[str, dict]:
     """Return (resolved_model, extra_kwargs) for litellm."""
-    if provider == "openrouter" or model.startswith("openrouter/"):
-        key = os.environ.get("OPENROUTER_API_KEY", "") or OPENROUTER_API_KEY
-        if not key:
-            raise RuntimeError(
-                "OPENROUTER_API_KEY is not set. Add it to your .env file."
-            )
-        return model, {"api_key": key}
-    return model, {}
+    if provider == "openrouter" and not model.startswith("openrouter/"):
+        model = f"openrouter/{model}"
+    return model, provider_kwargs(model, api_key)
 
 
 # ── Output cleaner ────────────────────────────────────────────────────────────
@@ -204,17 +197,13 @@ def _find_prompt_start_after_analysis(buf: str) -> int:
 # LLM 1 — Context Summarizer
 # ─────────────────────────────────────────────────────────────────────────────
 
-def summarize_context(cc: ChatContext, provider: str) -> str:
+def summarize_context(cc: ChatContext, provider: str, api_key: str = "") -> str:
     """
     LLM 1: Compress full chat context into a compact summary.
     Uses SUMMARIZER_MODEL (cheap/fast) regardless of what the optimizer uses.
     """
-    sentry_sdk.add_breadcrumb(
-        category="optimizer", message="Context summarization started",
-        level="info", data={"session_id": cc.session_id},
-    )
     system_prompt = _load_system_prompt("system_prompt_summarizer.md")
-    resolved_model, extra = _get_litellm_kwargs(provider, SUMMARIZER_MODEL)
+    resolved_model, extra = _get_litellm_kwargs(provider, SUMMARIZER_MODEL, api_key)
 
     user_prompt = f"""Chat History:
 {cc.to_text(max_messages=50)}
@@ -257,10 +246,6 @@ def _build_delivery_format(task_plan: Optional[list] = None) -> str:
     precise state anchor so the optimizer writes continuations, not repeats.
     Without a plan, falls back to the original generic instruction.
     """
-    sentry_sdk.add_breadcrumb(
-        category="optimizer", message="Building delivery format",
-        level="info", data={"has_task_plan": bool(task_plan), "task_count": len(task_plan) if task_plan else 0},
-    )
     if task_plan:
         plan_text = "\n".join(
             f"Task {t['number']}: {t['name']}\n"
@@ -323,8 +308,8 @@ def optimize(
     task_plan: Optional[list] = None,
     project_id: Optional[str] = None,
     project_branch: Optional[str] = None,
-    auth_token: Optional[str] = None,
     code_intel_root: Optional[str] = None,
+    llm: Optional[LLMSettings] = None,
 ) -> Union[str, Generator]:
     """
     Full pipeline: DT → SF → PO → optimized prompt (clean, no metadata).
@@ -340,22 +325,12 @@ def optimize(
         wants_sections: If True, instruct the LLM to output as ordered task sections.
         project_id: If provided, fetches code context from the Code Intelligence Service.
         project_branch: Current git branch for context scoping.
-        auth_token: JWT token forwarded for Code Intelligence Service auth.
+        code_intel_root: The desktop app's code-index folder, forwarded to code-intel.
+        llm: The user's OpenRouter key and models (forwarded to code-intel too).
     """
     if attached_files is None:
         attached_files = []
 
-    sentry_sdk.add_breadcrumb(
-        category="optimizer", message="Optimization started",
-        level="info", data={
-            "mode": mode, "model": model, "stream": stream,
-            "has_clarification": bool(clarification_answers),
-            "wants_sections": wants_sections,
-            "has_files": len(attached_files) > 0,
-            "forced_skill": forced_skill,
-            "is_regeneration": bool(previous_output and previous_output.strip()),
-        },
-    )
 
     # Fetch project codebase context if a project is attached.
     # POLICY: never optimize "blind" when a project is attached — if the code
@@ -372,12 +347,11 @@ def optimize(
                     project_id=project_id,
                     user_query=user_input,
                     branch=project_branch,
-                    auth_token=auth_token,
                     code_intel_root=code_intel_root,
+                    llm=llm,
                 )
             except Exception as e:
                 last_err = e
-                sentry_sdk.capture_exception(e)
                 logger.error(f"Project context fetch raised on attempt {attempt}: {e}", exc_info=True)
                 project_ctx = None
 
@@ -416,7 +390,8 @@ def optimize(
             f"The new version must be meaningfully different — not a paraphrase or minor reword of the previous one."
         )
 
-    resolved_model, extra = _get_litellm_kwargs(provider, model)
+    api_key = llm.api_key if llm else ""
+    resolved_model, extra = _get_litellm_kwargs(provider, model, api_key)
     model_has_vision = supports_vision(resolved_model)
 
     if models_info is not None:
@@ -429,10 +404,6 @@ def optimize(
         user_input = (
             f"ORIGINAL REQUEST:\n{user_input}\n\n"
             f"USER CLARIFICATIONS:\n{clarification_answers}"
-        )
-        sentry_sdk.add_breadcrumb(
-            category="optimizer", message="Clarification answers injected",
-            level="info", data={"answer_length": len(clarification_answers)},
         )
 
     if mode == "fast":
@@ -508,17 +479,12 @@ def optimize(
         if cc.token_estimate() > SUMMARIZE_THRESHOLD:
             logger.info(f"Compacting context ({SUMMARIZER_MODEL})...")
             try:
-                summary_text = summarize_context(cc, provider)
+                summary_text = summarize_context(cc, provider, api_key)
                 cc.compact_with_summary(summary_text, keep_recent=CC_KEEP_RECENT)
                 if models_info is not None:
                     models_info["summarizer"] = SUMMARIZER_MODEL
-                sentry_sdk.add_breadcrumb(
-                    category="optimizer", message="Context compacted in-memory",
-                    level="info", data={"kept_recent": CC_KEEP_RECENT, "new_msg_count": len(cc.messages)},
-                )
             except Exception as exc:
                 logger.warning(f"Summarizer failed ({exc.__class__.__name__}: {exc}). Using tail-trim fallback.")
-                sentry_sdk.capture_exception(exc)
     
         cc_text = cc.to_text(max_messages=CC_FALLBACK_MSGS)
         
@@ -586,10 +552,6 @@ Apply your internal analysis silently (classify, select skills, choose technique
             prefix_buffer = ""
             leak_detected = False
             buffer_limit = _STRIP_BUFFER_LIMIT_TASK if is_task_mode else _STRIP_BUFFER_LIMIT_SINGLE
-            sentry_sdk.add_breadcrumb(
-                category="optimizer", message="Stream prefix strip enabled (universal)",
-                level="info", data={"is_task_mode": is_task_mode},
-            )
 
             for chunk in response:
                 delta = chunk.choices[0].delta.content or ""
@@ -602,20 +564,12 @@ Apply your internal analysis silently (classify, select skills, choose technique
                         # Quick check: if first ~500 chars have no analysis headers, flush immediately
                         if not leak_detected and len(prefix_buffer) >= _QUICK_CHECK_LEN:
                             if not _ANALYSIS_LEAK_RE.search(prefix_buffer):
-                                sentry_sdk.add_breadcrumb(
-                                    category="optimizer", message="No analysis leak detected, flushing buffer",
-                                    level="info", data={"buffer_len": len(prefix_buffer)},
-                                )
                                 dump = prefix_buffer
                                 prefix_buffer = None
                                 yield dump
                                 continue
                             else:
                                 leak_detected = True
-                                sentry_sdk.add_breadcrumb(
-                                    category="optimizer", message="Analysis leak detected in stream",
-                                    level="warning", data={"buffer_len": len(prefix_buffer)},
-                                )
 
                         if leak_detected or len(prefix_buffer) >= _QUICK_CHECK_LEN:
                             if is_task_mode:
@@ -625,11 +579,6 @@ Apply your internal analysis silently (classify, select skills, choose technique
                                     stripped_len = heading_match.start()
                                     clean_start = prefix_buffer[stripped_len:]
                                     prefix_buffer = None
-                                    if stripped_len > 0:
-                                        sentry_sdk.add_breadcrumb(
-                                            category="optimizer", message="Stripped analysis prefix (task mode)",
-                                            level="warning", data={"chars_stripped": stripped_len},
-                                        )
                                     if clean_start:
                                         yield clean_start
                                 elif len(prefix_buffer) >= buffer_limit:
@@ -640,10 +589,6 @@ Apply your internal analysis silently (classify, select skills, choose technique
                                         if clean_start:
                                             yield clean_start
                                     else:
-                                        sentry_sdk.add_breadcrumb(
-                                            category="optimizer", message="Task mode safety valve: flushing buffer",
-                                            level="warning", data={"buffer_len": len(prefix_buffer)},
-                                        )
                                         dump = prefix_buffer
                                         prefix_buffer = None
                                         yield dump
@@ -653,18 +598,10 @@ Apply your internal analysis silently (classify, select skills, choose technique
                                     prompt_start = _find_prompt_start_after_analysis(prefix_buffer)
                                     if prompt_start > 0 and prompt_start < len(prefix_buffer):
                                         clean = prefix_buffer[prompt_start:].lstrip('\n')
-                                        sentry_sdk.add_breadcrumb(
-                                            category="optimizer", message="Stripped analysis prefix (single prompt)",
-                                            level="warning", data={"chars_stripped": prompt_start},
-                                        )
                                         prefix_buffer = None
                                         if clean:
                                             yield clean
                                     else:
-                                        sentry_sdk.add_breadcrumb(
-                                            category="optimizer", message="Single prompt safety valve: flushing buffer",
-                                            level="warning", data={"buffer_len": len(prefix_buffer)},
-                                        )
                                         dump = prefix_buffer
                                         prefix_buffer = None
                                         yield dump
@@ -737,19 +674,11 @@ Apply your internal analysis silently (classify, select skills, choose technique
             if not heading_match:
                 heading_match = re.search(r'##\s*\S', cleaned, re.IGNORECASE)
             if heading_match and heading_match.start() > 0:
-                sentry_sdk.add_breadcrumb(
-                    category="optimizer", message="Stripped analysis prefix from non-stream result (task mode)",
-                    level="warning", data={"chars_stripped": heading_match.start()},
-                )
                 cleaned = cleaned[heading_match.start():]
         # Single-prompt mode: detect and strip analysis headers
         elif cleaned and _ANALYSIS_LEAK_RE.search(cleaned[:_QUICK_CHECK_LEN]):
             prompt_start = _find_prompt_start_after_analysis(cleaned)
             if prompt_start > 0 and prompt_start < len(cleaned):
-                sentry_sdk.add_breadcrumb(
-                    category="optimizer", message="Stripped analysis prefix from non-stream result (single prompt)",
-                    level="warning", data={"chars_stripped": prompt_start},
-                )
                 cleaned = cleaned[prompt_start:].lstrip('\n')
         logger.info(f"Optimization complete ({latency_ms}ms)")
         return cleaned

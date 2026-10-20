@@ -9,18 +9,16 @@ import logging
 from dataclasses import dataclass, field
 
 import litellm
-import sentry_sdk
 
 from app.config import (
     CONCEPT_PHRASE_PER_CHUNK,
     GRAPH_BUILDER_ENABLED,
     MAX_CODE_BODY_LEN,
-    OPENROUTER_API_KEY,
     SUMMARY_MAX_TOKENS,
     SUMMARIZER_MODEL,
 )
 from app.services.concepts import VALID_CONCEPTS, VALID_CONCEPTS_SET as _VALID_CONCEPTS_SET
-from app.services import prmpt_ai_client
+from app import llm
 
 logger = logging.getLogger("code-intel.summarizer")
 
@@ -78,10 +76,7 @@ class ChunkSummaryInput:
 
 
 def _get_llm_kwargs() -> dict:
-    kwargs: dict = {"model": SUMMARIZER_MODEL, "temperature": 0.1}
-    if OPENROUTER_API_KEY and "openrouter" in SUMMARIZER_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
-    return kwargs
+    return {**llm.completion_kwargs(SUMMARIZER_MODEL), "temperature": 0.1}
 
 
 def _build_chunk_text(chunk: ChunkSummaryInput) -> str:
@@ -116,10 +111,10 @@ def summarize_chunk_batch(chunks: list[ChunkSummaryInput]) -> list[SummaryResult
         numbered_parts.append(f"--- ELEMENT {i} ---\n{_build_chunk_text(chunk)}")
 
     user_content = "\n\n".join(numbered_parts)
-    kwargs = _get_llm_kwargs()
-    kwargs["max_tokens"] = min(max(SUMMARY_MAX_TOKENS * len(chunks), 300), 3000)
 
     try:
+        kwargs = _get_llm_kwargs()
+        kwargs["max_tokens"] = min(max(SUMMARY_MAX_TOKENS * len(chunks), 300), 3000)
         parsed = _summarize_attempt(
             kwargs=kwargs,
             user_content=user_content,
@@ -143,7 +138,6 @@ def summarize_chunk_batch(chunks: list[ChunkSummaryInput]) -> list[SummaryResult
             return retry_parsed
     except Exception as e:
         logger.warning(f"Batch summarization failed ({e}), using fallbacks")
-        sentry_sdk.capture_exception(e)
 
     return [_build_fallback(c) for c in chunks]
 
@@ -162,11 +156,8 @@ def _summarize_attempt(
     ]
     if strict_retry:
         request_kwargs["temperature"] = 0.0
-    if prmpt_ai_client.is_configured():
-        raw = prmpt_ai_client.completion(**request_kwargs).strip()
-    else:
-        response = litellm.completion(**request_kwargs)
-        raw = (response.choices[0].message.content or "").strip()
+    response = litellm.completion(**request_kwargs)
+    raw = (response.choices[0].message.content or "").strip()
     return _parse_batch_response(raw, chunks)
 
 

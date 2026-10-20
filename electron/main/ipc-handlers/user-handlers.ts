@@ -1,11 +1,9 @@
 import { ipcMain } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import { UserService } from '../database/services/user-service';
 import { MemoryService, MemoryType, MemorySource } from '../database/services/memory-service';
 import { SettingsService } from '../database/services/settings-service';
 import { AppWindowManager } from '../windows/app-window-manager';
 import { authState } from '../utils/auth-state';
-import { localCache } from '../database/local-cache';
 
 // Lazy load services
 let userService: UserService | null = null;
@@ -34,7 +32,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
                 appWindowManager.send('user-data-loaded', userData);
             }
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'app:request-user-data' } });
             console.error('[User] Failed to load user data:', error);
         }
     });
@@ -59,24 +56,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
 
             await service.updateProfile(sanitized);
 
-            // Cache new avatar immediately if provided
-            if (updates.avatar_url && authState.currentUserId) {
-                try {
-                    const avatarRes = await fetch(updates.avatar_url);
-                    if (avatarRes.ok) {
-                        const arrayBuffer = await avatarRes.arrayBuffer();
-                        const buffer = Buffer.from(arrayBuffer);
-                        const mimeType = avatarRes.headers.get('content-type') || 'image/jpeg';
-                        const base64 = `data:${mimeType};base64,${buffer.toString('base64')}`;
-                        localCache.setAvatar(authState.currentUserId, base64);
-                        console.log('[User] ✅ New avatar cached for offline use');
-                    }
-                } catch (err) {
-                    Sentry.captureException(err, { tags: { component: 'user-handlers', op: 'avatar-cache' } });
-                    console.warn('[User] Could not cache new avatar:', err);
-                }
-            }
-
             if (appWindowManager) {
                 appWindowManager.send('user:profile-updated');
 
@@ -85,10 +64,8 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
                 appWindowManager.send('user-data-loaded', userData);
             }
 
-            Sentry.addBreadcrumb({ category: 'user', message: 'Profile updated', level: 'info' });
             console.log('[User] ✅ Profile updated');
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'user:update-profile' } });
             console.error('[User] Error updating profile:', error);
         }
     });
@@ -111,10 +88,8 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
                 appWindowManager.send('user-data-loaded', userData);
             }
 
-            Sentry.addBreadcrumb({ category: 'user', message: 'Preferences updated', level: 'info' });
             console.log('[User] ✅ Preferences updated');
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'user:update-preferences' } });
             console.error('[User] Error updating preferences:', error);
         }
     });
@@ -133,10 +108,8 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
                 appWindowManager.send('user:preferences-updated');
             }
 
-            Sentry.addBreadcrumb({ category: 'user', message: 'Personalization prompt updated', level: 'info' });
             console.log('[User] ✅ Personalization prompt updated');
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'user:set-personalization-prompt' } });
             console.error('[User] Error setting personalization prompt:', error);
         }
     });
@@ -152,7 +125,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             const result = await memory.getMemory();
             return result;
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'memory:get' } });
             console.error('[Memory] Failed to get memory:', error);
             return { user: {}, behavioral: {}, context: {} };
         }
@@ -174,7 +146,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             );
             return { success: true };
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'memory:upsert' } });
             console.error('[Memory] Failed to upsert memory entry:', error);
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return { success: false, error: msg };
@@ -191,7 +162,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             await memory.deleteMemoryEntry(data.memoryType, data.key);
             return { success: true };
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'memory:delete' } });
             console.error('[Memory] Failed to delete memory entry:', error);
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return { success: false, error: msg };
@@ -211,7 +181,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             const userSettings = await settings.getUserSettings(profile.id);
             return userSettings?.memory_enabled !== false; // Default true
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'memory:get-enabled' } });
             console.error('[Memory] Failed to get memory enabled state:', error);
             return true; // Fail-open
         }
@@ -230,7 +199,6 @@ export function registerUserHandlers(appWindowManager: AppWindowManager) {
             console.log(`[Memory] Toggle set to ${enabled ? 'ON' : 'OFF'}`);
             return { success: true };
         } catch (error) {
-            Sentry.captureException(error, { tags: { component: 'user-handlers', op: 'memory:set-enabled' } });
             console.error('[Memory] Failed to set memory enabled state:', error);
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return { success: false, error: msg };

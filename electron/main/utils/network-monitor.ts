@@ -1,5 +1,4 @@
 import { net } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import { EventEmitter } from 'events';
 
 /**
@@ -53,11 +52,6 @@ export class NetworkMonitor extends EventEmitter {
       this._isOnline = online;
 
       console.log(`[NetworkMonitor] Status changed → ${online ? 'ONLINE' : 'OFFLINE'}`);
-      Sentry.addBreadcrumb({
-        category: 'network',
-        message: `Network ${online ? 'online' : 'offline'}`,
-        level: online ? 'info' : 'warning',
-      });
 
       sendToApp('network:status', { isOnline: online });
       sendToOverlay('network:status', { isOnline: online });

@@ -10,6 +10,7 @@ import { DEFAULT_SETTINGS, STORAGE_KEY, applySettings } from '@/lib/settings';
 import type { SettingsData } from '@/lib/settings';
 import { motion, AnimatePresence } from 'motion/react';
 import darkLogoSvg from '@/assets/logos/dark-logo-svg.svg';
+import { AIProviderForm } from '@/components/settings/AIProviderForm';
 
 /* ─────────────────────────────────────────────────────────────
    Feature data
@@ -1657,16 +1658,58 @@ function FeatureVisual({ type, onDone }: { type: string; onDone?: () => void }) 
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Frameless-window title bar (drag area + Windows controls)
+   ───────────────────────────────────────────────────────────── */
+function OnboardingTitleBar({ isMac }: { isMac: boolean }) {
+  return (
+    <div
+      className="absolute top-0 left-0 right-0 h-9 z-30 flex items-center justify-end select-none"
+      style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+    >
+      {!isMac && (
+        <div className="flex items-center h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button
+            onClick={() => (window.electronAPI as any)?.windowControls?.minimize()}
+            aria-label="Minimise"
+            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+          >
+            <Minus size={14} weight="light" />
+          </button>
+          <button
+            onClick={() => (window.electronAPI as any)?.windowControls?.maximize()}
+            aria-label="Maximise"
+            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 transition-colors duration-150"
+          >
+            <Square size={12} weight="light" />
+          </button>
+          <button
+            onClick={() => (window.electronAPI as any)?.windowControls?.close()}
+            aria-label="Close"
+            className="h-full w-11 flex items-center justify-center text-muted-foreground/40 hover:text-white hover:bg-red-500/80 transition-colors duration-150"
+          >
+            <X size={14} weight="light" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
    OnboardingPage
    ───────────────────────────────────────────────────────────── */
 interface OnboardingPageProps {
   onComplete: () => void;
   userName?: string;
+  /** Show only the AI provider step (later launches with no key set). */
+  aiProviderOnly?: boolean;
 }
 
-export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
+export function OnboardingPage({ onComplete, userName, aiProviderOnly = false }: OnboardingPageProps) {
   const isMac = (window.electronAPI as any)?.platform === 'darwin';
-  const [phase, setPhase] = useState<'theme-picker' | 'features'>('theme-picker');
+  const [phase, setPhase] = useState<'theme-picker' | 'ai-provider' | 'features'>(
+    aiProviderOnly ? 'ai-provider' : 'theme-picker',
+  );
   const [selectedTheme, setSelectedTheme] = useState<'light' | 'dark'>(() => {
     return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
   });
@@ -1701,8 +1744,14 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
         prompt_instructions: settings.promptInstructions,
       }).catch(() => {});
     }
-    setPhase('features');
+    setPhase('ai-provider');
   }, [selectedTheme]);
+
+  // After the AI provider step (saved or skipped): the feature tour, or done
+  const finishAiProvider = useCallback(() => {
+    if (aiProviderOnly) onComplete();
+    else setPhase('features');
+  }, [aiProviderOnly, onComplete]);
 
   // Step label: "01", "02", etc.
   const stepLabel = useMemo(() => String(activeIndex + 1).padStart(2, '0'), [activeIndex]);
@@ -1759,6 +1808,43 @@ export function OnboardingPage({ onComplete, userName }: OnboardingPageProps) {
   const visualClass = isTransitioning
     ? 'opacity-0 scale-95 translate-y-2'
     : 'opacity-100 scale-100 translate-y-0';
+
+  /* ─── Render: AI provider (OpenRouter key + models) ────── */
+  if (phase === 'ai-provider') {
+    return (
+      <div
+        className={`fixed inset-0 z-50 flex flex-col bg-background overflow-hidden transition-opacity duration-700 ${mounted ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <div
+          className="absolute inset-0 opacity-[0.02] pointer-events-none"
+          style={{
+            backgroundImage: `linear-gradient(hsl(var(--foreground)) 1px, transparent 1px),
+                              linear-gradient(90deg, hsl(var(--foreground)) 1px, transparent 1px)`,
+            backgroundSize: '56px 56px',
+          }}
+        />
+        <OnboardingTitleBar isMac={isMac} />
+        <div className="flex-1 overflow-y-auto flex items-center justify-center px-8 py-12">
+          <div className="w-full max-w-md">
+            <Logo size="w-12 h-12" />
+            <h1 className="mt-6 text-2xl font-bold text-foreground tracking-tight">Connect your AI provider</h1>
+            <p className="mt-2 mb-8 text-sm text-muted-foreground">
+              Prmpt runs on your computer and uses your own OpenRouter key, so you only pay OpenRouter for what you use.
+              Your chats and code index stay on this machine.
+            </p>
+            <AIProviderForm variant="onboarding" onSaved={finishAiProvider} />
+            <button
+              type="button"
+              onClick={finishAiProvider}
+              className="mt-4 block text-xs text-muted-foreground/60 hover:text-muted-foreground"
+            >
+              {aiProviderOnly ? 'Skip for now' : 'Set this up later'} (Settings &gt; AI provider)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   /* ─── Render: Theme Picker ─────────────────────────────── */
   if (phase === 'theme-picker') {

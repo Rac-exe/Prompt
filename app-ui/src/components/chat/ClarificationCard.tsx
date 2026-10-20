@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import * as Sentry from "@sentry/react";
 import {
   Sparkle,
   ArrowRight,
@@ -351,7 +350,6 @@ export const ClarificationCard = ({
 
   const handleSubmit = useCallback(() => {
     setSubmitted(true);
-    Sentry.addBreadcrumb({ category: 'clarification', message: 'Clarification submitted', level: 'info', data: { questionCount: questions.length, answeredCount } });
     const finalAnswers: Record<string, string> = {};
 
     for (const q of questions) {
@@ -395,7 +393,6 @@ export const ClarificationCard = ({
       }
     }
 
-    Sentry.addBreadcrumb({ category: 'clarification', message: 'Answers finalized', level: 'info', data: { answerCount: Object.keys(finalAnswers).length, wantsSections, hasExtraNotes: !!extraNotes.trim() } });
     onSubmit(finalAnswers, wantsSections);
   }, [questions, selections, otherActive, otherTexts, textAnswers, extraNotes, onSubmit, answeredCount]);
 
@@ -630,7 +627,6 @@ export const ClarificationCard = ({
             <button
               type="button"
               onClick={() => {
-                Sentry.addBreadcrumb({ category: 'clarification', message: 'Clarification skipped', level: 'info', data: { questionCount: questions.length, currentStep } });
                 onSkip();
               }}
               className={cn(

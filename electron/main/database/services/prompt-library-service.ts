@@ -1,35 +1,4 @@
-import { SupabaseClientManager } from '../supabase-client';
-import { randomBytes } from 'crypto';
-import * as Sentry from '@sentry/electron/main';
-
-// ============================================
-// SHARE TOKEN HELPERS
-// ============================================
-
-/**
- * Generates a cryptographically secure opaque share token.
- * 24 random bytes = 192 bits of entropy — computationally impossible to brute-force
- * even at 1 billion guesses/second (would take ~10^39 years).
- *
- * The token is stored in the DB and acts as the credential. The DB lookup IS the
- * verification — no shared secret is needed, so tokens work identically across
- * all user machines without any configuration.
- *
- * Security layers:
- *  - Token entropy: 192 bits (brute-force infeasible)
- *  - Collections: RLS requires auth.uid() IS NOT NULL (must be signed in)
- *  - Prompts: publicly readable by design
- *  - Type confusion: prevented by querying the correct table based on the URL path prefix (c/p)
- *  - Injection: token format validated in the deep link handler before any DB call
- */
-function generateShareToken(): string {
-  return randomBytes(24).toString('base64url');
-}
-
-/** Validates that a token string has the correct format before any DB interaction. */
-export function isValidTokenFormat(token: string): boolean {
-  return /^[A-Za-z0-9_-]{20,50}$/.test(token);
-}
+import { getDb, LOCAL_USER_ID, newId, nowIso, toJson, fromJson } from '../local-db';
 
 // ============================================
 // INTERFACES
@@ -42,31 +11,6 @@ export interface PromptCollection {
   icon?: string;
   created_at: string;
   updated_at: string;
-  // Sharing fields (added in migration 20260315_add_shared_libraries)
-  share_token?: string | null;
-  original_collection_id?: string | null;
-  original_creator_id?: string | null;
-  original_creator_name?: string | null;
-}
-
-export interface SharedCollectionView {
-  id: string;
-  name: string;
-  icon?: string;
-  share_token: string;
-  owner_name: string;
-  owner_id: string;
-  prompts: SavedPrompt[];
-}
-
-export interface SharedPromptView {
-  id: string;
-  title: string;
-  content: string;
-  share_token: string;
-  owner_name: string;
-  owner_id: string;
-  created_at: string;
 }
 
 export interface SavedPrompt {
@@ -90,161 +34,91 @@ export interface SavedPromptWithCollection extends SavedPrompt {
   collection_icon?: string;
 }
 
+function toPrompt<T extends SavedPrompt>(row: any): T {
+  return { ...row, metadata: fromJson(row.metadata, {}) };
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  return String((err as { code?: string })?.code || '').startsWith('SQLITE_CONSTRAINT_UNIQUE');
+}
+
 // ============================================
 // SERVICE
 // ============================================
 
+/**
+ * Prompt library (collections + saved prompts), stored in the local SQLite database.
+ */
 export class PromptLibraryService {
-  private client = SupabaseClientManager.getClient();
-
   // ============================================
   // COLLECTIONS
   // ============================================
 
   /**
-   * Get all collections for the current user
+   * Get all collections, oldest first
    */
   async getCollections(): Promise<PromptCollection[]> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[PromptLibraryService] ❌ getCollections: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    console.log('[PromptLibraryService] Loading collections for user:', userData.user.id);
-
-    const { data, error } = await this.client
-      .from('prompt_collections')
-      .select('*')
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      console.error('[PromptLibraryService] ❌ Error loading collections:', error);
-      throw error;
-    }
-
-    console.log('[PromptLibraryService] ✅ Loaded', data?.length || 0, 'collections for user:', userData.user.id);
-    return data || [];
+    return getDb()
+      .prepare('SELECT * FROM prompt_collections ORDER BY created_at ASC, rowid ASC')
+      .all();
   }
 
   /**
    * Get a single collection by ID
    */
   async getCollection(collectionId: string): Promise<PromptCollection | null> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[PromptLibraryService] ❌ getCollection: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { data, error } = await this.client
-      .from('prompt_collections')
-      .select('*')
-      .eq('id', collectionId)
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .single();
-
-    if (error) throw error;
-    return data;
+    return getDb().prepare('SELECT * FROM prompt_collections WHERE id = ?').get(collectionId) || null;
   }
 
   /**
    * Create a new collection
    */
   async createCollection(name: string, icon?: string): Promise<PromptCollection> {
-    console.log('[PromptLibraryService] createCollection called:', name);
-    
-    // STEP 1: Verify authentication
-    const { data: userData, error: userError } = await this.client.auth.getUser();
-    
-    if (userError) {
-      console.error('[PromptLibraryService] ❌ Auth error:', userError);
-      throw new Error(`Authentication error: ${userError.message}`);
-    }
-    
-    if (!userData.user) {
-      console.error('[PromptLibraryService] ❌ No user found - not authenticated');
-      throw new Error('Not authenticated');
-    }
-    
-    console.log('[PromptLibraryService] ✅ User authenticated:', userData.user.id);
-
-    // STEP 2: Insert collection
-    console.log('[PromptLibraryService] Inserting collection:', {
-      user_id: userData.user.id,
+    const now = nowIso();
+    const collection: PromptCollection = {
+      id: newId(),
+      user_id: LOCAL_USER_ID,
       name,
       icon: icon || 'folder',
-    });
-
-    const { data, error } = await this.client
-      .from('prompt_collections')
-      .insert({
-        user_id: userData.user.id,
-        name,
-        icon: icon || 'folder',
-      })
-      .select()
-      .single();
-
-    // STEP 3: Log INSERT RESULT (CRITICAL DIAGNOSTIC)
-    console.log('🔴 COLLECTION INSERT RESULT:', { 
-      data: data ? { id: data.id, name: data.name, user_id: data.user_id } : null, 
-      error: error ? { code: error.code, message: error.message, details: error.details } : null 
-    });
-
-    if (error) {
-      console.error('[PromptLibraryService] ❌ Insert error:', error);
-      // Handle duplicate collection name
-      if (error.code === '23505') {
-        throw new Error(`Collection "${name}" already exists`);
-      }
-      throw error;
+      created_at: now,
+      updated_at: now,
+    };
+    try {
+      getDb()
+        .prepare(
+          `INSERT INTO prompt_collections (id, user_id, name, icon, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(collection.id, collection.user_id, collection.name, collection.icon, now, now);
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new Error(`Collection "${name}" already exists`);
+      throw err;
     }
-
-    if (!data) {
-      console.error('[PromptLibraryService] ❌ No data returned after insert');
-      throw new Error('Failed to create collection: no data returned');
-    }
-
-    console.log('[PromptLibraryService] ✅ Collection created:', data.id);
-    return data;
+    return collection;
   }
 
   /**
    * Rename a collection
    */
   async renameCollection(collectionId: string, newName: string): Promise<PromptCollection> {
-    const { data, error } = await this.client
-      .from('prompt_collections')
-      .update({ name: newName })
-      .eq('id', collectionId)
-      .select()
-      .single();
-
-    if (error) {
-      // Handle duplicate collection name
-      if (error.code === '23505') {
-        throw new Error(`Collection "${newName}" already exists`);
-      }
-      throw error;
+    try {
+      getDb()
+        .prepare('UPDATE prompt_collections SET name = ?, updated_at = ? WHERE id = ?')
+        .run(newName, nowIso(), collectionId);
+    } catch (err) {
+      if (isUniqueViolation(err)) throw new Error(`Collection "${newName}" already exists`);
+      throw err;
     }
-
-    return data;
+    const collection = await this.getCollection(collectionId);
+    if (!collection) throw new Error('Collection not found');
+    return collection;
   }
 
   /**
-   * Delete a collection (and all its prompts due to CASCADE)
+   * Delete a collection (its prompts are removed by ON DELETE CASCADE)
    */
   async deleteCollection(collectionId: string): Promise<void> {
-    const { error } = await this.client
-      .from('prompt_collections')
-      .delete()
-      .eq('id', collectionId);
-
-    if (error) throw error;
+    getDb().prepare('DELETE FROM prompt_collections WHERE id = ?').run(collectionId);
   }
 
   // ============================================
@@ -252,75 +126,36 @@ export class PromptLibraryService {
   // ============================================
 
   /**
-   * Get all prompts for the current user
+   * Get all prompts with their collection name and icon, newest first
    */
   async getPrompts(): Promise<SavedPromptWithCollection[]> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[PromptLibraryService] ❌ getPrompts: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    console.log('[PromptLibraryService] Loading prompts for user:', userData.user.id);
-
-    const { data, error } = await this.client
-      .from('user_prompts_with_collections')
-      .select('*')
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('[PromptLibraryService] ❌ Error loading prompts:', error);
-      throw error;
-    }
-
-    console.log('[PromptLibraryService] ✅ Loaded', data?.length || 0, 'prompts for user:', userData.user.id);
-    return data || [];
+    const rows = getDb()
+      .prepare(
+        `SELECT sp.*, pc.name AS collection_name, pc.icon AS collection_icon
+         FROM saved_prompts sp
+         JOIN prompt_collections pc ON pc.id = sp.collection_id
+         ORDER BY sp.created_at DESC, sp.rowid DESC`,
+      )
+      .all();
+    return rows.map((row: any) => toPrompt<SavedPromptWithCollection>(row));
   }
 
   /**
-   * Get prompts in a specific collection
+   * Get prompts in a specific collection, newest first
    */
   async getPromptsByCollection(collectionId: string): Promise<SavedPrompt[]> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[PromptLibraryService] ❌ getPromptsByCollection: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { data, error } = await this.client
-      .from('saved_prompts')
-      .select('*')
-      .eq('collection_id', collectionId)
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
+    const rows = getDb()
+      .prepare('SELECT * FROM saved_prompts WHERE collection_id = ? ORDER BY created_at DESC, rowid DESC')
+      .all(collectionId);
+    return rows.map((row: any) => toPrompt<SavedPrompt>(row));
   }
 
   /**
    * Get a single prompt by ID
    */
   async getPrompt(promptId: string): Promise<SavedPrompt | null> {
-    // SECURITY: Explicitly verify auth and scope to user
-    const { data: userData, error: authError } = await this.client.auth.getUser();
-    if (authError || !userData.user) {
-      console.error('[PromptLibraryService] ❌ getPrompt: Not authenticated');
-      throw new Error('Not authenticated');
-    }
-
-    const { data, error } = await this.client
-      .from('saved_prompts')
-      .select('*')
-      .eq('id', promptId)
-      .eq('user_id', userData.user.id) // ✅ EXPLICIT user scoping
-      .single();
-
-    if (error) throw error;
-    return data;
+    const row = getDb().prepare('SELECT * FROM saved_prompts WHERE id = ?').get(promptId);
+    return row ? toPrompt<SavedPrompt>(row) : null;
   }
 
   /**
@@ -332,69 +167,27 @@ export class PromptLibraryService {
     content: string,
     metadata?: Record<string, any>
   ): Promise<SavedPrompt> {
-    console.log('[PromptLibraryService] savePrompt called:', { collectionId, title });
-    
-    // STEP 1: Verify authentication
-    const { data: userData, error: userError } = await this.client.auth.getUser();
-    
-    if (userError) {
-      console.error('[PromptLibraryService] ❌ Auth error:', userError);
-      throw new Error(`Authentication error: ${userError.message}`);
-    }
-    
-    if (!userData.user) {
-      console.error('[PromptLibraryService] ❌ No user found - not authenticated');
-      throw new Error('Not authenticated');
-    }
-    
-    console.log('[PromptLibraryService] ✅ User authenticated:', userData.user.id);
-
-    // STEP 2: Verify collection exists and belongs to user
-    console.log('[PromptLibraryService] Verifying collection:', collectionId);
     const collection = await this.getCollection(collectionId);
-    if (!collection) {
-      console.error('[PromptLibraryService] ❌ Collection not found');
-      throw new Error('Collection not found');
-    }
-    console.log('[PromptLibraryService] ✅ Collection verified:', collection.name);
+    if (!collection) throw new Error('Collection not found');
 
-    // STEP 3: Insert prompt
-    console.log('[PromptLibraryService] Inserting prompt:', {
-      user_id: userData.user.id,
+    const now = nowIso();
+    const prompt: SavedPrompt = {
+      id: newId(),
+      user_id: LOCAL_USER_ID,
       collection_id: collectionId,
       title,
-    });
-
-    const { data, error } = await this.client
-      .from('saved_prompts')
-      .insert({
-        user_id: userData.user.id,
-        collection_id: collectionId,
-        title,
-        content,
-        metadata: metadata || {},
-      })
-      .select()
-      .single();
-
-    // STEP 4: Log INSERT RESULT (CRITICAL DIAGNOSTIC)
-    console.log('🔴 INSERT RESULT:', { 
-      data: data ? { id: data.id, title: data.title, user_id: data.user_id } : null, 
-      error: error ? { code: error.code, message: error.message, details: error.details } : null 
-    });
-
-    if (error) {
-      console.error('[PromptLibraryService] ❌ Insert error:', error);
-      throw error;
-    }
-
-    if (!data) {
-      console.error('[PromptLibraryService] ❌ No data returned after insert');
-      throw new Error('Failed to save prompt: no data returned');
-    }
-
-    console.log('[PromptLibraryService] ✅ Prompt saved successfully:', data.id);
-    return data;
+      content,
+      metadata: metadata || {},
+      created_at: now,
+      updated_at: now,
+    };
+    getDb()
+      .prepare(
+        `INSERT INTO saved_prompts (id, user_id, collection_id, title, content, metadata, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(prompt.id, prompt.user_id, collectionId, title, content, toJson(prompt.metadata), now, now);
+    return prompt;
   }
 
   /**
@@ -409,27 +202,31 @@ export class PromptLibraryService {
       metadata?: Record<string, any>;
     }
   ): Promise<SavedPrompt> {
-    const { data, error } = await this.client
-      .from('saved_prompts')
-      .update(updates)
-      .eq('id', promptId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    const current = await this.getPrompt(promptId);
+    if (!current) throw new Error('Prompt not found');
+    if (updates.collection_id && !(await this.getCollection(updates.collection_id))) {
+      throw new Error('Collection not found');
+    }
+    const next: SavedPrompt = {
+      ...current,
+      ...updates,
+      metadata: updates.metadata ?? current.metadata,
+      updated_at: nowIso(),
+    };
+    getDb()
+      .prepare(
+        `UPDATE saved_prompts SET title = ?, content = ?, collection_id = ?, metadata = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(next.title, next.content, next.collection_id, toJson(next.metadata), next.updated_at, promptId);
+    return next;
   }
 
   /**
    * Delete a prompt
    */
   async deletePrompt(promptId: string): Promise<void> {
-    const { error } = await this.client
-      .from('saved_prompts')
-      .delete()
-      .eq('id', promptId);
-
-    if (error) throw error;
+    getDb().prepare('DELETE FROM saved_prompts WHERE id = ?').run(promptId);
   }
 
   /**
@@ -461,8 +258,7 @@ export class PromptLibraryService {
   // ============================================
 
   /**
-   * Get all library data for a user (collections + prompts)
-   * Useful for loading on login
+   * Get all library data (collections + prompts)
    */
   async getFullLibrary(): Promise<{
     collections: PromptCollection[];
@@ -476,414 +272,8 @@ export class PromptLibraryService {
     return { collections, prompts };
   }
 
-  // ============================================
-  // SHARING
-  // ============================================
-
   /**
-   * Generate (or return existing) share token for an individual prompt.
-   * Idempotent — calling twice returns the same token.
-   * Returns both a deep-link URL (in-app) and a web URL (Edge Function, browser-accessible).
-   */
-  async getOrCreatePromptShareToken(promptId: string): Promise<{ shareToken: string; shareUrl: string; webUrl: string }> {
-    try {
-      const { data: userData, error: authError } = await this.client.auth.getUser();
-      if (authError || !userData.user) throw new Error('Not authenticated');
-
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Generating prompt share link',
-        level: 'info',
-        data: { promptId, userId: userData.user.id },
-      });
-
-      const { data: prompt, error: fetchError } = await this.client
-        .from('saved_prompts')
-        .select('id, share_token')
-        .eq('id', promptId)
-        .eq('user_id', userData.user.id)
-        .single();
-
-      if (fetchError || !prompt) throw new Error('Prompt not found');
-
-      // Re-use existing token if it has the correct format
-      if (prompt.share_token && isValidTokenFormat(prompt.share_token)) {
-        const supabaseUrl = process.env.SUPABASE_URL!;
-        Sentry.addBreadcrumb({
-          category: 'sharing',
-          message: 'Reused existing prompt share token',
-          level: 'info',
-          data: { promptId, tokenLength: prompt.share_token.length },
-        });
-        return {
-          shareToken: prompt.share_token,
-          shareUrl: `prmpt://share/p/${prompt.share_token}`,
-          webUrl: `${supabaseUrl}/functions/v1/share-view?token=${prompt.share_token}`,
-        };
-      }
-
-      const token = generateShareToken();
-
-      const { data: updated, error: updateError } = await this.client
-        .from('saved_prompts')
-        .update({ share_token: token })
-        .eq('id', promptId)
-        .eq('user_id', userData.user.id)
-        .select('share_token')
-        .single();
-
-      if (updateError || !updated) throw new Error('Failed to generate prompt share token');
-
-      const supabaseUrl = process.env.SUPABASE_URL!;
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Created new prompt share token',
-        level: 'info',
-        data: { promptId, tokenLength: updated.share_token?.length || 0 },
-      });
-      return {
-        shareToken: updated.share_token!,
-        shareUrl: `prmpt://share/p/${updated.share_token}`,
-        webUrl: `${supabaseUrl}/functions/v1/share-view?token=${updated.share_token}`,
-      };
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'prompt-library-service', operation: 'getOrCreatePromptShareToken' },
-        extra: { promptId },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Fetch a shared prompt by its opaque token.
-   * The DB lookup by share_token IS the verification — the token is the credential.
-   */
-  async getSharedPrompt(token: string): Promise<SharedPromptView> {
-    try {
-      if (!isValidTokenFormat(token)) throw new Error('Invalid share link');
-
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Loading shared prompt',
-        level: 'info',
-        data: { tokenLength: token.length },
-      });
-
-      const { data: prompt, error: promptError } = await this.client
-        .from('saved_prompts')
-        .select('id, title, content, share_token, user_id, created_at')
-        .eq('share_token', token)
-        .single();
-
-      if (promptError || !prompt) {
-        throw new Error('Shared prompt not found or link is invalid');
-      }
-
-      // Fetch owner name from profiles
-      const { data: profile } = await this.client
-        .from('profiles')
-        .select('name')
-        .eq('id', prompt.user_id)
-        .single();
-
-      return {
-        id: prompt.id,
-        title: prompt.title,
-        content: prompt.content,
-        share_token: prompt.share_token,
-        owner_name: profile?.name || 'Unknown User',
-        owner_id: prompt.user_id,
-        created_at: prompt.created_at,
-      };
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'prompt-library-service', operation: 'getSharedPrompt' },
-        extra: { tokenLength: token?.length || 0 },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Generate (or return existing) share token for a collection.
-   * Idempotent — calling twice returns the same token.
-   * Collections are app-only: shareUrl uses the prmpt:// deep-link scheme.
-   */
-  async getOrCreateShareToken(collectionId: string): Promise<{ shareToken: string; shareUrl: string }> {
-    try {
-      const { data: userData, error: authError } = await this.client.auth.getUser();
-      if (authError || !userData.user) throw new Error('Not authenticated');
-
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Generating collection share link',
-        level: 'info',
-        data: { collectionId, userId: userData.user.id },
-      });
-
-      const { data: collection, error: fetchError } = await this.client
-        .from('prompt_collections')
-        .select('id, share_token')
-        .eq('id', collectionId)
-        .eq('user_id', userData.user.id)
-        .single();
-
-      if (fetchError || !collection) throw new Error('Collection not found');
-
-      // Re-use existing token if it has the correct format
-      if (collection.share_token && isValidTokenFormat(collection.share_token)) {
-        Sentry.addBreadcrumb({
-          category: 'sharing',
-          message: 'Reused existing collection share token',
-          level: 'info',
-          data: { collectionId, tokenLength: collection.share_token.length },
-        });
-        return {
-          shareToken: collection.share_token,
-          shareUrl: `prmpt://share/c/${collection.share_token}`,
-        };
-      }
-
-      const token = generateShareToken();
-
-      const { data: updated, error: updateError } = await this.client
-        .from('prompt_collections')
-        .update({ share_token: token })
-        .eq('id', collectionId)
-        .eq('user_id', userData.user.id)
-        .select('share_token')
-        .single();
-
-      if (updateError || !updated) throw new Error('Failed to generate share token');
-
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Created new collection share token',
-        level: 'info',
-        data: { collectionId, tokenLength: updated.share_token?.length || 0 },
-      });
-      return {
-        shareToken: updated.share_token!,
-        shareUrl: `prmpt://share/c/${updated.share_token}`,
-      };
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'prompt-library-service', operation: 'getOrCreateShareToken' },
-        extra: { collectionId },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Fetch a shared collection by its opaque token.
-   * The DB lookup by share_token IS the verification — the token is the credential.
-   * RLS requires auth.uid() IS NOT NULL so only signed-in users can read collections.
-   */
-  async getSharedCollection(token: string): Promise<SharedCollectionView> {
-    try {
-      if (!isValidTokenFormat(token)) throw new Error('Invalid share link');
-
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Loading shared collection',
-        level: 'info',
-        data: { tokenLength: token.length },
-      });
-
-      // RLS: requires authenticated Supabase session
-      const { data: collection, error: collectionError } = await this.client
-        .from('prompt_collections')
-        .select('id, name, icon, share_token, user_id')
-        .eq('share_token', token)
-        .single();
-
-      if (collectionError || !collection) {
-        throw new Error('Shared library not found or link is invalid');
-      }
-
-      // Fetch owner profile name
-      const { data: profile } = await this.client
-        .from('profiles')
-        .select('name')
-        .eq('id', collection.user_id)
-        .single();
-
-      const ownerName = profile?.name || 'Unknown User';
-
-      const { data: prompts, error: promptsError } = await this.client
-        .from('saved_prompts')
-        .select('*')
-        .eq('collection_id', collection.id)
-        .order('created_at', { ascending: false });
-
-      if (promptsError) throw promptsError;
-
-      return {
-        id: collection.id,
-        name: collection.name,
-        icon: collection.icon,
-        share_token: collection.share_token,
-        owner_name: ownerName,
-        owner_id: collection.user_id,
-        prompts: prompts || [],
-      };
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'prompt-library-service', operation: 'getSharedCollection' },
-        extra: { tokenLength: token?.length || 0 },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Save a shared collection (fork) under the current user.
-   * Idempotent — if the user already saved this collection, returns existing copy.
-   */
-  async saveSharedCollection(originalCollectionId: string): Promise<{
-    collection: PromptCollection;
-    alreadyExisted: boolean;
-  }> {
-    try {
-      const { data: userData, error: authError } = await this.client.auth.getUser();
-      if (authError || !userData.user) throw new Error('Not authenticated');
-
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Saving shared collection copy',
-        level: 'info',
-        data: { originalCollectionId, userId: userData.user.id },
-      });
-
-      // Check if user already forked this collection (idempotency — Task 7)
-      const { data: existing } = await this.client
-        .from('prompt_collections')
-        .select('*')
-        .eq('user_id', userData.user.id)
-        .eq('original_collection_id', originalCollectionId)
-        .maybeSingle();
-
-      if (existing) {
-        Sentry.addBreadcrumb({
-          category: 'sharing',
-          message: 'Shared collection already saved',
-          level: 'info',
-          data: { originalCollectionId, existingCollectionId: existing.id },
-        });
-        return { collection: existing as PromptCollection, alreadyExisted: true };
-      }
-
-    // Fetch original collection + owner name
-    const { data: original, error: originalError } = await this.client
-      .from('prompt_collections')
-      .select('id, name, icon, user_id, share_token')
-      .eq('id', originalCollectionId)
-      .single();
-
-    if (originalError || !original) throw new Error('Original collection not found');
-
-    // Only allow saving collections that have a share token (are actually shared)
-    if (!original.share_token) throw new Error('This collection is not shared publicly');
-
-    const { data: ownerProfile } = await this.client
-      .from('profiles')
-      .select('name')
-      .eq('id', original.user_id)
-      .single();
-
-    const creatorName = ownerProfile?.name || 'Unknown User';
-
-    // ── Resolve a unique name for the forked collection ──────────────────────
-    // The user may already own a collection with the same name (e.g. they are
-    // saving their own shared library, or they saved it before under a different
-    // flow). Auto-suffix with " (2)", " (3)", … until the name is free.
-    const { data: existingNames } = await this.client
-      .from('prompt_collections')
-      .select('name')
-      .eq('user_id', userData.user.id);
-
-    const takenNames = new Set((existingNames || []).map((c: any) => c.name as string));
-
-    let candidateName = original.name;
-    if (takenNames.has(candidateName)) {
-      let counter = 2;
-      while (takenNames.has(`${original.name} (${counter})`)) counter++;
-      candidateName = `${original.name} (${counter})`;
-    }
-
-    // Create a copy of the collection under the current user
-    const { data: newCollection, error: createError } = await this.client
-      .from('prompt_collections')
-      .insert({
-        user_id: userData.user.id,
-        name: candidateName,
-        icon: original.icon || 'folder',
-        original_collection_id: original.id,
-        original_creator_id: original.user_id,
-        original_creator_name: creatorName,
-      })
-      .select()
-      .single();
-
-    if (createError || !newCollection) throw createError || new Error('Failed to save collection');
-
-    // Copy all prompts from original to the new collection
-    const { data: originalPrompts } = await this.client
-      .from('saved_prompts')
-      .select('title, content, metadata')
-      .eq('collection_id', original.id)
-      .order('created_at', { ascending: true });
-
-    if (originalPrompts && originalPrompts.length > 0) {
-      const promptsToInsert = originalPrompts.map((p: any) => ({
-        user_id: userData.user.id,
-        collection_id: newCollection.id,
-        title: p.title,
-        content: p.content,
-        metadata: {
-          ...(p.metadata || {}),
-          // Prompt-level attribution: only copied prompts keep source attribution.
-          // New prompts created later in this collection should not inherit it.
-          shared_origin_creator_id: original.user_id,
-          shared_origin_creator_name: creatorName,
-          shared_origin_collection_id: original.id,
-        },
-      }));
-
-      const { error: insertError } = await this.client
-        .from('saved_prompts')
-        .insert(promptsToInsert);
-
-      if (insertError) {
-        console.error('[PromptLibraryService] ⚠️ Failed to copy prompts:', insertError);
-      }
-    }
-
-      console.log('[PromptLibraryService] ✅ Collection forked:', newCollection.id);
-      Sentry.addBreadcrumb({
-        category: 'sharing',
-        message: 'Shared collection forked',
-        level: 'info',
-        data: {
-          originalCollectionId,
-          newCollectionId: newCollection.id,
-          copiedPromptCount: originalPrompts?.length || 0,
-        },
-      });
-      return { collection: newCollection as PromptCollection, alreadyExisted: false };
-    } catch (error) {
-      Sentry.captureException(error, {
-        tags: { component: 'prompt-library-service', operation: 'saveSharedCollection' },
-        extra: { originalCollectionId },
-      });
-      throw error;
-    }
-  }
-
-  /**
-   * Create a collection and save a prompt to it in one transaction
+   * Create a collection and save a prompt to it in one step
    */
   async createCollectionAndSavePrompt(
     collectionName: string,
@@ -895,12 +285,8 @@ export class PromptLibraryService {
     collection: PromptCollection;
     prompt: SavedPrompt;
   }> {
-    // Create collection first
     const collection = await this.createCollection(collectionName, collectionIcon);
-
-    // Then save prompt to it
     const prompt = await this.savePrompt(collection.id, promptTitle, promptContent, metadata);
-
     return { collection, prompt };
   }
 }

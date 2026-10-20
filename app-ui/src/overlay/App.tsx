@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Sentry from '@sentry/react';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import Header, { type OverlayMode } from './components/Header';
-import AuthGate from './components/AuthGate';
+import SetupGate from './components/SetupGate';
 import OfflineBanner from './components/OfflineBanner';
 import ChatArea from './components/ChatArea';
 import InputSection from './components/InputSection';
@@ -99,6 +99,9 @@ function spaceStatusMeta(status: string | null | undefined) {
 const OverlayApp: React.FC = () => {
   // ── Auth & connection state ──────────────────────────────────────────────
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // AI provider configured (OpenRouter key saved). Assume yes until the
+  // first answer so the composer doesn't flash the setup gate.
+  const [aiConfigured, setAiConfigured] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
   const [triggeredByHook, setTriggeredByHook] = useState(false);
 
@@ -250,11 +253,17 @@ const OverlayApp: React.FC = () => {
     // cases from silently corrupting the wrong turn bank).
     const targetMode = (): OverlayMode => streamingModeRef.current ?? activeModeRef.current;
 
-    // ── Pre-warm auth state so AuthGate never flashes on first open ──
+    // ── Pre-warm session state so the setup gate never flashes on first open ──
     api.overlay?.checkAuth?.().then((data: { isAuthenticated: boolean }) => {
       if (data?.isAuthenticated) setIsAuthenticated(true);
-    }).catch((e: unknown) => {
-      Sentry.captureException(e, { tags: { component: 'overlay-app', op: 'check-auth' } });
+    }).catch(() => {});
+
+    // ── AI provider configured? (OpenRouter key saved in the app) ──
+    api.aiSettings?.get?.().then((ai: { configured: boolean }) => {
+      setAiConfigured(!!ai?.configured);
+    }).catch(() => {});
+    const cleanupAiSettings = api.aiSettings?.onChanged?.((ai: { configured: boolean }) => {
+      setAiConfigured(!!ai?.configured);
     });
 
     // ── Cursor glow via IPC ──
@@ -358,7 +367,7 @@ const OverlayApp: React.FC = () => {
           });
           window.electronAPI?.spaces?.appendMessages?.({ spaceId: pending.spaceId, messages });
         } catch (err) {
-          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-sync-on-complete' } });
+          console.error('[Overlay] space sync on complete failed:', err);
         } finally {
           pendingSpaceSyncRef.current = null;
         }
@@ -400,13 +409,13 @@ const OverlayApp: React.FC = () => {
     // Load skills once
     if (api.skills?.list) {
       api.skills.list().then((s: SkillInfo[]) => setSkills(s || [])).catch((e: unknown) => {
-        Sentry.captureException(e, { tags: { component: 'overlay-app', op: 'load-skills' } });
       });
     }
 
     return () => {
       cleanupOpened?.();
       cleanupAuthState?.();
+      cleanupAiSettings?.();
       cleanupClarification?.();
       cleanupChunk?.();
       cleanupComplete?.();
@@ -561,7 +570,6 @@ const OverlayApp: React.FC = () => {
 
   // ── Submit clarification answers ─────────────────────────────────────────
   const handleSubmitClarification = useCallback((answers: Record<string, string>, wantsSections: boolean) => {
-    Sentry.addBreadcrumb({ category: 'overlay.clarification', message: 'Clarification submitted', data: { answerCount: Object.keys(answers).length, wantsSections } });
     const mode = clarificationMode ?? activeModeRef.current;
     const currentClarification = clarificationDataRef.current;
     const turns = turnsByMode[mode].turns;
@@ -595,7 +603,6 @@ const OverlayApp: React.FC = () => {
   }, [clarificationMode, turnsByMode]);
 
   const handleSkipClarification = useCallback(() => {
-    Sentry.addBreadcrumb({ category: 'overlay.clarification', message: 'Clarification skipped' });
     handleSubmitClarification({}, false);
   }, [handleSubmitClarification]);
 
@@ -605,7 +612,6 @@ const OverlayApp: React.FC = () => {
   const handleReoptimize = useCallback((turnIdx: number, newAnswers: Record<string, string>, wantsSections: boolean) => {
     if (isOptimizing) return;
     const mode = activeModeRef.current;
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Re-optimize triggered', data: { turnIdx, wantsSections, mode } });
     const bundle = turnsByMode[mode];
     const turn = bundle.turns[turnIdx];
     if (!turn) return;
@@ -687,7 +693,7 @@ const OverlayApp: React.FC = () => {
         if (d?.ranked_chunks) ranked.push(...d.ranked_chunks);
         if (d?.related_chunks) related.push(...d.related_chunks);
       } catch (err) {
-        Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-retrieve' }, extra: { projectId: proj.projectId } });
+        console.error('[Overlay] space retrieve failed:', err);
         fails++;
       }
     }
@@ -703,7 +709,6 @@ const OverlayApp: React.FC = () => {
   const handleSend = useCallback((text: string) => {
     if (!text.trim() || isOptimizing) return;
     const mode = activeModeRef.current;
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Message sent', data: { mode } });
 
     // Spaces mode hard-gate: no Space → refuse to send. The composer is
     // also disabled in that state, but double-gating here keeps the
@@ -764,7 +769,6 @@ const OverlayApp: React.FC = () => {
           });
         })
         .catch((err) => {
-          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt' } });
           window.electronAPI?.overlay?.optimize?.({
             text,
             isRegenerate: false,
@@ -800,7 +804,6 @@ const OverlayApp: React.FC = () => {
   // ── Stop generation ──────────────────────────────────────────────────────
   const handleStop = useCallback(() => {
     if (!isOptimizing) return;
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Generation stopped' });
     window.electronAPI?.overlay?.stopGeneration?.();
 
     const mode = streamingModeRef.current ?? activeModeRef.current;
@@ -865,7 +868,6 @@ const OverlayApp: React.FC = () => {
           });
         })
         .catch((err) => {
-          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt-edit' } });
           window.electronAPI?.overlay?.optimize?.({
             text: newContent,
             isRegenerate: false,
@@ -900,7 +902,6 @@ const OverlayApp: React.FC = () => {
   const handleRegenerate = useCallback((turnIdx: number) => {
     if (isOptimizing) return;
     const mode = activeModeRef.current;
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Regenerate requested', data: { turnIdx, mode } });
     const bundle = turnsByMode[mode];
     const result = bundle.prepareRegenerate(turnIdx);
     if (!result) return;
@@ -945,7 +946,6 @@ const OverlayApp: React.FC = () => {
           });
         })
         .catch((err) => {
-          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'build-space-prompt-regen' } });
           window.electronAPI?.overlay?.optimize?.({
             text: result.userVer.content,
             isRegenerate: true,
@@ -978,7 +978,6 @@ const OverlayApp: React.FC = () => {
   // Reads from whichever mode is currently active — copy is always
   // initiated from the visible ChatArea.
   const handleCopy = useCallback((msgId: string) => {
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Prompt copied', data: { msgId } });
     const content = turnsByMode[activeModeRef.current].getMessageContent(msgId);
     if (content) window.electronAPI?.overlay?.copy?.(content);
   }, [turnsByMode]);
@@ -987,14 +986,13 @@ const OverlayApp: React.FC = () => {
   const handleSaveLibrary = useCallback(async (msgId: string) => {
     const content = turnsByMode[activeModeRef.current].getMessageContent(msgId);
     if (!content) return;
-    Sentry.addBreadcrumb({ category: 'overlay.action', message: 'Open save-to-library picker', level: 'info', data: { msgId, contentLen: content.length } });
     setCollectionPromptContent(content);
     setCollectionPromptMsgId(msgId);
     try {
       const result = await window.electronAPI?.overlay?.getCollections?.();
       setCollections(Array.isArray(result) ? result : []);
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'load-collections' } });
+      console.error('[Overlay] load collections failed:', err);
       setCollections([]);
     }
     setCollectionPickerOpen(true);
@@ -1024,14 +1022,8 @@ const OverlayApp: React.FC = () => {
         next.add(msgId);
         return next;
       });
-      Sentry.addBreadcrumb({
-        category: 'overlay.action',
-        message: 'Prompt saved to library',
-        level: 'info',
-        data: { msgId, collectionId: targetCollectionId, createdNewCollection: collectionId === 'new' },
-      });
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'save-prompt' }, extra: { msgId } });
+      console.error('[Overlay] save prompt failed:', err);
       setErrorMessage('Could not save prompt. Please try again.');
       setTimeout(() => setErrorMessage(null), 5000);
     }
@@ -1041,14 +1033,12 @@ const OverlayApp: React.FC = () => {
   const handleReplace = useCallback(async (msgId: string) => {
     const content = turnsByMode[activeModeRef.current].getMessageContent(msgId);
     if (!content) return;
-    Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Replace IPC invoked', level: 'info', data: { msgId, contentLen: content.length } });
     try {
       const result = await window.electronAPI?.overlay?.insert?.(content);
       if (!result?.success) {
-        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Replace IPC returned failure', level: 'warning' });
       }
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'replace' } });
+      console.error('[Overlay] replace failed:', err);
       window.electronAPI?.overlay?.copy?.(content);
     }
   }, [turnsByMode]);
@@ -1056,7 +1046,6 @@ const OverlayApp: React.FC = () => {
   // ── Section insert (per-section paste without closing overlay) ───────────
   const handleInsertSection = useCallback(async (sectionIdx: number, text: string) => {
     const mode = activeModeRef.current;
-    Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert IPC invoked', level: 'info', data: { sectionIdx, textLen: text.length, mode } });
     try {
       const result = await window.electronAPI?.overlay?.insertSection?.(text);
       if (result?.success) {
@@ -1064,12 +1053,10 @@ const OverlayApp: React.FC = () => {
           ...prev,
           [mode]: new Set(prev[mode]).add(sectionIdx),
         }));
-        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert succeeded', level: 'info', data: { sectionIdx } });
       } else {
-        Sentry.addBreadcrumb({ category: 'overlay.ipc', message: 'Section insert returned failure', level: 'warning', data: { sectionIdx } });
       }
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'insert-section' }, extra: { sectionIdx } });
+      console.error('[Overlay] insert section failed:', err);
       window.electronAPI?.overlay?.copy?.(text);
     }
   }, []);
@@ -1220,15 +1207,13 @@ const OverlayApp: React.FC = () => {
             .map((p) => ({ projectId: p.projectId, localPath: p.localPath }));
           if (projectApi?.ensureFresh && toCheck.length > 0) {
             projectApi.ensureFresh(toCheck).catch((err: unknown) => {
-              Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'attach-ensure-fresh' } });
             });
           }
         } catch (err) {
-          Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'attach-ensure-fresh' } });
+          console.error('[Overlay] ensure fresh on attach failed:', err);
         }
       })
       .catch((err) => {
-        Sentry.captureException(err, { tags: { component: 'overlay-app', op: 'space-picker-confirm' } });
         setSpacePickerOpen(false);
       });
   }, [spacesTurns, clarificationMode]);
@@ -1244,8 +1229,8 @@ const OverlayApp: React.FC = () => {
   const chatMeta = spaceStatusMeta(selectedSpaceStatus);
 
   return (
-    <Sentry.ErrorBoundary
-      fallback={({ error, resetError }) => (
+    <ErrorBoundary
+      fallback={({ resetError }) => (
         <div style={{ padding: 20, textAlign: 'center', fontFamily: 'Inter, sans-serif', color: '#ccc' }}>
           <p>Something went wrong</p>
           <button onClick={resetError} style={{ marginTop: 8, cursor: 'pointer' }}>Try Again</button>
@@ -1263,8 +1248,8 @@ const OverlayApp: React.FC = () => {
             spaceStatus={selectedSpaceStatus}
           />
 
-          {!isAuthenticated ? (
-            <AuthGate onOpenApp={handleOpenApp} />
+          {!isAuthenticated || !aiConfigured ? (
+            <SetupGate onOpenApp={handleOpenApp} />
           ) : (
             <div className="view active" style={{ flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
               <OfflineBanner visible={!isOnline} />
@@ -1456,7 +1441,7 @@ const OverlayApp: React.FC = () => {
 
       <ZoomIndicator />
     </div>
-    </Sentry.ErrorBoundary>
+    </ErrorBoundary>
   );
 };
 

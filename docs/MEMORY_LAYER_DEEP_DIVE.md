@@ -1,6 +1,8 @@
 # Memory Layer — Complete Technical Documentation
 
-> **Scope**: This document covers the **user personalization memory** system — the feature that learns facts about a user from their prompt optimization history and injects those facts back into future optimizations. It does **not** cover code-intelligence embeddings/pgvector (`code-intelligence-service/`), which index repository code, not user facts.
+> **Scope**: This document covers the **user personalization memory** system — the feature that learns facts about a user from their prompt optimization history and injects those facts back into future optimizations. It does **not** cover code-intelligence embeddings (`code-intelligence-service/`, per-project SQLite indexes with on-device ONNX embeddings), which index repository code, not user facts.
+>
+> Prmpt is a local-first, single-user desktop app. Memory lives in the app's local SQLite database on the user's machine; there is no server-side copy and no login.
 
 ---
 
@@ -8,12 +10,12 @@
 
 1. [Architecture Overview](#1-architecture-overview)
 2. [Database Schema](#2-database-schema)
-3. [Core Backend Service — `MemoryService](#3-core-backend-service--memoryservice)`
-4. [Orchestration — `MemoryAnalyzer](#4-orchestration--memoryanalyzer)`
+3. [Core Backend Service — `MemoryService`](#3-core-backend-service--memoryservice)
+4. [Orchestration — `MemoryAnalyzer`](#4-orchestration--memoryanalyzer)
 5. [Python Extraction Endpoint](#5-python-extraction-endpoint)
 6. [IPC Bridge (Electron Main ↔ Renderer)](#6-ipc-bridge-electron-main--renderer)
 7. [Chat Integration — How Memory Gets Used](#7-chat-integration--how-memory-gets-used)
-8. [Frontend UI — `MemoryView](#8-frontend-ui--memoryview)`
+8. [Frontend UI — `MemoryView`](#8-frontend-ui--memoryview)
 9. [Priority System (Explicit vs Inferred)](#9-priority-system-explicit-vs-inferred)
 10. [End-to-End Data Flow](#10-end-to-end-data-flow)
 11. [Security & Sanitization](#11-security--sanitization)
@@ -25,82 +27,86 @@
 
 ## 1. Architecture Overview
 
-The memory layer is a **user personalization system** that learns facts about the user from their prompt optimization history and injects those facts back into future optimizations. It operates across four layers:
+The memory layer is a **user personalization system** that learns facts about the user from their prompt optimization history and injects those facts back into future optimizations. It spans the React renderer, the Electron main process (which owns the local SQLite database) and the local Python optimizer service:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         RENDERER (React)                             │
 │  MemoryView.tsx ─── Settings > Memory tab                            │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐                  │
 │  │ About You   │  │ Usage       │  │ Recurring    │   Toggle: Learn  │
 │  │ (user)      │  │ Patterns    │  │ Themes       │   from my usage  │
 │  │             │  │ (behavioral)│  │ (context)    │                  │
-│  └─────────────┘  └─────────────┘  └──────────────┘                 │
+│  └─────────────┘  └─────────────┘  └──────────────┘                  │
 │         │                │                │                          │
 │         └────────────────┼────────────────┘                          │
-│                          │  window.electronAPI.memory.*               │
+│                          │  window.electronAPI.memory.*              │
 └──────────────────────────┼───────────────────────────────────────────┘
                            │  IPC (invoke / on)
 ┌──────────────────────────┼───────────────────────────────────────────┐
-│                  ELECTRON MAIN PROCESS                                │
+│                  ELECTRON MAIN PROCESS                               │
 │                          │                                           │
 │  ┌───────────────────────▼───────────────────────┐                   │
-│  │           user-handlers.ts (IPC controllers)   │                   │
-│  │  memory:get · memory:upsert · memory:delete    │                   │
-│  │  memory:get-enabled · memory:set-enabled        │                   │
+│  │  user-handlers.ts (IPC controllers)           │                   │
+│  │  memory:get · memory:upsert · memory:delete   │                   │
+│  │  memory:get-enabled · memory:set-enabled      │                   │
 │  └───────────────────────┬───────────────────────┘                   │
 │                          │                                           │
 │  ┌───────────────────────▼───────────────────────┐                   │
-│  │              MemoryService                      │                   │
-│  │  getMemory() · upsertMemoryEntry()              │                   │
-│  │  upsertInferredEntries() · deleteMemoryEntry()  │                   │
-│  │  buildMemoryContext() · hasExplicitEntry()       │                   │
+│  │  MemoryService                                │                   │
+│  │  getMemory() · upsertMemoryEntry()            │                   │
+│  │  upsertInferredEntries() · deleteMemoryEntry()│                   │
+│  │  buildMemoryContext() · hasExplicitEntry()    │                   │
+│  │  reads/writes prmpt.db via better-sqlite3     │                   │
 │  └───────────────────────┬───────────────────────┘                   │
 │                          │                                           │
 │  ┌───────────────────────▼───────────────────────┐                   │
-│  │              MemoryAnalyzer                     │                   │
-│  │  onNewOptimization() — every 3rd optimization   │                   │
-│  │  extractAndUpsert() — LLM extraction pipeline   │                   │
-│  │  isMemoryEnabled() — toggle check               │                   │
+│  │  MemoryAnalyzer                               │                   │
+│  │  onNewOptimization() — every 3rd optimization │                   │
+│  │  extractAndUpsert() — LLM extraction pipeline │                   │
+│  │  isMemoryEnabled() — toggle check             │                   │
 │  └───────────────────────┬───────────────────────┘                   │
 │                          │                                           │
 │  ┌───────────────────────▼───────────────────────┐                   │
-│  │  chat-handlers.ts / overlay-ipc-handlers.ts    │                   │
-│  │  Inject memory into customInstructions before   │                   │
-│  │  optimization; fire analyzer after each result  │                   │
+│  │  chat-handlers.ts / overlay-ipc-handlers.ts   │                   │
+│  │  Inject memory into customInstructions before │                   │
+│  │  optimization; fire analyzer after each result│                   │
 │  └───────────────────────┬───────────────────────┘                   │
 └──────────────────────────┼───────────────────────────────────────────┘
-                           │  HTTP (axios)
+                           │  HTTP (axios) to 127.0.0.1:8001
+                           │  headers: X-Prmpt-OpenRouter-Key + chosen models
 ┌──────────────────────────┼───────────────────────────────────────────┐
-│                  PYTHON SERVICE (FastAPI)                             │
+│                  PYTHON SERVICE (FastAPI, local)                     │
 │                          │                                           │
 │  ┌───────────────────────▼───────────────────────┐                   │
-│  │     POST /extract-memory-facts                 │                   │
-│  │  LiteLLM completion → JSON array of facts      │                   │
-│  │  model: MEMORY_MODEL  temp: 0.1  max: 300 tok  │                   │
+│  │  POST /extract-memory-facts                   │                   │
+│  │  LiteLLM completion → JSON array of facts     │                   │
+│  │  model: MEMORY_MODEL  temp: 0.1  max: 300 tok │                   │
+│  │  → OpenRouter with the user's key             │                   │
 │  └───────────────────────────────────────────────┘                   │
 │                                                                      │
 │  ┌───────────────────────────────────────────────┐                   │
-│  │     optimizer.py                               │                   │
-│  │  Appends custom_instructions (incl. memory)    │                   │
-│  │  to system prompt with anti-override guard      │                   │
+│  │  optimizer.py                                 │                   │
+│  │  Appends custom_instructions (incl. memory)   │                   │
+│  │  to system prompt with anti-override guard    │                   │
 │  └───────────────────────────────────────────────┘                   │
 └──────────────────────────────────────────────────────────────────────┘
-                           │
-┌──────────────────────────┼───────────────────────────────────────────┐
-│                  SUPABASE POSTGRES                                    │
-│                          │                                           │
-│  ┌───────────────────────▼───────────────────────┐                   │
-│  │  user_memory                                   │                   │
-│  │  PK: id (UUID)                                 │                   │
-│  │  UNIQUE: (user_id, memory_type, key)           │                   │
-│  │  RLS: user_id = auth.uid()                     │                   │
-│  │  Columns: memory_type, key, value, confidence, │                   │
-│  │           source, observation_count, timestamps │                   │
+
+┌──────────────────────────────────────────────────────────────────────┐
+│        LOCAL SQLITE  {userData}/prmpt.db                             │
+│        (opened in-process by the Electron main process)              │
+│                                                                      │
+│  ┌───────────────────────────────────────────────┐                   │
+│  │  user_memory                                  │                   │
+│  │  PK: id (TEXT, UUID)                          │                   │
+│  │  UNIQUE: (user_id, memory_type, key)          │                   │
+│  │  user_id = LOCAL_USER_ID (single local user)  │                   │
+│  │  Columns: memory_type, key, value, confidence,│                   │
+│  │    source, observation_count, timestamps      │                   │
 │  └───────────────────────────────────────────────┘                   │
 │                                                                      │
 │  ┌───────────────────────────────────────────────┐                   │
-│  │  user_settings.memory_enabled (boolean)        │                   │
+│  │  user_settings.memory_enabled (INTEGER 0/1)   │                   │
 │  └───────────────────────────────────────────────┘                   │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -108,9 +114,11 @@ The memory layer is a **user personalization system** that learns facts about th
 Key design decisions:
 
 - **No vectors, no embeddings, no semantic search** on user memory. Facts are literal key-value strings; retrieval is "load all for user → filter by confidence → format string."
-- **No external vector database** (Qdrant, Pinecone, Weaviate, Chroma). The `pgvector` infrastructure elsewhere in the repo is for code intelligence (Spaces), not this feature.
-- **No dedicated REST API**. The renderer communicates via Electron IPC; the main process talks to Supabase via the JS client and to Python via HTTP.
+- **No vector database**. Code intelligence (Spaces) keeps its own per-project SQLite index with on-device embeddings; it is unrelated to this feature.
+- **No dedicated REST API**. The renderer communicates via Electron IPC; the main process reads and writes the local SQLite database in-process (better-sqlite3) and calls the Python service over HTTP on `127.0.0.1`.
+- **Local and single-user**. There is no login. Every row is written with `user_id = LOCAL_USER_ID` (`'00000000-0000-0000-0000-000000000001'`, from `electron/main/database/local-db.ts`); the column is kept so row shapes match the earlier API.
 - **No background workers or queues**. Extraction is fire-and-forget promises triggered inline after each optimization.
+- **Bring your own key**. Extraction calls OpenRouter with the user's own API key, which the Electron app sends to the Python service per request. Nothing about memory is stored outside the user's machine.
 
 ---
 
@@ -118,45 +126,41 @@ Key design decisions:
 
 ### 2.1 Table: `user_memory`
 
-**Migration**: `supabase/migrations/20260315120000_add_user_memory.sql`
+**Defined in**: `electron/main/database/local-db.ts` (`migrate()`)
+
+The app keeps all user data in one SQLite file, `{userData}/prmpt.db` (Electron's `app.getPath('userData')`, overridable with the `PRMPT_USER_DATA_DIR` env var). `getDb()` opens it lazily with better-sqlite3, sets `journal_mode = WAL`, `synchronous = NORMAL` and `foreign_keys = ON`, then runs `migrate()`. `migrate()` creates every table with `CREATE TABLE IF NOT EXISTS` and records `PRAGMA user_version = 1` (`SCHEMA_VERSION`); it does nothing on later opens.
 
 ```sql
 CREATE TABLE IF NOT EXISTS user_memory (
-  id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id      UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  memory_type  TEXT        NOT NULL CHECK (memory_type IN ('user', 'behavioral', 'context')),
-  key          TEXT        NOT NULL,
-  value        TEXT        NOT NULL,
-  confidence   FLOAT       NOT NULL DEFAULT 1.0 CHECK (confidence >= 0.0 AND confidence <= 1.0),
-  source       TEXT        NOT NULL DEFAULT 'inferred' CHECK (source IN ('inferred', 'explicit')),
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_user_memory UNIQUE (user_id, memory_type, key)
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  memory_type TEXT NOT NULL CHECK (memory_type IN ('user', 'behavioral', 'context')),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1.0,
+  source TEXT NOT NULL DEFAULT 'inferred' CHECK (source IN ('inferred', 'explicit')),
+  observation_count INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (user_id, memory_type, key)
 );
-```
-
-**Added by follow-up migration** (`20260323_add_observation_count_to_user_memory.sql`):
-
-```sql
-ALTER TABLE user_memory
-  ADD COLUMN IF NOT EXISTS observation_count INT NOT NULL DEFAULT 1;
 ```
 
 ### 2.2 Column Reference
 
 
-| Column              | Type        | Default             | Constraints                                | Purpose                                                          |
-| ------------------- | ----------- | ------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| `id`                | UUID        | `gen_random_uuid()` | PK                                         | Row identifier                                                   |
-| `user_id`           | UUID        | —                   | FK → `auth.users(id)` ON DELETE CASCADE    | Owner. Cascade ensures account deletion removes all memory       |
-| `memory_type`       | TEXT        | —                   | CHECK IN (`user`, `behavioral`, `context`) | Bucket categorization (see §2.3)                                 |
-| `key`               | TEXT        | —                   | Part of UNIQUE constraint                  | Snake_case label within a bucket (e.g. `role`, `preferred_tone`) |
-| `value`             | TEXT        | —                   | NOT NULL                                   | The factual statement (e.g. "Full-stack developer")              |
-| `confidence`        | FLOAT       | `1.0`               | CHECK 0.0–1.0                              | How certain the system is. Explicit = 1.0; inferred ≤ 0.95       |
-| `source`            | TEXT        | `'inferred'`        | CHECK IN (`inferred`, `explicit`)          | Who created it: the user or the LLM                              |
-| `observation_count` | INT         | `1`                 | NOT NULL                                   | How many times the LLM independently observed this fact          |
-| `created_at`        | TIMESTAMPTZ | `NOW()`             | NOT NULL                                   | Row creation time                                                |
-| `updated_at`        | TIMESTAMPTZ | `NOW()`             | NOT NULL, auto-updated by trigger          | Last modification time                                           |
+| Column              | Type    | Default      | Constraints                                | Purpose                                                                 |
+| ------------------- | ------- | ------------ | ------------------------------------------ | ----------------------------------------------------------------------- |
+| `id`                | TEXT    | —            | PK                                         | Row identifier, a UUID from `newId()` (`crypto.randomUUID()`)           |
+| `user_id`           | TEXT    | —            | NOT NULL, part of UNIQUE constraint        | Always `LOCAL_USER_ID`. No foreign key (there is no users table)        |
+| `memory_type`       | TEXT    | —            | CHECK IN (`user`, `behavioral`, `context`) | Bucket categorization (see §2.3)                                        |
+| `key`               | TEXT    | —            | Part of UNIQUE constraint                  | Snake_case label within a bucket (e.g. `role`, `preferred_tone`)        |
+| `value`             | TEXT    | —            | NOT NULL                                   | The factual statement (e.g. "Full-stack developer")                     |
+| `confidence`        | REAL    | `1.0`        | NOT NULL (range not enforced by the DB)    | How certain the system is. Explicit = 1.0; inferred ≤ 0.95 (see §5.3)   |
+| `source`            | TEXT    | `'inferred'` | CHECK IN (`inferred`, `explicit`)          | Who created it: the user or the LLM                                     |
+| `observation_count` | INTEGER | `1`          | NOT NULL                                   | How many times the LLM independently observed this fact                 |
+| `created_at`        | TEXT    | —            | NOT NULL                                   | ISO 8601 timestamp from `nowIso()`, written on first insert only        |
+| `updated_at`        | TEXT    | —            | NOT NULL                                   | ISO 8601 timestamp from `nowIso()`, rewritten on every upsert (§2.5)    |
 
 
 ### 2.3 Memory Type Buckets
@@ -171,42 +175,49 @@ ALTER TABLE user_memory
 
 ### 2.4 Indexes & Constraints
 
-- **Unique constraint**: `UNIQUE (user_id, memory_type, key)` — one value per user per type per key. This is what makes upsert work via `ON CONFLICT`.
-- **Composite index**: `idx_user_memory_user_type ON (user_id, memory_type)` — efficient per-user filtered queries.
-- **RLS policy**: "Users can manage own memory" — `USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())` for ALL operations.
-- **Permissions**: `GRANT SELECT, INSERT, UPDATE, DELETE ON user_memory TO authenticated`.
+- **Unique constraint**: `UNIQUE (user_id, memory_type, key)` — one value per type per key. This is what makes upsert work via `INSERT ... ON CONFLICT(user_id, memory_type, key) DO UPDATE`. SQLite backs it with an automatic unique index, which also serves the per-user lookups; there is no separate index.
+- **CHECK constraints** on `memory_type` and `source` reject unknown buckets or sources at write time.
+- **No row-level security or grants**. Only the Electron main process opens `prmpt.db`; the renderer reaches memory only through the IPC channels in §6. See §11.1.
 
-### 2.5 Auto-update Trigger
+### 2.5 Timestamps
+
+There is no trigger. `MemoryService.upsertRow()` writes `created_at` and `updated_at` from `nowIso()` on insert, and its `ON CONFLICT ... DO UPDATE` clause sets `updated_at = excluded.updated_at` while leaving `created_at` unchanged:
 
 ```sql
-CREATE OR REPLACE FUNCTION update_user_memory_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trigger_user_memory_updated_at
-  BEFORE UPDATE ON user_memory
-  FOR EACH ROW
-  EXECUTE FUNCTION update_user_memory_updated_at();
+INSERT INTO user_memory
+  (id, user_id, memory_type, key, value, confidence, source, observation_count, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(user_id, memory_type, key) DO UPDATE SET
+  value = excluded.value,
+  confidence = excluded.confidence,
+  source = excluded.source,
+  observation_count = excluded.observation_count,
+  updated_at = excluded.updated_at
 ```
 
 ### 2.6 Settings Toggle
 
-**Migration**: `supabase/migrations/20260323_add_memory_enabled_to_settings.sql`
+The toggle is a column of the local `user_settings` table, created in the same `migrate()`:
 
 ```sql
-ALTER TABLE user_settings
-  ADD COLUMN IF NOT EXISTS memory_enabled BOOLEAN NOT NULL DEFAULT true;
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id TEXT PRIMARY KEY,
+  ...
+  memory_enabled INTEGER NOT NULL DEFAULT 1,
+  ...
+);
 ```
 
-When `false`, automatic fact extraction is disabled. Users can still add/edit facts manually.
+SQLite has no boolean type: `SettingsService` (`electron/main/database/services/settings-service.ts`) writes `0`/`1` and converts back to a boolean with `toBool()` on read. `DEFAULT_SETTINGS.memory_enabled` is `true`.
 
-### 2.7 GDPR / Account Deletion
+When `false`, automatic fact extraction is disabled and memory is no longer injected into optimizations. Users can still add/edit facts manually.
 
-The migration `20260328_add_deletion_requests.sql` contains a comment noting that `user_memory` rows should be removed in GDPR processing. The `ON DELETE CASCADE` foreign key also ensures rows are removed when the `auth.users` row is deleted.
+### 2.7 Deleting Memory
+
+There are no accounts, so there is no account-deletion flow and no cascade. Memory is removed:
+
+- one fact at a time from Settings > Memory (`memory:delete` → `MemoryService.deleteMemoryEntry()`), or
+- all at once by deleting `prmpt.db` (or the whole user-data folder) while the app is closed.
 
 ---
 
@@ -214,7 +225,7 @@ The migration `20260328_add_deletion_requests.sql` contains a comment noting tha
 
 **File**: `electron/main/database/services/memory-service.ts`
 
-This is the data-access layer. Every read/write to `user_memory` goes through it. It uses the Supabase JS client directly (not a REST API).
+This is the data-access layer. Every read/write to `user_memory` goes through it. It uses the shared better-sqlite3 connection from `getDb()` (`local-db.ts`) with prepared statements, and every query filters on `user_id = LOCAL_USER_ID`. better-sqlite3 is synchronous; the methods keep their `async` signatures so callers did not change.
 
 ### 3.1 Types
 
@@ -248,13 +259,13 @@ export interface UserMemoryMap {
 
 #### `getMemory(): Promise<UserMemoryMap>`
 
-Fetches all entries for the authenticated user, ordered by `memory_type` then `key`, and groups them into the three-bucket map. This powers both the Settings UI and the context builder.
+Fetches all entries for the local user (`SELECT * FROM user_memory WHERE user_id = ? ORDER BY memory_type ASC, key ASC`) and groups them into the three-bucket map. This powers both the Settings UI and the context builder.
 
 #### `upsertMemoryEntry(memoryType, key, value, source, confidence)`
 
-Single-entry upsert used by the IPC handler when users manually add or edit a fact from the UI. Uses `ON CONFLICT (user_id, memory_type, key)` for conflict resolution. Always resets `observation_count` to 1 (explicit entries don't accumulate observations).
+Single-entry upsert used by the IPC handler when users manually add or edit a fact from the UI. Writes through the private `upsertRow()` helper (`INSERT ... ON CONFLICT(user_id, memory_type, key) DO UPDATE`, see §2.5). Always resets `observation_count` to 1 (explicit entries don't accumulate observations).
 
-Default `source` is `'inferred'`; the UI always overrides to `'explicit'`. Default `confidence` is `1.0`.
+Default `source` is `'inferred'` and default `confidence` is `1.0`; the `memory:upsert` handler defaults `source` to `'explicit'`, and the UI passes `'explicit'` anyway.
 
 #### `hasExplicitEntry(memoryType, key): Promise<boolean>`
 
@@ -262,21 +273,22 @@ Checks if a user-set (`source = 'explicit'`) entry exists for a given `(memoryTy
 
 #### `upsertInferredEntry(memoryType, key, value, confidence)`
 
-Single inferred upsert with explicit-priority check and observation count incrementing. Calls `hasExplicitEntry()` first and bails if it returns `true`. If the row already exists, increments `observation_count` by 1.
+Single inferred upsert with explicit-priority check and observation count incrementing (default `confidence` is `0.7`). Calls `hasExplicitEntry()` first and bails if it returns `true`. If the row already exists, increments `observation_count` by 1. Not used by the analyzer, which goes through the batch method below.
 
 #### `upsertInferredEntries(facts[]): Promise<number>`
 
-**Batch upsert** — the primary write path for automated fact extraction. Optimized to exactly **3 DB round-trips** regardless of how many facts are being written:
+**Batch upsert** — the primary write path for automated fact extraction. It runs two reads and one write transaction regardless of how many facts are being written:
 
-1. **Fetch all explicit entries** → builds a `Set<"memoryType::key">` for O(1) skip checks.
-2. **Fetch existing inferred entries** → builds a `Map` of current `observation_count` values.
-3. **Single batch upsert** of all eligible rows with incremented counts.
+1. **Read all explicit entries** → builds a `Set<"memoryType::key">` for O(1) skip checks.
+2. **Read existing rows** (`memory_type`, `key`, `observation_count`) → builds a `Map` of current counts.
+3. **Sanitize** keys/values (§3.3) and drop rows that end up empty.
+4. **One transaction** (`conn.transaction(...)`) that runs `upsertRow()` for each eligible fact with its incremented count.
 
 Returns the number of rows actually written (after filtering out explicit-blocked and empty-after-sanitization rows).
 
 #### `deleteMemoryEntry(memoryType, key)`
 
-Deletes a specific entry filtered by `(user_id, memory_type, key)`. RLS is also enforced server-side.
+Deletes a specific entry filtered by `(user_id, memory_type, key)`.
 
 #### `buildMemoryContext(): Promise<string>`
 
@@ -284,7 +296,7 @@ The critical method that transforms stored facts into a string injected into the
 
 **Algorithm:**
 
-1. Load all memory entries via `getMemory()`.
+1. Load all memory entries via `getMemory()` (returns an empty string if that throws).
 2. Filter to entries with `confidence >= 0.5`.
 3. Split `user`-type entries into two groups:
   - **Persona keys** (from a hardcoded set: `occupation`, `role`, `job_title`, `profession`, `industry`, `expertise`, `background`, `identity`, `title`, `position`)
@@ -317,7 +329,7 @@ Recurring Themes:
 
 ### 3.3 Sanitization
 
-Every key and value passes through `sanitizeField()` before storage and before injection:
+Keys and values pass through `sanitizeField()` in two places: before storage in the batch inferred path (`upsertInferredEntries()`), and again for every entry at injection time in `buildMemoryContext()`. Manual entries (`upsertMemoryEntry()`) and the single-entry `upsertInferredEntry()` store the text as given, so they are sanitized only at injection.
 
 ```typescript
 private static sanitizeField(raw: string, maxLen: number): string {
@@ -366,7 +378,7 @@ constructor(
 )
 ```
 
-Lazily instantiated in `chat-handlers.ts` and `overlay-ipc-handlers.ts` via `getServices()`. Receives the shared `PythonClient` and `AppWindowManager` for HTTP calls and UI event pushing.
+Lazily instantiated in `chat-handlers.ts` (via `getServices()`) and in `overlay-ipc-handlers.ts` (via `getMemoryAnalyzer()`). Each file keeps its own instance. Receives the shared `PythonClient` and `AppWindowManager` for HTTP calls and UI event pushing.
 
 ### 4.2 Throttling
 
@@ -375,11 +387,11 @@ private optimizationsSinceLastRun = 0;
 private readonly runEveryN = 3;
 ```
 
-Extraction only runs every **3rd** successful optimization. This prevents hammering the LLM endpoint during rapid-fire usage. The counter is **in-memory** and resets on app restart — there is no persistent tracking of the count.
+Extraction only runs every **3rd** successful optimization. This prevents hammering the LLM endpoint during rapid-fire usage. The counter is **in-memory** and resets on app restart — there is no persistent tracking of the count. Because the chat and overlay handlers hold separate analyzer instances, each path counts on its own.
 
 ### 4.3 `onNewOptimization(userId, rawPrompt, optimizedText, skill)`
 
-The public entry point, called fire-and-forget after every successful optimization:
+The public entry point, called fire-and-forget after every successful optimization (`userId` is always `LOCAL_USER_ID` and is only used for logging):
 
 1. Increment `optimizationsSinceLastRun`.
 2. If counter < `runEveryN` (3), return immediately (no extraction this time).
@@ -388,19 +400,19 @@ The public entry point, called fire-and-forget after every successful optimizati
 
 ### 4.4 `extractAndUpsert()` — Core Pipeline
 
-1. **Check toggle**: `isMemoryEnabled()` reads `user_settings.memory_enabled`. Defaults to `true` if settings can't be fetched (fail-open). If disabled, logs and returns.
-2. **Extract facts**: `pythonClient.extractMemoryFacts(rawPrompt, optimizedText, skill)` → HTTP POST to Python service.
+1. **Check toggle**: `isMemoryEnabled()` reads `user_settings.memory_enabled`. Defaults to `true` if settings can't be read (fail-open). If disabled, logs and returns.
+2. **Extract facts**: `pythonClient.extractMemoryFacts(rawPrompt, optimizedText, skill)` → HTTP POST to the local Python service, which calls OpenRouter with the user's key.
 3. **Filter**: Only accepts facts with valid categories (`user`, `behavioral`, `context`).
-4. **Batch upsert**: `memoryService.upsertInferredEntries(eligibleFacts)` — 3 DB round-trips, respects explicit priority.
+4. **Batch upsert**: `memoryService.upsertInferredEntries(eligibleFacts)` — two reads plus one transaction, respects explicit priority.
 5. **Push to UI**: If any rows were upserted and `appWindowManager` is available, sends `memory:updated` event with the full updated `UserMemoryMap`.
 
 ### 4.5 `isMemoryEnabled(): Promise<boolean>`
 
-Reads the user's settings to check the memory toggle. Returns `true` by default if:
+Reads the local settings to check the memory toggle. Returns `true` by default if:
 
-- The user profile can't be fetched
-- The settings can't be fetched
-- The `memory_enabled` field is `null` or missing (old DB rows)
+- The local profile can't be read (`UserService.getUserProfile()` creates the profile row on first use, so this is rare)
+- No `user_settings` row has been saved yet
+- Reading the settings throws
 
 This is a **fail-open** design: memory features stay active unless explicitly disabled.
 
@@ -408,7 +420,7 @@ This is a **fail-open** design: memory features stay active unless explicitly di
 
 ## 5. Python Extraction Endpoint
 
-**File**: `python-service/app/main.py` (lines 1086–1220)
+**File**: `python-service/app/main.py` (the `MEMORY FACT EXTRACTION` block, about lines 880–1021)
 
 ### 5.1 Pydantic Models
 
@@ -454,21 +466,22 @@ Rules:
 
 ### 5.3 Endpoint Logic (`POST /extract-memory-facts`)
 
-1. **Auth**: Protected by `require_auth` (Supabase JWT verification).
-2. **Input validation**: Raw prompt must be ≥ 10 characters. If shorter, returns empty facts.
-3. **User content construction**: Concatenates raw prompt + optimized text + optional detected skill.
-4. **LLM call** via LiteLLM:
-  - **Model**: `MEMORY_MODEL` (defaults to `SUMMARIZER_MODEL` → `openrouter/openai/gpt-4o-mini`)
+1. **No auth, local only**: The service listens on `127.0.0.1` and serves a single local user. The `BrowserOriginGuard` middleware (`app/origin_guard.py`) rejects requests that carry a browser `Origin` other than the service's own host or `ALLOWED_ORIGINS`; the Electron app sends no `Origin`.
+2. **Provider settings**: The `llm_from_headers` dependency builds an `LLMSettings` from the request headers (`X-Prmpt-OpenRouter-Key`, `X-Prmpt-Optimizer-Model`, `X-Prmpt-Rag-Model`). Only the API key is used here; the key is used for this one call and never stored.
+3. **Input validation**: Raw prompt must be ≥ 10 characters. If shorter, returns empty facts.
+4. **User content construction**: `"Raw prompt:\n{raw}\n\nOptimized version:\n{optimized}"`, plus `"\n\nDetected skill: {skill}"` when a skill is given.
+5. **LLM call** via LiteLLM:
+  - **Model**: `MEMORY_MODEL` (defaults to `SUMMARIZER_MODEL` → `openrouter/openai/gpt-4o-mini`). The optimizer model the user picks in the app does not apply here.
   - **Temperature**: 0.1 (near-deterministic)
   - **Max tokens**: 300 (compact output)
-  - Uses `OPENROUTER_API_KEY` if the model name contains "openrouter"
-5. **Usage logging**: Logged as `memory_extraction` call type with prompt/completion tokens and latency for cost tracking.
-6. **JSON parsing**:
+  - **Key**: `provider_kwargs(model, llm.api_key)` passes the request's OpenRouter key for `openrouter/` models, falling back to the `OPENROUTER_API_KEY` env var. With neither, it raises `MissingAPIKeyError`, which the endpoint's error handling turns into empty facts.
+6. **Usage logging**: Logged as `memory_extraction` call type with prompt/completion tokens and latency via `pipeline_v2/usage_logger.py`, which appends to local JSONL files under `pipeline_v2/storage/usage/`.
+7. **JSON parsing**:
   - Strips markdown code fences if the LLM wraps its output in them.
   - Parses as JSON array; rejects non-array responses.
   - Validates each item: must have a valid category, non-empty key/value, confidence in [0.0, 1.0].
-7. **Confidence cap**: All inferred confidences are clamped to **max 0.95** so explicit entries (1.0) always win in priority comparisons.
-8. **Error handling**: Returns empty `facts: []` on any failure — JSON parse error, LLM timeout, network error, etc. Never throws to the caller.
+8. **Confidence cap**: All inferred confidences are clamped to **max 0.95** so explicit entries (1.0) always win in priority comparisons.
+9. **Error handling**: Returns empty `facts: []` on any failure — missing key, JSON parse error, LLM timeout, network error, etc. Never throws to the caller.
 
 ### 5.4 Model Configuration
 
@@ -481,7 +494,7 @@ TITLE_MODEL      = os.environ.get("TITLE_MODEL",      SUMMARIZER_MODEL)
 MEMORY_MODEL     = os.environ.get("MEMORY_MODEL",     SUMMARIZER_MODEL)
 ```
 
-`MEMORY_MODEL` cascades: env var → `SUMMARIZER_MODEL` env var → hardcoded `openrouter/openai/gpt-4o-mini`.
+`MEMORY_MODEL` cascades: env var → `SUMMARIZER_MODEL` env var → hardcoded `openrouter/openai/gpt-4o-mini`. The same file defines `LLMSettings`, the header names and `provider_kwargs()`.
 
 ### 5.5 HTTP Client (Electron Side)
 
@@ -508,6 +521,7 @@ async extractMemoryFacts(
 }
 ```
 
+- **Headers**: An axios request interceptor in the `PythonClient` constructor adds `aiSettings.pythonHeaders()` (the user's OpenRouter key and chosen models, from `ai-settings-service.ts`) to every request.
 - **Timeout**: 15 seconds.
 - **Failure mode**: Returns empty array. Never throws. Logged as a warning.
 
@@ -541,17 +555,19 @@ memory: {
 **File**: `electron/main/ipc-handlers/user-handlers.ts`
 
 
-| Channel              | Type                    | Auth Required                  | Purpose                                                                            |
-| -------------------- | ----------------------- | ------------------------------ | ---------------------------------------------------------------------------------- |
-| `memory:get`         | invoke (req/res)        | Yes (returns empty map if not) | Fetch all memory grouped by type                                                   |
-| `memory:upsert`      | invoke (req/res)        | Yes                            | Create or update a fact. UI defaults to `source: 'explicit'`, `confidence: 1.0`    |
-| `memory:delete`      | invoke (req/res)        | Yes                            | Remove a fact by `(memoryType, key)`                                               |
-| `memory:get-enabled` | invoke (req/res)        | Yes                            | Check if auto-learning toggle is on                                                |
-| `memory:set-enabled` | invoke (req/res)        | Yes                            | Toggle auto-learning on/off (writes to `user_settings`)                            |
-| `memory:updated`     | event (main → renderer) | —                              | Pushed after background extraction completes with the full updated `UserMemoryMap` |
+| Channel              | Type                    | Purpose                                                                            |
+| -------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| `memory:get`         | invoke (req/res)        | Fetch all memory grouped by type                                                   |
+| `memory:upsert`      | invoke (req/res)        | Create or update a fact. Defaults to `source: 'explicit'`, `confidence: 1.0`       |
+| `memory:delete`      | invoke (req/res)        | Remove a fact by `(memoryType, key)`                                               |
+| `memory:get-enabled` | invoke (req/res)        | Check if auto-learning toggle is on                                                |
+| `memory:set-enabled` | invoke (req/res)        | Toggle auto-learning on/off (writes `memory_enabled` to `user_settings`)           |
+| `memory:updated`     | event (main → renderer) | Pushed after background extraction completes with the full updated `UserMemoryMap` |
 
 
-All handlers wrap in try/catch with `Sentry.captureException` tagging the component and operation. On unauthenticated calls, `memory:get` returns `{ user: {}, behavioral: {}, context: {} }` instead of throwing.
+The handlers still check `authState.isAuthenticated`, but in the local build `electron/main/utils/auth-state.ts` is a constant (`isAuthenticated: true`, `currentUserId: LOCAL_USER_ID`), so those checks always pass.
+
+All handlers wrap in try/catch and log failures with `console.error`. On failure, `memory:get` returns `{ user: {}, behavioral: {}, context: {} }`, `memory:get-enabled` returns `true` (fail-open), and the write channels return `{ success: false, error }` instead of throwing.
 
 ### 6.3 TypeScript Contracts (Renderer Side)
 
@@ -595,11 +611,11 @@ Memory context is injected into the optimization pipeline at **four** distinct c
 | ------------------------- | ------------------------------------------------------ |
 | `chat-handlers.ts`        | `app:optimize-prompt` (main chat optimization)         |
 | `chat-handlers.ts`        | `app:send-message` (send with attachment/chat message) |
-| `chat-handlers.ts`        | `app:regenerate-prompt` (regeneration)                 |
+| `chat-handlers.ts`        | `app:regenerate-response` (regeneration)               |
 | `overlay-ipc-handlers.ts` | Overlay optimize                                       |
 
 
-All four follow the identical pattern:
+All four follow the same pattern (shown here from `chat-handlers.ts`):
 
 ```typescript
 // Append user memory context (guarded by toggle, non-blocking, silent failure)
@@ -618,7 +634,7 @@ if (authState.isAuthenticated && memory && analyzer) {
 }
 ```
 
-`customInstructions` may already contain `user_settings.prompt_instructions` (the user's manually entered custom instructions). Memory context is appended after it.
+`customInstructions` may already contain `user_settings.prompt_instructions` (the user's manually entered custom instructions, read from the local database). Memory context is appended after it. Clarification follow-ups reuse the `customInstructions` captured by the original request.
 
 ### 7.2 How the Optimizer Receives Memory
 
@@ -633,6 +649,8 @@ if custom_instructions and custom_instructions.strip():
         f"{custom_instructions.strip()}"
     )
 ```
+
+The fast path uses a variant of this block that also states the detected prompt category is authoritative.
 
 The anti-override language ("Do not let user memory override the user's explicit intent") is a guardrail to prevent persona facts from changing what the user is actually asking for. For example, if a user's memory says `role: "Marketing Manager"` but they ask to write a Python script, the optimizer should treat it as a coding task, not a marketing task.
 
@@ -819,9 +837,9 @@ User types a prompt in the app
         ▼
 [Electron Main — chat-handlers.ts]
   │
-  ├─ 1. Fetch user_settings.prompt_instructions (custom instructions)
+  ├─ 1. Read user_settings.prompt_instructions (custom instructions, local SQLite)
   │
-  ├─ 2. Check: is user authenticated? Do memory + analyzer exist?
+  ├─ 2. Check: authState guard (always true locally)? Do memory + analyzer exist?
   │     │
   │     └─ YES → analyzer.isMemoryEnabled()
   │              │
@@ -829,7 +847,7 @@ User types a prompt in the app
   │              │
   │              └─ TRUE → memory.buildMemoryContext()
   │                        │
-  │                        ├─ Load all user_memory rows
+  │                        ├─ Load all user_memory rows (local SQLite)
   │                        ├─ Filter: confidence >= 0.5
   │                        ├─ Split user entries: persona vs preferences
   │                        ├─ Build [USER PERSONA] and [USER PREFERENCES] blocks
@@ -859,7 +877,7 @@ Optimization completes successfully
         ▼
 [Electron Main — chat-handlers.ts]
   │
-  ├─ Save optimization record to DB
+  ├─ Save optimization record to the local DB (prompt_optimizations)
   │
   └─ Fire-and-forget: analyzer.onNewOptimization(userId, raw, optimized, skill)
            │
@@ -874,11 +892,12 @@ Optimization completes successfully
                 │
                 ├─ 2. pythonClient.extractMemoryFacts(raw, optimized, skill)
                 │     │
-                │     └─ POST /extract-memory-facts
+                │     └─ POST /extract-memory-facts (headers carry the user's OpenRouter key)
                 │        │
-                │        ├─ LLM (gpt-4o-mini, temp 0.1, max 300 tokens)
+                │        ├─ LLM via OpenRouter (MEMORY_MODEL, default gpt-4o-mini,
+                │        │  temp 0.1, max 300 tokens)
                 │        ├─ System: MEMORY_EXTRACTION_SYSTEM_PROMPT
-                │        ├─ User: "Raw prompt:\n{raw}\n\nOptimized:\n{optimized}"
+                │        ├─ User: "Raw prompt:\n{raw}\n\nOptimized version:\n{optimized}"
                 │        │
                 │        ├─ Parse JSON → validate categories, keys, values
                 │        ├─ Cap confidence at 0.95
@@ -888,11 +907,11 @@ Optimization completes successfully
                 │
                 ├─ 4. memoryService.upsertInferredEntries(facts)
                 │     │
-                │     ├─ Query 1: fetch all explicit entries → build skip set
-                │     ├─ Query 2: fetch existing entries → get observation counts
+                │     ├─ Read 1: SELECT explicit entries → build skip set
+                │     ├─ Read 2: SELECT existing rows → get observation counts
                 │     ├─ Sanitize keys/values (strip injection patterns)
-                │     ├─ Build upsert payload (skip explicit-blocked, increment counts)
-                │     └─ Query 3: batch upsert
+                │     ├─ Build rows (skip explicit-blocked, increment counts)
+                │     └─ Write: one transaction of INSERT ... ON CONFLICT DO UPDATE
                 │
                 └─ 5. appWindowManager.send('memory:updated', updatedMemory)
                       │
@@ -904,12 +923,15 @@ Optimization completes successfully
 
 ## 11. Security & Sanitization
 
-### 11.1 Authentication & Authorization
+### 11.1 Data Location & Access
 
-- **Database RLS**: Every query on `user_memory` is scoped to `auth.uid()`. Even if the Supabase client is misconfigured, Postgres enforces row-level access.
-- **IPC guards**: All IPC handlers check `authState.isAuthenticated` before proceeding.
-- **Python endpoint**: Protected by `require_auth` middleware (Supabase JWT verification).
-- **Account deletion**: `ON DELETE CASCADE` on the foreign key ensures all memory is removed when the user's auth record is deleted.
+- **Local only**: Memory lives in `{userData}/prmpt.db` on the user's machine. There is no server copy, no sync and no login.
+- **Who can read it**: Only the Electron main process opens the database. The renderer (context isolation on) reaches memory only through the five `memory:*` IPC channels in §6. On disk, the file is protected only by the OS's permissions on the user's profile folder.
+- **Not encrypted at rest**: `user_memory` rows are plain text in SQLite. (Only the API keys in `app_kv` are encrypted, with Electron `safeStorage` on Windows and Linux; macOS stores them as plain text to avoid keychain prompts.)
+- **No RLS**: Queries filter on `user_id = LOCAL_USER_ID`, but that keeps row shapes consistent rather than enforcing access; there is only one user.
+- **IPC guards**: Handlers still check `authState.isAuthenticated`, which is always `true` in the local build.
+- **Python endpoint**: No auth. It listens on `127.0.0.1` only and `BrowserOriginGuard` blocks calls from web pages (foreign `Origin` headers). The OpenRouter key arrives per request and is not stored.
+- **What leaves the machine**: For extraction, the raw prompt, the optimized text and the skill go to OpenRouter (with the user's key) on every 3rd optimization while learning is enabled. Injected memory context also reaches OpenRouter as part of the optimizer's system prompt.
 
 ### 11.2 Prompt Injection Defense
 
@@ -935,9 +957,11 @@ The `buildMemoryContext()` method adds per-section guardrails:
 - Persona: "NEVER use to change the type or purpose of the prompt. If the user asks to build software, it is a coding task regardless of their occupation."
 - Preferences: "apply where relevant to enrich the optimized prompt"
 
-### 11.4 GDPR Considerations
+### 11.4 User Control & Deletion
 
-The migration `20260328_add_deletion_requests.sql` documents that `user_memory` should be included in GDPR deletion flows. The `ON DELETE CASCADE` FK handles the database side, but the comment suggests additional edge function work may be needed for complete compliance.
+- **Off switch**: Turning off "Learn from my usage" stops both extraction and injection (§2.6).
+- **Per-fact deletion**: Settings > Memory → trash icon → `DELETE FROM user_memory WHERE user_id = ? AND memory_type = ? AND key = ?`.
+- **Full wipe**: Delete `prmpt.db` (or the user-data folder) while the app is closed. There is no account or server-side record to remove.
 
 ---
 
@@ -946,21 +970,23 @@ The migration `20260328_add_deletion_requests.sql` documents that `user_memory` 
 ### 12.1 Environment Variables
 
 
-| Variable             | Where Read                             | Default                                                            | Purpose                              |
-| -------------------- | -------------------------------------- | ------------------------------------------------------------------ | ------------------------------------ |
-| `MEMORY_MODEL`       | `python-service/pipeline_v2/config.py` | Falls back to `SUMMARIZER_MODEL` → `openrouter/openai/gpt-4o-mini` | LLM model used for fact extraction   |
-| `SUMMARIZER_MODEL`   | `python-service/pipeline_v2/config.py` | `openrouter/openai/gpt-4o-mini`                                    | Fallback for `MEMORY_MODEL`          |
-| `OPENROUTER_API_KEY` | `python-service/pipeline_v2/config.py` | `""`                                                               | API key for OpenRouter-hosted models |
+| Variable             | Where Read                             | Default                                                            | Purpose                                                                                             |
+| -------------------- | -------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `MEMORY_MODEL`       | `python-service/pipeline_v2/config.py` | Falls back to `SUMMARIZER_MODEL` → `openrouter/openai/gpt-4o-mini` | LLM model used for fact extraction                                                                  |
+| `SUMMARIZER_MODEL`   | `python-service/pipeline_v2/config.py` | `openrouter/openai/gpt-4o-mini`                                    | Fallback for `MEMORY_MODEL`                                                                         |
+| `OPENROUTER_API_KEY` | `python-service/pipeline_v2/config.py` | `""`                                                               | Fallback only, for calling the service directly (scripts/curl). The app sends the user's key per request |
 
 
 Note: `MEMORY_MODEL` is documented in `README.md` but is **not** listed in `.env.example`.
 
+The user's OpenRouter key is not an environment variable: it is entered in the app (onboarding or Settings > AI provider), stored by `electron/main/database/services/ai-settings-service.ts` in the local `app_kv` table, and sent to the service in the `X-Prmpt-OpenRouter-Key` header.
+
 ### 12.2 Database Settings
 
 
-| Setting          | Table           | Default | Purpose                                                                                        |
-| ---------------- | --------------- | ------- | ---------------------------------------------------------------------------------------------- |
-| `memory_enabled` | `user_settings` | `true`  | User toggle for auto-learning. When `false`, extraction is disabled; injection is also skipped |
+| Setting          | Table (local SQLite) | Default     | Purpose                                                                                        |
+| ---------------- | -------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `memory_enabled` | `user_settings`      | `1` (true)  | User toggle for auto-learning. When `false`, extraction is disabled; injection is also skipped |
 
 
 ### 12.3 Hardcoded Constants
@@ -980,6 +1006,7 @@ Note: `MEMORY_MODEL` is documented in `README.md` but is **not** listed in `.env
 | Input cap (optimized text) | Pydantic model                    | `50,000` chars | Prevents oversized extraction requests         |
 | Min prompt length          | Python endpoint                   | `10` chars     | Skips trivially short prompts                  |
 | HTTP timeout               | `PythonClient.extractMemoryFacts` | `15,000` ms    | Prevents indefinite waiting on extraction      |
+| `LOCAL_USER_ID`            | `local-db.ts`                     | `00000000-0000-0000-0000-000000000001` | The single local user's id on every row |
 
 
 ---
@@ -991,28 +1018,26 @@ Note: `MEMORY_MODEL` is documented in `README.md` but is **not** listed in `.env
 
 | File                                                  | Role                                                                                                                 |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `electron/main/database/local-db.ts`                  | Opens `{userData}/prmpt.db` (better-sqlite3), creates the schema incl. `user_memory`, exports `getDb()`, `LOCAL_USER_ID`, `newId()`, `nowIso()` |
 | `electron/main/database/services/memory-service.ts`   | Data-access layer: types, CRUD, sanitization, `buildMemoryContext()`                                                 |
 | `electron/main/database/services/memory-analyzer.ts`  | Orchestration: throttling, extraction pipeline, toggle check, UI push                                                |
 | `electron/main/ipc-handlers/user-handlers.ts`         | IPC controllers: `memory:get`, `memory:upsert`, `memory:delete`, `memory:get-enabled`, `memory:set-enabled`          |
 | `electron/main/ipc-handlers/chat-handlers.ts`         | Injects memory into `customInstructions` on optimize/send/regenerate; fires `analyzer.onNewOptimization` after saves |
 | `electron/main/ipc-handlers/overlay-ipc-handlers.ts`  | Same injection + analyzer for overlay optimize and clarification-complete paths                                      |
-| `electron/main/api/python-client.ts`                  | `extractMemoryFacts()` → HTTP `POST /extract-memory-facts`                                                           |
-| `electron/main/database/services/settings-service.ts` | `UserSettings.memory_enabled` + defaults                                                                             |
+| `electron/main/api/python-client.ts`                  | `extractMemoryFacts()` → HTTP `POST /extract-memory-facts`; interceptor adds the provider headers                    |
+| `electron/main/database/services/settings-service.ts` | `UserSettings.memory_enabled` + defaults (local `user_settings` table)                                               |
+| `electron/main/database/services/user-service.ts`     | Local profile used by `isMemoryEnabled()` and the toggle handlers                                                    |
+| `electron/main/database/services/ai-settings-service.ts` | User's OpenRouter key and models; `pythonHeaders()` for the requests above                                        |
+| `electron/main/utils/auth-state.ts`                   | Constant session for the single local user (no login)                                                                |
 | `python-service/app/main.py`                          | FastAPI models + `MEMORY_EXTRACTION_SYSTEM_PROMPT` + `/extract-memory-facts` endpoint                                |
-| `python-service/pipeline_v2/config.py`                | `MEMORY_MODEL` env config                                                                                            |
+| `python-service/app/origin_guard.py`                  | `BrowserOriginGuard` middleware for the local API                                                                    |
+| `python-service/pipeline_v2/config.py`                | `MEMORY_MODEL` env config, `LLMSettings`, `provider_kwargs()`                                                        |
 | `python-service/pipeline_v2/optimizer.py`             | Appends `custom_instructions` (incl. memory) to system prompt with anti-override guard                               |
 
 
-### 13.2 Database Migrations
+### 13.2 Schema
 
-
-| File                                                                    | Purpose                                                |
-| ----------------------------------------------------------------------- | ------------------------------------------------------ |
-| `supabase/migrations/20260315120000_add_user_memory.sql`                | Creates `user_memory` table, RLS, indexes, trigger     |
-| `supabase/migrations/20260323_add_memory_enabled_to_settings.sql`       | Adds `user_settings.memory_enabled`                    |
-| `supabase/migrations/20260323_add_observation_count_to_user_memory.sql` | Adds `observation_count` column                        |
-| `supabase/migrations/20260328_add_deletion_requests.sql`                | GDPR comment: delete `user_memory` in account deletion |
-
+There are no SQL migration files. The schema lives in `migrate()` in `electron/main/database/local-db.ts` and is created on first open. `migrate()` only runs while `PRAGMA user_version` is below `SCHEMA_VERSION` (currently `1`), so a schema change needs a version bump plus steps that upgrade existing databases.
 
 ### 13.3 Bridge & Types
 
@@ -1040,17 +1065,18 @@ Note: `MEMORY_MODEL` is documented in `README.md` but is **not** listed in `.env
 
 | Gap                                      | Description                                                                                                                                                        |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **No automated tests**                   | No test files found for any memory component (service, analyzer, IPC handlers, Python endpoint, or UI)                                                             |
+| **No automated tests**                   | Nothing tests the memory components (service, analyzer, IPC handlers, Python endpoint, or UI). `tests/e2e/overlay.test.ts` only mocks `MemoryService`/`MemoryAnalyzer`, and `tests/mocks/python-server.ts` stubs `/extract-memory-facts` |
 | **No TTL / decay**                       | Facts never expire. Memory accumulates indefinitely with no cleanup mechanism                                                                                      |
 | **No search or filter in UI**            | Users must scroll through all facts; no keyword search, date filter, or sort options                                                                               |
 | **No compaction**                        | If the same key is re-inferred with a different value, it overwrites. There's no versioning or history                                                             |
-| **In-memory throttle counter**           | `optimizationsSinceLastRun` resets on app restart, so the extraction cadence is unpredictable across sessions                                                      |
+| **In-memory throttle counter**           | `optimizationsSinceLastRun` resets on app restart, and the chat and overlay paths each keep their own counter, so the extraction cadence is unpredictable across sessions |
 | **No dedicated background workers**      | Extraction runs on fire-and-forget promises in the main Electron process. If the app closes mid-extraction, the work is lost                                       |
 | **No vector/semantic retrieval**         | All facts are loaded and filtered by confidence. As fact count grows, this doesn't scale — though the 800-char cap on output provides a natural ceiling            |
-| `**MEMORY_MODEL` not in `.env.example`** | Documented in README but missing from the example env file                                                                                                         |
+| **Priority check uses the raw key**      | `upsertInferredEntries()` checks explicit priority and observation counts against the key as returned by the LLM, but stores the sanitized key. If sanitization changes a key, the explicit check and the count lookup can miss |
+| **Not encrypted at rest**                | Memory rows are plain text in `prmpt.db`; anyone with access to the user's profile folder can read them                                                           |
+| **`MEMORY_MODEL` not in `.env.example`** | Documented in README but missing from the example env file                                                                                                         |
 | **Documentation drift**                  | `ARCHITECTURE.md` references `domain`/`style`/`score` columns that don't exist in the actual schema; the real columns are `memory_type`/`key`/`value`/`confidence` |
-| **No rate limiting on extraction**       | Beyond the every-3rd-optimization throttle, there's no per-minute or per-day cap on LLM extraction calls                                                           |
+| **No rate limiting on extraction**       | Beyond the every-3rd-optimization throttle, there's no per-minute or per-day cap on LLM extraction calls, which are billed to the user's own OpenRouter key        |
 | **No UI for observation count context**  | The eye icon shows the count but doesn't explain what it means (no tooltip beyond the HTML `title` attribute)                                                      |
-| **Fail-open toggle check**               | `isMemoryEnabled()` returns `true` on any error, meaning a settings-fetch failure could cause unwanted extraction                                                  |
-
+| **Fail-open toggle check**               | `isMemoryEnabled()` returns `true` on any error, meaning a settings-read failure could cause unwanted extraction                                                   |
 

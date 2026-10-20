@@ -1,7 +1,7 @@
 # Code Intelligence Service — Architecture Guide
 
 > How the retrieval (RAG) pipeline works: the what, why, and how, without code.
-> Last synced to source: June 2026.
+> Last synced to source: October 2026.
 
 ---
 
@@ -14,15 +14,24 @@ structured knowledge graph of the user's codebase and returns the 5–10 most
 relevant code chunks with precision, so the downstream optimizer can build a
 tight, correct prompt instead of stuffing an entire repo into context.
 
-**The index never leaves the user's machine.** Electron parses the codebase with
-tree-sitter (AST parsing), reduces it to structural skeletons (function names,
-signatures, call edges), and sends only those skeletons to this service. Source
-code bodies are stored in a **local SQLite database** (one per project, on the
-user's machine). Nothing goes to a cloud database.
+**The index never leaves the user's machine.** The service runs locally on
+`127.0.0.1:8002`. Electron parses the codebase with tree-sitter (AST parsing),
+reduces it to structural chunks (function names, signatures, call edges,
+imports, plus a code excerpt of up to 3000 characters per chunk for
+summarization), and sends them to this service. Everything the service derives
+from them (summaries, embeddings, PageRank, communities) is stored in a
+**local SQLite database**, one `index.db` per project on the user's machine.
+Source code bodies are not stored in the index: when a result needs code, the
+snippet is re-read from the file on disk using its path and line range.
+Nothing goes to a cloud database.
 
-> **Storage note:** The default `STORAGE_BACKEND=local` keeps all data in SQLite
-> on the user's machine. A Supabase backend exists as an optional alternative
-> but is not the default.
+> **What does leave the machine:** LLM calls. They go to OpenRouter (through
+> litellm) with the user's own API key: chunk code excerpts and their context
+> for summaries at index time, chunk names and summaries for community reports
+> and relationship summaries, and the query plus retrieved snippets for query
+> analysis, the agentic loop and answers. Embeddings and reranking run
+> on-device (ONNX); the reranker only falls back to an LLM call if its ONNX
+> model cannot be loaded. See [LLM Provider and Keys](#llm-provider-and-keys).
 
 ---
 
@@ -50,7 +59,11 @@ Everything the service does maps to one of three phases:
 
 **Triggered by:** `POST /api/index/ingest` — Electron sends parsed chunks + call graph
 
-**Runs as:** A background job. Project status goes `indexing → ready`.
+**Runs as:** An in-process background task inside the service (FastAPI
+background task, no external queue or worker). The endpoint returns `202`
+immediately; the request's OpenRouter key and RAG model are captured and
+re-applied for the background run. Project status goes `indexing → ready`
+(or `partial` / `error`).
 
 ```
 Electron sends:
@@ -95,7 +108,8 @@ Electron sends:
 ┌── Step 3: Parallel Summarization ──────────────────────────────────────────┐
 │                                                                             │
 │  🤖 LLM CALL #1 — SUMMARIZER                                                │
-│  Model:     deepseek-chat (via OpenRouter, configurable)                    │
+│  Model:     SUMMARIZER_MODEL (default deepseek-chat via OpenRouter, using   │
+│             the user's OpenRouter key)                                      │
 │  Batching:  8 chunks per LLM call, up to 10 calls running in parallel       │
 │  Frequency: First index only for each chunk (hash-deduplicated after)       │
 │                                                                             │
@@ -111,6 +125,8 @@ Electron sends:
 │  If the LLM returns malformed JSON, one automatic retry is performed with   │
 │  a stricter prompt. If that also fails, a fallback result is generated from │
 │  the chunk name + signature alone (no LLM cost, but lower quality).         │
+│  The same fallback is used when no OpenRouter key is configured, so         │
+│  indexing still completes without one.                                      │
 │                                                                             │
 │  The service logs `summary_empty_count` so degraded quality is visible      │
 │  in the ingest logs rather than silently polluting the index.               │
@@ -133,22 +149,27 @@ Electron sends:
 │  When a user types "where is verifyJWT", structure embedding finds it       │
 │  even if the summary never mentions the function name explicitly.            │
 │                                                                             │
-│  EMBEDDING BACKEND (important):                                             │
-│  Default: EMBEDDING_BACKEND=local — runs bge-small-en-v1.5 (384-dim) or   │
-│  bge-base-en-v1.5 (768-dim) via ONNX on CPU. Zero network hop, zero cost.  │
-│  Fallback: EMBEDDING_BACKEND=openai — uses text-embedding-3-large (1536d)  │
-│  via OpenAI API. Higher quality but costs money and requires network.       │
+│  EMBEDDING BACKEND (on-device only):                                        │
+│  EMBEDDING_BACKEND=local is the only supported value. It runs               │
+│  EMBEDDING_LOCAL_MODEL — Xenova/bge-small-en-v1.5 (384-dim, default) or     │
+│  Xenova/bge-base-en-v1.5 (768-dim) — via ONNX Runtime on CPU. The model is  │
+│  downloaded from the HuggingFace Hub on first use and cached; after that    │
+│  there is no network hop and no cost. No embedding API key is involved.     │
 └─────────────────────────────────────────────────────────────────────────────┘
          │
          ▼
 
 ┌── Step 5: Upsert to Local SQLite ──────────────────────────────────────────┐
 │                                                                             │
-│  Each chunk row stored in code_chunks table:                                │
+│  Each chunk row stored in the code_chunks table of the project's index.db: │
 │    file_path, name, chunk_type, start_line, end_line                        │
-│    code_body, summary_code, summary_purpose, concepts[]                     │
-│    embedding_summary (vector), embedding_structure (vector)                  │
+│    summary_code, summary_purpose, concepts_json                             │
+│    embedding_summary, embedding_structure (JSON float arrays in TEXT)       │
 │    content_hash, branch, is_exported, signature, language                   │
+│  The chunk's chunks_fts (FTS5) row is rewritten in the same transaction.    │
+│                                                                             │
+│  The code body itself is NOT stored. Snippets are re-read from disk         │
+│  (project local_path + file_path + line range) when a result needs code.    │
 │                                                                             │
 │  Conflict key: (project_id, file_path, name, chunk_type)                   │
 │  → Updating an existing function updates its row in place.                  │
@@ -401,11 +422,14 @@ code chunks.
 
 **Two execution modes:**
 
-1. **Agentic mode** (default for ASK/BUG/OPTIMIZE; `AGENTIC_RETRIEVAL_ENABLED`):
-   An LLM drives tool calls (search, get_definition, find_callers,
-   expand_neighbors, grep, read_chunk) in a bounded loop (max 6 hops, 25s
-   budget). It finds exactly the chunks it needs instead of running a fixed
-   recall pass. Falls back to one-shot on any error or empty result.
+1. **Agentic mode** (default for ASK/BUG/OPTIMIZE; `AGENTIC_RETRIEVAL_ENABLED`,
+   on unless set to `false`):
+   An LLM (`AGENT_MODEL`, overridden by the RAG model chosen in the app) drives
+   tool calls over the local SQLite index (search_symbols, get_definition,
+   find_callers, find_callees, expand_neighbors, grep, read_chunk) in a bounded
+   loop (max 6 hops, 25s budget, 15 chunks). It finds exactly the chunks it
+   needs instead of running a fixed recall pass. Falls back to one-shot on any
+   error or empty result.
 
 2. **One-shot mode** (always used by FIND, and the fallback for the others):
    Fixed recall → rank → rerank → refine pipeline. Everything below describes
@@ -424,7 +448,8 @@ User: "where is JWT verified"
 ┌── Multi-channel Recall (parallel) ─────────────────────────────────────────┐
 │                                                                             │
 │  Vector Search   — embed query → cosine similarity against embedding_summary│
-│  FTS Search      — full-text search on code_body + summaries               │
+│  FTS Search      — SQLite FTS5 (BM25) over path, name, signature,           │
+│                    summaries and concepts (SPLADE if SPLADE_ENABLED=true)   │
 │  Concept Search  — filter chunks tagged with matching concepts              │
 │  Filepath Search — pattern match query terms against file paths / names     │
 │                                                                             │
@@ -533,8 +558,10 @@ When GRAPH_BUILDER_ENABLED=true, the global path takes over:
          │
          ▼
 ┌── Answer Generation ───────────────────────────────────────────────────────┐
-│  🤖 LLM CALL — ANSWER_MODEL (deepseek-chat)                                 │
+│  🤖 LLM CALL — the RAG model chosen in the app (falls back to ANSWER_MODEL, │
+│  default deepseek-chat, when none is sent)                                  │
 │  ASK mode only (generate_answer=True)                                       │
+│  POST /api/context/stream streams this answer token-by-token over SSE.      │
 │                                                                             │
 │  Input: top ≤15 chunks + community context + user query                    │
 │  Output: a direct natural language answer citing specific files + lines     │
@@ -760,26 +787,58 @@ trigger refinement even at medium confidence.
 and the future MCP server can all talk to the same engine.
 
 ```
-POST /api/index/ingest     ← Electron: "here are the chunks, index this project"
-GET  /api/retrieve         ← Spaces UI: "give me raw chunks for this query"
-POST /api/context          ← python-service optimizer: "give me probable locations"
-POST /api/projects         ← create/list/delete projects
-POST /api/sync             ← trigger GitHub sync (polling)
-POST /api/webhooks/github  ← receive GitHub push events
-POST /api/feedback         ← user rating on search quality
-GET  /api/pipeline/status  ← A/B pipeline comparison
-GET  /api/graph/data/{id}  ← graph visualization data
-GET  /health/ready         ← deep health check (DB + AI provider)
+POST   /api/index/ingest                 ← Electron: "here are the chunks, index this project" (202)
+GET    /api/retrieve                     ← Spaces UI: "give me raw chunks for this query"
+POST   /api/context                      ← python-service optimizer: "give me probable locations"
+POST   /api/context/stream               ← Ask: locations first, then the answer streamed over SSE
+POST   /api/chunks/expand                ← fetch source for specific chunk ids on demand
+POST   /api/projects                     ← register a project (returns its UUID)
+GET    /api/projects                     ← list registered projects
+GET    /api/projects/{id}                ← one project (also warms its retrieval cache)
+DELETE /api/projects/{id}                ← delete the project and its index.db folder
+DELETE /api/projects/{id}/chunks         ← drop the chunks of one file (?file_path=)
+GET    /api/projects/{id}/graph-health   ← edge / PageRank / community counts
+POST   /api/feedback                     ← user rating on search quality
+GET    /api/pipeline/status              ← current pipeline fingerprint + tuning values
+GET    /api/pipeline/compare             ← compare results between two pipeline tags
+GET    /api/graph/data/{id}              ← graph visualization data
+DELETE /api/graph/data/{id}/cache        ← drop the cached visualization data
+GET    /api/debug/projects               ← list local project ids (for curl / scripts)
+POST   /api/debug/retrieve               ← run retrieval with a full score breakdown
+GET    /health                           ← liveness
+GET    /health/ready                     ← warmup done + SQLite root writable + local reranker loaded
 ```
+
+There is no login and no separation between users: the service is a
+single-user API meant to listen only on `127.0.0.1` (every launch command
+below binds there). Every request runs as one fixed local user
+(`app/auth.py`). Projects are identified by UUIDs; each project's database
+lives at `<root>/projects/<project_id>/index.db`, and the project registry is
+the `projects_local` row inside each `index.db` (listing projects scans
+`projects/*/index.db`). The root is `CODE_INTEL_DB_ROOT` if set, otherwise the
+folder Electron announces in the `X-Prmpt-Code-Intel-Root` header
+(`{userData}/code-intel`), otherwise an OS default
+(`%APPDATA%\Prmpt\code-intel`, `~/Library/Application Support/Prmpt/code-intel`,
+or `$XDG_CONFIG_HOME/Prmpt/code-intel`, falling back to `~/.config`).
+
+**Keeping browsers out.** Because there is no login, a web page open in the
+user's browser must not be able to call `127.0.0.1:8002`. The
+`BrowserOriginGuard` ASGI middleware (`app/origin_guard.py`) lets through
+requests with no `Origin` header (Electron and python-service call from
+Node/Python, which send none) and requests from the service's own origin;
+any other origin gets a `403` (WebSockets are closed with code 1008) unless it
+is listed in `ALLOWED_ORIGINS` (comma-separated; `*` is ignored).
 
 The key endpoint the optimizer calls is `POST /api/context`. It returns:
 ```
-probable_locations[]   — ranked chunks with code bodies + confidence scores
+probable_locations[]   — ranked chunks + confidence scores (one-shot results
+                         carry code bodies only when include_code_body=true;
+                         agentic results always carry them)
 related_locations[]    — graph-expanded structural neighbors
 intent                 — "bug" / "architecture" / "feature" / etc.
 concepts               — ["auth", "JWT", ...]
 project_summary        — tech stack + framework detection
-branch_context         — active branch + diverged files info
+branch_context         — current branch + default branch
 ```
 
 The optimizer takes `probable_locations[]` and weaves them into a
@@ -789,64 +848,136 @@ the answer — it only surfaces *where* to look.
 
 ---
 
+## LLM Provider and Keys
+
+Prmpt is bring-your-own-key: the user enters an OpenRouter API key and picks a
+RAG model in the desktop app (Settings > AI provider). The service stores
+neither. Every request carries them as headers:
+
+```
+X-Prmpt-OpenRouter-Key   ← the user's OpenRouter API key
+X-Prmpt-Rag-Model        ← OpenRouter model id, e.g. "anthropic/claude-haiku-4.5"
+```
+
+Electron sends both on every call, and python-service forwards them when it
+asks this service for project context. `app/main.py` reads them into a
+request-scoped contextvar (`app/llm.py`), and every litellm call asks
+`app/llm.py` for its key at the moment the call is made. Ingest captures the
+settings when the request arrives and re-applies them inside the background
+task. Nothing is persisted.
+
+- **Which calls use the RAG model:** answer generation (`ANSWER_MODEL`) and the
+  agentic loop (`AGENT_MODEL`). The header overrides both; the env values are
+  only defaults for when no model is sent. Ids are normalized to litellm form
+  (`openrouter/<id>`).
+- **Helper calls** (summaries, community reports, relationship summaries,
+  query decomposition, DRIFT follow-ups and refinement, the LLM reranker
+  fallback) keep their own env-configured models (`SUMMARIZER_MODEL`,
+  `COMMUNITY_MODEL`, `QUERY_DECOMPOSE_MODEL`, `QUERY_REFINER_MODEL`,
+  `RERANKER_MODEL`) but still run on the user's key.
+- **Fallback key:** `OPENROUTER_API_KEY` from the environment (or
+  `code-intelligence-service/.env`) is used only when no header is sent. It
+  exists so scripts and curl can call the service directly.
+- **Errors:** an OpenRouter model with no key raises
+  "No OpenRouter API key configured. Add one in Prmpt Settings > AI provider."
+  A rejected key, an unknown model or an OpenRouter rate/credit limit are
+  mapped to similar plain messages (`llm.user_facing_error`). `POST
+  /api/context` returns them as a `400`; `/api/context/stream` sends them as
+  an `error` event. At index time, failed LLM calls degrade to fallback
+  summaries and reports instead of failing the ingest.
+- An env-configured model id that does not contain `openrouter` is passed to
+  litellm unchanged, and litellm reads that provider's key from the
+  environment.
+
+---
+
 ## Complete LLM Call Map
 
-Every LLM call in the system, when it fires, what model, and why:
+Every LLM call in the system, when it fires, what model, and why. All of them
+go to OpenRouter through litellm on the user's key (see
+[LLM Provider and Keys](#llm-provider-and-keys)); "RAG model" means the model
+the user picked in the app, which overrides the env default shown in brackets.
 
 | # | Call | Model (default) | When | Why |
 |---|------|----------------|------|-----|
-| 1 | **Chunk summarization** | deepseek-chat | Index time, once per chunk (hash-deduped) | Convert raw code into searchable semantic representations |
-| 2 | **Community reports** | deepseek-chat | Index time, every ingest (Leiden re-runs) | Pre-synthesize architecture descriptions so query time is fast |
-| 3 | **Relationship summaries** | deepseek-chat | Index time, top 50 edges by in-degree | Capture causal connections between functions as searchable embeddings |
-| 4 | **Query decomposition** | gpt-4o-mini | Query time, conditional (≥12 tokens, no identifier hints, low confidence) | Break complex query into focused sub-queries + classify intent |
-| 5 | **DRIFT follow-ups** | deepseek-chat | Query time, BUG mode only | Generate drill-down questions from community context |
-| 5 | **Refinement queries** | deepseek-chat | Query time, conditional (low confidence) | Cover missed angles when first pass is weak |
-| 6 | **Reranker (LLM)** | deepseek-chat | Query time, fallback only when ONNX fails | Score each candidate chunk for relevance with reasoning |
-| 7 | **Answer generation** | deepseek-chat | Query time, ASK mode only | Produce a direct natural language answer for "explain" queries |
+| 1 | **Chunk summarization** | `SUMMARIZER_MODEL` (deepseek-chat) | Index time, once per chunk (hash-deduped) | Convert raw code into searchable semantic representations |
+| 2 | **Community reports** | `COMMUNITY_MODEL` (= `SUMMARIZER_MODEL`) | Index time, every ingest (Leiden re-runs) | Pre-synthesize architecture descriptions so query time is fast |
+| 3 | **Relationship summaries** | `SUMMARIZER_MODEL` (deepseek-chat) | Index time, top 50 edges by in-degree | Capture causal connections between functions as searchable embeddings |
+| 4 | **Query decomposition** | `QUERY_DECOMPOSE_MODEL` (gpt-4o-mini) | Query time, conditional (≥12 tokens, no identifier hints, low confidence) | Break complex query into focused sub-queries + classify intent |
+| 5 | **DRIFT follow-ups** | `QUERY_REFINER_MODEL` (deepseek-chat) | Query time, BUG mode only | Generate drill-down questions from community context |
+| 6 | **Refinement queries** | `QUERY_REFINER_MODEL` (deepseek-chat) | Query time, conditional (low confidence) | Cover missed angles when first pass is weak |
+| 7 | **Reranker (LLM)** | `RERANKER_MODEL` (deepseek-chat) | Query time, fallback only when ONNX fails | Score each candidate chunk for relevance with reasoning |
+| 8 | **Answer generation** | RAG model (`ANSWER_MODEL`, deepseek-chat) | Query time, ASK mode only | Produce a direct natural language answer for "explain" queries |
+| 9 | **Agentic retrieval loop** | RAG model (`AGENT_MODEL` = `ANSWER_MODEL`) | Query time, ASK/BUG/OPTIMIZE when `AGENTIC_RETRIEVAL_ENABLED` (default on); up to 6 tool-calling rounds | Let the model pick the chunks it needs via local tool calls |
 
 **FIND mode: zero LLM calls.** Pure local scoring. Always instant.
 
 **Reranker is now local-first (ONNX, ~150ms offline).** The LLM reranker
 is only used as a fallback when the ONNX model fails to load.
 
-**Index-time calls are the expensive ones** (called once, hash-deduped, no repeat
-cost until code changes). Query-time calls are the latency problem.
+**Index-time calls are the expensive ones** (chunk summaries are called once,
+hash-deduped, no repeat cost until code changes; community reports and
+relationship summaries re-run with the graph pipeline on every ingest).
+Query-time calls are the latency problem.
 
 ---
 
 ## The Storage Schema
 
-All stored locally in SQLite. One database per project per user machine.
+All stored locally in SQLite: one `index.db` per project, at
+`<root>/projects/<project_id>/index.db` (see Layer 5 for how the root is
+chosen). The schema lives in `app/db/local_store.py` and is created or
+extended automatically whenever a project database is opened
+(`CREATE TABLE IF NOT EXISTS` plus additive column checks), so there is no
+migration step. `app/db/queries.py` is the import surface the routes and
+services use on top of it. Electron opens the same file to keep its per-file
+hash cache.
+
+Vectors are stored as JSON float arrays in `TEXT` columns. Similarity is
+computed in Python (numpy cosine) over the project's rows; there is no vector
+index. Source code is not stored: `code_body` in API responses is read from
+the file on disk (project `local_path` + `file_path` + line range, capped at
+5000 characters).
 
 ```
+projects_local                            ← the project registry row
+  ├── id (UUID text)
+  ├── name, local_path
+  ├── default_branch, current_branch
+  ├── index_status                        ← indexing / ready / partial / stale / error
+  ├── last_indexed_at
+  ├── project_summary, tech_stack_json
+  └── embedding_model, embedding_dimensions, structure_embedding_dimensions
+                                          ← mismatch with the active config marks the project stale
+
 code_chunks
-  ├── id (UUID)
+  ├── id (deterministic UUID text)
   ├── project_id
   ├── file_path, name, chunk_type (function/class/method/file)
   ├── start_line, end_line
-  ├── code_body
   ├── summary_code, summary_purpose       ← from LLM call #1
-  ├── concepts[]                          ← from LLM call #1
-  ├── embedding_summary (vector)          ← semantic embedding
-  ├── embedding_structure (vector)        ← structural identity embedding
+  ├── concepts_json                       ← from LLM call #1
+  ├── embedding_summary                   ← semantic embedding
+  ├── embedding_structure                 ← structural identity embedding
   ├── content_hash                        ← for deduplication
   ├── pagerank_score                      ← from graph pipeline
   ├── centrality_score                    ← betweenness centrality
   ├── community_id                        ← from Leiden clustering
-  ├── concept_embedding_[1/2/3]           ← from concept phrases
+  ├── concept_embedding_1/2/3             ← from concept phrases
+  ├── sparse_embedding                    ← SPLADE vector (only when SPLADE_ENABLED)
   ├── branch, branch_diverged
   ├── is_exported, signature, language
-  └── observation_count                   ← bumped on every retrieval
+  └── observation_count                   ← column exists; not incremented at present
 
 code_relationships
   ├── from_chunk_id, to_chunk_id
   ├── relationship_type (calls/imports/inherits/etc.)
-  ├── weight
   ├── relationship_summary                ← from LLM call #3
   └── relationship_embedding              ← embedded summary
+      (edge weights are applied in memory from relationship_type, not stored)
 
 communities
-  ├── id (UUID)
+  ├── id (UUID text, derived from project + label)
   ├── project_id
   ├── label                               ← e.g. "auth-backend-0"
   ├── summary                             ← from LLM call #2
@@ -854,9 +985,10 @@ communities
   ├── member_count
   └── level                               ← 0 = leaf cluster
 
-project_branches
-  ├── branch_name
-  └── last_commit_sha
+chunks_fts            ← FTS5 table: path, name, signature, summaries, concepts
+retrieval_searches    ← one row per one-shot search (query, mode, chunk ids, variant)
+retrieval_feedback    ← POST /api/feedback and implicit /api/chunks/expand signals
+file_cache            ← per-file content hash + chunk count (written by Electron)
 ```
 
 ---
@@ -883,6 +1015,9 @@ User types in Spaces: "why can unauthorized users update videos they don't own"
   Mode = BUG
   │
   └─► POST /api/context
+      (With AGENTIC_RETRIEVAL_ENABLED=true, the default, the agentic loop runs
+       first; the steps below are the one-shot path it falls back to, and the
+       only path when the flag is off.)
       • Mode router: BUG → search_path="drift"
       • PRIMER: embed query → match community reports
           → "Video operations community" + "Auth middleware community" matched
@@ -921,9 +1056,11 @@ python-service optimizer receives probable_locations[]
 ## Known Limitations (Honest Flags)
 
 1. **GRAPH_BUILDER_ENABLED is still a flag.** The graph pipeline (PageRank,
-   Leiden, community reports, concept embeddings) is gated behind
-   `GRAPH_BUILDER_ENABLED=true`. When off, all graph-aware search paths fall
-   back to flat retrieval. The schema migration must be run before enabling.
+   Leiden, community reports, concept embeddings) is on by default and can be
+   turned off with `GRAPH_BUILDER_ENABLED=false`. When off, all graph-aware
+   search paths fall back to flat retrieval. No migration is needed either way:
+   the SQLite schema always has the graph tables and columns. Re-index after
+   turning it back on.
 
 2. **Community reports re-generate on every ingest.** Leiden runs on the full
    graph after every ingest, which means community reports are regenerated even
@@ -939,13 +1076,65 @@ python-service optimizer receives probable_locations[]
 
 4. **Agentic retrieval costs LLM calls on every ASK/BUG query.** On a 38-file
    Express repo it raised recall@5 from 0.32 to ~0.79 and cut median latency
-   from 38s to 14s versus one-shot, so it is on by default. Set
-   `AGENTIC_RETRIEVAL_ENABLED=false` to run one-shot only (no per-query LLM cost).
+   from 38s to 14s versus one-shot, so it is on by default. The calls are billed
+   to the user's own OpenRouter key. Set `AGENTIC_RETRIEVAL_ENABLED=false` to
+   run one-shot only (no agent-loop LLM calls).
 
 5. **FIND is off-thesis.** It's a navigator, not an optimizer. Useful, but the
    core business value is BUG and OPTIMIZE (context injection → token savings).
 
 6. **Silent quality dependence on graph density.** If Electron sends sparse
    call edges, PageRank is flat and the definition-vs-reference signal collapses.
-   The service logs a `[GRAPH_HEALTH]` warning when `edge_count == 0` but this
-   only surfaces in logs — no alert fires to the user.
+   The service logs a `[GRAPH_HEALTH]` warning when `edge_count == 0`, and
+   `GET /api/projects/{id}/graph-health` returns the edge / PageRank /
+   community counts, but nothing in the app surfaces them — no alert fires to
+   the user.
+
+---
+
+## Running Locally
+
+The service is a FastAPI app (`app/main.py`). The desktop app and
+python-service expect it at `http://127.0.0.1:8002` (override with
+`CODE_INTELLIGENCE_SERVICE_URL` on their side). The desktop app does not start
+it; run it next to the app.
+
+**Setup and dev server** (from the repo root):
+
+```
+npm run code-intel:install    # Windows: creates code-intelligence-service/.venv, installs requirements.txt
+npm run code-intel:dev        # Windows: uvicorn --reload on 127.0.0.1:8002
+
+npm run code-intel:install:mac   # macOS / Linux
+npm run code-intel:dev:mac       # macOS / Linux
+```
+
+Or run uvicorn directly from `code-intelligence-service/`:
+
+```
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8002
+```
+
+(`./.venv/bin/python` on macOS / Linux. `python -m app.main` also works; it
+binds `127.0.0.1` and reads `PORT`, default `8002`.)
+
+**Configuration.** A `.env` is optional. `app/main.py` loads
+`code-intelligence-service/.env` if it exists, without overriding variables
+already set in the environment. `.env.example` lists the settings worth
+knowing: `OPENROUTER_API_KEY` (fallback only, see
+[LLM Provider and Keys](#llm-provider-and-keys)), `CODE_INTEL_DB_ROOT`,
+`AGENTIC_RETRIEVAL_ENABLED`, `GRAPH_BUILDER_ENABLED`, the model defaults and
+`ALLOWED_ORIGINS`. Every other tuning value is in `app/config.py`.
+
+**First start.** The local reranker (`Xenova/bge-reranker-base`) is loaded at
+startup and the embedding model (`Xenova/bge-small-en-v1.5`) on first use.
+Both are downloaded from the HuggingFace Hub once and cached; after that only
+the LLM calls need the network. `GET /health/ready` reports whether startup
+warmup finished, whether the SQLite root is writable and whether the local
+reranker loaded.
+
+**Calling it without the app** (scripts, curl): send `X-Prmpt-OpenRouter-Key`
+(or set `OPENROUTER_API_KEY`) and optionally `X-Prmpt-Rag-Model`.
+`GET /api/debug/projects` lists project ids and `POST /api/debug/retrieve`
+runs a retrieval with the full score breakdown. curl sends no `Origin`
+header, so the origin guard lets it through.

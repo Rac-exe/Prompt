@@ -17,19 +17,8 @@ vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => '/mock' },
 }));
 
-vi.mock('@sentry/electron/main', () => ({
-  addBreadcrumb: vi.fn(),
-  captureException: vi.fn(),
-  captureMessage: vi.fn(),
-  setTag: vi.fn(),
-}));
-
-vi.mock('@sentry/core', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fmt: (...args: any[]) => args.join('') },
-}));
-
 vi.mock('../../electron/main/utils/auth-state', () => ({
-  authState: { isAuthenticated: true, currentUserId: 'user1', currentAccessToken: 'tok' },
+  authState: { isAuthenticated: true, currentUserId: 'user1', currentUserEmail: null },
 }));
 
 vi.mock('../../electron/main/database/services/prompt-library-service', () => {
@@ -43,32 +32,9 @@ vi.mock('../../electron/main/database/services/prompt-library-service', () => {
     getFullLibrary = vi.fn().mockResolvedValue({ collections: [], prompts: [] });
     deleteCollection = vi.fn().mockResolvedValue(undefined);
     renameCollection = vi.fn().mockResolvedValue({ id: 'c1', name: 'Renamed' });
-    getShareLink = vi.fn().mockResolvedValue('https://share.example.com/abc');
-    getPromptShareLink = vi.fn().mockResolvedValue('https://share.example.com/p/abc');
-    getSharedPrompt = vi.fn().mockResolvedValue({ title: 'Shared', content: 'Content' });
-    getSharedCollection = vi.fn().mockResolvedValue({ name: 'Shared Col', prompts: [] });
-    saveSharedCollection = vi.fn().mockResolvedValue({ id: 'c3' });
   }
   return { PromptLibraryService: MockPromptLibraryService };
 });
-
-vi.mock('../../electron/main/database/local-cache', () => ({
-  localCache: {
-    setCollections: vi.fn(),
-    getCollections: vi.fn().mockReturnValue([]),
-    addOrUpdateCollection: vi.fn(),
-    addOrUpdatePrompt: vi.fn(),
-    getPrompts: vi.fn().mockReturnValue([]),
-  },
-}));
-
-vi.mock('../../electron/main/ipc-handlers/network-monitor-singleton', () => ({
-  networkMonitor: { isOnline: true },
-}));
-
-vi.mock('../../electron/main/database/offline-queue', () => ({
-  offlineQueue: { enqueue: vi.fn() },
-}));
 
 describe('Prompt Library - IPC Handler Smoke Tests', () => {
   it('prompt-library handlers get registered on import', async () => {

@@ -1,5 +1,4 @@
 import { BrowserWindow, app, nativeImage, ipcMain } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 
 /**
@@ -62,7 +61,6 @@ export class AppWindowManager {
     });
 
     if (isMac) {
-      Sentry.addBreadcrumb({ category: 'window', message: 'macOS titleBarStyle: hiddenInset applied', level: 'info' });
     }
 
     if (isMac) {
@@ -70,9 +68,8 @@ export class AppWindowManager {
       if (!iconForDock.isEmpty()) {
         try {
           app.dock?.setIcon(iconForDock);
-          Sentry.addBreadcrumb({ category: 'window', message: 'macOS dock icon set', level: 'info' });
         } catch (err) {
-          Sentry.captureException(err, { tags: { component: 'app-window', op: 'dock-set-icon', platform: 'darwin' } });
+          console.error('[AppWindowManager] dock.setIcon failed:', err);
         }
       }
     } else if (icon && !icon.isEmpty()) {
@@ -134,7 +131,6 @@ export class AppWindowManager {
       this.isLoaded = false;
     });
 
-    Sentry.addBreadcrumb({ category: 'window', message: 'Main app window created', level: 'info' });
     console.log('[AppWindowManager] Main app window created');
   }
 
@@ -177,7 +173,6 @@ export class AppWindowManager {
       this.create();
     } else if (this.isLoaded) {
       if (!this.window.isVisible()) {
-        Sentry.addBreadcrumb({ category: 'window', message: 'App window show (opacity fade-in)', level: 'info' });
         const win = this.window;
         win.setOpacity(0);
         win.show();
@@ -229,7 +224,7 @@ export class AppWindowManager {
         this.window.webContents.send(channel, ...args);
       }
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'app-window-manager', op: 'send' }, extra: { channel } });
+      console.error('[AppWindowManager] send failed:', err);
     }
   }
 

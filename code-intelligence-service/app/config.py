@@ -2,18 +2,14 @@ import hashlib
 import json
 import os
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
-
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+# Fallback OpenRouter key for CLI scripts. The desktop app sends the user's key
+# with every request instead (see app/llm.py).
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-PRMPT_AI_PROXY_URL = os.environ.get("PRMPT_AI_PROXY_URL", "")
-PRMPT_AI_PROXY_TOKEN = os.environ.get("PRMPT_AI_PROXY_TOKEN", "")
 CODE_INTEL_DB_ROOT = os.environ.get("CODE_INTEL_DB_ROOT", "")
-STORAGE_BACKEND = os.environ.get("STORAGE_BACKEND", "local").lower()
 
 # ── LLM Models ──────────────────────────────────────────────────────────────
+# ANSWER_MODEL and AGENT_MODEL are defaults; the user's chosen RAG model (sent
+# by the desktop app) overrides both. The others are small helper models.
 SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "openrouter/deepseek/deepseek-chat")
 RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "openrouter/deepseek/deepseek-chat")
 RERANKER_BACKEND = os.environ.get("RERANKER_BACKEND", "local").lower()
@@ -45,14 +41,9 @@ _EMBEDDING_DIM_DEFAULT = _LOCAL_EMBED_DIM_DEFAULT if EMBEDDING_BACKEND == "local
 EMBEDDING_DIMENSIONS = int(os.environ.get("EMBEDDING_DIMENSIONS", _EMBEDDING_DIM_DEFAULT))
 STRUCTURE_EMBEDDING_DIMENSIONS = int(os.environ.get("STRUCTURE_EMBEDDING_DIMENSIONS", _EMBEDDING_DIM_DEFAULT))
 
-GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
-
 APP_ENV = os.environ.get("APP_ENV", "development")
 APP_VERSION = os.environ.get("APP_VERSION", "1.1.0")
-SENTRY_DSN = os.environ.get("SENTRY_DSN", "")
 
-GITHUB_POLLING_INTERVAL_SECONDS = 300
 MAX_CHUNKS_PER_INGEST = 10_000
 SUMMARY_MAX_TOKENS = int(os.environ.get("SUMMARY_MAX_TOKENS", "240"))
 RETRIEVAL_DEFAULT_LIMIT = 15
@@ -145,10 +136,10 @@ PIPELINE_VERSION: str = os.environ.get("PIPELINE_VERSION", "")
 PIPELINE_TAG: str = PIPELINE_VERSION if PIPELINE_VERSION else f"{APP_VERSION}-{PIPELINE_FINGERPRINT}"
 
 # ── Graph / Knowledge-graph pipeline ────────────────────────────────────────
-# Set GRAPH_BUILDER_ENABLED=true to activate PageRank + Leiden + community
-# reports + concept embeddings after every ingest.  Defaults to false so
-# existing deployments are unaffected until the schema migration has been run.
-GRAPH_BUILDER_ENABLED: bool = os.environ.get("GRAPH_BUILDER_ENABLED", "false").lower() == "true"
+# PageRank + Leiden + community reports + concept embeddings after every
+# ingest. On by default (the local SQLite schema always has the graph tables);
+# set GRAPH_BUILDER_ENABLED=false for flat retrieval and fewer LLM calls.
+GRAPH_BUILDER_ENABLED: bool = os.environ.get("GRAPH_BUILDER_ENABLED", "true").lower() == "true"
 COMMUNITY_MODEL: str = os.environ.get("COMMUNITY_MODEL", SUMMARIZER_MODEL)
 CONCEPT_PHRASE_PER_CHUNK: int = int(os.environ.get("CONCEPT_PHRASE_PER_CHUNK", "3"))
 RELATIONSHIP_EMBED_TOP_N: int = int(os.environ.get("RELATIONSHIP_EMBED_TOP_N", "50"))

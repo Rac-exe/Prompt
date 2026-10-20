@@ -1,16 +1,13 @@
 import { ipcMain } from 'electron';
-import * as Sentry from '@sentry/electron/main';
-import type { PythonClient } from '../api/python-client';
 import { UserService } from '../database/services/user-service';
 
-export function registerAvatarHandlers(pythonClient: PythonClient) {
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+
+export function registerAvatarHandlers() {
   const userService = new UserService();
 
   /**
-   * avatar:upload — Upload an avatar image via the Python service.
-   *
-   * Persists BOTH avatar_url (CDN URL) and avatar_public_id (Cloudinary handle)
-   * to the user's profile so account deletion can wipe the asset directly.
+   * avatar:upload — store the avatar locally on the profile as a data URL.
    *
    * Accepts: { imageData: string (base64 data URL), filename: string }
    * Returns: { success: boolean, url?: string, error?: string }
@@ -21,36 +18,19 @@ export function registerAvatarHandlers(pythonClient: PythonClient) {
         return { success: false, error: 'No image data provided' };
       }
 
-      const base64Match = data.imageData.match(/^data:image\/(\w+);base64,(.+)$/);
+      const base64Match = data.imageData.match(/^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=]+)$/);
       if (!base64Match) {
         return { success: false, error: 'Invalid image data format' };
       }
-
-      const mimeType = `image/${base64Match[1]}`;
-      const rawBase64 = base64Match[2];
-      console.log(`[AvatarUpload] Received image: ${(rawBase64.length * 0.75 / 1024).toFixed(0)} KB`);
-
-      const upload = await pythonClient.uploadImage(rawBase64, data.filename || 'avatar.jpg', mimeType);
-
-      // Persist both fields. updateProfile is best-effort — we still return the
-      // URL on partial failure so the renderer can preview the image immediately.
-      try {
-        await userService.updateProfile({
-          avatar_url: upload.url,
-          avatar_public_id: upload.publicId || null,
-        } as any);
-      } catch (err) {
-        console.warn('[AvatarUpload] Failed to persist avatar_public_id (non-fatal):', err);
-        Sentry.captureException(err, { tags: { component: 'avatar-upload', op: 'persist-public-id' } });
+      if (base64Match[2].length * 0.75 > MAX_AVATAR_BYTES) {
+        return { success: false, error: 'Image is too large (max 2 MB)' };
       }
 
-      return { success: true, url: upload.url };
+      await userService.updateProfile({ avatar_url: data.imageData });
+      return { success: true, url: data.imageData };
     } catch (err: any) {
-      Sentry.captureException(err, { tags: { component: 'avatar-upload' } });
-      console.error('[AvatarUpload] Handler error:', err);
-      return { success: false, error: err.message || 'Upload failed' };
+      console.error('[Avatar] Handler error:', err);
+      return { success: false, error: err.message || 'Could not save avatar' };
     }
   });
-
-  console.log('[AvatarHandlers] IPC handlers registered');
 }

@@ -1,14 +1,14 @@
 import asyncio
 import logging
-import sentry_sdk
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.auth import require_auth
 from app.db.models import IngestRequest
 from app.db import queries
 from app.db.local_store import warmup_local_store
+from app import llm
 from app.runtime_state import is_service_ready, set_service_ready
 from app.workers.index_worker import process_ingest_batch
-from app.config import MAX_CHUNKS_PER_INGEST, REDIS_URL
+from app.config import MAX_CHUNKS_PER_INGEST
 
 logger = logging.getLogger("code-intel.routes.ingest")
 router = APIRouter(tags=["ingest"])
@@ -65,59 +65,38 @@ async def ingest_skeleton(
 
     if body.branch:
         queries.update_project_status(body.project_id, "indexing")
-        try:
-            from app.db.supabase_client import get_client
-            client = get_client()
-            client.table("projects").update(
-                {"current_branch": body.branch}
-            ).eq("id", body.project_id).execute()
-            logger.info(f"Updated current_branch to {body.branch} for project {body.project_id}")
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.warning(f"Failed to update current_branch: {e}")
+        queries.set_current_branch(body.project_id, body.branch)
 
-    use_arq = bool(REDIS_URL and REDIS_URL != "redis://localhost:6379")
-    if use_arq:
-        try:
-            from app.workers.arq_worker import enqueue_ingest
-            chunks_data = [c.model_dump() for c in body.chunks]
-            graph_data = [e.model_dump() for e in body.call_graph]
-            job_id = await enqueue_ingest(
-                body.project_id,
-                user_id,
-                chunks_data,
-                graph_data,
-                body.branch,
-                body.language_map,
-                body.cleanup_scope,
-                [key.model_dump() for key in body.cleanup_keys],
-            )
-            logger.info(f"Ingest enqueued via arq: job_id={job_id}")
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.warning(f"arq enqueue failed, falling back to background task: {e}")
-            use_arq = False
-
-    if not use_arq:
-        background_tasks.add_task(
-            _run_ingest,
-            project_id=body.project_id,
-            user_id=user_id,
-            body=body,
-        )
-        logger.info(f"Ingest queued via FastAPI BackgroundTasks for project {body.project_id}")
+    background_tasks.add_task(
+        _run_ingest,
+        project_id=body.project_id,
+        user_id=user_id,
+        body=body,
+        llm_settings=llm.current_settings(),
+    )
+    logger.info(f"Ingest queued for project {body.project_id}")
 
     return {
         "status": "accepted",
         "project_id": body.project_id,
         "chunks_queued": len(body.chunks),
         "edges_queued": len(body.call_graph),
-        "queue": "arq" if use_arq else "background",
+        "queue": "background",
     }
 
 
-async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
-    """Background task that processes all chunks and call graph edges."""
+async def _run_ingest(
+    project_id: str,
+    user_id: str,
+    body: IngestRequest,
+    llm_settings: llm.LLMSettings,
+):
+    """Background task that processes all chunks and call graph edges.
+
+    Runs after the response is sent, so the request's LLM settings (used for
+    chunk summaries) are re-applied explicitly.
+    """
+    token = llm.use_settings(llm_settings)
     try:
         await process_ingest_batch(
             project_id=project_id,
@@ -133,8 +112,9 @@ async def _run_ingest(project_id: str, user_id: str, body: IngestRequest):
         logger.info(f"Background ingest task complete for project {project_id}")
 
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.error(f"Ingest background task failed for project {project_id}: {e}", exc_info=True)
         # Avoid regressing to "stale" on transient first-run/startup failures.
         # "partial" preserves user trust and signals retryable degradation.
         queries.update_project_status(project_id, "partial")
+    finally:
+        llm.reset_settings(token)

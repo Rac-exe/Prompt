@@ -13,6 +13,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from app import llm
 from app.auth import require_auth
 from app.db import queries
 from app.db.models import (
@@ -160,6 +161,9 @@ async def get_context(
     except HTTPException:
         raise
     except Exception as e:
+        message = llm.user_facing_error(e)
+        if message:
+            raise HTTPException(status_code=400, detail=message)
         logger.error(f"Context retrieval failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Context retrieval failed")
 
@@ -243,8 +247,10 @@ async def get_context_stream(
                 request.project_id, time.perf_counter() - t_start, "yes" if emitted_any else "no",
             )
         except Exception as e:
-            logger.error(f"Context stream failed: {e}", exc_info=True)
-            yield _sse("error", {"message": "Context streaming failed"})
+            message = llm.user_facing_error(e)
+            if not message:
+                logger.error(f"Context stream failed: {e}", exc_info=True)
+            yield _sse("error", {"message": message or "Context streaming failed"})
 
     return StreamingResponse(
         event_stream(),

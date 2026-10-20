@@ -7,7 +7,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import * as Sentry from '@sentry/electron/main';
 import type { FSWatcher } from 'chokidar';
 import { getLanguageForFile, parseFile } from './code-parser';
 import { getCachedHash, setCachedHash, clearFileCache } from '../database/local-project-cache';
@@ -19,7 +18,6 @@ try {
   chokidar = require('chokidar');
 } catch (err) {
   console.warn('[FileWatcher] chokidar not available');
-  Sentry.captureException(err, { level: 'warning', tags: { component: 'file-watcher', op: 'load-chokidar' } });
 }
 
 interface WatcherState {
@@ -159,7 +157,6 @@ async function handleFileChange(
     state.onChunksIngested?.(state.projectId);
   } catch (e) {
     console.error(`[FileWatcher] Failed to process ${relativePath}:`, e);
-    Sentry.captureException(e, { tags: { component: 'file-watcher', op: 'handleFileChange' }, extra: { filePath: relativePath } });
   }
 }
 
@@ -195,7 +192,6 @@ export function startWatching(
 
   watcher.on('error', (err: unknown) => {
     console.error(`[FileWatcher] Watcher error for ${projectId}:`, err);
-    Sentry.captureException(err, { level: 'warning', tags: { component: 'file-watcher', op: 'watcher-error' }, extra: { projectId, projectPath } });
   });
 
   watcher.on('ready', () => {
@@ -224,7 +220,6 @@ export function startWatching(
         console.log(`[FileWatcher] [${ts()}] debounce fired for ${rel}`);
         handleFileChange(filePath, state, client, branch).catch((e) => {
           console.error(`[FileWatcher] Error handling change for ${filePath}:`, e);
-          Sentry.captureException(e, { tags: { component: 'file-watcher', op: 'debounced-change' } });
         });
       }, DEBOUNCE_MS),
     );
@@ -238,13 +233,11 @@ export function startWatching(
     clearFileCache(state.projectId, relativePath);
     client.deleteChunksForFile(state.projectId, relativePath).catch((e) => {
       console.error(`[FileWatcher] Failed to delete chunks for ${relativePath}:`, e);
-      Sentry.captureException(e, { tags: { component: 'file-watcher', op: 'delete-chunks' }, extra: { filePath: relativePath } });
     });
     state.onChunksIngested?.(state.projectId);
   });
 
   activeWatchers.set(projectId, state);
-  Sentry.addBreadcrumb({ category: 'file-watcher', message: 'Watch started', level: 'info', data: { projectId, usePolling } });
   console.log(`[FileWatcher] [${ts()}] Watching ${projectPath} for project ${projectId} (polling=${usePolling})`);
 }
 
@@ -256,7 +249,6 @@ export function stopWatching(projectId: string): void {
     }
     state.watcher.close();
     activeWatchers.delete(projectId);
-    Sentry.addBreadcrumb({ category: 'file-watcher', message: 'Watch stopped', level: 'info', data: { projectId } });
     console.log(`[FileWatcher] Stopped watching project ${projectId}`);
   }
 }
@@ -506,7 +498,6 @@ export async function performFullScan(
       }
     } catch (e) {
       console.warn(`[FileWatcher] Error processing ${relativePath}:`, e);
-      Sentry.captureException(e, { level: 'warning', tags: { component: 'file-watcher', op: 'scan-file' }, extra: { filePath: relativePath } });
     }
 
     if (onProgress && i % 50 === 0) {

@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import * as Sentry from '@sentry/react';
-import { User, Palette, Moon, Sun, Check, Sparkle, Camera, Brain, GithubLogo, Link, LinkBreak, Key, CircleNotch, Envelope, ArrowLeft } from "@phosphor-icons/react";
+import { useState, useEffect, useRef } from "react";
+import { User, Palette, Moon, Sun, Check, Camera, Brain, CircleNotch, Robot } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,8 +16,7 @@ import { SettingsData, loadSettings, saveSettings, applySettings } from "@/lib/s
 import { useAuth } from "@/context/AuthContext";
 import { AvatarUploadModal } from "@/components/profile/AvatarUploadModal";
 import { MemoryView } from "@/components/settings/MemoryView";
-import { OtpVerification } from "@/components/auth/OtpVerification";
-import { DeleteAccountModal } from "@/components/settings/DeleteAccountModal";
+import { AIProviderForm } from "@/components/settings/AIProviderForm";
 import { cn } from "@/lib/utils";
 
 /* ── Reusable section wrapper ─────────────────────────────── */
@@ -52,9 +50,13 @@ const RowLabel = ({ label, hint }: { label: string; hint?: string }) => (
   </div>
 );
 
+const TAB_TRIGGER_CLASS =
+  "h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
+
 export const SettingsView = () => {
   const { user } = useAuth();
 
+  const [tab, setTab] = useState("profile");
   const [settings, setSettings] = useState<SettingsData>(() => {
     try {
       const stored = localStorage.getItem('prompt-weaver-settings');
@@ -62,235 +64,12 @@ export const SettingsView = () => {
     } catch {}
     return { theme: "light", fontSize: "medium", fontFamily: "inter", promptInstructions: "" };
   });
-  const [isLoading, setIsLoading] = useState(true);
   const [localInstructions, setLocalInstructions] = useState("");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
-
   const [nameSaving, setNameSaving] = useState(false);
-
-  const [identities, setIdentities] = useState<any[]>([]);
-  const [identityLoading, setIdentityLoading] = useState<string | null>(null);
-
-  // Persist "has email password" flag across restarts per user.
-  // Supabase admin API sets the password hash but does NOT add an email identity
-  // row in auth.identities for OAuth accounts, so we track it ourselves.
-  const emailPwKey = `prmpt-has-pw:${user?.profile?.id ?? ''}`;
-  const persistEmailPwSet = () => localStorage.setItem(emailPwKey, 'true');
-  const hasPersistedEmailPw = () => localStorage.getItem(emailPwKey) === 'true';
-
-  const injectEmailIdentityIfNeeded = (ids: any[]): any[] => {
-    if (ids.some((i: any) => i.provider === 'email')) return ids;
-    if (hasPersistedEmailPw()) return [...ids, { provider: 'email', id: 'email' }];
-    return ids;
-  };
-
-  const fetchIdentities = useCallback(async () => {
-    if (!window.electronAPI?.getIdentities) return;
-    try {
-      const { identities: ids } = await window.electronAPI.getIdentities();
-      const injected = injectEmailIdentityIfNeeded(ids ?? []);
-      setIdentities(injected);
-      Sentry.addBreadcrumb({
-        category: 'auth',
-        message: 'Identities fetched',
-        level: 'info',
-        data: { count: injected.length, providers: injected.map((i: any) => i.provider) },
-      });
-    } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'fetchIdentities' } });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [emailPwKey]);
-
-  useEffect(() => {
-    // If the backend confirmed a password exists (via user_has_email_password RPC),
-    // seed the localStorage flag so existing users who set a password before this
-    // fix was deployed also see the correct UI state on their next login.
-    if (user?.hasEmailPassword && !hasPersistedEmailPw()) {
-      persistEmailPwSet();
-      Sentry.addBreadcrumb({
-        category: 'auth',
-        message: 'Email-password flag seeded from RPC (existing user)',
-        level: 'info',
-        data: { userId: user.profile?.id },
-      });
-    }
-    if (user?.identities) setIdentities(injectEmailIdentityIfNeeded(user.identities));
-    else fetchIdentities();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, fetchIdentities]);
-
-  const handleLinkIdentity = async (provider: 'google' | 'github') => {
-    if (identityLoading) return;
-    setIdentityLoading(provider);
-    await Sentry.startSpan({ name: 'settings.link-identity', op: 'ui.action', attributes: { provider } }, async (span) => {
-      try {
-        const result = await window.electronAPI?.linkIdentity(provider);
-        if (result?.error) {
-          span.setAttribute('result', 'failed');
-          Sentry.addBreadcrumb({ category: 'auth', message: `Link identity failed: ${provider}`, level: 'warning', data: { provider, error: result.error } });
-          toast({ title: `Couldn't connect ${provider === 'google' ? 'Google' : 'GitHub'}`, description: result.error, variant: "destructive" });
-        } else {
-          span.setAttribute('result', 'success');
-          Sentry.addBreadcrumb({ category: 'auth', message: `Identity linked: ${provider}`, level: 'info', data: { provider } });
-          toast({ title: `${provider === 'google' ? 'Google' : 'GitHub'} connected`, description: "Your account has been linked." });
-          await fetchIdentities();
-        }
-      } catch (err) {
-        span.setAttribute('result', 'error');
-        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleLinkIdentity', provider } });
-        toast({ title: `Couldn't connect ${provider === 'google' ? 'Google' : 'GitHub'}`, description: "Something went wrong. Please try again.", variant: "destructive" });
-      } finally {
-        setIdentityLoading(null);
-      }
-    });
-  };
-
-  const handleUnlinkIdentity = async (identityId: string, providerLabel: string) => {
-    if (identityLoading) return;
-    setIdentityLoading(identityId);
-    await Sentry.startSpan({ name: 'settings.unlink-identity', op: 'ui.action', attributes: { provider: providerLabel } }, async (span) => {
-      try {
-        const result = await window.electronAPI?.unlinkIdentity(identityId);
-        if (result?.error) {
-          span.setAttribute('result', 'failed');
-          Sentry.addBreadcrumb({ category: 'auth', message: `Unlink identity failed: ${providerLabel}`, level: 'warning', data: { provider: providerLabel, error: result.error } });
-          toast({ title: `Couldn't disconnect ${providerLabel}`, description: result.error, variant: "destructive" });
-        } else {
-          span.setAttribute('result', 'success');
-          Sentry.addBreadcrumb({ category: 'auth', message: `Identity unlinked: ${providerLabel}`, level: 'info', data: { provider: providerLabel } });
-          toast({ title: `${providerLabel} disconnected`, description: "The account has been unlinked." });
-          await fetchIdentities();
-        }
-      } catch (err) {
-        span.setAttribute('result', 'error');
-        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleUnlinkIdentity', provider: providerLabel } });
-        toast({ title: `Couldn't disconnect ${providerLabel}`, description: "Something went wrong. Please try again.", variant: "destructive" });
-      } finally {
-        setIdentityLoading(null);
-      }
-    });
-  };
-
-  // OTP password reset flow state
-  type ResetStep = 'idle' | 'otp' | 'new-password';
-  const [resetStep, setResetStep] = useState<ResetStep>('idle');
-  const [resetOtp, setResetOtp] = useState('');
-  const [otpError, setOtpError] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
-  const [resetPasswordError, setResetPasswordError] = useState('');
-  const [resetPasswordLoading, setResetPasswordLoading] = useState(false);
-
-  const handleSetPassword = async () => {
-    if (!userEmail) return;
-    setIdentityLoading('password');
-    await Sentry.startSpan({ name: 'settings.set-password.send-otp', op: 'ui.action' }, async (span) => {
-      try {
-        const result = await window.electronAPI?.sendResetOtp(userEmail);
-        if (result?.error) {
-          span.setAttribute('result', 'failed');
-          Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP send failed', level: 'warning', data: { error: result.error } });
-          toast({ title: "Couldn't send code", description: result.error, variant: "destructive" });
-        } else {
-          span.setAttribute('result', 'sent');
-          Sentry.addBreadcrumb({ category: 'auth', message: 'Set-password OTP sent', level: 'info' });
-          setResetStep('otp');
-          setOtpError('');
-          toast({ title: "Code sent", description: "We sent a 6-digit code to your email." });
-        }
-      } catch (err) {
-        span.setAttribute('result', 'error');
-        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleSetPassword' } });
-        toast({ title: "Couldn't send code", description: "Something went wrong. Please try again.", variant: "destructive" });
-      } finally {
-        setIdentityLoading(null);
-      }
-    });
-  };
-
-  const handleVerifyResetOtp = async (otp: string) => {
-    setOtpError('');
-    setResetOtp(otp);
-    setResetStep('new-password');
-    setNewPassword('');
-    setConfirmNewPassword('');
-    setResetPasswordError('');
-    Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP accepted — entering new-password step', level: 'info' });
-  };
-
-  const handleResendResetOtp = async () => {
-    if (!userEmail) return;
-    try {
-      const result = await window.electronAPI?.sendResetOtp(userEmail);
-      if (result?.error) {
-        Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resend failed', level: 'warning', data: { error: result.error } });
-        setOtpError(result.error);
-      } else {
-        Sentry.addBreadcrumb({ category: 'auth', message: 'Reset OTP resent', level: 'info' });
-        toast({ title: "Code resent", description: "A new code is on the way." });
-      }
-    } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResendResetOtp' } });
-      setOtpError('Failed to resend code.');
-    }
-  };
-
-  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setResetPasswordError('');
-
-    if (newPassword.length < 6) {
-      setResetPasswordError('Password must be at least 6 characters');
-      return;
-    }
-    if (newPassword !== confirmNewPassword) {
-      setResetPasswordError('Passwords do not match');
-      return;
-    }
-
-    setResetPasswordLoading(true);
-    await Sentry.startSpan({ name: 'settings.reset-password.submit', op: 'ui.action' }, async (span) => {
-      try {
-        const result = await window.electronAPI?.verifyResetOtp(userEmail, resetOtp, newPassword);
-        if (result?.error) {
-          span.setAttribute('result', 'failed');
-          Sentry.addBreadcrumb({
-            category: 'auth',
-            message: 'Password reset submit failed',
-            level: 'warning',
-            data: { error: result.error },
-          });
-          setResetPasswordError(result.error);
-          if (result.error.toLowerCase().includes('code') || result.error.toLowerCase().includes('expired')) {
-            setResetStep('otp');
-            setOtpError(result.error);
-          }
-        } else {
-          span.setAttribute('result', 'success');
-          Sentry.addBreadcrumb({ category: 'auth', message: 'Password reset successful', level: 'info' });
-          toast({ title: "Password updated", description: "You can now sign in with your new password." });
-          setResetStep('idle');
-          setResetOtp('');
-          // Persist the flag so the UI stays correct across restarts (Supabase admin API
-          // doesn't add an email identity row for OAuth accounts that set a password).
-          persistEmailPwSet();
-          await fetchIdentities();
-        }
-      } catch (err) {
-        span.setAttribute('result', 'error');
-        Sentry.captureException(err, { tags: { component: 'settings-view', op: 'handleResetPasswordSubmit' } });
-        setResetPasswordError('Failed to update password. Please try again.');
-      } finally {
-        setResetPasswordLoading(false);
-      }
-    });
-  };
 
   const avatarUrl = user?.profile?.avatar_url || null;
   const userName = user?.profile?.name || "User";
-  const userEmail = user?.profile?.email || "";
   const userInitial = (userName[0] || "U").toUpperCase();
 
   const [editedName, setEditedName] = useState(userName);
@@ -298,20 +77,20 @@ export const SettingsView = () => {
 
   useEffect(() => { setEditedName(userName); }, [userName]);
 
-  const saveName = async () => {
+  // Open on the AI provider tab until a key is configured
+  useEffect(() => {
+    window.electronAPI?.aiSettings?.get().then((ai) => {
+      if (!ai.configured) setTab("ai");
+    }).catch(() => {});
+  }, []);
+
+  const saveName = () => {
     const trimmed = editedName.trim();
     if (!trimmed || trimmed === userName) return;
     setNameSaving(true);
     try {
-      await Sentry.startSpan({ name: 'settings.update-username', op: 'ui.action' }, async () => {
-        if (window.electronAPI?.updateProfile) {
-          window.electronAPI.updateProfile({ name: trimmed });
-        }
-      });
-      toast({ title: "Username updated" });
-    } catch (err) {
-      Sentry.captureException(err);
-      toast({ title: "Couldn't update username", description: "Something went wrong. Please try again.", variant: "destructive" });
+      window.electronAPI?.updateProfile?.({ name: trimmed });
+      toast({ title: "Name updated" });
     } finally {
       setNameSaving(false);
     }
@@ -320,7 +99,7 @@ export const SettingsView = () => {
   const settingsReadyRef = useRef(false);
 
   // Auto-launch (start-at-login) is a per-machine system setting, kept
-  // separate from user-level settings (which are persisted to Supabase).
+  // separate from the app settings.
   const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(true);
   const [autoLaunchSaving, setAutoLaunchSaving] = useState(false);
 
@@ -332,7 +111,6 @@ export const SettingsView = () => {
       })
       .catch((err) => console.error('[SettingsView] Failed to load settings:', err))
       .finally(() => {
-        setIsLoading(false);
         // Allow saves only after the next animation frame so Radix Switch's
         // BubbleInput phantom toggle (fired in a useEffect after the re-render
         // caused by setSettings) is safely discarded.
@@ -344,7 +122,7 @@ export const SettingsView = () => {
     if (!window.electronAPI?.autoLaunch?.get) return;
     window.electronAPI.autoLaunch.get()
       .then((res) => setAutoLaunchEnabled(!!res?.enabled))
-      .catch((err) => Sentry.captureException(err, { tags: { component: 'settings-view', op: 'autoLaunch.get' } }));
+      .catch((err) => console.error('[SettingsView] autoLaunch.get failed:', err));
   }, []);
 
   const toggleAutoLaunch = async (next: boolean) => {
@@ -352,12 +130,11 @@ export const SettingsView = () => {
     const previous = autoLaunchEnabled;
     setAutoLaunchEnabled(next);
     setAutoLaunchSaving(true);
-    Sentry.addBreadcrumb({ category: 'auto-launch', message: `Auto-launch toggle: ${next}`, level: 'info' });
     try {
       await window.electronAPI.autoLaunch.set(next);
     } catch (err) {
       setAutoLaunchEnabled(previous);
-      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'autoLaunch.set' } });
+      console.error('[SettingsView] auto-launch toggle failed:', err);
       toast({ title: "Couldn't update startup setting", description: "Please try again.", variant: "destructive" });
     } finally {
       setAutoLaunchSaving(false);
@@ -365,6 +142,20 @@ export const SettingsView = () => {
   };
 
   const instructionsDirty = localInstructions !== settings.promptInstructions;
+
+  const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
+    if (!settingsReadyRef.current) return;
+    const newSettings = { ...settings, [key]: value };
+    setSettings(newSettings);
+    applySettings(newSettings);
+    saveSettings(newSettings, user?.profile?.id).catch((err) => {
+      console.error('[SettingsView] Failed to auto-save:', err);
+      toast({ title: "Couldn't save settings", description: "Your last change wasn't stored. Try again.", variant: "destructive" });
+    });
+    if (window.electronAPI && window.electronAPI.send) {
+      window.electronAPI.send('overlay:settings-update', newSettings);
+    }
+  };
 
   const saveInstructions = () => {
     updateSetting("promptInstructions", localInstructions);
@@ -374,27 +165,9 @@ export const SettingsView = () => {
     setLocalInstructions(settings.promptInstructions ?? "");
   };
 
-  const updateSetting = <K extends keyof SettingsData>(key: K, value: SettingsData[K]) => {
-    if (!settingsReadyRef.current) return;
-    Sentry.addBreadcrumb({ category: 'settings', message: `Setting changed: ${key}`, level: 'info', data: { key, value } });
-    const newSettings = { ...settings, [key]: value };
-    setSettings(newSettings);
-    applySettings(newSettings);
-    saveSettings(newSettings, user?.profile?.id).catch((err) => {
-      Sentry.captureException(err, { tags: { component: 'settings-view', op: 'auto-save' }, extra: { key } });
-      console.error('[SettingsView] Failed to auto-save:', err);
-      toast({ title: "Couldn't save settings", description: "Your last change wasn't stored. Try again.", variant: "destructive" });
-    });
-    if (window.electronAPI && window.electronAPI.send) {
-      window.electronAPI.send('overlay:settings-update', newSettings);
-    }
-  };
-
   const handleAvatarUploaded = (url: string) => {
-    if (window.electronAPI?.updateProfile) {
-      window.electronAPI.updateProfile({ avatar_url: url });
-      toast({ title: "Avatar updated" });
-    }
+    window.electronAPI?.updateProfile?.({ avatar_url: url });
+    toast({ title: "Avatar updated" });
   };
 
   return (
@@ -405,27 +178,22 @@ export const SettingsView = () => {
       </div>
 
       {/* ── Tabs ── */}
-      <Tabs defaultValue="profile" className="flex-1 flex flex-col overflow-hidden">
+      <Tabs value={tab} onValueChange={setTab} className="flex-1 flex flex-col overflow-hidden">
         <div className="px-6 pt-5 pb-0 flex-shrink-0">
           <TabsList className="bg-secondary h-9 p-1 rounded-lg gap-0.5">
-            <TabsTrigger
-              value="profile"
-              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="profile" className={TAB_TRIGGER_CLASS}>
               <User size={14} weight="light" className="mr-1.5 opacity-70" />
               Profile
             </TabsTrigger>
-            <TabsTrigger
-              value="customize"
-              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="ai" className={TAB_TRIGGER_CLASS}>
+              <Robot size={14} weight="light" className="mr-1.5 opacity-70" />
+              AI provider
+            </TabsTrigger>
+            <TabsTrigger value="customize" className={TAB_TRIGGER_CLASS}>
               <Palette size={14} weight="light" className="mr-1.5 opacity-70" />
               Customize
             </TabsTrigger>
-            <TabsTrigger
-              value="memory"
-              className="h-7 px-3.5 text-xs font-medium rounded-md data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="memory" className={TAB_TRIGGER_CLASS}>
               <Brain size={14} weight="light" className="mr-1.5 opacity-70" />
               Memory
             </TabsTrigger>
@@ -436,9 +204,7 @@ export const SettingsView = () => {
         <TabsContent value="profile" className="flex-1 mt-0 overflow-hidden">
           <ScrollArea className="h-full">
             <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
-
-              {/* Avatar + Identity */}
-              <Section title="Profile">
+              <Section title="Profile" description="Stored only on this computer">
                 <div className="px-4 py-5">
                   <div className="flex items-center gap-5">
                     {/* Avatar with edit overlay */}
@@ -461,7 +227,6 @@ export const SettingsView = () => {
 
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-foreground">{userName}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{userEmail}</p>
                     </div>
 
                     <Button
@@ -475,12 +240,8 @@ export const SettingsView = () => {
                     </Button>
                   </div>
                 </div>
-              </Section>
-
-              {/* Account info */}
-              <Section title="Account Information">
                 <Row>
-                  <RowLabel label="Username" />
+                  <RowLabel label="Name" hint="Shown in greetings" />
                   <div className="flex items-center gap-2">
                     <Input
                       value={editedName}
@@ -499,158 +260,25 @@ export const SettingsView = () => {
                     )}
                   </div>
                 </Row>
-                <Row>
-                  <RowLabel label="Email Address" hint="Cannot be changed" />
-                  <Input
-                    type="email"
-                    value={userEmail}
-                    disabled
-                    className="w-48 h-8 text-sm bg-secondary border-border opacity-60"
-                  />
-                </Row>
-              </Section>
-
-              {/* Connected Accounts */}
-              <Section title="Connected Accounts" description="Manage sign-in methods linked to your account">
-                {/* Google */}
-                {(() => {
-                  const googleIdentity = identities.find((i: any) => i.provider === 'google');
-                  return (
-                    <Row>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-blue-500/12 border border-blue-500/20 flex items-center justify-center flex-shrink-0">
-                          <svg className="w-4 h-4" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground">Google</p>
-                          <p className="text-xs text-muted-foreground">
-                            {googleIdentity ? (googleIdentity.identity_data?.email || 'Connected') : 'Not connected'}
-                          </p>
-                        </div>
-                      </div>
-                      {googleIdentity ? (
-                        <Button
-                          variant="outline" size="sm"
-                          className="h-8 text-xs border-border hover:border-destructive/50 hover:text-destructive"
-                          disabled={identities.length <= 1 || identityLoading === googleIdentity.id}
-                          title={identities.length <= 1 ? 'Add another sign-in method first' : undefined}
-                          onClick={() => handleUnlinkIdentity(googleIdentity.id, 'Google')}
-                        >
-                          {identityLoading === googleIdentity.id ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <LinkBreak size={14} weight="light" className="mr-1.5" />}
-                          Disconnect
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="outline" size="sm"
-                          className="h-8 text-xs border-border"
-                          disabled={!!identityLoading}
-                          onClick={() => handleLinkIdentity('google')}
-                        >
-                          {identityLoading === 'google' ? <CircleNotch size={14} weight="light" className="animate-spin mr-1.5" /> : <Link size={14} weight="light" className="mr-1.5" />}
-                          Connect
-                        </Button>
-                      )}
-                    </Row>
-                  );
-                })()}
-
-                {/* GitHub */}
-                {(() => {
-                  const githubIdentity = identities.find((i: any) => i.provider === 'github');
-                  return (
-                    <Row>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-foreground/8 border border-foreground/12 flex items-center justify-center flex-shrink-0">
-                          <GithubLogo size={16} weight="light" className="text-foreground" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground">GitHub</p>
-                          <p className="text-xs text-muted-foreground">
-                            {githubIdentity ? (githubIdentity.identity_data?.email || githubIdentity.identity_data?.user_name || 'Connected') : 'Not connected'}
-                          </p>
-                        </div>
-                      </div>
-                      {githubIdentity ? (
-                        <Button
-                          variant="outline" size="sm"
-                          className="h-8 text-xs border-border hover:border-destructive/50 hover:text-destructive"
-                          disabled={identities.length <= 1 || identityLoading === githubIdentity.id}
-                          title={identities.length <= 1 ? 'Add another sign-in method first' : undefined}
-                          onClick={() => handleUnlinkIdentity(githubIdentity.id, 'GitHub')}
-                        >
-                          {identityLoading === githubIdentity.id ? <CircleNotch size={14} weight="light" className="animate-spin" /> : <LinkBreak size={14} weight="light" className="mr-1.5" />}
-                          Disconnect
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="outline" size="sm"
-                          className="h-8 text-xs border-border"
-                          disabled={!!identityLoading}
-                          onClick={() => handleLinkIdentity('github')}
-                        >
-                          {identityLoading === 'github' ? <CircleNotch size={14} weight="light" className="animate-spin mr-1.5" /> : <Link size={14} weight="light" className="mr-1.5" />}
-                          Connect
-                        </Button>
-                      )}
-                    </Row>
-                  );
-                })()}
-
-                {/* Email & Password */}
-                {(() => {
-                  const emailIdentity = identities.find((i: any) => i.provider === 'email');
-                  return (
-                    <Row>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-emerald/12 border border-emerald/20 flex items-center justify-center flex-shrink-0">
-                          <Key size={16} weight="light" className="text-emerald" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground">Email & Password</p>
-                          <p className="text-xs text-muted-foreground">
-                            {emailIdentity ? 'Password is set' : 'No password set'}
-                          </p>
-                        </div>
-                      </div>
-                      <Button
-                        variant="outline" size="sm"
-                        className="h-8 text-xs border-border"
-                        disabled={identityLoading === 'password'}
-                        onClick={handleSetPassword}
-                      >
-                        {identityLoading === 'password' ? <CircleNotch size={14} weight="light" className="animate-spin mr-1.5" /> : <Envelope size={14} weight="light" className="mr-1.5" />}
-                        {emailIdentity ? 'Reset Password' : 'Set Password'}
-                      </Button>
-                    </Row>
-                  );
-                })()}
-              </Section>
-
-              {/* Danger zone */}
-              <Section title="Danger Zone" description="Irreversible actions — proceed with caution">
-                <Row className="border-destructive/15 bg-destructive/4">
-                  <div>
-                    <p className="text-sm font-medium text-destructive">Delete Account</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Permanently remove your account and all data</p>
-                  </div>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="h-8 text-xs flex-shrink-0"
-                    onClick={() => setDeleteAccountOpen(true)}
-                  >
-                    Delete Account
-                  </Button>
-                </Row>
               </Section>
             </div>
           </ScrollArea>
+        </TabsContent>
 
-          <DeleteAccountModal
-            open={deleteAccountOpen}
-            onOpenChange={setDeleteAccountOpen}
-            userEmail={userEmail}
-          />
+        {/* ── AI provider tab ── */}
+        <TabsContent value="ai" className="flex-1 mt-0 overflow-hidden">
+          <ScrollArea className="h-full">
+            <div className="max-w-xl mx-auto px-6 py-6 space-y-5">
+              <Section
+                title="AI provider"
+                description="Your OpenRouter key and the models Prmpt uses. Keys stay on this computer."
+              >
+                <div className="p-4">
+                  <AIProviderForm variant="settings" />
+                </div>
+              </Section>
+            </div>
+          </ScrollArea>
         </TabsContent>
 
         {/* ── Customize tab ── */}
@@ -777,98 +405,6 @@ export const SettingsView = () => {
         currentAvatarUrl={avatarUrl}
         onAvatarUploaded={handleAvatarUploaded}
       />
-
-      {/* Password reset OTP flow */}
-      {resetStep !== 'idle' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-[400px] bg-background border border-border rounded-2xl shadow-elevated p-6 space-y-5 animate-slide-up">
-            {resetStep === 'otp' && (
-              <OtpVerification
-                email={userEmail}
-                purpose="reset"
-                isLoading={false}
-                error={otpError}
-                onVerify={handleVerifyResetOtp}
-                onResend={handleResendResetOtp}
-                onBack={() => { setResetStep('idle'); setOtpError(''); }}
-              />
-            )}
-
-            {resetStep === 'new-password' && (
-              <>
-                <button
-                  onClick={() => { setResetStep('otp'); setResetPasswordError(''); }}
-                  disabled={resetPasswordLoading}
-                  className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                >
-                  <ArrowLeft size={16} weight="light" />
-                  Back
-                </button>
-
-                <div className="flex flex-col items-center text-center space-y-3">
-                  <div className="w-14 h-14 rounded-full bg-emerald/10 flex items-center justify-center">
-                    <Key size={28} weight="light" className="text-emerald" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <h2 className="text-xl font-bold text-foreground tracking-tight">Set new password</h2>
-                    <p className="text-sm text-muted-foreground">Choose a strong password for your account</p>
-                  </div>
-                </div>
-
-                {resetPasswordError && (
-                  <div className="flex items-start gap-2.5 p-3 rounded-lg bg-destructive/8 border border-destructive/20">
-                    <div className="w-4 h-4 rounded-full bg-destructive/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-destructive" />
-                    </div>
-                    <p className="text-sm text-destructive leading-snug">{resetPasswordError}</p>
-                  </div>
-                )}
-
-                <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="settings-new-pw" className="text-sm font-medium text-foreground">New password</Label>
-                    <Input
-                      id="settings-new-pw" type="password" placeholder="••••••••"
-                      value={newPassword} onChange={(e) => setNewPassword(e.target.value)}
-                      required minLength={6} disabled={resetPasswordLoading}
-                      className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60"
-                    />
-                    <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="settings-confirm-pw" className="text-sm font-medium text-foreground">Confirm new password</Label>
-                    <Input
-                      id="settings-confirm-pw" type="password" placeholder="••••••••"
-                      value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)}
-                      required minLength={6} disabled={resetPasswordLoading}
-                      className="h-10 bg-surface border-border focus-visible:border-emerald/60 focus-visible:ring-emerald/20 text-foreground placeholder:text-muted-foreground/60"
-                    />
-                  </div>
-                  <div className="flex gap-2 pt-1">
-                    <Button
-                      type="button" variant="outline"
-                      onClick={() => { setResetStep('idle'); setResetPasswordError(''); }}
-                      disabled={resetPasswordLoading}
-                      className="flex-1 h-10"
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="submit" disabled={resetPasswordLoading}
-                      className="flex-1 h-10 border border-input text-foreground hover:bg-muted font-semibold"
-                    >
-                      {resetPasswordLoading ? (
-                        <CircleNotch size={16} weight="light" className="animate-spin" />
-                      ) : 'Update Password'}
-                    </Button>
-                  </div>
-                </form>
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
-

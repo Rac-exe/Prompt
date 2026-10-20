@@ -9,7 +9,6 @@
 import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 
 const MAX_ENTRIES = 200;
 
@@ -52,15 +51,6 @@ export class ErrorLog {
 
     // Also log to console so it shows up in Electron DevTools
     console.error(`[ErrorLog] ${context}: ${message}`);
-
-    Sentry.withScope(scope => {
-      scope.setTag('context', context);
-      if (err instanceof Error) {
-        Sentry.captureException(err);
-      } else {
-        Sentry.captureMessage(`${context}: ${message}`, 'error');
-      }
-    });
 
     const entries = this.read();
     entries.push(entry);

@@ -1,5 +1,4 @@
 import { Tray, Menu, nativeImage, app } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import * as path from 'path';
 import {
   getAutoLaunchPreference,
@@ -51,15 +50,8 @@ export class SystemTray {
         this.onOpenApp();
       });
 
-      Sentry.addBreadcrumb({
-        category: 'system-tray',
-        message: 'System tray created',
-        level: 'info',
-        data: { iconType: isMac ? 'template-image' : 'full-color', iconName },
-      });
       console.log('[SystemTray] System tray created');
     } catch (err) {
-      Sentry.captureException(err, { tags: { component: 'system-tray', op: 'create' } });
       console.error('[SystemTray] Failed to create system tray:', err);
     }
   }
@@ -89,11 +81,6 @@ export class SystemTray {
         click: (item) => {
           setAutoLaunchPreference(item.checked);
           applyAutoLaunchToOS(item.checked);
-          Sentry.addBreadcrumb({
-            category: 'auto-launch',
-            message: `Start at login ${item.checked ? 'enabled' : 'disabled'} (tray)`,
-            level: 'info',
-          });
           console.log(`[SystemTray] Start at login: ${item.checked}`);
           this.updateMenu();
         },

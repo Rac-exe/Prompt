@@ -20,7 +20,6 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProfileMenu } from "./ProfileMenu";
-import { FeedbackModal } from "@/components/feedback/FeedbackModal";
 
 function shortTitle(title: string): string {
   const words = title.trim().split(/\s+/);
@@ -29,8 +28,8 @@ function shortTitle(title: string): string {
 }
 
 interface SidebarProps {
-  currentView: "chat" | "library" | "settings" | "history" | "shared-library" | "projects";
-  onViewChange: (view: "chat" | "library" | "settings" | "history" | "shared-library" | "projects") => void;
+  currentView: "chat" | "library" | "settings" | "history" | "projects";
+  onViewChange: (view: "chat" | "library" | "settings" | "history" | "projects") => void;
   recentChats: { id: string; title: string; date: string }[];
   onSelectChat: (id: string) => void;
   selectedChatId: string | null;
@@ -53,15 +52,6 @@ export const Sidebar = ({
   const [deleteChatId, setDeleteChatId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [openDropdownChatId, setOpenDropdownChatId] = useState<string | null>(null);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-
-  const handleFeedbackSubmit = async (rating: "positive" | "negative", comment?: string) => {
-    try {
-      await window.electronAPI?.feedback?.submit({ rating, comment });
-    } catch {
-      // non-fatal — modal already handles its own close
-    }
-  };
 
   const navItems = [
     { id: "chat" as const, label: "New Chat", icon: Plus, action: onNewChat },
@@ -364,19 +354,11 @@ export const Sidebar = ({
         <div className={cn("flex-shrink-0 border-t border-sidebar-border", collapsed ? "p-1.5" : "p-2")}>
           <ProfileMenu
             onSettingsClick={() => onViewChange("settings")}
-            onHelpClick={() => window.electronAPI?.openExternal("https://www.tryprmpt.com/help")}
-            onFeedbackClick={() => setFeedbackOpen(true)}
+            onHelpClick={() => window.electronAPI?.openExternal("https://github.com/Rac-exe/Prompt#readme")}
             collapsed={collapsed}
           />
         </div>
       </div>
-
-      {/* ── Feedback modal ── */}
-      <FeedbackModal
-        open={feedbackOpen}
-        onClose={() => setFeedbackOpen(false)}
-        onSubmit={handleFeedbackSubmit}
-      />
 
       {/* ── Delete dialog ── */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

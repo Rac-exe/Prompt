@@ -232,14 +232,3 @@ class FeedbackRequest(BaseModel):
 
 class FeedbackResponse(BaseModel):
     status: str = "recorded"
-
-
-class SyncRequest(BaseModel):
-    project_id: Optional[str] = None
-
-
-class WebhookPayload(BaseModel):
-    ref: Optional[str] = None
-    commits: Optional[list[dict]] = None
-    repository: Optional[dict] = None
-    sender: Optional[dict] = None

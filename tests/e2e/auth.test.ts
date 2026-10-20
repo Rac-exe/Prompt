@@ -1,87 +1,26 @@
 /**
- * Auth integration smoke tests.
+ * Local session smoke tests.
  *
- * Tests auth-related IPC handler registration and behavior
- * by importing the modules directly.
+ * Prmpt has no login: every handler runs as the single local user.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { EventEmitter } from 'events';
+import { describe, it, expect, vi } from 'vitest';
 
-vi.mock('electron', () => {
-  const ipcMain = new (require('events').EventEmitter)();
-  (ipcMain as any).handle = vi.fn((channel: string, handler: any) => {
-    ipcMain.on(channel, handler);
-  });
-  return {
-    ipcMain,
-    app: { isPackaged: false, getAppPath: () => '/mock' },
-    shell: { openExternal: vi.fn() },
-    BrowserWindow: vi.fn(),
-  };
-});
-
-vi.mock('@sentry/electron/main', () => ({
-  addBreadcrumb: vi.fn(),
-  captureException: vi.fn(),
-  captureMessage: vi.fn(),
-  startSpan: vi.fn((_opts, cb) => cb({ setStatus: vi.fn(), setAttribute: vi.fn() })),
-  setTag: vi.fn(),
+vi.mock('electron', () => ({
+  app: { isPackaged: false, getAppPath: () => '/mock', getPath: () => '/mock/userData' },
 }));
 
-vi.mock('@sentry/core', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fmt: (...args: any[]) => args.join('') },
-}));
-
-describe('Auth - IPC Handler Smoke Tests', () => {
-  it('authState module loads and has expected shape', async () => {
+describe('Local session', () => {
+  it('is always signed in as the local user', async () => {
     const { authState } = await import('../../electron/main/utils/auth-state');
-    expect(authState).toBeDefined();
-    expect(typeof authState.isAuthenticated).toBe('boolean');
-  });
-
-  it('auth-state starts as unauthenticated', async () => {
-    vi.resetModules();
-    // Re-mock after reset
-    vi.doMock('electron', () => {
-      const ipcMain = new (require('events').EventEmitter)();
-      (ipcMain as any).handle = vi.fn();
-      return { ipcMain, app: { isPackaged: false }, shell: {} };
-    });
-    vi.doMock('@sentry/electron/main', () => ({
-      addBreadcrumb: vi.fn(), captureException: vi.fn(), captureMessage: vi.fn(),
-      startSpan: vi.fn((_o: any, cb: any) => cb({ setStatus: vi.fn() })), setTag: vi.fn(),
-    }));
-    vi.doMock('@sentry/core', () => ({
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fmt: (...a: any[]) => a.join('') },
-    }));
-
-    const { authState } = await import('../../electron/main/utils/auth-state');
-    expect(authState.isAuthenticated).toBe(false);
-    expect(authState.currentAccessToken).toBeFalsy();
-  });
-
-  it('auth-state can be mutated (simulating login)', async () => {
-    vi.resetModules();
-    vi.doMock('electron', () => {
-      const ipcMain = new (require('events').EventEmitter)();
-      (ipcMain as any).handle = vi.fn();
-      return { ipcMain, app: { isPackaged: false }, shell: {} };
-    });
-    vi.doMock('@sentry/electron/main', () => ({
-      addBreadcrumb: vi.fn(), captureException: vi.fn(), captureMessage: vi.fn(),
-      startSpan: vi.fn((_o: any, cb: any) => cb({ setStatus: vi.fn() })), setTag: vi.fn(),
-    }));
-    vi.doMock('@sentry/core', () => ({
-      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fmt: (...a: any[]) => a.join('') },
-    }));
-
-    const { authState } = await import('../../electron/main/utils/auth-state');
-    authState.isAuthenticated = true;
-    authState.currentAccessToken = 'test-token';
-    authState.currentUserId = 'user-123';
+    const { LOCAL_USER_ID } = await import('../../electron/main/database/local-db');
 
     expect(authState.isAuthenticated).toBe(true);
-    expect(authState.currentAccessToken).toBe('test-token');
-    expect(authState.currentUserId).toBe('user-123');
+    expect(authState.currentUserId).toBe(LOCAL_USER_ID);
+    expect(LOCAL_USER_ID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('carries no access token', async () => {
+    const { authState } = await import('../../electron/main/utils/auth-state');
+    expect('currentAccessToken' in authState).toBe(false);
   });
 });

@@ -9,27 +9,25 @@ try:
 except ImportError:
     pass
 
+# Use litellm's bundled model price list instead of fetching it from GitHub
+# on import, and opt out of Hugging Face Hub telemetry for the model downloads.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import logging
-import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
-from sentry_sdk.integrations.fastapi import FastApiIntegration
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
+from app import llm
 from app.config import (
-    APP_ENV, APP_VERSION, SENTRY_DSN,
+    APP_ENV, APP_VERSION,
     EMBEDDING_MODEL, EMBEDDING_BACKEND, EMBEDDING_LOCAL_MODEL, EMBEDDING_DIMENSIONS, SUMMARIZER_MODEL,
     QUERY_DECOMPOSE_MODEL,
     SUMMARIZER_CONCURRENCY, GRAPH_MAX_DEPTH, GRAPH_MAX_RELATED,
@@ -38,6 +36,7 @@ from app.config import (
     GRAPH_BUILDER_ENABLED, CONCEPT_PHRASE_PER_CHUNK, FIND_PAGERANK_WEIGHT,
     RERANKER_BACKEND, RERANKER_LOCAL_MODEL,
 )
+from app.origin_guard import BrowserOriginGuard
 from app.runtime_state import is_service_ready, set_service_ready
 
 log_level = logging.INFO
@@ -48,20 +47,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("code-intel")
 
-sentry_sdk.init(
-    dsn=SENTRY_DSN,
-    release=f"prmpt-code-intel@{APP_VERSION}",
-    environment=APP_ENV,
-    traces_sample_rate=1.0 if APP_ENV == "development" else 0.2,
-    send_default_pii=False,
-    integrations=[
-        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-        FastApiIntegration(),
-    ],
-)
 
+class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Per-request context: request id, the index root announced by the desktop
+    app, and the user's LLM settings (API key + RAG model) from headers."""
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         import uuid
         req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
@@ -69,13 +59,18 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         if db_root:
             from app.db.local_store import set_runtime_db_root
             set_runtime_db_root(db_root)
-        response: StarletteResponse = await call_next(request)
+        token = llm.use_settings(llm.settings_from_headers(request.headers))
+        try:
+            response: StarletteResponse = await call_next(request)
+        finally:
+            llm.reset_settings(token)
         response.headers["X-Request-ID"] = req_id
         return response
 
 
 app = FastAPI(title="Prmpt Code Intelligence Service", version=APP_VERSION)
-app.add_middleware(RequestIDMiddleware)
+app.add_middleware(RequestContextMiddleware)
+app.add_middleware(BrowserOriginGuard)
 
 logger.info(
     "Code Intelligence Service starting — env=%s, version=%s, pipeline_tag=%s (fingerprint=%s), "
@@ -103,31 +98,10 @@ if not GRAPH_BUILDER_ENABLED:
         "Set GRAPH_BUILDER_ENABLED=true in .env and re-index to activate."
     )
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
-
-_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
-_allowed_origins = (
-    [o.strip() for o in _raw_origins.split(",") if o.strip()]
-    if _raw_origins
-    else ["http://127.0.0.1", "http://localhost"]
-)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-)
-
 from app.routes.projects import router as projects_router
 from app.routes.ingest import router as ingest_router
 from app.routes.retrieve import router as retrieve_router
 from app.routes.context import router as context_router
-from app.routes.sync import router as sync_router
-from app.routes.webhooks import router as webhooks_router
 from app.routes.feedback import router as feedback_router
 from app.routes.pipeline import router as pipeline_router
 from app.routes.graph_viz import router as graph_viz_router
@@ -137,8 +111,6 @@ app.include_router(projects_router, prefix="/api")
 app.include_router(ingest_router, prefix="/api")
 app.include_router(retrieve_router, prefix="/api")
 app.include_router(context_router, prefix="/api")
-app.include_router(sync_router, prefix="/api")
-app.include_router(webhooks_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(graph_viz_router, prefix="/api")
@@ -183,29 +155,16 @@ async def health_ready():
         db_root = get_db_root()
         checks["local_sqlite"] = db_root.exists() and os.access(db_root, os.W_OK)
         checks["db_root"] = str(db_root)
-    except Exception as e:
+    except Exception:
+        logger.warning("Local SQLite root check failed", exc_info=True)
         checks["local_sqlite"] = False
-        sentry_sdk.capture_exception(e)
-    try:
-        from app.db.supabase_client import get_client
-        checks["supabase_auth_registry"] = get_client() is not None
-    except Exception as e:
-        checks["supabase_auth_registry"] = False
-        sentry_sdk.capture_exception(e)
-    from app.config import OPENAI_API_KEY, OPENROUTER_API_KEY, PRMPT_AI_PROXY_URL
-    checks["ai_provider"] = bool(PRMPT_AI_PROXY_URL) or bool(OPENAI_API_KEY) or bool(OPENROUTER_API_KEY)
     if RERANKER_BACKEND == "local":
         from app.services import reranker as _reranker_mod
         checks["reranker_local"] = _reranker_mod._local_model_loaded
         checks["reranker_local_model"] = RERANKER_LOCAL_MODEL
     else:
         checks["reranker_local"] = None
-    all_ok = (
-        checks.get("service_ready")
-        and checks.get("local_sqlite")
-        and checks.get("supabase_auth_registry")
-        and checks.get("ai_provider")
-    )
+    all_ok = checks.get("service_ready") and checks.get("local_sqlite")
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 
@@ -220,9 +179,8 @@ async def root():
             "ingest": "POST /api/index/ingest",
             "retrieve": "GET /api/retrieve",
             "context": "POST /api/context",
+            "context_stream": "POST /api/context/stream",
             "feedback": "POST /api/feedback",
-            "sync": "POST /api/sync",
-            "webhooks": "POST /api/webhooks/github",
             "pipeline_status": "GET /api/pipeline/status",
             "pipeline_compare": "GET /api/pipeline/compare",
             "graph_data": "GET /api/graph/data/{project_id}",
@@ -233,4 +191,4 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8002")))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8002")))

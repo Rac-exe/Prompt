@@ -47,10 +47,69 @@ def get_db_root() -> Path:
     return path
 
 
+def _validated_project_id(project_id: str) -> str:
+    """Project ids are UUIDs; anything else could escape the projects folder."""
+    raw = str(project_id)
+    try:
+        canonical = str(uuid.UUID(raw))
+    except (ValueError, AttributeError, TypeError):
+        canonical = ""
+    if not canonical or canonical != raw.lower():
+        raise ValueError(f"Invalid project id: {project_id!r}")
+    return raw
+
+
 def get_project_dir(project_id: str) -> Path:
-    path = get_db_root() / "projects" / project_id
+    path = get_db_root() / "projects" / _validated_project_id(project_id)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def project_exists(project_id: str) -> bool:
+    """True if a project index exists. Never creates folders or databases."""
+    try:
+        pid = _validated_project_id(project_id)
+    except ValueError:
+        return False
+    return (get_db_root() / "projects" / pid / "index.db").exists()
+
+
+def create_project(
+    user_id: str,
+    name: str,
+    local_path: Optional[str] = None,
+    default_branch: str = "main",
+) -> dict:
+    """Register a new project and return its row."""
+    project_id = str(uuid.uuid4())
+    sync_project({
+        "id": project_id,
+        "user_id": user_id,
+        "name": name,
+        "local_path": local_path,
+        "default_branch": default_branch or "main",
+        "index_status": "stale",
+    })
+    project = get_local_project(project_id)
+    if project is None:
+        raise RuntimeError(f"Project {project_id} was not persisted")
+    return project
+
+
+def list_projects() -> list[dict]:
+    """All registered projects, newest first."""
+    projects_dir = get_db_root() / "projects"
+    if not projects_dir.exists():
+        return []
+    projects: list[dict] = []
+    for db_path in projects_dir.glob("*/index.db"):
+        if not project_exists(db_path.parent.name):
+            continue
+        project = get_local_project(db_path.parent.name)
+        if project and project.get("name"):
+            projects.append(project)
+    projects.sort(key=lambda p: p.get("created_at") or "", reverse=True)
+    return projects
 
 
 def get_project_db_path(project_id: str) -> Path:

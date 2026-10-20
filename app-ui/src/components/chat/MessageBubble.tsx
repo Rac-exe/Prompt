@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import * as Sentry from "@sentry/react";
 import { Copy, Check, BookmarkSimple, User, Sparkle, PencilSimple, ArrowCounterClockwise, FileText, ImageSquare, MagnifyingGlassPlus, Paperclip, CaretLeft, CaretRight, WarningCircle } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/ui/Logo";
@@ -9,6 +8,37 @@ import { SKILL_ICON_MAP } from "@/lib/skillIcons";
 import { FeedbackWidget } from "./FeedbackWidget";
 import { FilePreviewModal, type PreviewFile } from "./FilePreviewModal";
 import type { AttachedFile } from "@/types/electron";
+import { useStoredFileUrl } from "./StoredImage";
+
+/** Thumbnail for an image saved in the local attachment store (reloaded chats). */
+const StoredImageThumb = ({ file, storagePath, onPreview }: {
+  file: AttachedFile;
+  storagePath: string;
+  onPreview: (f: PreviewFile) => void;
+}) => {
+  const src = useStoredFileUrl(storagePath);
+  if (!src) {
+    return (
+      <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald/8 border border-emerald/20 text-xs">
+        <ImageSquare size={14} weight="light" className="text-emerald flex-shrink-0" />
+        <span className="max-w-[100px] truncate text-emerald/90 font-medium">{file.name}</span>
+      </div>
+    );
+  }
+  return (
+    <button
+      onClick={() => onPreview({ name: file.name, mimeType: file.mimeType, base64: src.slice(src.indexOf(',') + 1), sizeBytes: file.sizeBytes })}
+      className="relative group rounded-xl overflow-hidden border border-white/10 shadow cursor-zoom-in focus:outline-none"
+      style={{ width: 80, height: 80 }}
+      title={`${file.name} — click to preview`}
+    >
+      <img src={src} alt={file.name} className="w-full h-full object-cover" />
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+        <MagnifyingGlassPlus size={20} weight="light" className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+      </div>
+    </button>
+  );
+};
 
 export interface Message {
   id: string;
@@ -71,7 +101,6 @@ const SectionCopyButton = ({ text }: { text: string }) => {
   return (
     <button
       onClick={() => {
-        Sentry.addBreadcrumb({ category: 'app.action', message: 'Section copied' });
         navigator.clipboard.writeText(text);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
@@ -151,7 +180,6 @@ export const MessageBubble = ({
   }, [isEditing]);
 
   const handleCopy = () => {
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Prompt copied', data: { messageId: message.id } });
     navigator.clipboard.writeText(message.content);
     setCopied(true);
     onCopy();
@@ -165,7 +193,6 @@ export const MessageBubble = ({
       setEditValue(message.content);
       return;
     }
-    Sentry.addBreadcrumb({ category: 'app.action', message: 'Message edit submitted', data: { messageId: message.id } });
     onEdit?.(message.id, trimmed);
     setIsEditing(false);
   };
@@ -227,15 +254,12 @@ export const MessageBubble = ({
                   {message.attachedFiles.map((file, idx) => {
                     const isImage = file.mimeType.startsWith('image/');
                     const hasBase64 = !!(file as any).base64;
-                    const cloudinaryUrl: string | undefined = (file as any).cloudinaryUrl;
                     const storagePath: string | undefined = (file as any).storagePath;
 
-                    // Image: prefer Cloudinary URL, fall back to base64
-                    if (isImage && (cloudinaryUrl || hasBase64)) {
-                      const src = cloudinaryUrl ?? `data:${file.mimeType};base64,${(file as any).base64}`;
-                      const previewEntry: PreviewFile = cloudinaryUrl
-                        ? { name: file.name, mimeType: file.mimeType, cloudinaryUrl, sizeBytes: file.sizeBytes }
-                        : { name: file.name, mimeType: file.mimeType, base64: (file as any).base64 as string, sizeBytes: file.sizeBytes };
+                    // Image: in-session base64
+                    if (isImage && hasBase64) {
+                      const src = `data:${file.mimeType};base64,${(file as any).base64}`;
+                      const previewEntry: PreviewFile = { name: file.name, mimeType: file.mimeType, base64: (file as any).base64 as string, sizeBytes: file.sizeBytes };
                       return (
                         <button
                           key={idx}
@@ -250,6 +274,11 @@ export const MessageBubble = ({
                           </div>
                         </button>
                       );
+                    }
+
+                    // Image saved in the local attachment store (chat reloaded from disk)
+                    if (isImage && storagePath) {
+                      return <StoredImageThumb key={idx} file={file} storagePath={storagePath} onPreview={setPreviewFile} />;
                     }
 
                     if (isImage) {
@@ -283,7 +312,7 @@ export const MessageBubble = ({
                       );
                     }
 
-                    // PDF from DB with storagePath: open via signed URL in system viewer
+                    // PDF saved in the local attachment store: open in the system viewer
                     if (storagePath) {
                       return (
                         <button
@@ -412,12 +441,11 @@ export const MessageBubble = ({
         onClose={() => setPreviewFile(null)}
         allFiles={
           (message.attachedFiles ?? [])
-            .filter(f => f.mimeType.startsWith('image/') && (!!(f as any).base64 || !!(f as any).cloudinaryUrl))
+            .filter(f => f.mimeType.startsWith('image/') && !!(f as any).base64)
             .map(f => ({
               name: f.name,
               mimeType: f.mimeType,
               base64: (f as any).base64 as string | undefined,
-              cloudinaryUrl: (f as any).cloudinaryUrl as string | undefined,
               sizeBytes: f.sizeBytes,
             }))
         }

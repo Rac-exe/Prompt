@@ -1,4 +1,4 @@
-import { SupabaseClientManager } from '../supabase-client';
+import { getDb, nowIso, toBool } from '../local-db';
 
 export interface UserSettings {
     user_id: string;
@@ -19,92 +19,73 @@ export const DEFAULT_SETTINGS: Omit<UserSettings, 'user_id' | 'created_at' | 'up
     memory_enabled: true,
 };
 
+type SettingsFields = Omit<UserSettings, 'user_id' | 'created_at' | 'updated_at'>;
+
+function toSettings(row: any): UserSettings {
+    return { ...row, memory_enabled: toBool(row.memory_enabled) };
+}
+
 /**
  * Settings Service
- * Handles user settings management in Supabase
+ * App settings (theme, typography, custom instructions, memory toggle),
+ * stored in the local SQLite database.
  */
 export class SettingsService {
-    private client = SupabaseClientManager.getClient();
-
     /**
-     * Get user settings from Supabase
-     * Returns null if no settings found (new user)
+     * Get user settings. Returns null if none have been saved yet.
      */
     async getUserSettings(userId: string): Promise<UserSettings | null> {
-        try {
-            const { data, error } = await this.client
-                .from('user_settings')
-                .select('*')
-                .eq('user_id', userId)
-                .single();
-
-            if (error) {
-                if (error.code === 'PGRST116') {
-                    // No settings found - this is normal for new users
-                    console.log(`[SettingsService] No settings found for user ${userId}, will use defaults`);
-                    return null;
-                }
-                console.error('[SettingsService] Error fetching settings:', error);
-                throw error;
-            }
-
-            console.log(`[SettingsService] ✅ Settings loaded from Supabase for user ${userId}:`, data);
-            return data;
-        } catch (error) {
-            console.error('[SettingsService] Unexpected error fetching settings:', error);
-            throw error;
-        }
+        const row = getDb().prepare('SELECT * FROM user_settings WHERE user_id = ?').get(userId);
+        return row ? toSettings(row) : null;
     }
 
     /**
-     * Upsert (insert or update) user settings
-     * Creates new settings if they don't exist, updates if they do
+     * Upsert (insert or update) user settings.
+     * Fields not passed keep their current (or default) value.
      */
     async upsertUserSettings(
         userId: string,
-        settings: Partial<Omit<UserSettings, 'user_id' | 'created_at' | 'updated_at'>>
+        settings: Partial<SettingsFields>
     ): Promise<UserSettings> {
-        try {
-            const { data, error } = await this.client
-                .from('user_settings')
-                .upsert({
-                    user_id: userId,
-                    ...settings,
-                    updated_at: new Date().toISOString(),
-                })
-                .select()
-                .single();
-
-            if (error) {
-                console.error(`[SettingsService] Error upserting settings for user ${userId}:`, error);
-                throw error;
-            }
-
-            console.log(`[SettingsService] ✅ Settings saved to Supabase for user ${userId}:`, data);
-            return data;
-        } catch (error) {
-            console.error('[SettingsService] Unexpected error upserting settings:', error);
-            throw error;
-        }
+        const current = await this.getUserSettings(userId);
+        const merged: SettingsFields = {
+            ...DEFAULT_SETTINGS,
+            ...(current ?? {}),
+            ...settings,
+        };
+        const now = nowIso();
+        getDb()
+            .prepare(
+                `INSERT INTO user_settings
+                   (user_id, theme, font_size, font_family, prompt_instructions, memory_enabled, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                   theme = excluded.theme,
+                   font_size = excluded.font_size,
+                   font_family = excluded.font_family,
+                   prompt_instructions = excluded.prompt_instructions,
+                   memory_enabled = excluded.memory_enabled,
+                   updated_at = excluded.updated_at`,
+            )
+            .run(
+                userId,
+                merged.theme,
+                merged.font_size,
+                merged.font_family,
+                merged.prompt_instructions ?? '',
+                merged.memory_enabled === false ? 0 : 1,
+                current?.created_at ?? now,
+                now,
+            );
+        return (await this.getUserSettings(userId)) as UserSettings;
     }
 
     /**
      * Get settings or create with defaults if they don't exist
      */
     async getOrCreateSettings(userId: string): Promise<UserSettings> {
-        try {
-            const existing = await this.getUserSettings(userId);
-
-            if (existing) {
-                return existing;
-            }
-
-            // Create new settings with defaults
-            console.log('[SettingsService] Creating default settings for new user');
-            return await this.upsertUserSettings(userId, DEFAULT_SETTINGS);
-        } catch (error) {
-            console.error('[SettingsService] Error in getOrCreateSettings:', error);
-            throw error;
-        }
+        const existing = await this.getUserSettings(userId);
+        if (existing) return existing;
+        return this.upsertUserSettings(userId, DEFAULT_SETTINGS);
     }
 }

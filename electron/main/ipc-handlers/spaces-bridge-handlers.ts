@@ -1,5 +1,4 @@
 import { ipcMain } from 'electron';
-import * as Sentry from '@sentry/electron/main';
 import { OverlayWindowManager } from '../overlay/overlay-window-manager';
 import { AppWindowManager } from '../windows/app-window-manager';
 
@@ -153,9 +152,7 @@ export function registerSpacesBridgeHandlers(
           messages: payload.messages,
         });
       } catch (err) {
-        Sentry.captureException(err, {
-          tags: { component: 'spaces-bridge', op: 'append-messages' },
-        });
+        console.error('[SpacesBridge] append messages failed:', err);
       }
     },
   );

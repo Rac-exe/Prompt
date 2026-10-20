@@ -1,8 +1,5 @@
-import { useState, useEffect, useRef, ReactNode, useCallback } from 'react';
-import * as Sentry from '@sentry/react';
+import { useState, useEffect, ReactNode } from 'react';
 import { Logo } from "@/components/ui/Logo";
-import { LoginPage } from './LoginPage';
-import { SignupPage } from './SignupPage';
 import { OnboardingPage } from './OnboardingPage';
 import { AuthContext, CompleteUserData } from '@/context/AuthContext';
 import { ZoomIndicator } from '@/components/layout/ZoomIndicator';
@@ -11,234 +8,136 @@ interface AuthWrapperProps {
   children: ReactNode;
 }
 
-type AuthView = 'loading' | 'login' | 'signup' | 'onboarding' | 'app';
+type AppView = 'loading' | 'error' | 'onboarding' | 'ai-setup' | 'app';
 
-const ONBOARDING_KEY_PREFIX = 'onboarding-completed-';
-const AUTH_SLOW_MS = 6_000;
-const AUTH_RETRY_MS = 12_000;
-const AUTH_GIVEUP_MS = 20_000;
+const ONBOARDING_DONE_KEY = 'prmpt-onboarding-completed';
 
+function onboardingDone(): boolean {
+  try {
+    return localStorage.getItem(ONBOARDING_DONE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function markOnboardingDone(): void {
+  try {
+    localStorage.setItem(ONBOARDING_DONE_KEY, 'true');
+  } catch {
+    /* not critical: onboarding shows again next time */
+  }
+}
+
+const LOADING_SLOW_MS = 6_000;
+
+/**
+ * App gate. There is no login: the main process sends the local user once the
+ * local database is open. The first launch shows onboarding (theme, AI
+ * provider, feature tour). Later launches with no OpenRouter key yet show just
+ * the AI provider step, which can be skipped.
+ */
 export function AuthWrapper({ children }: AuthWrapperProps) {
-  const [authView, setAuthView] = useState<AuthView>('loading');
+  const [view, setView] = useState<AppView>('loading');
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<CompleteUserData | null>(null);
   const [loadingSlow, setLoadingSlow] = useState(false);
-  const retryTimer = useRef<ReturnType<typeof setTimeout>>();
-  const giveupTimer = useRef<ReturnType<typeof setTimeout>>();
-
-  const handleSignOut = useCallback(() => {
-    if (window.electronAPI?.signOut) {
-      window.electronAPI.signOut();
-      setUser(null);
-      setAuthView('login');
-    }
-  }, []);
 
   useEffect(() => {
-    console.log('[AuthWrapper] Initializing');
-
-    // Check if we're in Electron
     if (!window.electronAPI) {
-      console.error('[AuthWrapper] window.electronAPI not found');
-      setAuthView('login');
-      setError('This app must run in Electron');
+      setError('Prmpt must run inside its desktop app.');
+      setView('error');
       return;
     }
 
-    // Set up auth state change listener
-    window.electronAPI.onAuthStateChange((data: { isAuthenticated: boolean; user: any; error?: string }) => {
-      console.log('[AuthWrapper] Auth state changed:', {
-        isAuthenticated: data.isAuthenticated,
-        hasUser: !!data.user,
-        error: data.error
-      });
-
-      if (data.error) {
-        // Surface auth errors that crossed the IPC boundary into the breadcrumb
-        // trail so a follow-up Sentry event has context about what the renderer
-        // actually saw (e.g. OAuth banned-user errors that originate in main).
-        const lower = data.error.toLowerCase();
-        const isBanned = lower.includes('banned');
-        Sentry.addBreadcrumb({
-          category: 'auth',
-          message: 'auth:state-changed received with error',
-          level: 'warning',
-          data: {
-            error: data.error,
-            blocked_reason: isBanned ? 'account_scheduled_for_deletion' : 'other',
-          },
-        });
-        setError(data.error);
-        setAuthView('login');
-        setUser(null);
-      } else if (data.isAuthenticated && data.user) {
-        // user data from backend matches CompleteUserData structure
-        setUser(data.user);
-        setError(null);
-
-        // Show onboarding only for genuinely NEW users.
-        // We combine two signals:
-        //   1. localStorage key — set when onboarding is completed
-        //   2. profile.created_at — if the account is older than 2 minutes,
-        //      the user is returning (not new), even if localStorage is missing
-        //      (e.g. app reinstall, cleared storage, or pre-existing account).
-        const userId = data.user?.profile?.id || data.user?.id;
-        const onboardingKey = userId ? `${ONBOARDING_KEY_PREFIX}${userId}` : null;
-        const markedComplete = onboardingKey
-          ? localStorage.getItem(onboardingKey) === 'true'
-          : true; // safety: skip onboarding if we can't identify the user
-
-        if (markedComplete) {
-          // Already completed onboarding → straight to app
-          setAuthView('app');
-        } else {
-          // Check if account was just created (within the last 2 minutes)
-          const createdAt = data.user?.profile?.created_at;
-          const isNewAccount = createdAt
-            ? (Date.now() - new Date(createdAt).getTime()) < 2 * 60 * 1000
-            : false; // if we can't determine age, assume existing user
-
-          if (isNewAccount) {
-            // Genuinely new signup → show onboarding
-            setAuthView('onboarding');
-          } else {
-            // Existing user without localStorage key → mark as done, skip
-            if (onboardingKey) {
-              localStorage.setItem(onboardingKey, 'true');
-            }
-            setAuthView('app');
-          }
-        }
-      } else {
-        setAuthView('login');
-        setUser(null);
+    window.electronAPI.onAuthStateChange(async (data: { isAuthenticated: boolean; user: any; error?: string }) => {
+      if (data.error || !data.user) {
+        setError(data.error || 'Could not load your local data.');
+        setView('error');
+        return;
       }
+      setUser(data.user);
+      setError(null);
+      const ai = await window.electronAPI.aiSettings.get().catch(() => null);
+      setView((current) => {
+        if (current === 'app' || current === 'onboarding' || current === 'ai-setup') return current;
+        if (ai?.configured) return 'app';
+        return onboardingDone() ? 'ai-setup' : 'onboarding';
+      });
     });
 
-    // Listen for profile updates (e.g. avatar change) — updates user state in real-time
-    if (window.electronAPI.onUserDataLoaded) {
-      window.electronAPI.onUserDataLoaded((userData: any) => {
-        console.log('[AuthWrapper] user-data-loaded — refreshing user state');
-        if (userData) {
-          setUser(userData);
-        }
-      });
-    }
+    // Profile updates (e.g. avatar or name change) refresh the user in place
+    window.electronAPI.onUserDataLoaded?.((userData: any) => {
+      if (userData) setUser(userData);
+    });
 
-    // Check current auth status
     window.electronAPI.checkAuth();
   }, []);
 
   useEffect(() => {
-    if (authView !== 'loading') {
+    if (view !== 'loading') {
       setLoadingSlow(false);
-      clearTimeout(retryTimer.current);
-      clearTimeout(giveupTimer.current);
       return;
     }
-
-    const slowTimer = setTimeout(() => setLoadingSlow(true), AUTH_SLOW_MS);
-
-    retryTimer.current = setTimeout(() => {
-      if (authView === 'loading' && window.electronAPI) {
-        console.warn('[AuthWrapper] Still loading after', AUTH_RETRY_MS, 'ms — retrying checkAuth');
-        window.electronAPI.checkAuth();
-      }
-    }, AUTH_RETRY_MS);
-
-    giveupTimer.current = setTimeout(() => {
-      setAuthView((current) => {
-        if (current !== 'loading') return current;
-        console.error('[AuthWrapper] Still loading after', AUTH_GIVEUP_MS, 'ms — falling back to login');
-        return 'login';
-      });
-    }, AUTH_GIVEUP_MS);
-
-    return () => {
-      clearTimeout(slowTimer);
-      clearTimeout(retryTimer.current);
-      clearTimeout(giveupTimer.current);
-    };
-  }, [authView]);
-
-  // Debug: Log current state before render
-  console.log('[AuthWrapper] Current authView:', authView);
+    const timer = setTimeout(() => setLoadingSlow(true), LOADING_SLOW_MS);
+    return () => clearTimeout(timer);
+  }, [view]);
 
   const renderContent = () => {
-    if (authView === 'loading') {
+    if (view === 'loading' || view === 'error') {
       return (
         <div className="min-h-screen flex items-center justify-center bg-background">
-          <div className="flex flex-col items-center gap-5">
+          <div className="flex flex-col items-center gap-5 max-w-sm text-center">
             <Logo size="w-16 h-16" />
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald"></div>
-            {loadingSlow && (
-              <p className="text-sm text-muted-foreground animate-fade-in">
-                Taking longer than usual&hellip;
-              </p>
+            {view === 'loading' ? (
+              <>
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald"></div>
+                {loadingSlow && (
+                  <p className="text-sm text-muted-foreground animate-fade-in">Taking longer than usual&hellip;</p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-destructive">{error}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setView('loading');
+                    window.electronAPI?.checkAuth();
+                  }}
+                  className="h-9 px-4 rounded-xl text-sm border border-input hover:bg-muted"
+                >
+                  Try again
+                </button>
+              </>
             )}
           </div>
         </div>
       );
     }
 
-    if (authView === 'signup') {
-      return (
-        <SignupPage
-          onSwitchToLogin={() => {
-            setAuthView('login');
-            setError(null);
-          }}
-          onSignupSuccess={() => {
-            // Don't set authView here - let the auth state change event handle it
-          }}
-        />
-      );
-    }
-
-    if (authView === 'login') {
-      return (
-        <LoginPage
-          onSwitchToSignup={() => {
-            setAuthView('signup');
-            setError(null);
-          }}
-          onLoginSuccess={() => {
-            // Don't set authView here - let the auth state change event handle it
-          }}
-          error={error}
-        />
-      );
-    }
-
-    if (authView === 'onboarding') {
+    if (view === 'onboarding') {
       return (
         <OnboardingPage
           userName={user?.profile?.name?.split(' ')[0]}
           onComplete={() => {
-            // Mark onboarding as completed for this user
-            const userId = user?.profile?.id;
-            if (userId) {
-              localStorage.setItem(`${ONBOARDING_KEY_PREFIX}${userId}`, 'true');
-            }
-            setAuthView('app');
+            markOnboardingDone();
+            setView('app');
           }}
         />
       );
     }
 
-    // authView === 'app' - User is authenticated, render main app
-    console.log('[AuthWrapper] Rendering main app');
+    if (view === 'ai-setup') {
+      return <OnboardingPage aiProviderOnly onComplete={() => setView('app')} />;
+    }
+
     return <>{children}</>;
   };
 
   return (
-    <AuthContext.Provider value={{
-      user,
-      isLoading: authView === 'loading',
-      signOut: handleSignOut
-    }}>
+    <AuthContext.Provider value={{ user, isLoading: view === 'loading' }}>
       {renderContent()}
-      {authView !== 'app' && <ZoomIndicator />}
+      {view !== 'app' && <ZoomIndicator />}
     </AuthContext.Provider>
   );
 }

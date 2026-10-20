@@ -9,7 +9,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/health/ready', (_req, res) => {
-  res.json({ status: 'ready', checks: { supabase: true, embedding_key: true } });
+  res.json({ status: 'ready', checks: { service_ready: true, local_sqlite: true } });
 });
 
 app.get('/', (_req, res) => {

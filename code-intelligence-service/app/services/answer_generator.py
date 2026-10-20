@@ -5,10 +5,9 @@ import logging
 from typing import AsyncIterator
 
 import litellm
-import sentry_sdk
 
-from app.config import ANSWER_MODEL, OPENROUTER_API_KEY
-from app.services import prmpt_ai_client
+from app import llm
+from app.config import ANSWER_MODEL
 
 logger = logging.getLogger("code-intel.answer")
 
@@ -23,31 +22,21 @@ async def generate_answer(
     chunks: list[dict],
     project_summary: str | None = None,
 ) -> tuple[str | None, list[str]]:
+    """Non-streamed answer. Provider/configuration errors (no key, rejected
+    key, unknown model) are raised so the caller can show them to the user;
+    other failures return (None, [])."""
     if not chunks:
         return None, []
 
-    context = _build_context(chunks, project_summary)
-    kwargs: dict = {
-        "model": ANSWER_MODEL,
-        "messages": [
-            {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query[:2000]}"},
-        ],
-        "max_tokens": 900,
-        "temperature": 0.2,
-    }
-    if OPENROUTER_API_KEY and "openrouter" in ANSWER_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
+    kwargs = _answer_kwargs(query, chunks, project_summary)
     try:
-        if prmpt_ai_client.is_configured():
-            answer = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-        else:
-            response = await asyncio.to_thread(litellm.completion, **kwargs)
-            answer = (response.choices[0].message.content or "").strip()
+        response = await asyncio.to_thread(litellm.completion, **kwargs)
+        answer = (response.choices[0].message.content or "").strip()
         return answer or None, [str(c["id"]) for c in chunks[:8] if c.get("id")]
     except Exception as e:
+        if llm.user_facing_error(e):
+            raise
         logger.warning(f"Answer generation failed: {e}")
-        sentry_sdk.capture_exception(e)
         return None, []
 
 
@@ -63,35 +52,12 @@ async def generate_answer_stream(
 ) -> AsyncIterator[str]:
     """Yield the answer token-by-token. This is the latency-perceived win for
     Ask: the UI renders deltas as they arrive instead of waiting ~20-50s for the
-    whole completion. Falls back to a single emit if streaming is unavailable
-    (e.g. the proxy backend, which has no streaming endpoint)."""
+    whole completion. Falls back to a single non-streamed completion if
+    streaming fails. Provider/configuration errors are raised."""
     if not chunks:
         return
 
-    context = _build_context(chunks, project_summary)
-    kwargs: dict = {
-        "model": ANSWER_MODEL,
-        "messages": [
-            {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query[:2000]}"},
-        ],
-        "max_tokens": 900,
-        "temperature": 0.2,
-    }
-    if OPENROUTER_API_KEY and "openrouter" in ANSWER_MODEL.lower():
-        kwargs["api_key"] = OPENROUTER_API_KEY
-
-    # Proxy backend can't stream — emit the full answer once.
-    if prmpt_ai_client.is_configured():
-        try:
-            answer = (await prmpt_ai_client.completion_async(**kwargs)).strip()
-            if answer:
-                yield answer
-        except Exception as e:
-            logger.warning(f"Answer (proxy) generation failed: {e}")
-            sentry_sdk.capture_exception(e)
-        return
-
+    kwargs = _answer_kwargs(query, chunks, project_summary)
     try:
         response = await litellm.acompletion(stream=True, **kwargs)
         async for part in response:
@@ -102,16 +68,25 @@ async def generate_answer_stream(
             if delta:
                 yield delta
     except Exception as e:
+        if llm.user_facing_error(e):
+            raise
         logger.warning(f"Answer streaming failed ({e}); falling back to non-streamed")
-        sentry_sdk.capture_exception(e)
-        # Fallback: one-shot non-streamed completion so Ask still answers.
-        try:
-            answer, _ = await generate_answer(query, chunks, project_summary)
-            if answer:
-                yield answer
-        except Exception as e2:
-            logger.warning(f"Answer fallback also failed: {e2}")
-            sentry_sdk.capture_exception(e2)
+        answer, _ = await generate_answer(query, chunks, project_summary)
+        if answer:
+            yield answer
+
+
+def _answer_kwargs(query: str, chunks: list[dict], project_summary: str | None) -> dict:
+    context = _build_context(chunks, project_summary)
+    return {
+        **llm.completion_kwargs(llm.rag_model(ANSWER_MODEL)),
+        "messages": [
+            {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query[:2000]}"},
+        ],
+        "max_tokens": 900,
+        "temperature": 0.2,
+    }
 
 
 def _build_context(chunks: list[dict], project_summary: str | None) -> str:

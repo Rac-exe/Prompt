@@ -11,6 +11,10 @@ try:
 except ImportError:
     pass  # python-dotenv not installed; rely on system env vars
 
+# Use litellm's bundled model price list instead of fetching it from GitHub
+# on import, so the only network calls are the ones the user's requests make.
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 # Force UTF-8 stdout/stderr so emoji and non-ASCII chars don't crash the server
 # on Windows where the default console encoding is cp1252.
 if hasattr(sys.stdout, 'reconfigure'):
@@ -19,26 +23,10 @@ if hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from app.auth import require_auth, require_ws_auth
-from app.email_otp import (
-    send_signup_otp, verify_signup_otp,
-    send_reset_otp, reset_password as otp_reset_password,
-    send_restore_otp, verify_restore_otp,
-    cleanup_expired as otp_cleanup,
-)
 import logging
-import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
 
-# Configure structured logging — INFO goes to stdout; WARNING+ become Sentry breadcrumbs;
-# ERROR+ become Sentry events via LoggingIntegration.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
@@ -46,69 +34,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("prmpt")
 
-def _scrub_prompts(event, hint):
-    _pii_words = ("prompt", "content", "message", "text")
-    def _is_pii(k):
-        kl = k.lower()
-        return any(w in kl for w in _pii_words)
-
-    if event.get("extra"):
-        for key in list(event["extra"].keys()):
-            if _is_pii(key):
-                event["extra"][key] = "[REDACTED]"
-
-    for bc in event.get("breadcrumbs", {}).get("values", []):
-        if bc.get("data"):
-            for key in list(bc["data"].keys()):
-                if _is_pii(key):
-                    bc["data"][key] = "[REDACTED]"
-
-    req_data = event.get("request", {}).get("data")
-    if isinstance(req_data, dict):
-        for key in list(req_data.keys()):
-            if _is_pii(key):
-                req_data[key] = "[REDACTED]"
-
-    for exc in event.get("exception", {}).get("values", []):
-        if _is_pii(exc.get("value", "")):
-            exc["value"] = "[REDACTED]"
-        for frame in exc.get("stacktrace", {}).get("frames", []):
-            if frame.get("vars"):
-                for key in list(frame["vars"].keys()):
-                    if _is_pii(key):
-                        frame["vars"][key] = "[REDACTED]"
-
-    return event
-
-_is_dev = os.environ.get("APP_ENV", "development") == "development"
-
-_sentry_dsn = os.environ.get("SENTRY_PYTHON_DSN", "")
-_app_env = os.environ.get("APP_ENV", "development")
-_app_version = os.environ.get("APP_VERSION", "0.0.0-dev")
+# Voice input (optional): the desktop app sends the user's Deepgram key when
+# a session starts; this env var is only a fallback.
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY", "")
-
-if not _sentry_dsn:
-    logger.warning("[Sentry] SENTRY_PYTHON_DSN is not set — error tracking is disabled")
-if _app_env == "development" and not _is_dev:
-    logger.warning("[Sentry] APP_ENV is unset or 'development' but appears to be a production build — set APP_ENV=production")
-if _app_version == "0.0.0-dev":
-    logger.warning("[Sentry] APP_VERSION is not set — Sentry release will report as 0.0.0-dev")
-
-sentry_sdk.init(
-    dsn=_sentry_dsn,
-    release=f"prmpt-python@{_app_version}",
-    environment=_app_env,
-    traces_sample_rate=1.0 if _is_dev else 0.2,
-    send_default_pii=False,
-    before_send=_scrub_prompts,
-    integrations=[
-        # INFO → breadcrumbs, ERROR → Sentry events.
-        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
-    ],
-    _experiments={
-        "enable_logs": True,
-    },
-)
 
 import json
 import time
@@ -126,6 +54,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
+from app.origin_guard import BrowserOriginGuard
+
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: StarletteRequest, call_next):
         import uuid as _uuid
@@ -141,14 +72,8 @@ app = FastAPI(
     openapi_url=None if _is_prod else "/openapi.json",
 )
 app.add_middleware(RequestIDMiddleware)
-limiter = Limiter(
-    key_func=get_remote_address,
-    default_limits=["60/minute"],
-    application_limits=["10000/minute"],
-)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware)
+# No login: keep browser pages from calling the local API (see origin_guard).
+app.add_middleware(BrowserOriginGuard)
 
 # Heavy modules (numpy, pipeline_v2, litellm, torch, faster_whisper, scipy)
 # are imported lazily inside the functions that use them so the server
@@ -157,31 +82,39 @@ app.add_middleware(SlowAPIMiddleware)
 _pipeline_loaded = False
 ChatContext = None
 pipeline_optimize = None
-OPTIMIZER_MODEL = SUMMARIZER_MODEL = TITLE_MODEL = MEMORY_MODEL = OPENROUTER_API_KEY = None
+OPTIMIZER_MODEL = SUMMARIZER_MODEL = TITLE_MODEL = MEMORY_MODEL = None
+LLMSettings = optimizer_model = provider_kwargs = user_facing_error = None
 
 
 def _ensure_pipeline():
     """Lazy-load pipeline_v2 and its transitive deps (litellm, etc.) on first use."""
     global _pipeline_loaded, ChatContext, pipeline_optimize
-    global OPTIMIZER_MODEL, SUMMARIZER_MODEL, TITLE_MODEL, MEMORY_MODEL, OPENROUTER_API_KEY
+    global OPTIMIZER_MODEL, SUMMARIZER_MODEL, TITLE_MODEL, MEMORY_MODEL
+    global LLMSettings, optimizer_model, provider_kwargs, user_facing_error
     if _pipeline_loaded:
         return
     logger.info("Loading pipeline_v2 modules (lazy)...")
     from pipeline_v2.context import ChatContext as _CC
     from pipeline_v2.optimizer import optimize as _opt
-    from pipeline_v2.config import (
-        OPTIMIZER_MODEL as _OM, SUMMARIZER_MODEL as _SM,
-        TITLE_MODEL as _TM, MEMORY_MODEL as _MM, OPENROUTER_API_KEY as _OR,
-    )
+    from pipeline_v2 import config as _config
     ChatContext = _CC
     pipeline_optimize = _opt
-    OPTIMIZER_MODEL = _OM
-    SUMMARIZER_MODEL = _SM
-    TITLE_MODEL = _TM
-    MEMORY_MODEL = _MM
-    OPENROUTER_API_KEY = _OR
+    OPTIMIZER_MODEL = _config.OPTIMIZER_MODEL
+    SUMMARIZER_MODEL = _config.SUMMARIZER_MODEL
+    TITLE_MODEL = _config.TITLE_MODEL
+    MEMORY_MODEL = _config.MEMORY_MODEL
+    LLMSettings = _config.LLMSettings
+    optimizer_model = _config.optimizer_model
+    provider_kwargs = _config.provider_kwargs
+    user_facing_error = _config.user_facing_error
     _pipeline_loaded = True
     logger.info("pipeline_v2 loaded")
+
+
+def llm_from_headers(request: StarletteRequest):
+    """The user's OpenRouter key and models, sent by the desktop app as headers."""
+    _ensure_pipeline()
+    return LLMSettings.from_headers(request.headers)
 
 
 def _get_np():
@@ -189,22 +122,15 @@ def _get_np():
     import numpy as np
     return np
 
-async def _otp_cleanup_loop():
-    while True:
-        await asyncio.sleep(300)
-        otp_cleanup()
-
-
 @app.on_event("startup")
 async def startup_event():
     """Kick off model warmup in the background so the port binds immediately."""
     logger.info("Server starting — model preloads will run in background")
     asyncio.create_task(_background_warmup())
-    asyncio.create_task(_otp_cleanup_loop())
 
 
 async def _background_warmup():
-    """Non-blocking warmup: OpenRouter + Whisper/VAD load after the port is open."""
+    """Non-blocking warmup: pipeline modules + Whisper/VAD load after the port is open."""
     loop = asyncio.get_event_loop()
 
     async def _warmup_pipeline():
@@ -212,24 +138,6 @@ async def _background_warmup():
             await loop.run_in_executor(None, _ensure_pipeline)
         except Exception as e:
             logger.warning(f"Pipeline preload failed: {e}")
-
-    async def _warmup_openrouter():
-        try:
-            # Load pipeline in thread pool first so the event loop stays free
-            await loop.run_in_executor(None, _ensure_pipeline)
-            logger.info("Warming up OpenRouter connection...")
-            import litellm as _litellm
-            kwargs: dict = {
-                "model": OPTIMIZER_MODEL,
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 1,
-            }
-            if OPENROUTER_API_KEY and "openrouter" in OPTIMIZER_MODEL.lower():
-                kwargs["api_key"] = OPENROUTER_API_KEY
-            await loop.run_in_executor(None, lambda: _litellm.completion(**kwargs))
-            logger.info("OpenRouter connection warmed up")
-        except Exception as e:
-            logger.warning(f"Warmup failed (harmless if offline): {e}")
 
     async def _load_whisper():
         try:
@@ -247,7 +155,7 @@ async def _background_warmup():
         except Exception as e:
             logger.warning(f"Silero VAD preload failed: {e}")
 
-    warmup_tasks = [_warmup_openrouter()]
+    warmup_tasks = [_warmup_pipeline()]
     try:
         import torch  # noqa: F401
         warmup_tasks.extend([_load_whisper(), _load_vad()])
@@ -264,21 +172,6 @@ async def _background_warmup():
 # Skill system has been disabled to use a single, clear system prompt
 # which prevents the LLM from generating content instead of optimizing prompts
 
-
-# CORS middleware — defaults to localhost only; set ALLOWED_ORIGINS to override.
-_raw_origins = os.environ.get("ALLOWED_ORIGINS", "")
-_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else [
-    "http://127.0.0.1",
-    "http://localhost",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-)
 
 # Adaptive prompt optimization system with type detection and specialized strategies
 
@@ -532,32 +425,9 @@ class OptimizeResponse(BaseModel):
 from cachetools import TTLCache
 prompt_cache: TTLCache = TTLCache(maxsize=200, ttl=300)  # 200 entries, 5-min TTL
 
-# ── Server-side rate limiting with daily cleanup (SCALE-02) ───────────────────
 import asyncio as _asyncio
-_rate_lock = _asyncio.Lock()
-_rate_counters: dict[str, int] = {}   # key: "<user_id>:<YYYY-MM-DD>"
-_rate_last_date: str = ""
-
-DAILY_REQUEST_LIMIT = int(os.environ.get("DAILY_REQUEST_LIMIT", "50"))
-
 _optimize_semaphore = _asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_OPTIMIZATIONS", "50")))
 
-
-async def _check_rate_limit(user_id: str) -> bool:
-    """Return True if the user may proceed, False if daily limit reached."""
-    from datetime import datetime, timezone
-    global _rate_last_date
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    key = f"{user_id}:{today}"
-    async with _rate_lock:
-        if _rate_last_date != today:
-            _rate_counters.clear()
-            _rate_last_date = today
-        count = _rate_counters.get(key, 0)
-        if count >= DAILY_REQUEST_LIMIT:
-            return False
-        _rate_counters[key] = count + 1
-        return True
 
 _CLEAN_ANALYSIS_RE = re.compile(
     r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
@@ -625,16 +495,8 @@ def clean_optimized_text(text: str) -> str:
     return text.strip()
 
 @app.post("/optimize", response_model=OptimizeResponse)
-async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require_auth)):
-    _ensure_pipeline()
-    # Derive user_id from verified JWT rather than trusting request body
-    user_id = auth.get("sub") or request.user_id
-    if user_id:
-        sentry_sdk.set_user({"id": user_id})
-        allowed = await _check_rate_limit(user_id)
-        if not allowed:
-            raise HTTPException(status_code=429, detail=f"Daily limit of {DAILY_REQUEST_LIMIT} optimizations reached. Resets at midnight UTC.")
-
+async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers)):
+    model = optimizer_model(llm)
     start_time = time.time()
 
     if not request.prompt or len(request.prompt.strip()) < 1:
@@ -655,7 +517,7 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
         return OptimizeResponse(
             optimized=prompt_cache[prompt_text],
             original=request.prompt.strip(),  # Return original without unique ID
-            model=OPTIMIZER_MODEL,
+            model=model,
             latency_ms=latency
         )
 
@@ -681,12 +543,13 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
         optimized_raw = pipeline_optimize(
             user_input=clean_prompt,
             cc=cc,
-            model=OPTIMIZER_MODEL,
+            model=model,
             provider="auto",
             stream=False,
             mode=mode,
             custom_instructions=custom_instructions,
             models_info=models_info,
+            llm=llm,
         )
         
         optimized = clean_optimized_text(optimized_raw)
@@ -704,19 +567,15 @@ async def optimize_prompt(request: OptimizeRequest, auth: dict = Depends(require
         return OptimizeResponse(
             optimized=optimized,
             original=request.prompt.strip(),
-            model=OPTIMIZER_MODEL,
+            model=model,
             latency_ms=latency
         )
 
     except Exception as e:
-        sentry_sdk.capture_exception(e)
-        error_msg = str(e)
-        if "model" in error_msg.lower() or "not found" in error_msg.lower():
-            raise HTTPException(
-                status_code=500,
-                detail="Model not found. Please ensure Ollama is running and the model is installed (e.g., 'ollama pull llama3.2')"
-            )
-        logger.error(f"Optimization failed: {error_msg}")
+        message = user_facing_error(e)
+        if message:
+            raise HTTPException(status_code=400, detail=message)
+        logger.error(f"Optimization failed: {e}")
         raise HTTPException(status_code=500, detail="Optimization failed — please try again")
 
 
@@ -741,18 +600,14 @@ class ClarifyResponse(BaseModel):
     questions: list[ClarifyQuestion] = []
 
 @app.post("/clarify", response_model=ClarifyResponse)
-async def clarify_prompt(request: ClarifyRequest, auth: dict = Depends(require_auth)):
+async def clarify_prompt(request: ClarifyRequest, llm=Depends(llm_from_headers)):
     """Analyze a prompt and return clarification questions if beneficial."""
-    _ensure_pipeline()
     try:
         from pipeline_v2.clarifier import clarify
-        result = await asyncio.get_event_loop().run_in_executor(
-            None, clarify, request.prompt
-        )
+        result = await asyncio.to_thread(clarify, request.prompt, None, llm.api_key)
         return ClarifyResponse(**result)
     except Exception as exc:
         logger.warning(f"Clarify endpoint failed (returning safe default): {exc}")
-        sentry_sdk.capture_exception(exc)
         return ClarifyResponse(should_clarify=False, is_complex=False)
 
 
@@ -760,18 +615,24 @@ async def clarify_prompt(request: ClarifyRequest, auth: dict = Depends(require_a
 async def optimize_stream(websocket: WebSocket):
     """
     WebSocket endpoint for streaming prompt optimization using pipeline_v2.
-    Auth token must be passed as ?token=<access_token> query param.
+
+    Each message is one request. Its `llm` object carries the user's OpenRouter
+    key and chosen models ({api_key, optimizer_model, rag_model}).
     """
     _ensure_pipeline()
-    auth = await require_ws_auth(websocket)
     await websocket.accept()
-    verified_user_id = auth.get("sub")
-    logger.info(f"WebSocket connection accepted user={verified_user_id}")
-    
+    logger.info("WebSocket connection accepted")
+
     try:
         while True:
             data = await websocket.receive_json()
-            
+
+            # Requests on one connection run one at a time, so an abort for the
+            # in-flight request only arrives after it finished: nothing to do.
+            if data.get("type") == "abort":
+                logger.info(f"Ignoring abort for finished request {data.get('request_id')}")
+                continue
+
             request_id = data.get("request_id", str(int(time.time() * 1000)))
             prompt_text = data.get("prompt", "").strip()
             previous_output = data.get("previous_output", None)  # for regeneration self-critique
@@ -790,58 +651,12 @@ async def optimize_stream(websocket: WebSocket):
             # service falls back to its default empty root and reports "project
             # not found" → context unavailable.
             code_intel_root = data.get("code_intel_root", None)
-            sentry_trace = data.get("sentry_trace")
-            baggage = data.get("baggage", "")
-            # Use JWT-verified user id; fall back to request body only for legacy local mode
-            user_id = verified_user_id or data.get("user_id")
-
-            if user_id:
-                sentry_sdk.set_user({"id": user_id})
-
-            # Server-side rate limit check (enforced even for direct WebSocket connections)
-            if user_id:
-                allowed = await _check_rate_limit(user_id)
-                if not allowed:
-                    await websocket.send_json({
-                        "type": "error",
-                        "request_id": request_id,
-                        "message": f"Daily limit of {DAILY_REQUEST_LIMIT} optimizations reached. Resets at midnight UTC.",
-                    })
-                    continue
+            llm = LLMSettings.from_mapping(data.get("llm"))
+            model = optimizer_model(llm)
 
             is_regeneration = bool(previous_output and previous_output.strip())
             logger.info(f"Processing request {request_id} (Mode: {mode}, Files: {len(attached_files)}, Skill: {forced_skill or 'auto'}, Regen: {is_regeneration})")
 
-            # Continue distributed trace from Electron so Python spans are linked.
-            if sentry_trace:
-                incoming = {"sentry-trace": sentry_trace}
-                if baggage:
-                    incoming["baggage"] = baggage
-                transaction = sentry_sdk.continue_trace(
-                    incoming,
-                    op="ai.optimization",
-                    name=f"ws.optimize/{mode}",
-                )
-                sentry_sdk.get_current_scope().set_transaction_name(f"ws.optimize/{mode}")
-            else:
-                transaction = sentry_sdk.start_transaction(
-                    op="ai.optimization",
-                    name=f"ws.optimize/{mode}",
-                )
-
-            sentry_sdk.add_breadcrumb(
-                category="optimize",
-                message="optimize_stream request received",
-                level="info",
-                data={
-                    "request_id": request_id,
-                    "mode": mode,
-                    "skill": forced_skill or "auto",
-                    "is_regeneration": is_regeneration,
-                    "file_count": len(attached_files),
-                },
-            )
-            
             # Validate file count
             if len(attached_files) > 5:
                 await websocket.send_json({
@@ -850,7 +665,7 @@ async def optimize_stream(websocket: WebSocket):
                     "message": "Maximum 5 files allowed per message"
                 })
                 continue
-            
+
             if not prompt_text or len(prompt_text) < 1:
                 await websocket.send_json({
                     "type": "error",
@@ -865,164 +680,136 @@ async def optimize_stream(websocket: WebSocket):
                     role_str = msg.get('role', 'user') if isinstance(msg, dict) else getattr(msg, 'role', 'user')
                     content_str = msg.get('content', '') if isinstance(msg, dict) else getattr(msg, 'content', '')
                     cc.add(role_str, content_str)
-            
-            async with _optimize_semaphore:
-             with transaction:
-              try:
-                models_info = {}
-                loop = asyncio.get_event_loop()
-                chunk_queue: asyncio.Queue = asyncio.Queue()
 
-                task_plan = None
-                if wants_sections:
-                    from pipeline_v2.task_planner import plan_tasks
-                    sentry_sdk.add_breadcrumb(
-                        category="optimize", message="Task planning started",
-                        level="info", data={"request_id": request_id},
-                    )
-                    planner_input = prompt_text
-                    if project_id:
-                        try:
-                            from pipeline_v2.project_context import fetch_project_context
-                            planner_ctx = await loop.run_in_executor(
-                                None,
-                                lambda: fetch_project_context(
+            async with _optimize_semaphore:
+                try:
+                    models_info = {}
+                    loop = asyncio.get_event_loop()
+                    chunk_queue: asyncio.Queue = asyncio.Queue()
+
+                    task_plan = None
+                    if wants_sections:
+                        from pipeline_v2.task_planner import plan_tasks
+                        planner_input = prompt_text
+                        if project_id:
+                            try:
+                                from pipeline_v2.project_context import fetch_project_context
+                                planner_ctx = await asyncio.to_thread(
+                                    fetch_project_context,
                                     project_id=project_id,
                                     user_query=prompt_text,
                                     branch=project_branch,
-                                    auth_token=websocket.query_params.get("token", ""),
                                     code_intel_root=code_intel_root,
-                                ),
-                            )
-                            if planner_ctx:
-                                planner_input = f"{planner_ctx.text}\n\n{prompt_text}"
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch project context for task planner: {e}")
-                    task_plan = await loop.run_in_executor(
-                        None,
-                        lambda: plan_tasks(
+                                    llm=llm,
+                                )
+                                if planner_ctx:
+                                    planner_input = f"{planner_ctx.text}\n\n{prompt_text}"
+                            except Exception as e:
+                                logger.warning(f"Failed to fetch project context for task planner: {e}")
+                        task_plan = await asyncio.to_thread(
+                            plan_tasks,
                             user_input=planner_input,
                             model=SUMMARIZER_MODEL,
                             provider="auto",
-                        ),
-                    )
-                    task_count = len(task_plan) if task_plan else 0
-                    sentry_sdk.add_breadcrumb(
-                        category="optimize", message="Task planning complete",
-                        level="info", data={"request_id": request_id, "task_count": task_count, "success": task_plan is not None},
-                    )
-                    logger.info(f"Task plan: {task_count} tasks")
-
-                def run_stream():
-                    """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""
-                    try:
-                        gen = pipeline_optimize(
-                            user_input=prompt_text,
-                            cc=cc,
-                            model=OPTIMIZER_MODEL,
-                            provider="auto",
-                            stream=True,
-                            mode=mode,
-                            custom_instructions=custom_instructions,
-                            attached_files=attached_files,
-                            forced_skill=forced_skill,
-                            previous_output=previous_output,
-                            models_info=models_info,
-                            clarification_answers=clarification_answers,
-                            wants_sections=wants_sections,
-                            task_plan=task_plan,
-                            project_id=project_id,
-                            project_branch=project_branch,
-                            auth_token=websocket.query_params.get("token", ""),
-                            code_intel_root=code_intel_root,
+                            api_key=llm.api_key,
                         )
-                        for chunk in gen:
-                            loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
-                    finally:
-                        loop.call_soon_threadsafe(chunk_queue.put_nowait, None)  # sentinel
+                        task_count = len(task_plan) if task_plan else 0
+                        logger.info(f"Task plan: {task_count} tasks")
 
-                # Start blocking generator in thread — event loop stays free for other requests
-                thread_future = loop.run_in_executor(None, run_stream)
+                    def run_stream():
+                        """Run the blocking LLM generator in a thread, pushing chunks to the async queue."""
+                        try:
+                            gen = pipeline_optimize(
+                                user_input=prompt_text,
+                                cc=cc,
+                                model=model,
+                                provider="auto",
+                                stream=True,
+                                mode=mode,
+                                custom_instructions=custom_instructions,
+                                attached_files=attached_files,
+                                forced_skill=forced_skill,
+                                previous_output=previous_output,
+                                models_info=models_info,
+                                clarification_answers=clarification_answers,
+                                wants_sections=wants_sections,
+                                task_plan=task_plan,
+                                project_id=project_id,
+                                project_branch=project_branch,
+                                code_intel_root=code_intel_root,
+                                llm=llm,
+                            )
+                            for chunk in gen:
+                                loop.call_soon_threadsafe(chunk_queue.put_nowait, chunk)
+                        finally:
+                            loop.call_soon_threadsafe(chunk_queue.put_nowait, None)  # sentinel
 
-                accumulated_text = ""
-                chunk_count = 0
+                    # Start blocking generator in thread — event loop stays free for other requests
+                    thread_future = loop.run_in_executor(None, run_stream)
 
-                while True:
-                    chunk = await chunk_queue.get()
-                    if chunk is None:
-                        break
-                    accumulated_text += chunk
-                    chunk_count += 1
+                    accumulated_text = ""
+                    chunk_count = 0
+
+                    while True:
+                        chunk = await chunk_queue.get()
+                        if chunk is None:
+                            break
+                        accumulated_text += chunk
+                        chunk_count += 1
+                        await websocket.send_json({
+                            "type": "chunk",
+                            "request_id": request_id,
+                            "content": chunk,
+                            "accumulated": accumulated_text
+                        })
+
+                    await thread_future  # Propagate any thread exceptions
+
+                    cleaned_text = clean_optimized_text(accumulated_text)
+
                     await websocket.send_json({
-                        "type": "chunk",
+                        "type": "complete",
                         "request_id": request_id,
-                        "content": chunk,
-                        "accumulated": accumulated_text
+                        "optimized": cleaned_text,
+                        "original": prompt_text,
+                        "models_used": models_info,
+                    })
+                    logger.info(f"Request {request_id} complete. Chunks: {chunk_count}")
+
+                except Exception as e:
+                    from pipeline_v2.project_context import ProjectContextUnavailableError
+                    message = user_facing_error(e)
+                    if message is None and isinstance(e, ProjectContextUnavailableError):
+                        message = str(e)
+                    if message is None:
+                        logger.error(f"Error processing request {request_id}: {e}", exc_info=True)
+                        message = "Optimization failed. Please try again."
+                    else:
+                        logger.warning(f"Request {request_id} failed: {message}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "request_id": request_id,
+                        "message": message
                     })
 
-                await thread_future  # Propagate any thread exceptions
-
-                cleaned_text = clean_optimized_text(accumulated_text)
-                
-                await websocket.send_json({
-                    "type": "complete",
-                    "request_id": request_id,
-                    "optimized": cleaned_text,
-                    "original": prompt_text,
-                    "models_used": models_info,
-                })
-                
-                sentry_sdk.add_breadcrumb(
-                    category="optimize",
-                    message="optimize_stream complete",
-                    level="info",
-                    data={"request_id": request_id, "chunk_count": chunk_count, "mode": mode},
-                )
-                logger.info(f"Request {request_id} complete. Chunks: {chunk_count}")
-                
-              except Exception as e:
-                logger.error(f"OptimizeStream.request_error request_id={request_id} error={e}")
-                sentry_sdk.capture_exception(e)
-                logger.error(f"✗ Error processing request {request_id}: {e}")
-                import traceback
-                traceback.print_exc()
-                message = "Optimization failed. Please try again."
-                try:
-                    from pipeline_v2.project_context import ProjectContextUnavailableError
-                    if isinstance(e, ProjectContextUnavailableError):
-                        message = str(e)
-                except Exception:
-                    pass
-                await websocket.send_json({
-                    "type": "error",
-                    "request_id": request_id,
-                    "message": message
-                })
-                
     except WebSocketDisconnect:
-        logger.info("OptimizeStream.client_disconnected")
         logger.info("Client disconnected")
     except Exception as e:
-        sentry_sdk.capture_exception(e)
-        logger.error(f"OptimizeStream.fatal_error error={e}")
-        logger.error(f"✗ Fatal connection error: {e}")
-    finally:
-        pass # Connection closed
+        logger.error(f"OptimizeStream fatal connection error: {e}", exc_info=True)
+
 
 @app.get("/health")
-@limiter.exempt
 async def health():
     """Lightweight liveness probe."""
     return {"status": "ok", "service": "prompt-optimizer"}
 
 
 @app.get("/health/ready")
-@limiter.exempt
 async def health_ready():
-    """Readiness probe — checks that critical dependencies are available."""
+    """Readiness probe — checks that critical dependencies are available.
+    The API key arrives with each request, so it is not checked here."""
     _ensure_pipeline()
     checks: dict = {}
-    checks["llm_api_key"] = bool(OPENROUTER_API_KEY)
     checks["optimizer_model"] = bool(OPTIMIZER_MODEL)
     try:
         import torch  # noqa: F401
@@ -1032,7 +819,7 @@ async def health_ready():
         checks["whisper_model"] = "skipped (not installed)"
     except Exception:
         checks["whisper_model"] = False
-    all_ok = checks["llm_api_key"] and checks["optimizer_model"]
+    all_ok = checks["optimizer_model"]
     return {"status": "ready" if all_ok else "degraded", "checks": checks}
 
 
@@ -1041,10 +828,11 @@ class TitleRequest(BaseModel):
 
 
 @app.post("/generate-title")
-async def generate_title(request: TitleRequest, auth: dict = Depends(require_auth)):
+async def generate_title(request: TitleRequest, llm=Depends(llm_from_headers)):
     """
     Generate a short smart chat title (3-5 words) from the first user message.
-    Uses TITLE_MODEL (defaults to SUMMARIZER_MODEL — cheap & fast).
+    Uses TITLE_MODEL (defaults to SUMMARIZER_MODEL — cheap & fast) with the
+    user's OpenRouter key.
     Falls back to "New Chat" if the LLM call fails or prompt is empty.
     """
     _ensure_pipeline()
@@ -1073,10 +861,9 @@ async def generate_title(request: TitleRequest, auth: dict = Depends(require_aut
             "max_tokens": 20,
             "temperature": 0.3,
         }
-        if OPENROUTER_API_KEY and ("openrouter" in model.lower()):
-            kwargs["api_key"] = OPENROUTER_API_KEY
+        kwargs.update(provider_kwargs(model, llm.api_key))
 
-        response = _litellm.completion(**kwargs)
+        response = await asyncio.to_thread(_litellm.completion, **kwargs)
         raw_title = response.choices[0].message.content.strip()
 
         import re as _re
@@ -1140,7 +927,7 @@ Example output:
 
 
 @app.post("/extract-memory-facts", response_model=ExtractMemoryResponse)
-async def extract_memory_facts(request: ExtractMemoryRequest, auth: dict = Depends(require_auth)):
+async def extract_memory_facts(request: ExtractMemoryRequest, llm=Depends(llm_from_headers)):
     """
     Extract user facts from a raw prompt + optimized output.
     Uses a cheap/fast model (same as optimizer) for minimal cost.
@@ -1171,11 +958,10 @@ async def extract_memory_facts(request: ExtractMemoryRequest, auth: dict = Depen
             "max_tokens": 300,
             "temperature": 0.1,
         }
-        if OPENROUTER_API_KEY and "openrouter" in model.lower():
-            kwargs["api_key"] = OPENROUTER_API_KEY
+        kwargs.update(provider_kwargs(model, llm.api_key))
 
         t0 = time.time()
-        response = _litellm.completion(**kwargs)
+        response = await asyncio.to_thread(_litellm.completion, **kwargs)
         latency_ms = int((time.time() - t0) * 1000)
 
         raw_text = response.choices[0].message.content.strip()
@@ -1264,7 +1050,7 @@ VAD_SPEECH_THRESH  = 0.5    # confidence threshold (0–1)
 VAD_MIN_SPEECH_MS  = 250    # ignore speech bursts shorter than this
 
 # Debug WAV output
-DEBUG_WAV_COUNT  = 3 if _is_dev else 0
+DEBUG_WAV_COUNT  = 3 if os.environ.get("APP_ENV", "development") == "development" else 0
 _debug_wav_saved = 0
 
 
@@ -1447,7 +1233,6 @@ def _transcribe_uploaded_wav(audio_bytes: bytes) -> str:
         )
         segments = list(segments_gen)
     except Exception as exc:
-        sentry_sdk.capture_exception(exc)
         logger.error(f"Uploaded transcription failed: {exc}")
         raise HTTPException(status_code=500, detail="Transcription failed")
 
@@ -1456,15 +1241,11 @@ def _transcribe_uploaded_wav(audio_bytes: bytes) -> str:
 
 
 @app.post("/transcribe-audio")
-async def transcribe_audio(request: AudioTranscriptionRequest, auth: dict = Depends(require_auth)):
+async def transcribe_audio(request: AudioTranscriptionRequest):
     try:
         import torch  # noqa: F401
     except ImportError:
         raise HTTPException(status_code=501, detail="Local transcription unavailable — use streaming via /ws/transcribe-stream")
-
-    user_id = auth.get("sub")
-    if user_id:
-        sentry_sdk.set_user({"id": user_id})
 
     try:
         audio_bytes = base64.b64decode(request.audio_base64, validate=True)
@@ -1526,23 +1307,11 @@ async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: li
 
             elif msg_type == "Metadata":
                 logger.info(f"[Deepgram] Metadata session={session_id}: request_id={msg.get('request_id')}")
-                sentry_sdk.add_breadcrumb(
-                    category="transcription",
-                    message="Deepgram metadata received",
-                    level="info",
-                    data={"session_id": session_id, "request_id": msg.get("request_id")},
-                )
 
     except websockets.exceptions.ConnectionClosedOK:
         logger.info(f"[Deepgram] Connection closed normally session={session_id}")
     except websockets.exceptions.ConnectionClosedError as e:
         logger.warning(f"[Deepgram] Connection closed with error session={session_id}: {e}")
-        sentry_sdk.add_breadcrumb(
-            category="transcription",
-            message="Deepgram connection closed with error",
-            level="warning",
-            data={"session_id": session_id, "error": str(e)},
-        )
         try:
             await client_ws.send_json({
                 "type": "error",
@@ -1551,7 +1320,6 @@ async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: li
         except Exception:
             pass
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.error(f"[Deepgram] Relay error session={session_id}: {e}")
         try:
             await client_ws.send_json({
@@ -1561,23 +1329,19 @@ async def _deepgram_relay(dg_ws, client_ws, session_id: str, finalized_parts: li
         except Exception:
             pass
     finally:
-        sentry_sdk.add_breadcrumb(
-            category="transcription",
-            message="Deepgram relay finished",
-            level="info",
-            data={"session_id": session_id, "finalized_segments": finalized_count},
-        )
+        logger.info(f"[Deepgram] Relay finished session={session_id} finalized_segments={finalized_count}")
 
 
 @app.websocket("/ws/transcribe-stream")
 async def websocket_transcribe_stream(websocket: WebSocket):
-    """Deepgram streaming proxy — client sends PCM audio, receives live transcription."""
-    auth = await require_ws_auth(websocket)
-    await websocket.accept()
-    user_id = auth.get("sub")
-    logger.info(f"WebSocket.transcribe_stream connected user={user_id}")
+    """Deepgram streaming proxy — client sends PCM audio, receives live transcription.
 
-    sentry_sdk.set_user({"id": user_id} if user_id else None)
+    The first message is {action: 'start', sample_rate, session_id,
+    deepgram_api_key}; the key is the user's own (DEEPGRAM_API_KEY env is a
+    fallback for local testing).
+    """
+    await websocket.accept()
+    logger.info("WebSocket.transcribe_stream connected")
 
     session_id: str | None = None
     dg_ws = None
@@ -1585,45 +1349,23 @@ async def websocket_transcribe_stream(websocket: WebSocket):
     finalized_parts: list[str] = []
     audio_chunks_received = 0
 
-    transaction = sentry_sdk.start_transaction(
-        op="transcription.stream",
-        name="ws.transcribe-stream",
-    )
-    transaction.set_tag("user_id", user_id or "anonymous")
-
     try:
         start_data = await websocket.receive_json()
         if start_data.get("action") != "start":
             await websocket.send_json({"type": "error", "message": "Expected {action: 'start'} as first message"})
             await websocket.close(code=1008)
-            transaction.set_status("invalid_argument")
             return
 
         sample_rate = int(start_data.get("sample_rate", 16000))
         session_id = start_data.get("session_id", f"stream_{int(time.time())}")
         logger.info(f"[Deepgram] Starting session={session_id} sample_rate={sample_rate}")
 
-        transaction.set_tag("session_id", session_id)
-        transaction.set_data("sample_rate", sample_rate)
 
-        sentry_sdk.add_breadcrumb(
-            category="transcription",
-            message="Transcription session started",
-            level="info",
-            data={"session_id": session_id, "sample_rate": sample_rate, "user_id": user_id},
-        )
-
-        api_key = DEEPGRAM_API_KEY
+        api_key = str(start_data.get("deepgram_api_key") or "").strip() or DEEPGRAM_API_KEY
         if not api_key:
-            logger.error("[Deepgram] DEEPGRAM_API_KEY is not set")
-            sentry_sdk.add_breadcrumb(
-                category="transcription",
-                message="Deepgram API key missing",
-                level="error",
-            )
-            await websocket.send_json({"type": "error", "message": "Transcription unavailable: service API key not configured. Contact support."})
+            logger.warning("[Deepgram] No Deepgram API key provided")
+            await websocket.send_json({"type": "error", "message": "Voice input needs a Deepgram API key. Add one in Prmpt Settings > AI provider."})
             await websocket.close(code=1011)
-            transaction.set_status("unavailable")
             return
 
         dg_url = (
@@ -1634,36 +1376,20 @@ async def websocket_transcribe_stream(websocket: WebSocket):
         )
         dg_headers = {"Authorization": f"Token {api_key}"}
 
-        with transaction.start_child(op="transcription.deepgram_connect", description="Connect to Deepgram STT"):
-            try:
-                dg_ws = await websockets.connect(dg_url, additional_headers=dg_headers)
-            except Exception as e:
-                sentry_sdk.capture_exception(e)
-                err_str = str(e).lower()
-                if "401" in err_str or "403" in err_str or "unauthorized" in err_str:
-                    user_msg = "Transcription service is temporarily unavailable. Please try again shortly."
-                elif "timeout" in err_str or "timed out" in err_str:
-                    user_msg = "Transcription service unreachable. Try again in a moment."
-                else:
-                    user_msg = f"Transcription service connection failed: {e}"
-                sentry_sdk.add_breadcrumb(
-                    category="transcription",
-                    message="Deepgram connection failed",
-                    level="error",
-                    data={"session_id": session_id, "error": str(e)},
-                )
-                logger.error(f"[Deepgram] Failed to connect: {e}")
-                await websocket.send_json({"type": "error", "message": user_msg})
-                await websocket.close(code=1011)
-                transaction.set_status("internal_error")
-                return
-
-        sentry_sdk.add_breadcrumb(
-            category="transcription",
-            message="Connected to Deepgram STT",
-            level="info",
-            data={"session_id": session_id},
-        )
+        try:
+            dg_ws = await websockets.connect(dg_url, additional_headers=dg_headers)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "401" in err_str or "403" in err_str or "unauthorized" in err_str:
+                user_msg = "Deepgram rejected the API key. Check it in Prmpt Settings > AI provider."
+            elif "timeout" in err_str or "timed out" in err_str:
+                user_msg = "Transcription service unreachable. Try again in a moment."
+            else:
+                user_msg = f"Transcription service connection failed: {e}"
+            logger.error(f"[Deepgram] Failed to connect: {e}")
+            await websocket.send_json({"type": "error", "message": user_msg})
+            await websocket.close(code=1011)
+            return
 
         _active_stream_sessions.add(session_id)
         relay_task = asyncio.create_task(
@@ -1685,12 +1411,6 @@ async def websocket_transcribe_stream(websocket: WebSocket):
                     await dg_ws.send(msg["bytes"])
                 except websockets.exceptions.ConnectionClosed:
                     logger.warning(f"[Deepgram] WS closed while sending audio session={session_id}")
-                    sentry_sdk.add_breadcrumb(
-                        category="transcription",
-                        message="Deepgram WS closed while forwarding audio",
-                        level="warning",
-                        data={"session_id": session_id, "chunks_received": audio_chunks_received},
-                    )
                     break
 
             elif "text" in msg and msg["text"]:
@@ -1701,35 +1421,18 @@ async def websocket_transcribe_stream(websocket: WebSocket):
 
                 if data.get("action") == "stop":
                     logger.info(f"[Deepgram] Client requested stop session={session_id}")
-                    sentry_sdk.add_breadcrumb(
-                        category="transcription",
-                        message="Client requested stop",
-                        level="info",
-                        data={"session_id": session_id, "chunks_received": audio_chunks_received},
-                    )
                     try:
                         await dg_ws.send(json.dumps({"type": "CloseStream"}))
                     except websockets.exceptions.ConnectionClosed:
                         pass
                     break
 
-        transaction.set_status("ok")
-
     except WebSocketDisconnect:
         logger.info(f"WebSocket.transcribe_stream disconnected session={session_id}")
-        sentry_sdk.add_breadcrumb(
-            category="transcription",
-            message="Client WebSocket disconnected",
-            level="info",
-            data={"session_id": session_id},
-        )
-        transaction.set_status("cancelled")
     except Exception as e:
-        sentry_sdk.capture_exception(e)
         logger.error(f"WebSocket.transcribe_stream error session={session_id}: {e}")
         import traceback
         traceback.print_exc()
-        transaction.set_status("internal_error")
     finally:
         if relay_task and not relay_task.done():
             try:
@@ -1760,335 +1463,9 @@ async def websocket_transcribe_stream(websocket: WebSocket):
         if session_id:
             _active_stream_sessions.discard(session_id)
 
-        transaction.set_data("audio_chunks_received", audio_chunks_received)
-        transaction.set_data("finalized_segments", len(finalized_parts))
-        transaction.set_data("accumulated_length", len(accumulated))
-        transaction.finish()
-
         logger.info(f"[Deepgram] Session ended session={session_id} "
                     f"accumulated_length={len(accumulated)} "
                     f"audio_chunks={audio_chunks_received}")
-
-
-# ── Cloudinary image upload ────────────────────────────────────────────────────
-
-class ImageUploadRequest(BaseModel):
-    base64: str = Field(..., max_length=10_000_000)
-    filename: str
-    mime_type: str = "image/jpeg"
-
-class ImageUploadResponse(BaseModel):
-    url: str
-
-class ImageUploadResult(BaseModel):
-    url: str
-    public_id: str
-
-
-def _sync_cloudinary_upload(
-    image_bytes: bytes,
-    filename: str,
-    mime_type: str,
-    user_id: Optional[str] = None,
-) -> dict:
-    """Synchronous Cloudinary multipart upload — run in a thread executor.
-
-    When user_id is provided, the asset is tagged user_<userId> AND placed
-    under folder users/<userId>/. The Edge Function `process-deletions` uses
-    this tag for bulk cleanup at the 30-day mark.
-
-    Returns: {"secure_url": str, "public_id": str}
-    """
-    import hashlib
-    import urllib.request
-    import json as json_lib
-    import time as time_lib
-
-    cloud_name = os.environ.get("VITE_CLOUDINARY_CLOUD_NAME", "")
-    api_key    = os.environ.get("CLOUDINARY_API_KEY", "")
-    api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
-
-    if not (cloud_name and api_key and api_secret):
-        raise ValueError("Cloudinary credentials not configured on the server")
-
-    boundary  = f"----UploadBoundary{int(time_lib.time() * 1000)}"
-    timestamp = str(int(time_lib.time()))
-
-    # Per Cloudinary signature spec: every non-file param except api_key,
-    # signature, file & resource_type goes into the signing payload, sorted
-    # alphabetically. We attach folder + tags when a user is known.
-    sign_params: dict[str, str] = {"timestamp": timestamp}
-    if user_id:
-        sign_params["folder"] = f"users/{user_id}"
-        sign_params["tags"]   = f"user_{user_id}"
-
-    sign_payload = "&".join(f"{k}={sign_params[k]}" for k in sorted(sign_params))
-    signature = hashlib.sha1(f"{sign_payload}{api_secret}".encode()).hexdigest()
-
-    form_fields: list[tuple[str, str]] = [
-        *sign_params.items(),
-        ("api_key", api_key),
-        ("signature", signature),
-    ]
-
-    parts: list[bytes] = []
-    for name, value in form_fields:
-        parts.append(
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
-        )
-    parts.append(
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {mime_type}\r\n\r\n".encode()
-        + image_bytes
-        + b"\r\n"
-    )
-    parts.append(f"--{boundary}--\r\n".encode())
-    body = b"".join(parts)
-
-    upload_url = f"https://api.cloudinary.com/v1_1/{cloud_name}/image/upload"
-    req = urllib.request.Request(
-        upload_url,
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json_lib.loads(resp.read().decode())
-
-    if "secure_url" not in result or "public_id" not in result:
-        msg = result.get("error", {}).get("message", "Cloudinary upload failed — missing secure_url/public_id")
-        raise ValueError(msg)
-
-    return {"secure_url": result["secure_url"], "public_id": result["public_id"]}
-
-
-@app.post("/upload/image", response_model=ImageUploadResult)
-async def upload_image(request: ImageUploadRequest, auth: dict = Depends(require_auth)):
-    """Upload a base64-encoded image to Cloudinary.
-
-    Tags & folder-prefixes the asset with the verified user_id from the JWT
-    so that account deletion can wipe all of a user's assets in a single API call.
-    """
-    import asyncio
-    import base64 as base64_lib
-
-    user_id = auth.get("sub")
-
-    try:
-        image_bytes = base64_lib.b64decode(request.base64)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid base64 image data")
-
-    try:
-        loop = asyncio.get_event_loop()
-        upload = await loop.run_in_executor(
-            None, _sync_cloudinary_upload, image_bytes, request.filename, request.mime_type, user_id
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except Exception as e:
-        logger.error(f"[CloudinaryUpload] Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="Image upload failed")
-
-    logger.info(f"[CloudinaryUpload] Uploaded {request.filename} -> {upload['public_id']}")
-    sentry_sdk.add_breadcrumb(
-        category="file-upload",
-        message=f"Cloudinary upload success: {request.filename}",
-        level="info",
-        data={"public_id": upload["public_id"], "user_id": user_id},
-    )
-    return ImageUploadResult(url=upload["secure_url"], public_id=upload["public_id"])
-
-
-# ── Auth OTP Routes (unauthenticated, rate-limited) ──────────────────────────
-
-
-class SendSignupOtpRequest(BaseModel):
-    email: str
-    name: str
-    dob: str
-    password: str
-
-
-class VerifySignupOtpRequest(BaseModel):
-    email: str
-    otp: str
-
-
-class SendResetOtpRequest(BaseModel):
-    email: str
-
-
-class ResetPasswordRequest(BaseModel):
-    email: str
-    otp: str
-    new_password: str
-
-
-@app.post("/auth/send-signup-otp")
-@limiter.limit("5/minute")
-async def route_send_signup_otp(request: StarletteRequest, body: SendSignupOtpRequest):
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="route /auth/send-signup-otp invoked", level="info",
-    )
-    result = await send_signup_otp(body.email, body.name, body.dob, body.password)
-    if not result.get("success"):
-        sentry_sdk.add_breadcrumb(
-            category="auth", message="send-signup-otp failed", level="warning",
-            data={"error": result.get("error")},
-        )
-        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
-    return result
-
-
-@app.post("/auth/verify-signup-otp")
-@limiter.limit("10/minute")
-async def route_verify_signup_otp(request: StarletteRequest, body: VerifySignupOtpRequest):
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="route /auth/verify-signup-otp invoked", level="info",
-    )
-    result = verify_signup_otp(body.email, body.otp)
-    if not result.get("valid"):
-        sentry_sdk.add_breadcrumb(
-            category="auth", message="verify-signup-otp failed", level="warning",
-            data={"error": result.get("error")},
-        )
-        raise HTTPException(status_code=400, detail=result.get("error", "Verification failed"))
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="verify-signup-otp success", level="info",
-    )
-    return result
-
-
-@app.post("/auth/send-reset-otp")
-@limiter.limit("5/minute")
-async def route_send_reset_otp(request: StarletteRequest, body: SendResetOtpRequest):
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="route /auth/send-reset-otp invoked", level="info",
-    )
-    result = await send_reset_otp(body.email)
-    if not result.get("success"):
-        sentry_sdk.add_breadcrumb(
-            category="auth", message="send-reset-otp failed", level="warning",
-            data={"error": result.get("error")},
-        )
-        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send OTP"))
-    return result
-
-
-@app.post("/auth/reset-password")
-@limiter.limit("5/minute")
-async def route_reset_password(request: StarletteRequest, body: ResetPasswordRequest):
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="route /auth/reset-password invoked", level="info",
-    )
-    result = await otp_reset_password(body.email, body.otp, body.new_password)
-    if not result.get("valid"):
-        sentry_sdk.add_breadcrumb(
-            category="auth", message="reset-password failed", level="warning",
-            data={"error": result.get("error")},
-        )
-        raise HTTPException(status_code=400, detail=result.get("error", "Password reset failed"))
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="reset-password success", level="info",
-    )
-    return result
-
-
-# ── Account Restore Routes (unauthenticated, rate-limited) ──────────────────
-# When a user has requested account deletion, GoTrue refuses sign-in.
-# These endpoints let them prove ownership of the email via a one-time code
-# and cancel the pending deletion (clears auth.users.banned_until).
-
-
-class RequestRestoreRequest(BaseModel):
-    email: str
-
-
-class ConfirmRestoreRequest(BaseModel):
-    email: str
-    otp: str
-
-
-@app.post("/account/request-restore")
-@limiter.limit("5/minute")
-async def route_request_restore(request: StarletteRequest, body: RequestRestoreRequest):
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="route /account/request-restore invoked", level="info",
-    )
-    result = await send_restore_otp(body.email)
-    if not result.get("success"):
-        sentry_sdk.add_breadcrumb(
-            category="auth", message="request-restore failed", level="warning",
-            data={"error": result.get("error")},
-        )
-        raise HTTPException(status_code=400, detail=result.get("error", "Failed to send restore code"))
-    return result
-
-
-@app.post("/account/confirm-restore")
-@limiter.limit("10/minute")
-async def route_confirm_restore(request: StarletteRequest, body: ConfirmRestoreRequest):
-    """Verify OTP, then call the restore_account RPC with the service role
-    to clear the deletion request and lift the auth ban."""
-    import httpx as _httpx
-
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="route /account/confirm-restore invoked", level="info",
-    )
-
-    otp_result = verify_restore_otp(body.email, body.otp)
-    if not otp_result.get("valid"):
-        sentry_sdk.add_breadcrumb(
-            category="auth", message="confirm-restore otp invalid", level="warning",
-            data={"error": otp_result.get("error")},
-        )
-        raise HTTPException(status_code=400, detail=otp_result.get("error", "Invalid code"))
-
-    supabase_url = os.environ.get("SUPABASE_URL", "")
-    service_role = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not supabase_url or not service_role:
-        logger.error("[Restore] SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not configured")
-        raise HTTPException(status_code=500, detail="Account restore is not configured. Contact support.")
-
-    try:
-        async with _httpx.AsyncClient(timeout=15) as client:
-            with sentry_sdk.start_span(op="http.client", description="Supabase RPC restore_account") as span:
-                resp = await client.post(
-                    f"{supabase_url}/rest/v1/rpc/restore_account",
-                    headers={
-                        "Authorization": f"Bearer {service_role}",
-                        "apikey": service_role,
-                        "Content-Type": "application/json",
-                    },
-                    json={"p_email": body.email.lower().strip()},
-                )
-                span.set_tag("http.status_code", resp.status_code)
-                if resp.status_code >= 400:
-                    body_text = resp.text
-                    logger.error(f"[Restore] RPC error {resp.status_code}: {body_text}")
-                    sentry_sdk.capture_message(f"restore_account RPC error: {resp.status_code}", level="error")
-                    # Map the RPC's RAISE EXCEPTION strings to clean user-facing
-                    # messages. The RPC raises with SQLSTATE P0002 in both cases.
-                    if "No account found" in body_text:
-                        raise HTTPException(status_code=404, detail="No account found for this email.")
-                    if "No pending deletion to restore" in body_text:
-                        raise HTTPException(
-                            status_code=409,
-                            detail="This account isn't queued for deletion — nothing to restore.",
-                        )
-                    raise HTTPException(status_code=502, detail="Could not restore account. Please try again.")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        sentry_sdk.capture_exception(exc)
-        logger.error(f"[Restore] Unexpected error: {exc}")
-        raise HTTPException(status_code=500, detail="Restore failed. Please try again.")
-
-    sentry_sdk.add_breadcrumb(
-        category="auth", message="confirm-restore success", level="info",
-    )
-    logger.info(f"[Restore] Account restored for {body.email}")
-    return {"success": True}
 
 
 @app.on_event("shutdown")
@@ -2101,7 +1478,6 @@ async def shutdown_event():
 
 
 @app.get("/")
-@limiter.exempt
 async def root():
     return {
         "service": "Prompt Optimizer API",
@@ -2117,5 +1493,5 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT", "8001")))
 
