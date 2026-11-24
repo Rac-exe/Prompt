@@ -154,8 +154,7 @@
     "sharp": "^0.34.5",
     "tsx": "^4.21.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.5",
-    "ws": "^8.20.0"
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "active-win": "^8.2.1",
@@ -166,6 +165,7 @@
     "file-type": "^16.5.4",
     "tree-sitter-wasms": "0.1.10",
     "uiohook-napi": "^1.5.4",
-    "web-tree-sitter": "^0.25.10"
+    "web-tree-sitter": "^0.25.10",
+    "ws": "^8.20.0"
   }
 }
