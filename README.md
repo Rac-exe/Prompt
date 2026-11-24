@@ -6,7 +6,7 @@
 
 Local-first desktop app for Windows and macOS · bring your own OpenRouter key · open source
 
-[How it works](#how-it-works) · [Install on Windows](#install-and-run-on-windows) · [Code intelligence engine](#the-code-intelligence-engine) · [Benchmark](#benchmark) · [Architecture deep dive](./ARCHITECTURE.md)
+[How it works](#how-it-works) · [Getting started](#getting-started) · [Code intelligence engine](#the-code-intelligence-engine) · [Benchmark](#benchmark) · [Architecture deep dive](./ARCHITECTURE.md)
 
 </div>
 
@@ -87,60 +87,120 @@ Details: [code-intelligence-service/README.md](./code-intelligence-service/READM
 
 ---
 
-## Install and run on Windows
+## Getting started
 
-Run Prmpt from source as below, or build a self-contained installer (see [Packaging](#packaging)). Either way, the app starts its two local Python services itself. These steps were run end to end on Windows 11; timings are from that run.
+There are two ways to run Prmpt:
 
-### Requirements
+- **[Use the installer](#option-a-use-the-installer-windows)** if you just want the app. You don't need Node, Python or Git.
+- **[Run from source](#option-b-run-from-source)** if you want to change the code. This takes about 10 minutes the first time.
 
-| | |
-|---|---|
-| Windows 10/11 x64 | A prebuilt keyboard-hook binary is included. macOS 12+ (Apple Silicon) works too: see [macOS](#macos). |
-| [Node.js](https://nodejs.org) 18+ | Tested with Node 24 |
-| [Python](https://www.python.org/downloads/) 3.11 or 3.12 | Tested with 3.11. `python` must be on your PATH. |
-| An [OpenRouter API key](https://openrouter.ai/keys) | You paste it into the app on first launch; it never goes in a file |
-| About 2 GB of free disk | Mostly the local embedding and reranker models |
-| Optional: [Rust](https://rustup.rs) + Visual Studio Build Tools (C++) | Only to rebuild the keyboard hook from source (`npm run native:build`) |
+Either way you need an **[OpenRouter API key](https://openrouter.ai/keys)**. You paste it into the app on first launch, and it never goes in a file. There's no account to create and no sign-in.
 
-### Install (about 8 minutes)
+### Option A: use the installer (Windows)
+
+1. Download `Prmpt Setup <version>.exe` from [Releases](https://github.com/Rac-exe/Prompt/releases). Use 1.3.2 or later: older builds still expect a hosted backend that no longer exists.
+2. Run it. The installer isn't code-signed yet, so Windows SmartScreen warns you about it: click **More info → Run anyway**.
+3. Open Prmpt from the Start menu, then go to [First launch](#first-launch).
+
+The installer is about 240 MB and takes about 800 MB on disk. It includes both local services, so you don't need to install anything else. On first launch, Prmpt downloads its local search models (about 1.2 GB) in the background, once.
+
+### Option B: run from source
+
+These steps were run end to end on a clean Windows 11 machine, and the timings come from that run.
+
+#### 1. Install the tools
+
+| Tool | Version | What it's for | Check with |
+|---|---|---|---|
+| [Git](https://git-scm.com/downloads) | Any | Cloning the repo | `git --version` |
+| [Node.js](https://nodejs.org) (includes npm) | 18 or newer (tested with 24) | The Electron app, the React UI and the build tools | `node -v` |
+| [Python](https://www.python.org/downloads/) | 3.11 or 3.12 (tested with 3.11) | The two local services | `python --version` |
+
+You also need about 3 GB of free disk: about 1.5 GB for dependencies and about 1.2 GB for the local search models.
+
+When you install Python on Windows, tick **"Add python.exe to PATH"**. If `python --version` opens the Microsoft Store instead, turn off the `python.exe` alias in **Settings → Apps → Advanced app settings → App execution aliases**.
+
+You **don't** need Rust or a C++ compiler. The Windows keyboard-hook binary is checked in, and `better-sqlite3` downloads a prebuilt binary. You only need them for the cases under [Optional tools](#optional-tools).
+
+#### 2. Get the code
 
 ```powershell
 git clone https://github.com/Rac-exe/Prompt.git
 cd Prompt
-
-npm install                 # Electron deps; rebuilds better-sqlite3 for Electron (~40 s)
-npm run install:ui          # React UI deps (~40 s)
-npm run python:install      # optimizer service venv (~3 min)
-npm run code-intel:install  # code-intelligence service venv (~3 min)
 ```
 
-No `.env` file is needed.
+#### 3. Install the dependencies (about 8 minutes)
 
-### Run
+Run these four commands from the repo root, in this order:
+
+```powershell
+npm install                 # Electron app (~40 s). Also rebuilds better-sqlite3 for Electron.
+npm run install:ui          # React UI (~40 s)
+npm run python:install      # Optimizer service: creates python-service/venv (~3 min)
+npm run code-intel:install  # Code-intelligence service: creates code-intelligence-service/.venv (~3 min)
+```
+
+Each Python service gets its own virtual environment, so nothing goes into your global Python. You don't need a `.env` file.
+
+#### 4. Start the app
 
 ```powershell
 npm start
 ```
 
-`npm start` builds the UI and the Electron code (about 30 s), then opens the app. The app starts both Python services from their venvs (about 2 s for the optimizer and 9 s for code intelligence) and stops them when you quit. Their output goes to `logs/optimizer.log` and `logs/code-intel.log` in the app's data folder. After the first build, `npm run dev` relaunches faster if you only changed Electron code.
+`npm start` builds the UI and the Electron code (about 30 s), then opens the app. The app starts both Python services from their venvs and stops them when you quit, so you don't need extra terminals. It's ready when the Prmpt icon appears in the system tray and the main window opens.
 
-The first time the code-intelligence service starts, it downloads its local models (about 1.2 GB) from Hugging Face. After that it starts in a few seconds.
+The first time the code-intelligence service starts, it downloads its local models (about 1.2 GB) from Hugging Face. After that, it starts in a few seconds.
 
-Working on the Python code? Start a service yourself with hot reload (`npm run python:dev` or `npm run code-intel:dev`) before launching the app; the app reuses a service that's already running instead of starting its own.
+After the first build, `npm run dev` relaunches faster if you only changed Electron code.
+
+#### 5. Check that it works
+
+1. Finish [First launch](#first-launch) and add your OpenRouter key.
+2. Open Notepad and type `make this better @prompt`. The overlay should open next to your text.
+3. Press `Enter` in the overlay to optimize, then click **Insert**. `@prompt` should be replaced with the optimized prompt.
 
 ### First launch
 
 1. Pick light or dark.
-2. **Connect your AI provider:** paste your OpenRouter key (it's checked against OpenRouter before it's saved), then pick the optimizer and RAG models. You can skip this and add the key later in **Settings → AI provider**. Until then, the overlay shows a setup prompt instead of optimizing.
-3. After a short tour you're in. Type `@prompt` in any text field, or press `Ctrl+5`.
+2. **Connect your AI provider.** Paste your OpenRouter key, then pick the optimizer and RAG models. The key is checked with OpenRouter before it's saved. You can skip this step and add the key later in **Settings → AI provider**; until you do, the overlay shows a setup message instead of optimizing.
+3. After a short tour, you're in. Type `@prompt` in any text field, or press `Ctrl+5`.
 
 To index a repository, open **Spaces**, create a Space and add a folder. Indexing summarizes code chunks with a small model, so a mid-sized repo takes a couple of minutes.
 
-If a service stops, the app says so and reconnects by itself once it's back.
+If a service stops, the app tells you and reconnects by itself once the service is back.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `python` isn't recognized, or it opens the Microsoft Store | Reinstall Python with **"Add python.exe to PATH"** ticked, or turn off the Store alias (see [step 1](#1-install-the-tools)). Then delete the half-made `venv` / `.venv` folder and rerun the install script. |
+| `npm install` fails while building `better-sqlite3` | No prebuilt binary matched your setup. Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the **Desktop development with C++** workload, then run `npm install` again. |
+| The app says the local AI service isn't running | Open `logs/optimizer.log` or `logs/code-intel.log` in the data folder. The app prints that folder's path at startup as `[Main] Data folder: ...`. A missing venv means one of the step 3 install scripts didn't finish. |
+| Port 8001 or 8002 is already in use | If an older Prmpt service is using it, the app reuses it. Otherwise, stop the other program or point the app at other ports (see [Configuration](#configuration)). |
+| `@prompt` does nothing in one app | That app may be running as administrator. Windows stops a normal app from reading keys typed into an elevated app or typing into it, so run Prmpt as administrator too. |
+
+### Optional tools
+
+| You want to… | You also need |
+|---|---|
+| Change the Rust keyboard hook (`native/platform-core`) and run `npm run native:build` | [Rust](https://rustup.rs) and Visual Studio Build Tools (C++) |
+| Build the Windows installer (`npm run package:win`) | Nothing extra. PyInstaller is installed into the service venvs automatically. |
+| Work on a Python service with hot reload | Nothing extra. Run `npm run python:dev` or `npm run code-intel:dev` before launching the app; the app reuses a service that's already running. |
 
 ### macOS
 
-Use the `:mac` variants: `npm run python:install:mac`, `npm run code-intel:install:mac`, `npm run python:dev:mac`, `npm run code-intel:dev:mac`. The keyboard hook and text insertion need **Accessibility** permission (System Settings → Privacy & Security → Accessibility). The app detects this and walks you through it.
+You need the same tools as in Option B, plus the Xcode Command Line Tools (`xcode-select --install`). Use the `:mac` scripts:
+
+```bash
+npm install
+npm run install:ui
+npm run python:install:mac
+npm run code-intel:install:mac
+npm start
+```
+
+The keyboard hook and text insertion need **Accessibility** permission (System Settings → Privacy & Security → Accessibility). The app detects when it's missing and walks you through it. macOS hasn't been tested as thoroughly as Windows yet.
 
 ### Packaging
 
@@ -149,7 +209,49 @@ npm run package:win    # NSIS installer (Windows x64), with both services bundle
 npm run package:mac    # DMG (macOS)
 ```
 
-On Windows, `package:win` first runs `npm run build:services`, which freezes each Python service into a standalone folder with PyInstaller (`scripts/build-services.ps1`, about 5 minutes). The installer ships them, so it needs no Python or source checkout. The macOS package doesn't bundle the services yet.
+On Windows, `package:win` first runs `npm run build:services`. That uses PyInstaller to freeze each Python service into a standalone folder (`scripts/build-services.ps1`, about 5 minutes). The installer ships those folders, so it needs no Python and no source checkout. The macOS package doesn't bundle the services yet.
+
+### What gets installed
+
+The four install commands pull in the packages below. None of them talk to a server of ours: there's no account system, no analytics and no error reporting.
+
+**Electron app** (`package.json`):
+
+| Package | Used for |
+|---|---|
+| `electron` | The desktop shell |
+| `better-sqlite3` | The local database (chats, settings, prompt library) |
+| `web-tree-sitter` | Parsing code in Spaces (the grammar files are in `tree-sitter-wasms/`) |
+| `chokidar` | Watching Space folders for changes |
+| `active-win` | Knowing which app you were typing in |
+| `axios`, `ws` | Talking to the local services over HTTP and WebSocket |
+| `file-type` | Checking attachment types |
+| `dotenv` | Reading the optional `.env` |
+| Dev only: `typescript`, `vitest`, `electron-builder`, `cross-env`, `express` and `tsx` (mock services for tests) | Building, testing and packaging |
+
+**React UI** (`app-ui/package.json`):
+- React 18, Vite and Tailwind CSS;
+- Radix UI primitives (through shadcn);
+- `@phosphor-icons/react` and `motion`;
+- `react-markdown` and `remark-gfm`;
+- `pdfjs-dist` for PDF previews;
+- `sonner` for toasts;
+- `@tanstack/react-query` and `react-router-dom`.
+
+**Optimizer service** (`python-service/requirements.txt`):
+- FastAPI, Uvicorn and Pydantic;
+- `websockets` for streaming;
+- LiteLLM, which calls OpenRouter;
+- `httpx`, `cachetools` and `numpy`;
+- PyMuPDF and Pillow, for reading PDF and image attachments.
+
+**Code-intelligence service** (`code-intelligence-service/requirements.txt`):
+- FastAPI, Uvicorn, Pydantic, LiteLLM and `python-dotenv`;
+- ONNX Runtime, `tokenizers` and `huggingface-hub` for the local embeddings and reranker;
+- `numpy`;
+- `igraph` and `leidenalg` for call-graph ranking and communities.
+
+**Keyboard hook** (`native/platform-core`): Rust, with napi-rs and the `windows` crate. A prebuilt `platform-core.win32-x64-msvc.node` is checked in.
 
 ---
 
