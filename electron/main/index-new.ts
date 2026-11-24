@@ -184,14 +184,23 @@ function toggleOverlay(fromHotkey = false) {
   // From the tray menu the foreground window is the taskbar, so only the
   // hotkey captures a source window.
   if (process.platform === 'win32' && fromHotkey) {
-    const title = getActiveWindowTitle();
-    const hwnd = captureSourceWindow();
-    if (hwnd && !isOwnWindow(hwnd)) {
-      console.log(`[Main] Ctrl+5 — source window hwnd=${hwnd}, title="${title}"`);
-      setSourceWindow(hwnd, title);
-      overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
-      return;
-    }
+    // Same short wait as the @prompt trigger: keys typed just before Ctrl+5
+    // may still be queued for the app, and the caret position captured here
+    // is where Insert pastes later.
+    setTimeout(() => {
+      if (overlayManager.isVisible()) return;
+      const title = getActiveWindowTitle();
+      const hwnd = captureSourceWindow();
+      if (hwnd && !isOwnWindow(hwnd)) {
+        console.log(`[Main] Ctrl+5 — source window hwnd=${hwnd}, title="${title}"`);
+        setSourceWindow(hwnd, title);
+        overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
+        return;
+      }
+      setSourceWindow(null, '');
+      overlayManager.open(authState.isAuthenticated);
+    }, TRIGGER_OPEN_DELAY_MS);
+    return;
   }
   setSourceWindow(null, '');
   overlayManager.open(authState.isAuthenticated);

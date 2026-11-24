@@ -39,7 +39,7 @@ pub fn store_anchor(handle: isize, trigger_len: u32) {
     }
 
     #[cfg(target_os = "windows")]
-    win32::capture_focus_child();
+    win32::capture_focus_child(false);
 }
 
 /// Forget the stored @prompt anchor (and, on Windows, the focused child).
@@ -57,7 +57,7 @@ pub fn clear_anchor() {
 /// storing a trigger anchor (used for Ctrl+5).
 pub fn capture_focus_only() {
     #[cfg(target_os = "windows")]
-    win32::capture_focus_child();
+    win32::capture_focus_child(true);
 }
 
 fn take_anchor() -> Option<AnchorData> {
@@ -133,14 +133,24 @@ mod win32 {
     use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 
     static STORED_FOCUS_HWND: Mutex<Option<isize>> = Mutex::new(None);
+    /// Selection (start, end) of the stored edit control, captured for the
+    /// Ctrl+5 path only. Some controls (.NET WinForms TextBox) select all
+    /// their text when they get focus back; restoring this before pasting
+    /// keeps the paste at the user's caret instead of over everything.
+    static STORED_SEL: Mutex<Option<(u32, u32)>> = Mutex::new(None);
 
     pub fn clear_focus_child() {
         if let Ok(mut g) = STORED_FOCUS_HWND.lock() {
             *g = None;
         }
+        if let Ok(mut g) = STORED_SEL.lock() {
+            *g = None;
+        }
     }
 
-    pub fn capture_focus_child() {
+    /// `keep_selection`: false for the @prompt trigger, where keystrokes may
+    /// still be queued for the app, so the caret isn't final yet.
+    pub fn capture_focus_child(keep_selection: bool) {
         unsafe {
             let mut gti: GUITHREADINFO = std::mem::zeroed();
             gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
@@ -150,9 +160,56 @@ mod win32 {
                 if let Ok(mut g) = STORED_FOCUS_HWND.lock() {
                     *g = Some(focus);
                 }
+                if keep_selection && is_edit_class(gti.hwndFocus) {
+                    let sel = get_selection(gti.hwndFocus);
+                    if let Ok(mut g) = STORED_SEL.lock() {
+                        *g = Some(sel);
+                    }
+                }
                 println!("[Replacement] Focus child stored: hwnd={focus:#x}");
             }
         }
+    }
+
+    const EM_GETSEL: u32 = 0x00B0;
+    const EM_SETSEL: u32 = 0x00B1;
+    const EM_REPLACESEL: u32 = 0x00C2;
+    const WM_GETTEXT: u32 = 0x000D;
+    const WM_GETTEXTLENGTH: u32 = 0x000E;
+
+    unsafe fn get_selection(hwnd: HWND) -> (u32, u32) {
+        let mut sel_start: u32 = 0;
+        let mut sel_end: u32 = 0;
+        SendMessageW(
+            hwnd, EM_GETSEL,
+            Some(WPARAM(&mut sel_start as *mut u32 as usize)),
+            Some(LPARAM(&mut sel_end as *mut u32 as isize)),
+        );
+        (sel_start, sel_end)
+    }
+
+    /// The control's text as UTF-16 (the units EM_GETSEL/EM_SETSEL use).
+    unsafe fn get_text_utf16(hwnd: HWND) -> Vec<u16> {
+        let len = SendMessageW(hwnd, WM_GETTEXTLENGTH, None, None).0.max(0) as usize;
+        if len == 0 || len > 4_000_000 {
+            return Vec::new();
+        }
+        let mut buf = vec![0u16; len + 1];
+        let got = SendMessageW(
+            hwnd, WM_GETTEXT,
+            Some(WPARAM(buf.len())),
+            Some(LPARAM(buf.as_mut_ptr() as isize)),
+        ).0.max(0) as usize;
+        buf.truncate(got.min(len));
+        buf
+    }
+
+    fn lower_ascii_u16(c: u16) -> u16 {
+        if (0x41..=0x5A).contains(&c) { c + 32 } else { c }
+    }
+
+    fn eq_ignore_case_utf16(a: &[u16], b: &[u16]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| lower_ascii_u16(*x) == lower_ascii_u16(*y))
     }
 
     pub unsafe fn execute_replacement(anchor: AnchorData, text: &str) -> bool {
@@ -172,6 +229,8 @@ mod win32 {
         println!("[Replacement] hwnd={:#x} class={:?}", anchor.handle, class_name);
 
         if let Some(edit_hwnd) = find_edit_hwnd(hwnd) {
+            // false means "@prompt" isn't in the control's text any more:
+            // don't guess at a position; the caller pastes at the caret.
             return inject_via_edit_messages(edit_hwnd, anchor.trigger_len, text);
         }
 
@@ -193,7 +252,14 @@ mod win32 {
     unsafe fn is_edit_class(hwnd: HWND) -> bool {
         if hwnd.0.is_null() { return false; }
         let c = get_class_name(hwnd);
-        c == "Edit" || c.to_ascii_lowercase().starts_with("richedit")
+        let lower = c.to_ascii_lowercase();
+        // Plain Win32 edit and RichEdit controls, and the .NET WinForms
+        // wrappers around them ("WindowsForms10.EDIT.app...",
+        // "WindowsForms10.RichEdit50W.app..."), which answer the same messages.
+        c == "Edit"
+            || lower.starts_with("richedit")
+            || (lower.starts_with("windowsforms")
+                && (lower.contains(".edit.") || lower.contains(".richedit")))
     }
 
     /// The edit control the user was typing in. Only ever the control that
@@ -226,21 +292,35 @@ mod win32 {
     }
 
     unsafe fn inject_via_edit_messages(hwnd: HWND, trigger_len: u32, text: &str) -> bool {
-        const EM_GETSEL: u32 = 0x00B0;
-        const EM_SETSEL: u32 = 0x00B1;
-        const EM_REPLACESEL: u32 = 0x00C2;
-
-        let mut sel_start: u32 = 0;
-        let mut sel_end: u32 = 0;
-        SendMessageW(
-            hwnd, EM_GETSEL,
-            Some(WPARAM(&mut sel_start as *mut u32 as usize)),
-            Some(LPARAM(&mut sel_end as *mut u32 as isize)),
-        );
-
-        let caret = sel_end;
-        let start = caret.saturating_sub(trigger_len);
-        SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(start as usize)), Some(LPARAM(caret as isize)));
+        // Replace exactly the "@prompt" the user typed. The caret is the
+        // first guess, but it can't be trusted on its own: some controls
+        // select all their text when they get focus back, and the user may
+        // have clicked elsewhere. So check the characters there, otherwise
+        // use the last "@prompt" in the text. If there's none, change nothing.
+        let trigger: Vec<u16> = "@prompt".encode_utf16().collect();
+        let content = get_text_utf16(hwnd);
+        let (_, caret) = get_selection(hwnd);
+        let caret = caret as usize;
+        let tl = trigger_len as usize;
+        let at_caret = tl == trigger.len()
+            && caret >= tl
+            && caret <= content.len()
+            && eq_ignore_case_utf16(&content[caret - tl..caret], &trigger);
+        let found = if at_caret {
+            Some(caret - tl)
+        } else if content.len() >= trigger.len() {
+            (0..=content.len() - trigger.len())
+                .rev()
+                .find(|&i| eq_ignore_case_utf16(&content[i..i + trigger.len()], &trigger))
+        } else {
+            None
+        };
+        let Some(start) = found else {
+            eprintln!("[Replacement] No @prompt found in the edit control; not replacing");
+            return false;
+        };
+        let end = start + trigger.len();
+        SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(start)), Some(LPARAM(end as isize)));
 
         let mut utf16: Vec<u16> = text.encode_utf16().collect();
         utf16.push(0);
@@ -628,6 +708,19 @@ mod win32 {
                         let _ = AttachThreadInput(our_thread, target_thread, false);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(30));
+                    // If the control selected all its text on getting focus
+                    // back (.NET WinForms TextBox does), put the caret back
+                    // where it was when Ctrl+5 was pressed (see STORED_SEL).
+                    // Any other selection is the user's, so it's left alone.
+                    if let Some((s0, s1)) = STORED_SEL.lock().ok().and_then(|g| *g) {
+                        if is_edit_class(child) {
+                            let len = SendMessageW(child, WM_GETTEXTLENGTH, None, None).0.max(0) as u32;
+                            let now = get_selection(child);
+                            if len > 0 && now == (0, len) && (s0, s1) != now {
+                                SendMessageW(child, EM_SETSEL, Some(WPARAM(s0 as usize)), Some(LPARAM(s1 as isize)));
+                            }
+                        }
+                    }
                 }
             }
 
