@@ -29,7 +29,7 @@ Prmpt is three connected systems: **Prompt** (the optimizer), **Overlay** (the O
 ```text
 you type "@prompt" in any app
   → Rust keyboard hook spots the trigger and remembers the window
-  → Electron opens the Overlay next to your cursor
+  → Electron opens the Overlay next to your text caret
   → Overlay streams the prompt to the local optimizer service (Python, port 8001)
       ↳ if a Space is active: code-intelligence service (port 8002) retrieves relevant code
   → optimizer clarifies, plans and rewrites, streaming tokens back
@@ -54,9 +54,9 @@ The overlay is a frameless, always-on-top Electron window that's kept warm in th
 On Windows, insertion tries three methods in order, so it works across very different text controls:
 1. `EM_REPLACESEL` for classic Win32 edit controls;
 2. UI Automation `TextPattern` to select the trigger, then paste;
-3. backspace over the trigger, then a clipboard paste. Your previous clipboard text is restored afterwards.
+3. backspace over the trigger, then a clipboard paste. Everything that was on your clipboard (text, images, files) is restored afterwards, unless you copied something new in the meantime, and the inserted prompt is kept out of Win+V clipboard history.
 
-`Ctrl+5` toggles the overlay without the trigger.
+`Ctrl+5` opens the overlay without typing the trigger; Insert then pastes at the caret of the app you were in. Closing the overlay (`Esc`) returns focus to that app.
 
 ### Spaces: code context
 
@@ -89,7 +89,7 @@ Details: [code-intelligence-service/README.md](./code-intelligence-service/READM
 
 ## Install and run on Windows
 
-Prmpt currently runs from source: the Electron app plus two local Python services. These steps were run end to end on Windows 11; timings are from that run.
+Run Prmpt from source as below, or build a self-contained installer (see [Packaging](#packaging)). Either way, the app starts its two local Python services itself. These steps were run end to end on Windows 11; timings are from that run.
 
 ### Requirements
 
@@ -118,25 +118,15 @@ No `.env` file is needed.
 
 ### Run
 
-Start the two services, each in its own terminal:
-
-```powershell
-npm run python:dev       # terminal 1: prompt optimizer, port 8001
-```
-
-```powershell
-npm run code-intel:dev   # terminal 2: code intelligence, port 8002
-```
-
-The first time the code-intelligence service starts, it downloads its local models (about 1.2 GB) from Hugging Face. After that it starts in a few seconds.
-
-Then build and launch the app in a third terminal:
-
 ```powershell
 npm start
 ```
 
-`npm start` builds the UI and the Electron code (about 30 s), then opens the app. After the first build, `npm run dev` relaunches faster if you only changed Electron code.
+`npm start` builds the UI and the Electron code (about 30 s), then opens the app. The app starts both Python services from their venvs (about 2 s for the optimizer and 9 s for code intelligence) and stops them when you quit. Their output goes to `logs/optimizer.log` and `logs/code-intel.log` in the app's data folder. After the first build, `npm run dev` relaunches faster if you only changed Electron code.
+
+The first time the code-intelligence service starts, it downloads its local models (about 1.2 GB) from Hugging Face. After that it starts in a few seconds.
+
+Working on the Python code? Start a service yourself with hot reload (`npm run python:dev` or `npm run code-intel:dev`) before launching the app; the app reuses a service that's already running instead of starting its own.
 
 ### First launch
 
@@ -146,7 +136,7 @@ npm start
 
 To index a repository, open **Spaces**, create a Space and add a folder. Indexing summarizes code chunks with a small model, so a mid-sized repo takes a couple of minutes.
 
-If a service isn't running, the app says so ("The local AI service isn't running") and reconnects by itself once you start it.
+If a service stops, the app says so and reconnects by itself once it's back.
 
 ### macOS
 
@@ -155,11 +145,11 @@ Use the `:mac` variants: `npm run python:install:mac`, `npm run code-intel:insta
 ### Packaging
 
 ```powershell
-npm run package:win    # NSIS installer (Windows x64)
+npm run package:win    # NSIS installer (Windows x64), with both services bundled
 npm run package:mac    # DMG (macOS)
 ```
 
-The installer contains the Electron app only. The two Python services still have to run from a source checkout (see [Run](#run)).
+On Windows, `package:win` first runs `npm run build:services`, which freezes each Python service into a standalone folder with PyInstaller (`scripts/build-services.ps1`, about 5 minutes). The installer ships them, so it needs no Python or source checkout. The macOS package doesn't bundle the services yet.
 
 ---
 
@@ -242,6 +232,7 @@ Everything here is optional. The app sends your key and model choices to the loc
 | `SUMMARIZER_MODEL` | `openrouter/openai/gpt-4o-mini` | Small helper model for titles, summaries and memory |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to call the API (the app needs none) |
 | `PRMPT_USER_DATA_DIR` | Electron's default | Use another user-data folder, for example to test a clean first run |
+| `PRMPT_MANAGE_SERVICES` | `1` | Set to `0` to stop the app from starting the Python services itself |
 
 **`code-intelligence-service/.env`** (template: [`code-intelligence-service/.env.example`](./code-intelligence-service/.env.example)) covers agentic retrieval on/off, the knowledge-graph pipeline, helper models and the index location. The RAG model chosen in the app overrides `ANSWER_MODEL` and `AGENT_MODEL`.
 
@@ -260,6 +251,7 @@ The app prints its data folder at startup (`[Main] Data folder: ...`).
 | `npm run code-intel:install` / `code-intel:dev` | Create the code-intelligence venv / run it with hot reload (port 8002) |
 | `npm run install:ui` | Install the React UI's dependencies |
 | `npm run native:build` | Build the Rust keyboard-hook module (needs Rust + MSVC on Windows) |
+| `npm run build:services` | Freeze both Python services with PyInstaller (Windows) |
 | `npm run package:win` / `package:mac` | Build the installer |
 | `npm test` | Electron unit and integration tests (Vitest) |
 
