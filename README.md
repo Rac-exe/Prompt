@@ -6,7 +6,7 @@
 
 Local-first desktop app for Windows and macOS · bring your own OpenRouter key · open source
 
-[How it works](#how-it-works) · [Getting started](#getting-started) · [Code intelligence engine](#the-code-intelligence-engine) · [Benchmark](#benchmark) · [Architecture deep dive](./ARCHITECTURE.md)
+[Why Prmpt](#why-prmpt) · [Numbers](#by-the-numbers) · [How it works](#how-it-works) · [Getting started](#getting-started) · [Code intelligence engine](#the-code-intelligence-engine) · [Benchmark](#benchmark) · [Architecture deep dive](./ARCHITECTURE.md)
 
 </div>
 
@@ -14,11 +14,64 @@ Local-first desktop app for Windows and macOS · bring your own OpenRouter key �
 <p align="center"><img src="assets/demo.gif" alt="Typing @prompt in an editor, optimizing in the overlay and inserting the result" width="760"></p>
 -->
 
-You write a rough prompt in ChatGPT, Claude, Cursor, Slack or a plain text box. Prmpt catches the `@prompt` trigger at the OS level, opens a small overlay next to your work, asks a clarifying question if it needs one, and rewrites the prompt with an LLM pipeline. If you've connected a code repository, it adds the relevant files and functions first. Then one click replaces `@prompt` with the result in the app you came from.
+Wherever you're about to write a prompt (ChatGPT, Claude, Cursor, Slack, an email, any text box), type `@prompt`. A small overlay opens at your cursor. Write what you want in your own words; rough is fine. Prmpt asks a quick question if something important is missing, then rewrites your words into a clear, complete prompt. If you've connected a code repository, it adds the relevant files and functions too. One click on Insert puts the result where `@prompt` was, in the app you came from.
 
 - **Works in any app.** A Rust keyboard hook (`WH_KEYBOARD_LL` on Windows, `CGEventTap` on macOS) watches for the trigger, so there's no plugin per app.
 - **Knows your code.** Spaces index your local repos with Tree-sitter, on-device ONNX embeddings and a hybrid search + call-graph engine, so prompts about your code come with the right context.
 - **Local-first.** No account, no hosted backend, no telemetry. Chats, settings and code indexes live in SQLite files on your machine. Model calls go straight from your computer to OpenRouter with your own key.
+
+---
+
+## Why Prmpt
+
+An AI tool is only as good as what you ask it. Most prompts get written in a hurry: one line, no context, no constraints, no idea what the answer should look like. The model fills the gaps with guesses. You get a generic answer and spend the next few messages correcting it.
+
+A good prompt isn't hard to write, just tedious. You have to say:
+- what you're trying to do and for whom;
+- what you already have;
+- what "good" looks like;
+- what shape the answer should take.
+
+Prmpt does that work for you, in the place you're already typing:
+
+- **No switching apps.** Prompt helpers usually live in their own tab, or in a browser extension that works on one site. Prmpt works in any text box on your computer: you don't copy, paste or switch back.
+- **It asks instead of guessing.** If something important is missing, you get one quick multiple-choice question, not an invented answer.
+- **Big asks become a plan.** "Build me a landing page with auth and payments" comes back as ordered steps you can run one at a time.
+- **It knows your code.** Connect a repo, and prompts about your code name the actual files, functions and line numbers.
+- **It's yours.** It's free and runs locally with your own key, and you can use any model on OpenRouter.
+
+### Who it's for
+
+| You are… | You type something like… | Prmpt turns it into… |
+|---|---|---|
+| A developer | "my react app re-renders like crazy when I type in the search box, fix it" | A debugging prompt: the component, the likely files from your repo, what to check first, and what to hand back (a fix plus an explanation) |
+| Someone using a coding agent (Claude Code, Cursor, Codex) | "support ticket routing is buggy and sla deadlines are weird, fix it" | A brief that points the agent at the right files and line ranges before it starts searching. In our benchmark this halved the agent's token use ([numbers](#by-the-numbers)). |
+| A student | "explain the krebs cycle for my exam" | A study prompt that sets your level and asks for the steps in order, a memory aid and practice questions |
+| A job seeker | "write a cover letter for a marketing job" | A prompt with the role, placeholders for your experience, tone, length and structure, so the letter isn't generic |
+| A marketer or founder | "write a linkedin post about our new feature" | A brief with the audience, hook, key points, tone, length and call to action |
+| Anyone at work | "tell my manager the project is delayed" | A prompt that covers the situation, the new date, what you need from them and the right tone |
+| A designer or creator | "a logo for my bakery" | An image prompt with style, colours, composition and what to avoid |
+
+The same rough sentence goes in. What comes out is the prompt you'd have written if you'd had five spare minutes.
+
+## By the numbers
+
+Measured on a Windows 11 laptop, from this repo.
+
+| What | Result |
+|---|---|
+| Type `@prompt` → overlay open and focused | **76 ms** median (66–100 ms) |
+| `Ctrl+5` → overlay open | **10 ms** median |
+| `Esc` → back in the app you were typing in | **10 ms** median |
+| Keystrokes lost when the overlay opens | **0** in 8 runs |
+| Inserting the result back into your app | **about 0.2 s** |
+| App start with the installer build | Optimizer ready in **2.3 s**, code intelligence in **11.2 s** |
+| A coding agent given a Prmpt-optimized prompt instead of the raw one | **49% fewer tokens** (3.32 M vs 6.56 M) and **12% less time**, with the same agent and model ([details](#benchmark)) |
+
+How these were measured:
+- **Overlay timings:** a script typed into a standard Windows text box and timed how long the overlay took to take focus, and how long focus took to come back.
+- **Insert time:** Prmpt's native paste into Notepad.
+- **Everyday prompts** (cover letters, study plans, emails): we're measuring answer quality next. The harness is in [`bench/prompt-quality/`](./bench/prompt-quality/).
 
 ---
 
@@ -27,7 +80,7 @@ You write a rough prompt in ChatGPT, Claude, Cursor, Slack or a plain text box. 
 Prmpt is three connected systems: **Prompt** (the optimizer), **Overlay** (the OS layer) and **Spaces** (code context).
 
 ```text
-you type "@prompt" in any app
+you type "@prompt" in any app, then your rough request in the overlay
   → Rust keyboard hook spots the trigger and remembers the window
   → Electron opens the Overlay next to your text caret
   → Overlay streams the prompt to the local optimizer service (Python, port 8001)
@@ -157,14 +210,14 @@ After the first build, `npm run dev` relaunches faster if you only changed Elect
 #### 5. Check that it works
 
 1. Finish [First launch](#first-launch) and add your OpenRouter key.
-2. Open Notepad and type `make this better @prompt`. The overlay should open next to your text.
-3. Press `Enter` in the overlay to optimize, then click **Insert**. `@prompt` should be replaced with the optimized prompt.
+2. Open Notepad and type `@prompt`. The overlay should open next to your text.
+3. In the overlay, type a rough request such as `make me a study plan, exams in 3 weeks` and press `Enter`. When the optimized prompt appears, click **Insert**. It should replace `@prompt` in Notepad.
 
 ### First launch
 
 1. Pick light or dark.
 2. **Connect your AI provider.** Paste your OpenRouter key, then pick the optimizer and RAG models. The key is checked with OpenRouter before it's saved. You can skip this step and add the key later in **Settings → AI provider**; until you do, the overlay shows a setup message instead of optimizing.
-3. After a short tour, you're in. Type `@prompt` in any text field, or press `Ctrl+5`.
+3. After a short tour, you're in. Type `@prompt` in any text field, or press `Ctrl+5`, then write your request in the overlay.
 
 To index a repository, open **Spaces**, create a Space and add a folder. Indexing summarizes code chunks with a small model, so a mid-sized repo takes a couple of minutes.
 
@@ -265,12 +318,14 @@ We also asked a harder question: **does giving a coding agent this retrieval eng
 |---|---:|---:|---:|
 | Claude Code | 27 / 27 | 10.04 M | 63.0 min |
 | **Prmpt agent (raw prompt)** | **27 / 27** | **6.56 M** (−34.7%) | **39.9 min** (−36.6%) |
+| **Prmpt agent + Prmpt-optimized prompt**² | **25 / 27** | **3.32 M** (−66.9%) | **35.3 min** (−44.0%) |
 | Cursor CLI | 27 / 27 | 9.99 M | 28.1 min |
 | Codex CLI (gpt-5.5)¹ | 27 / 27 | 22.93 M | 50.9 min |
 
 **What we learned:**
 - **Every agent solved every task.** Prmpt matched the others on correctness while using about a third fewer tokens than Claude Code on the same model.
-- **The agents barely used the retrieval engine.** In the earlier cold-start run (81 runs), the best-scoring Prmpt configuration (25/27) averaged **0.07 retrieval calls per task**. The configuration that retrieved most (1.6 calls per task) passed one task fewer. On small repos, a good model finds what it needs with `grep` and file reads. The savings came from the agent loop, not from retrieval. This is the honest headline, and it's why the engine's next home is very large legacy codebases, where `grep` stops working.
+- **Putting the right context in the prompt halved the work.** Same agent, same model: replacing the raw bug report with the prompt Prmpt writes when a code Space is connected cut tokens by **49%** (6.56 M → 3.32 M) and time by **12%**. That prompt names the files and line ranges to check first, so the agent stops searching. The cost was 2 missed tasks out of 27.
+- **The agents barely called the retrieval tool themselves.** In the earlier cold-start run (81 runs), the best-scoring Prmpt configuration (25/27) averaged **0.07 retrieval calls per task**. The configuration that retrieved most (1.6 calls per task) passed one task fewer. On small repos, a good model finds what it needs with `grep` and file reads. So the raw-prompt savings came from the agent loop, while retrieval paid off when it was done up front and written into the prompt. That's why the engine's next home is very large legacy codebases, where `grep` stops working.
 
 **How the numbers were counted:**
 - Token totals include cache reads and cache writes, which are 70–95% of real usage. They're summed from each run's raw usage logs, not from summaries.
@@ -280,7 +335,7 @@ We also asked a harder question: **does giving a coding agent this retrieval eng
 **Limitations:**
 - Synthetic repos and only 27 turns per agent.
 - The Prmpt agent started a fresh process for each turn, while the other agents resumed their sessions.
-- A third configuration, which fed the agent prompts pre-optimized by Prmpt, used even fewer tokens. It's left out of the table because the optimization step's own tokens weren't counted in it.
+- ² **The optimized-prompt row leaves out the optimizer's own tokens.** The prompts came from Prmpt's code optimizer (the template in [`files/system_prompt_code_optimizer.md`](./files/system_prompt_code_optimizer.md) plus code-intelligence retrieval). They were made once per task (9 in total), then reused across the 3 repeats. Both misses were the same task (`nova-support`, prompt 1: 5 of 6 tests passing). That task passed 2 out of 2 on a rerun.
 
 The harness, task files and raw per-run logs are on the [`feat/prmpt-cli`](https://github.com/Rac-exe/Prompt/tree/feat/prmpt-cli/prmpt-cli/harness) branch for now.
 
