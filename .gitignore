@@ -87,3 +87,11 @@ docs/
 
 # Agent skill lockfile (local tooling)
 skills-lock.json
+
+# Private local material: never commit
+pi-sdk-analysis/
+agent-tools-decode.py
+.prmpt/
+
+# Test env file (only localhost URLs; nothing reads it)
+.env.test
