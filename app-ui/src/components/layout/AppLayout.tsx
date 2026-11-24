@@ -102,7 +102,7 @@ export const AppLayout = ({ children, sidebar }: AppLayoutProps) => {
                          bg-red-500/10 border-b border-red-500/20 text-red-400
                          text-[11px] font-medium flex-shrink-0 animate-fade-in">
             <Warning size={12} weight="light" className="flex-shrink-0" />
-            <span>The local AI service isn't running — start it with npm run python:dev.</span>
+            <span>The local AI service isn't running yet. Prmpt starts it automatically; if this stays, check logs/optimizer.log in the Prmpt data folder.</span>
           </div>
         )}
 

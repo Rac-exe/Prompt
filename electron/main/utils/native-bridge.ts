@@ -26,6 +26,10 @@ interface NativeBridge {
     pasteTextToWindow(hwnd: number, text: string): boolean;
     sendEnterToWindow(hwnd: number): boolean;
     checkAccessibilityPermission(): boolean;
+    // Added after the first macOS binary was built: may be missing there.
+    captureSourceWindow?(): number;
+    clearAnchor?(): void;
+    getCaretPosition?(): { x: number; y: number; height: number } | null;
 }
 
 // ─── Stub (used when .node binary is absent) ─────────────────────────────────
@@ -189,5 +193,34 @@ export function sendEnterToWindow(hwnd: number): boolean {
     } catch (err) {
         console.error('[NativeBridge] sendEnterToWindow failed:', err);
         return false;
+    }
+}
+
+/**
+ * Record the current foreground window as the overlay's source window (for
+ * Ctrl+5, which has no @prompt anchor) and drop any stale anchor.
+ * Returns the window handle, or 0 if unavailable.
+ */
+export function captureSourceWindow(): number {
+    try {
+        const fn = loadBridge().captureSourceWindow;
+        return typeof fn === 'function' ? fn() : 0;
+    } catch (err) {
+        console.error('[NativeBridge] captureSourceWindow failed:', err);
+        return 0;
+    }
+}
+
+/**
+ * Screen position (physical pixels) of the text caret in the foreground
+ * window, or null when the app doesn't expose one.
+ */
+export function getCaretPosition(): { x: number; y: number; height: number } | null {
+    try {
+        const fn = loadBridge().getCaretPosition;
+        return typeof fn === 'function' ? fn() : null;
+    } catch (err) {
+        console.error('[NativeBridge] getCaretPosition failed:', err);
+        return null;
     }
 }

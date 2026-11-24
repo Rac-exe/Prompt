@@ -7,12 +7,13 @@ Loads .md skill files directly from the files/ directory.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import List, Tuple
 from functools import lru_cache
 
 # ── Skill files directory (relative to this file) ────────────────────────────
-SKILLS_DIR = Path(__file__).parent.parent.parent / "files"
+SKILLS_DIR = Path(os.environ.get("PRMPT_FILES_DIR") or Path(__file__).parent.parent.parent / "files")
 
 # ── Keyword map matching system_prompt_optimizer.md ──────────────────────────
 SKILL_KEYWORDS: dict[str, list[str]] = {

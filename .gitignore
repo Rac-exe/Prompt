@@ -12,6 +12,8 @@ code-intelligence-service/**/__pycache__/
 dist/
 build/*.js
 build/*.js.map
+build/services/
+build/pyi-work/
 *.log
 
 # OS files

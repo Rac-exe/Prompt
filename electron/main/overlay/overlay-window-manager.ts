@@ -1,6 +1,6 @@
 import { BrowserWindow, screen, app } from 'electron';
 import * as path from 'path';
-import { forceFocusWindow } from '../utils/native-bridge';
+import { forceFocusWindow, getCaretPosition } from '../utils/native-bridge';
 
 /**
  * OverlayWindowManager
@@ -291,6 +291,8 @@ export class OverlayWindowManager {
       // Guard: already open — just re-focus, don't re-show
       if (this.isOpen) {
         this.send('overlay:opened', openedPayload);
+        // Re-triggered from another place: follow the new caret.
+        this.positionNearCaretOrCursor();
         this.focusWindow();
         return;
       }
@@ -299,8 +301,9 @@ export class OverlayWindowManager {
       this.send('overlay:opened', openedPayload);
     }
 
-    // Position near cursor (like Raycast / Cursor inline assistant)
-    this.positionNearCursor();
+    // Position next to the text caret (falls back to the mouse pointer).
+    // Must run before focusing: the source app is still in the foreground.
+    this.positionNearCaretOrCursor();
 
     if (this.isLoaded) {
       // Compositor pre-heated — just focus (window is already "shown")
@@ -367,10 +370,30 @@ export class OverlayWindowManager {
    * Appears slightly below and to the right of the cursor
    * to avoid covering the text being typed.
    */
-  private positionNearCursor() {
+  private positionNearCaretOrCursor() {
     if (!this.window || this.window.isDestroyed()) return;
 
-    const cursor = screen.getCursorScreenPoint();
+    // Prefer the text caret: the user's eyes are where they were typing,
+    // which can be far from the mouse pointer.
+    const caret = process.platform === 'win32' ? getCaretPosition() : null;
+    if (caret) {
+      const topLeft = screen.screenToDipPoint({ x: caret.x, y: caret.y });
+      const bottom = screen.screenToDipPoint({ x: caret.x, y: caret.y + caret.height });
+      this.positionAt({ x: topLeft.x, y: bottom.y }, bottom.y - topLeft.y);
+      return;
+    }
+    this.positionAt(screen.getCursorScreenPoint(), 0);
+  }
+
+  /**
+   * Place the overlay just below-right of `point` (DIP), flipping left/up
+   * when it would leave the work area. `lineHeight` is the caret height, so
+   * a flipped overlay sits above the line instead of covering it.
+   */
+  private positionAt(point: { x: number; y: number }, lineHeight: number) {
+    if (!this.window || this.window.isDestroyed()) return;
+
+    const cursor = point;
     const currentDisplay = screen.getDisplayNearestPoint(cursor);
     const workArea = currentDisplay.workArea;
     const [overlayWidth, overlayHeight] = this.window.getSize();
@@ -380,16 +403,16 @@ export class OverlayWindowManager {
     const offsetY = 24;
 
     let x = cursor.x + offsetX;
-    let y = cursor.y + offsetY;
+    let y = cursor.y + (lineHeight ? 8 : offsetY);
 
     // Clamp right edge: if overlay goes past the right side, flip to left of cursor
     if (x + overlayWidth > workArea.x + workArea.width) {
       x = cursor.x - overlayWidth - offsetX;
     }
 
-    // Clamp bottom edge: if overlay goes below, position above cursor
+    // Clamp bottom edge: if overlay goes below, position above the line
     if (y + overlayHeight > workArea.y + workArea.height) {
-      y = cursor.y - overlayHeight - offsetY;
+      y = cursor.y - lineHeight - overlayHeight - (lineHeight ? 8 : offsetY);
     }
 
     // Clamp left/top edges (safety)
@@ -406,7 +429,7 @@ export class OverlayWindowManager {
    * compositor pipeline and cause a flicker on the next show), we park the
    * window off-screen and blur it so the previous app regains focus.
    */
-  close() {
+  close(options?: { restoreFocusTo?: number | null }) {
     if (this.window && !this.window.isDestroyed()) {
       this.isOpen = false;
       if (process.platform === 'darwin') {
@@ -414,6 +437,14 @@ export class OverlayWindowManager {
       } else {
         this.window.setPosition(OFFSCREEN_X, OFFSCREEN_Y);
         this.window.blur();
+        // blur() lets Windows pick *some* window to activate, often not the
+        // one the user came from. When the user dismissed the overlay
+        // (Esc, close button, Ctrl+5), hand focus back to the source app.
+        const target = options?.restoreFocusTo;
+        if (target) {
+          const ok = forceFocusWindow(target);
+          console.log(`[OverlayWindowManager] Focus returned to source window ${target}: ${ok}`);
+        }
       }
     }
   }

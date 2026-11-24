@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import sys
 import time
+import os
 from pathlib import Path
 from typing import Tuple, List, Dict, Union, Optional, Generator
 
@@ -37,7 +38,8 @@ from .project_context import (
 litellm.set_verbose = False
 
 # ── System prompts ────────────────────────────────────────────────────────────
-FILES_DIR = Path(__file__).parent.parent.parent / "files"
+# PRMPT_FILES_DIR lets the packaged app point at its bundled prompt files.
+FILES_DIR = Path(os.environ.get("PRMPT_FILES_DIR") or Path(__file__).parent.parent.parent / "files")
 
 
 def _load_system_prompt(name: str) -> str:

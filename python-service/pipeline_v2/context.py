@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import List
 
@@ -24,7 +25,8 @@ except Exception:
         return len(text) // 4
 
 # ── Storage root ──────────────────────────────────────────────────────────────
-STORAGE_DIR = Path(__file__).parent / "storage"
+# PRMPT_SERVICE_DATA_DIR keeps writable data out of the install folder in the packaged app.
+STORAGE_DIR = Path(os.environ["PRMPT_SERVICE_DATA_DIR"]) / "storage" if os.environ.get("PRMPT_SERVICE_DATA_DIR") else Path(__file__).parent / "storage"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
