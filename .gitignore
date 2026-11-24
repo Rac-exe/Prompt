@@ -35,9 +35,6 @@ Thumbs.db
 .agents/
 .kilocode/
 
-# Supabase CLI cache
-supabase/.temp/
-
 # Environment
 .env
 .env.local

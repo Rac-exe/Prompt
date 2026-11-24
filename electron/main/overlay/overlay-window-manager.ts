@@ -18,12 +18,11 @@ import { forceFocusWindow, getCaretPosition } from '../utils/native-bridge';
  *   - Independent of main app window
  *   - Persists while app runs in background
  *
- * Auth Guard Flow:
- *   1. User presses Ctrl+5
- *   2. Main process checks authState.isAuthenticated
- *   3. Sends overlay:opened with { isAuthenticated }
- *   4. If NOT authenticated → renderer shows "Login Required" screen
- *   5. If authenticated → renderer shows optimization input
+ * Open Flow:
+ *   1. User presses Ctrl+5 or types @prompt
+ *   2. Main process sends overlay:opened (there is no login: always the local user)
+ *   3. Renderer shows the optimization input, or the "Connect your AI provider"
+ *      gate when no OpenRouter key is set yet
  *
  * Save Flow:
  *   1. User clicks Save in overlay

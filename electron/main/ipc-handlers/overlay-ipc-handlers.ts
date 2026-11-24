@@ -54,7 +54,7 @@ function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
 //   overlay:save                  — Save optimized prompt to library (invoke, returns result)
 //   overlay:copy                  — Copy text to clipboard
 //   overlay:close                 — Hide the overlay
-//   overlay:open-app              — Show the main app window (e.g. for login)
+//   overlay:open-app              — Show the main app window (e.g. to add an API key)
 //   overlay:check-auth            — Check current auth state (invoke, returns boolean)
 //   overlay:get-collections       — Get prompt library collections (invoke)
 //
@@ -668,7 +668,7 @@ export function registerOverlayHandlers(
   });
 
   // ============================================
-  // overlay:open-app — Show the main app window (for login)
+  // overlay:open-app — Show the main app window (e.g. to add an API key)
   // ============================================
   ipcMain.on('overlay:open-app', () => {
     appWindowManager.show();

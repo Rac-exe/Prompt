@@ -1,7 +1,6 @@
 fastapi==0.128.0
 uvicorn[standard]==0.39.0
 pydantic==2.12.5
-httpx==0.28.1
 litellm==1.81.14
 python-dotenv==1.1.0
 numpy>=2.0

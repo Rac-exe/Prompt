@@ -32,13 +32,9 @@ export const ProjectsView = ({ onSaveMessage }: ProjectsViewProps = {}) => {
 
   const api = (window as any).electronAPI?.project;
 
-  // Reload spaces whenever the signed-in user changes (login, logout,
-  // account switch). Without this, React state from the previous account
-  // would leak into the next one. Also flush any pending writes so we
-  // don't overwrite the new user's storage with the previous user's
-  // payload. (ensureFresh now lives in pages/Index.tsx and re-fires
-  // automatically on userId change there — no per-session guard needed
-  // here anymore.)
+  // Reload spaces once the local user is loaded (or if its id ever
+  // changes), flushing any pending writes first. (ensureFresh lives in
+  // pages/Index.tsx and re-fires on userId change there.)
   useEffect(() => {
     flushSpacesSaves();
     setSpaces(loadSpaces(userId));
