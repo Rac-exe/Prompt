@@ -39,7 +39,6 @@ static HOOK_STATE: Mutex<Option<HookState>> = Mutex::new(None);
 
 thread_local! {
     static BUFFER:        RefCell<RollingBuffer> = RefCell::new(RollingBuffer::new());
-    static SHIFT_PRESSED: RefCell<bool>          = const { RefCell::new(false) };
     static CALLBACK:      RefCell<Option<Tsfn>>  = const { RefCell::new(None) };
 }
 
@@ -115,15 +114,25 @@ mod win32 {
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_BACK, VK_ESCAPE, VK_LSHIFT, VK_RETURN, VK_RSHIFT, VK_SHIFT, VK_TAB,
+        GetAsyncKeyState, GetKeyboardLayout, ToUnicodeEx, VK_BACK, VK_CAPITAL, VK_CONTROL,
+        VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LCONTROL, VK_LEFT, VK_LMENU,
+        VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_PACKET, VK_PRIOR, VK_RCONTROL, VK_RETURN,
+        VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_TAB, VK_UP,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW,
-        SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-        KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+        CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+        GetWindowThreadProcessId, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+        HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
     };
 
     const LLKHF_INJECTED: u32 = 0x10;
+
+    thread_local! {
+        /// Foreground window that received the last buffered character. When
+        /// it changes, the buffer is cleared so "@pro" typed in one app plus
+        /// "mpt" typed in another never forms a trigger.
+        static LAST_FG: RefCell<isize> = const { RefCell::new(0) };
+    }
 
     unsafe extern "system" fn ll_keyboard_proc(
         code: i32,
@@ -132,34 +141,75 @@ mod win32 {
     ) -> LRESULT {
         if code == HC_ACTION as i32 {
             let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-            let vk = info.vkCode;
-            let flags = info.flags.0;
-
-            if flags & LLKHF_INJECTED != 0 {
-                return CallNextHookEx(Some(HHOOK::default()), code, wparam, lparam);
-            }
-
+            let injected = info.flags.0 & LLKHF_INJECTED != 0;
+            // Skip only keys Prmpt itself injected (Ctrl+V, Backspace...).
+            // Keys injected by other tools (dictation, AutoHotkey, on-screen
+            // keyboards) still count towards the trigger.
+            let ours = injected && info.dwExtraInfo == crate::replacement::INJECT_MARKER;
             let is_keydown =
                 wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN;
-
-            if is_keydown {
-                handle_keydown(vk);
-            } else {
-                let vk16 = vk as u16;
-                if vk16 == VK_SHIFT.0 || vk16 == VK_LSHIFT.0 || vk16 == VK_RSHIFT.0 {
-                    SHIFT_PRESSED.with(|s| *s.borrow_mut() = false);
-                }
+            if is_keydown && !ours {
+                handle_keydown(info.vkCode, info.scanCode);
             }
         }
-
         CallNextHookEx(Some(HHOOK::default()), code, wparam, lparam)
     }
 
-    fn handle_keydown(vk: u32) {
+    #[inline]
+    fn down(vk: u16) -> bool {
+        unsafe { (GetAsyncKeyState(vk as i32) as u16 & 0x8000) != 0 }
+    }
+
+    fn is_modifier(vk: u16) -> bool {
+        [
+            VK_SHIFT.0, VK_LSHIFT.0, VK_RSHIFT.0, VK_CONTROL.0, VK_LCONTROL.0, VK_RCONTROL.0,
+            VK_MENU.0, VK_LMENU.0, VK_RMENU.0, VK_LWIN.0, VK_RWIN.0, VK_CAPITAL.0,
+        ]
+        .contains(&vk)
+    }
+
+    /// Translate a key press into the character the focused app will see,
+    /// using the foreground window's keyboard layout (so UK, German, French
+    /// and other layouts produce '@' correctly). Falls back to the US map.
+    fn key_to_char(vk: u32, scan: u32, fg_thread: u32) -> Option<char> {
+        if vk == VK_PACKET.0 as u32 {
+            // Unicode text injected by SendInput(KEYEVENTF_UNICODE): the
+            // character is carried in the scan code.
+            return char::from_u32(scan);
+        }
+        unsafe {
+            let mut state = [0u8; 256];
+            for vk_mod in [VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_CONTROL, VK_LCONTROL, VK_RCONTROL,
+                           VK_MENU, VK_LMENU, VK_RMENU] {
+                if down(vk_mod.0) {
+                    state[vk_mod.0 as usize] = 0x80;
+                }
+            }
+            let layout = GetKeyboardLayout(fg_thread);
+            let mut buf = [0u16; 8];
+            // Flag 0x4: don't change the keyboard state (keeps dead keys
+            // working in the target app). Supported on Windows 10 1607+.
+            let n = ToUnicodeEx(vk, scan, &state, &mut buf, 0x4, Some(layout));
+            if n == 1 {
+                if let Some(ch) = char::from_u32(buf[0] as u32) {
+                    if !ch.is_control() {
+                        return Some(ch);
+                    }
+                }
+                return None;
+            }
+            if n < 0 || n > 1 {
+                return None; // dead key or multi-char sequence: not part of the trigger
+            }
+        }
+        // ToUnicodeEx produced nothing: fall back to the US QWERTY map.
+        vk_to_char(vk, down(VK_SHIFT.0))
+    }
+
+    fn handle_keydown(vk: u32, scan: u32) {
         let vk16 = vk as u16;
 
-        if vk16 == VK_SHIFT.0 || vk16 == VK_LSHIFT.0 || vk16 == VK_RSHIFT.0 {
-            SHIFT_PRESSED.with(|s| *s.borrow_mut() = true);
+        if is_modifier(vk16) {
             return;
         }
 
@@ -168,13 +218,38 @@ mod win32 {
             return;
         }
 
-        if vk16 == VK_RETURN.0 || vk16 == VK_ESCAPE.0 || vk16 == VK_TAB.0 {
+        if [VK_RETURN.0, VK_ESCAPE.0, VK_TAB.0, VK_LEFT.0, VK_RIGHT.0, VK_UP.0, VK_DOWN.0,
+            VK_HOME.0, VK_END.0, VK_PRIOR.0, VK_NEXT.0, VK_DELETE.0].contains(&vk16)
+        {
             on_buffer_clear();
             return;
         }
 
-        let shift = SHIFT_PRESSED.with(|s| *s.borrow());
-        if let Some(ch) = vk_to_char(vk, shift) {
+        // Shortcuts (Ctrl+V, Ctrl+Z, Win+...) move or change text in ways we
+        // can't track: reset. Ctrl+Alt is AltGr, which types characters
+        // (e.g. '@' on German and French layouts), so it is allowed.
+        let ctrl = down(VK_CONTROL.0);
+        let alt = down(VK_MENU.0);
+        let win = down(VK_LWIN.0) || down(VK_RWIN.0);
+        if (ctrl && !alt) || (alt && !ctrl) || win {
+            on_buffer_clear();
+            return;
+        }
+
+        let fg = unsafe { GetForegroundWindow() };
+        let fg_raw = fg.0 as isize;
+        let changed = LAST_FG.with(|f| {
+            let mut f = f.borrow_mut();
+            let c = *f != fg_raw;
+            *f = fg_raw;
+            c
+        });
+        if changed {
+            on_buffer_clear();
+        }
+
+        let fg_thread = unsafe { GetWindowThreadProcessId(fg, None) };
+        if let Some(ch) = key_to_char(vk, scan, fg_thread) {
             on_char_keydown(ch);
         }
     }
@@ -215,6 +290,7 @@ mod win32 {
         }
     }
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // macOS implementation

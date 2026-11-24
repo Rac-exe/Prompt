@@ -43,6 +43,6 @@ impl RollingBuffer {
         self.buf[tail_start..]
             .iter()
             .zip(TRIGGER.chars())
-            .all(|(a, b)| *a == b)
+            .all(|(a, b)| a.to_ascii_lowercase() == b)  // Caps Lock / Shift safe
     }
 }
