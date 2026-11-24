@@ -60,16 +60,18 @@ Measured on a Windows 11 laptop, from this repo.
 
 | What | Result |
 |---|---|
-| Type `@prompt` → overlay open and focused | **76 ms** median (66–100 ms) |
-| `Ctrl+5` → overlay open | **10 ms** median |
+| Type `@prompt` → overlay open and focused | **82 ms** median (67–91 ms) |
+| `Ctrl+5` → overlay open | **102 ms** median |
 | `Esc` → back in the app you were typing in | **10 ms** median |
 | Keystrokes lost when the overlay opens | **0** in 8 runs |
+| Insert replaces exactly `@prompt` and keeps your clipboard (including images) | **4 of 4** runs, in two kinds of Windows text box |
 | Inserting the result back into your app | **about 0.2 s** |
+| Spaces: plain-English Find on a 20-file project, no API key | Right function ranked first in **4 of 4** questions, **about 0.55 s** each |
 | App start with the installer build | Optimizer ready in **2.3 s**, code intelligence in **11.2 s** |
 | A coding agent given a Prmpt-optimized prompt instead of the raw one | **49% fewer tokens** (3.32 M vs 6.56 M) and **12% less time**, with the same agent and model ([details](#benchmark)) |
 
 How these were measured:
-- **Overlay timings:** a script typed into a standard Windows text box and timed how long the overlay took to take focus, and how long focus took to come back.
+- **Overlay timings:** a script typed into a standard Windows text box and timed how long the overlay took to take focus, and how long focus took to come back. Both paths wait about 80 ms on purpose, so keys you've just typed reach your app before the overlay takes focus.
 - **Insert time:** Prmpt's native paste into Notepad.
 - **Everyday prompts** (cover letters, study plans, emails): we're measuring answer quality next. The harness is in [`bench/prompt-quality/`](./bench/prompt-quality/).
 
@@ -145,7 +147,7 @@ Details: [code-intelligence-service/README.md](./code-intelligence-service/READM
 There are two ways to run Prmpt:
 
 - **[Use the installer](#option-a-use-the-installer-windows)** if you just want the app. You don't need Node, Python or Git.
-- **[Run from source](#option-b-run-from-source)** if you want to change the code. This takes about 10 minutes the first time.
+- **[Run from source](#option-b-run-from-source)** if you want to change the code. This takes about 12 minutes the first time.
 
 Either way you need an **[OpenRouter API key](https://openrouter.ai/keys)**. You paste it into the app on first launch, and it never goes in a file. There's no account to create and no sign-in.
 
@@ -182,15 +184,15 @@ git clone https://github.com/Rac-exe/Prompt.git
 cd Prompt
 ```
 
-#### 3. Install the dependencies (about 8 minutes)
+#### 3. Install the dependencies (about 11 minutes)
 
 Run these four commands from the repo root, in this order:
 
 ```powershell
 npm install                 # Electron app (~40 s). Also rebuilds better-sqlite3 for Electron.
 npm run install:ui          # React UI (~40 s)
-npm run python:install      # Optimizer service: creates python-service/venv (~3 min)
-npm run code-intel:install  # Code-intelligence service: creates code-intelligence-service/.venv (~3 min)
+npm run python:install      # Optimizer service: creates python-service/venv (~5 min)
+npm run code-intel:install  # Code-intelligence service: creates code-intelligence-service/.venv (~5 min)
 ```
 
 Each Python service gets its own virtual environment, so nothing goes into your global Python. You don't need a `.env` file.
