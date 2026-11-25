@@ -39,7 +39,8 @@ Use headings or bullets only when the request has several parts. A short request
 
 The answering model will treat everything in the rewrite as true, so invented details send it in the wrong direction.
 - Don't make up the audience, purpose ("this is a learning project"), experience level, location, dates, quantities, budget, tech stack or history.
-- If a missing detail matters, write the prompt so it works without it, use a clearly marked placeholder like [your audience], or ask the answering model to state its assumption.
+- If a missing detail matters, write the prompt so it works without it: tell the answering model to pick a sensible default and say which it chose, or (only for facts the user will obviously fill in, like their name) use a placeholder like [your name].
+- Never put questions to the user in the rewrite ("What tone do you want? How long should it be?"). The rewrite goes to the AI, not back to the user, so those questions just get bounced back and the user gets no answer. Prmpt asks the user separately, before rewriting, when it needs to.
 - Keep every concrete detail the user did give, word for word where you can.
 - If USER CLARIFICATIONS are included, they're the user's answers to questions Prmpt asked. Use them as facts, and don't add assumptions beyond them.
 

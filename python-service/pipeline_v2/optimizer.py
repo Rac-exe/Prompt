@@ -529,7 +529,8 @@ These rules override the skill guidance above:
 - Rewrite the request; never answer it, refuse it or comment on it.
 - If it is already a clear question, quiz item or lookup, or already says how to answer, keep it nearly unchanged, with every option and the answer format exactly as given.
 - If it contains a pasted error, log or code, keep that text verbatim and ask for what the user asked (usually the cause and the fix). Don't change or widen the task.
-- Never state facts the user didn't give (audience, purpose, experience, numbers, tech stack). Use a placeholder or ask the answering AI to state its assumption."""
+- Never state facts the user didn't give (audience, purpose, experience, numbers, tech stack). Tell the answering AI to pick a sensible default and say which it chose.
+- Never put questions to the user in the rewrite; it goes to the AI, not back to the user."""
 
         # Append regeneration instruction when applicable
         if regen_instruction:

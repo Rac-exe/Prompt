@@ -414,6 +414,8 @@ class OptimizeRequest(BaseModel):
     mode: Optional[str] = "thinking"
     custom_instructions: Optional[str] = Field("", max_length=10_000)
     user_id: Optional[str] = None
+    # Answers to /clarify questions, formatted like the app does ("- question: answer").
+    clarification_answers: Optional[str] = Field(None, max_length=10_000)
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -515,11 +517,13 @@ async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers
         logger.info(f"Regenerate request - added unique ID: {unique_id}")
 
     # Check cache (skip if refresh requested)
-    if not request.skip_cache and prompt_text in prompt_cache:
+    # The same prompt with different clarification answers is a different request.
+    cache_key = f"{prompt_text}||{request.clarification_answers or ''}"
+    if not request.skip_cache and cache_key in prompt_cache:
         logger.info(f"Cache hit - returning cached result")
         latency = (time.time() - start_time) * 1000
         return OptimizeResponse(
-            optimized=prompt_cache[prompt_text],
+            optimized=prompt_cache[cache_key],
             original=request.prompt.strip(),  # Return original without unique ID
             model=model,
             latency_ms=latency
@@ -553,6 +557,7 @@ async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers
             mode=mode,
             custom_instructions=custom_instructions,
             models_info=models_info,
+            clarification_answers=request.clarification_answers,
             llm=llm,
         )
         
@@ -564,7 +569,7 @@ async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers
             logger.info(f"Improvement ratio: {len(optimized)/len(clean_prompt):.2f}x")
 
         # Cache the result (TTLCache handles eviction automatically)
-        prompt_cache[request.prompt.strip()] = optimized
+        prompt_cache[f"{request.prompt.strip()}||{request.clarification_answers or ''}"] = optimized
 
         latency = (time.time() - start_time) * 1000
 
