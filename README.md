@@ -451,4 +451,4 @@ Prmpt is built by **Prabhat Bajpai**, **Aarush Dhingra** and **Nihal Rahman**.
 
 ## License
 
-A license hasn't been chosen yet and will be added soon. Until then, standard copyright applies.
+[MIT](./LICENSE). Use it, fork it, ship it.

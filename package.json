@@ -146,7 +146,7 @@
     "rag",
     "local-first"
   ],
-  "author": "",
+  "author": "Prabhat Bajpai, Aarush Dhingra, Nihal Rahman",
   "license": "MIT",
   "devDependencies": {
     "@types/express": "^5.0.6",
