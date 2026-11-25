@@ -121,19 +121,23 @@ def _extract_optimized_prompt(raw: str) -> str:
 # ── Analysis leak detection & stripping ──────────────────────────────────────
 _TASK_HEADING_RE = re.compile(r'##\s*Task\s', re.IGNORECASE)
 _SECTION_HEADING_RE = re.compile(r'##\s*\S', re.IGNORECASE)
+# A leaked analysis section is one of the system prompt's own headers or a
+# classification label, at the start of a line and in capitals. Matching the
+# bare words anywhere ("decision", "classification") chopped real prompts:
+# "...decision-making..." came back as "-making".
+_LEAK_LINE_PREFIX = r'^[ \t>#*\-]*\**'
 _ANALYSIS_LEAK_RE = re.compile(
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION'
-    r'|CLASSIFICATION\b|DECISION\b|NEW\s+REQUEST\b|REFINEMENT/INVESTIGATION\b)',
-    re.IGNORECASE,
+    _LEAK_LINE_PREFIX +
+    r'(?:'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT(?:\s+INTEGRATION)?'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)\b'
+    r'|(?:CLASSIFICATION|DECISION|REQUEST\s+TYPE|Classification|Decision|Request\s+[Tt]ype)\**\s*[:\-—]\s*\**'
+    r'(?:NEW|REFINEMENT|ADDITION)\b'
+    r'|(?:NEW\s+REQUEST|REFINEMENT/INVESTIGATION|REFINEMENT|ADDITION)\**[ \t]*$'
+    r')',
+    re.MULTILINE,
 )
-_ANALYSIS_LAST_SECTION_RE = re.compile(
-    r'(?:\*{0,2})'
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
-    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
-    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?'
-    r'|CLASSIFICATION|DECISION|NEW\s+REQUEST|REFINEMENT/INVESTIGATION)',
-    re.IGNORECASE,
-)
+_ANALYSIS_LAST_SECTION_RE = _ANALYSIS_LEAK_RE
 _STRIP_BUFFER_LIMIT_TASK = 2000
 _STRIP_BUFFER_LIMIT_SINGLE = 4000
 _QUICK_CHECK_LEN = 500
@@ -506,7 +510,13 @@ LOADED SKILLS: {', '.join(skill_names)}
 USER REQUEST:
 {final_user_input}
 
-Apply your internal analysis silently (classify, select skills, choose techniques). Output ONLY the fully optimized prompt — no analysis headers, no reasoning, no section labels."""
+Apply your internal analysis silently (classify, select skills, choose techniques). Output ONLY the optimized prompt — no analysis headers, no reasoning, no section labels.
+
+These rules override the skill guidance above:
+- Rewrite the request; never answer it, refuse it or comment on it.
+- If it is already a clear question, quiz item or lookup, or already says how to answer, keep it nearly unchanged, with every option and the answer format exactly as given.
+- If it contains a pasted error, log or code, keep that text verbatim and ask for what the user asked (usually the cause and the fix). Don't change or widen the task.
+- Never state facts the user didn't give (audience, purpose, experience, numbers, tech stack). Use a placeholder or ask the answering AI to state its assumption."""
 
         # Append regeneration instruction when applicable
         if regen_instruction:

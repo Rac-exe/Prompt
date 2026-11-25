@@ -429,17 +429,17 @@ import asyncio as _asyncio
 _optimize_semaphore = _asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_OPTIMIZATIONS", "50")))
 
 
+# Same rule as pipeline_v2.optimizer._ANALYSIS_LEAK_RE (kept here so this
+# module doesn't import the pipeline at startup): only the system prompt's own
+# capitalised headers at the start of a line count as a leak, never ordinary
+# words like "user context" inside a real prompt.
 _CLEAN_ANALYSIS_RE = re.compile(
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
-    re.IGNORECASE,
+    r'^[ \t>#*\-]*\**'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT(?:\s+INTEGRATION)?'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)\b',
+    re.MULTILINE,
 )
-_CLEAN_LAST_SECTION_RE = re.compile(
-    r'(?:\*{0,2})'
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
-    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
-    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
-    re.IGNORECASE,
-)
+_CLEAN_LAST_SECTION_RE = _CLEAN_ANALYSIS_RE
 
 
 def clean_optimized_text(text: str) -> str:
