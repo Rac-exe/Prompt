@@ -98,10 +98,9 @@ SUCCESS CRITERIA:
 
 **Primary Techniques for Creative Tasks:**
 
-1. **Role Assignment**
-   - Be specific about creative specialty
-   - Example: "You are a senior copywriter specializing in SaaS product launches with 8 years at tech startups"
-   - Not just: "You are a writer"
+1. **Role (optional)**
+   - Useful here only to set voice: one plain line, such as "Write as a copywriter for a SaaS launch"
+   - No years of experience or backstory
 
 2. **Context Layering**
    - Audience context: who, why they care, what they need

@@ -34,15 +34,15 @@ Return ONLY valid JSON (no markdown, no prose) with this schema:
 }
 
 RULES:
-1. Set should_clarify to true for any prompt that has meaningful ambiguity. Almost every prompt benefits from clarification — default to true.
-2. Set should_clarify to false ONLY if the prompt is very simple, already fully specified, or is a follow-up refinement like "make it shorter."
-3. Generate 2-4 questions. ALWAYS use "multiple_choice" with 3-5 concrete options. Never use "text" type.
+1. Ask only when a missing fact would change the answer a lot: the optimizer would otherwise have to guess something important, like the audience, the tech stack or the goal. Guessing produces invented details, and asking prevents that. But every question costs the user time, so don't ask out of habit.
+2. Set should_clarify to false for clear requests: questions with one right answer, quizzes and multiple choice, lookups, calculations, requests that already say how to answer, pasted errors or code with a clear ask, and follow-ups like "make it shorter".
+3. Ask 1-3 questions, the most important first. Use "multiple_choice" with 3-5 concrete options. Never use "text" type.
 4. Infer questions from what the prompt is missing — do not hardcode. Read the prompt and figure out what is underspecified.
 5. For multi-part builds (apps, systems, workflows): set is_complex to true, fill suggested_sections, and include a delivery format question asking "One complete prompt" vs "Broken into task sections."
 6. Never ask about things the user already specified.
 7. When should_clarify is false, return empty questions and suggested_sections arrays.
 
-CRITICAL — DETECT MISSING CONTEXT BY CATEGORY:
+WHAT TO LOOK FOR, BY CATEGORY (ask only for what's missing and matters):
 For CODE / TECHNICAL / BUG FIX prompts (mentions code, buttons, CSS, API, database, components, etc.):
   - If no tech stack / framework specified → ASK (e.g. "React + Tailwind", "Vue + CSS", "Vanilla HTML/CSS/JS", "Next.js", "Flutter")
   - If no project type specified → ASK (e.g. "Web app", "Mobile app", "Desktop app", "CLI tool")
@@ -57,7 +57,7 @@ For BUSINESS / STRATEGY prompts:
   - If no industry/domain specified → ASK
   - If no audience or stakeholders specified → ASK
 
-The optimizer WILL fabricate details if you don't ask. Missing tech stack is the #1 cause of bad outputs — a prompt about "fixing button hover styles" will get "HTML/CSS/JS typing practice app" hallucinated if you don't ask what framework they use. Your job is to prevent that."""
+Why this matters: without an answer, the next step has to guess. A missing tech stack is the most common cause of bad results; a prompt about "fixing button hover styles" can end up assuming the wrong framework entirely."""
 
 
 _FAIL_SAFE: Dict[str, Any] = {

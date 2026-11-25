@@ -7,7 +7,7 @@ Run from python-service/:  venv\\Scripts\\python.exe -m unittest discover tests
 
 import unittest
 
-from pipeline_v2.optimizer import _ANALYSIS_LEAK_RE, _find_prompt_start_after_analysis
+from pipeline_v2.optimizer import _ANALYSIS_LEAK_RE, _find_prompt_start_after_analysis, strip_example_tags
 
 
 def strip(text: str) -> str:
@@ -62,6 +62,16 @@ class StripsLeaks(unittest.TestCase):
     def test_bare_request_type_line(self):
         leaked = "**NEW REQUEST**\n\nSummarise this article in five bullet points."
         self.assertEqual(strip(leaked), "Summarise this article in five bullet points.")
+
+
+class StripsExampleTags(unittest.TestCase):
+    def test_wrapper_copied_from_the_examples(self):
+        out = "<rewrite>\nWrite a haiku about rain.\n</rewrite>\n<why>Light edit.</why>"
+        self.assertEqual(strip_example_tags(out), "Write a haiku about rain.")
+
+    def test_plain_output_untouched(self):
+        out = "Explain how <rewrite> tags work in our XML format."
+        self.assertEqual(strip_example_tags(out), out)
 
 
 if __name__ == "__main__":

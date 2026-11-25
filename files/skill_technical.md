@@ -96,10 +96,9 @@ ADDITIONAL NOTES:
 
 **Primary Techniques for Technical Tasks:**
 
-1. **Role Assignment**
-   - Be specific: "senior Python developer" not just "developer"
-   - Add domain: "with expertise in distributed systems"
-   - Example: "You are a senior backend engineer with 8 years of experience building REST APIs in Python using FastAPI"
+1. **Role (optional)**
+   - Usually skip it: personas don't make technical answers more accurate
+   - If tone matters, one plain line is enough, with no years of experience
 
 2. **Task Decomposition**
    - Break complex coding tasks into steps
@@ -215,8 +214,6 @@ SUCCESS CRITERIA:
 
 ### ✅ GOOD: Optimized Database Prompt
 ```
-You are a database architect with 10 years of experience designing e-commerce systems.
-
 CONTEXT:
 Building an e-commerce platform handling 10,000 orders/day. Need to support product catalog, inventory, orders, users, and payments. Primary database will be PostgreSQL 15.
 

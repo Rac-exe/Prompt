@@ -155,6 +155,19 @@ _META_PREAMBLE_RE = re.compile(
 )
 
 
+# The system prompt's examples use <draft>/<rewrite>/<why> tags. If the model
+# copies the wrapper into its answer, drop it so it never reaches the user.
+_OPEN_EXAMPLE_TAG_RE = re.compile(r'^\s*<rewrite>\s*\n?', re.IGNORECASE)
+_CLOSE_EXAMPLE_TAG_RE = re.compile(r'\n?\s*</rewrite>\s*(?:<why>.*?</why>\s*)?$', re.IGNORECASE | re.DOTALL)
+
+
+def strip_example_tags(text: str) -> str:
+    if not text:
+        return text
+    text = _OPEN_EXAMPLE_TAG_RE.sub('', text, count=1)
+    return _CLOSE_EXAMPLE_TAG_RE.sub('', text, count=1).strip()
+
+
 def _strip_leading_meta(text: str) -> str:
     """Drop up to 2 leading conversational meta lines (preamble leak)."""
     if not text:
@@ -510,7 +523,7 @@ LOADED SKILLS: {', '.join(skill_names)}
 USER REQUEST:
 {final_user_input}
 
-Apply your internal analysis silently (classify, select skills, choose techniques). Output ONLY the optimized prompt — no analysis headers, no reasoning, no section labels.
+Output only the rewritten message, with no preamble, labels or notes.
 
 These rules override the skill guidance above:
 - Rewrite the request; never answer it, refuse it or comment on it.
@@ -576,7 +589,7 @@ These rules override the skill guidance above:
                         # Quick check: if first ~500 chars have no analysis headers, flush immediately
                         if not leak_detected and len(prefix_buffer) >= _QUICK_CHECK_LEN:
                             if not _ANALYSIS_LEAK_RE.search(prefix_buffer):
-                                dump = prefix_buffer
+                                dump = _OPEN_EXAMPLE_TAG_RE.sub('', prefix_buffer, count=1)
                                 prefix_buffer = None
                                 yield dump
                                 continue
@@ -692,6 +705,7 @@ These rules override the skill guidance above:
             prompt_start = _find_prompt_start_after_analysis(cleaned)
             if prompt_start > 0 and prompt_start < len(cleaned):
                 cleaned = cleaned[prompt_start:].lstrip('\n')
+        cleaned = strip_example_tags(cleaned)
         logger.info(f"Optimization complete ({latency_ms}ms)")
         return cleaned
 

@@ -487,6 +487,10 @@ def clean_optimized_text(text: str) -> str:
                         text = rest.lstrip('\n')
                         break
 
+    # The optimizer's examples use <rewrite>/<why> tags; drop them if copied.
+    text = re.sub(r'^\s*<rewrite>\s*\n?', '', text, count=1, flags=re.IGNORECASE)
+    text = re.sub(r'\n?\s*</rewrite>\s*(?:<why>.*?</why>\s*)?$', '', text, count=1, flags=re.IGNORECASE | re.DOTALL)
+
     # Remove leading/trailing quotes if present
     text = text.strip()
     if text.startswith('"') and text.endswith('"'):
