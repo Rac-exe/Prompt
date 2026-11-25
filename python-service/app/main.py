@@ -414,6 +414,8 @@ class OptimizeRequest(BaseModel):
     mode: Optional[str] = "thinking"
     custom_instructions: Optional[str] = Field("", max_length=10_000)
     user_id: Optional[str] = None
+    # Answers to /clarify questions, formatted like the app does ("- question: answer").
+    clarification_answers: Optional[str] = Field(None, max_length=10_000)
 
 class OptimizeResponse(BaseModel):
     optimized: str
@@ -429,17 +431,17 @@ import asyncio as _asyncio
 _optimize_semaphore = _asyncio.Semaphore(int(os.environ.get("MAX_CONCURRENT_OPTIMIZATIONS", "50")))
 
 
+# Same rule as pipeline_v2.optimizer._ANALYSIS_LEAK_RE (kept here so this
+# module doesn't import the pipeline at startup): only the system prompt's own
+# capitalised headers at the start of a line count as a leak, never ordinary
+# words like "user context" inside a real prompt.
 _CLEAN_ANALYSIS_RE = re.compile(
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT\s+INTEGRATION)',
-    re.IGNORECASE,
+    r'^[ \t>#*\-]*\**'
+    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES|USER\s+CONTEXT(?:\s+INTEGRATION)?'
+    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)\b',
+    re.MULTILINE,
 )
-_CLEAN_LAST_SECTION_RE = re.compile(
-    r'(?:\*{0,2})'
-    r'(?:DECISION\s+TAKER|SKILL\s+SELECTOR|OPTIMIZATION\s+TECHNIQUES'
-    r'|USER\s+CONTEXT\s+INTEGRATION|USER\s+CONTEXT'
-    r'|DISTINCTLY\s+DIFFERENT(?:\s+OPTIMIZATION)?)',
-    re.IGNORECASE,
-)
+_CLEAN_LAST_SECTION_RE = _CLEAN_ANALYSIS_RE
 
 
 def clean_optimized_text(text: str) -> str:
@@ -487,6 +489,10 @@ def clean_optimized_text(text: str) -> str:
                         text = rest.lstrip('\n')
                         break
 
+    # The optimizer's examples use <rewrite>/<why> tags; drop them if copied.
+    text = re.sub(r'^\s*<rewrite>\s*\n?', '', text, count=1, flags=re.IGNORECASE)
+    text = re.sub(r'\n?\s*</rewrite>\s*(?:<why>.*?</why>\s*)?$', '', text, count=1, flags=re.IGNORECASE | re.DOTALL)
+
     # Remove leading/trailing quotes if present
     text = text.strip()
     if text.startswith('"') and text.endswith('"'):
@@ -511,11 +517,13 @@ async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers
         logger.info(f"Regenerate request - added unique ID: {unique_id}")
 
     # Check cache (skip if refresh requested)
-    if not request.skip_cache and prompt_text in prompt_cache:
+    # The same prompt with different clarification answers is a different request.
+    cache_key = f"{prompt_text}||{request.clarification_answers or ''}"
+    if not request.skip_cache and cache_key in prompt_cache:
         logger.info(f"Cache hit - returning cached result")
         latency = (time.time() - start_time) * 1000
         return OptimizeResponse(
-            optimized=prompt_cache[prompt_text],
+            optimized=prompt_cache[cache_key],
             original=request.prompt.strip(),  # Return original without unique ID
             model=model,
             latency_ms=latency
@@ -549,6 +557,7 @@ async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers
             mode=mode,
             custom_instructions=custom_instructions,
             models_info=models_info,
+            clarification_answers=request.clarification_answers,
             llm=llm,
         )
         
@@ -560,7 +569,7 @@ async def optimize_prompt(request: OptimizeRequest, llm=Depends(llm_from_headers
             logger.info(f"Improvement ratio: {len(optimized)/len(clean_prompt):.2f}x")
 
         # Cache the result (TTLCache handles eviction automatically)
-        prompt_cache[request.prompt.strip()] = optimized
+        prompt_cache[f"{request.prompt.strip()}||{request.clarification_answers or ''}"] = optimized
 
         latency = (time.time() - start_time) * 1000
 

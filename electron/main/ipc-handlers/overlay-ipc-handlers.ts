@@ -54,7 +54,7 @@ function buildModelMeta(models?: ModelsUsed): Record<string, unknown> {
 //   overlay:save                  — Save optimized prompt to library (invoke, returns result)
 //   overlay:copy                  — Copy text to clipboard
 //   overlay:close                 — Hide the overlay
-//   overlay:open-app              — Show the main app window (e.g. for login)
+//   overlay:open-app              — Show the main app window (e.g. to add an API key)
 //   overlay:check-auth            — Check current auth state (invoke, returns boolean)
 //   overlay:get-collections       — Get prompt library collections (invoke)
 //
@@ -166,11 +166,19 @@ let sourceHwnd: number | null = null;
 let sourceWindowTitle: string = '';
 let firstSectionDone = false;
 
-/** Store the source window HWND and title from the @prompt trigger. */
-export function setSourceWindow(hwnd: number, title: string) {
+/**
+ * Store the window the overlay was opened from (via @prompt or Ctrl+5).
+ * Pass null to clear it, e.g. when the overlay was opened from Prmpt itself.
+ */
+export function setSourceWindow(hwnd: number | null, title: string) {
   sourceHwnd = hwnd;
-  sourceWindowTitle = title;
+  sourceWindowTitle = hwnd ? title : '';
   firstSectionDone = false;
+}
+
+/** The window the overlay was opened from, if any. */
+export function getSourceHwnd(): number | null {
+  return sourceHwnd;
 }
 
 /** Clear overlay conversation history and reset chat session (called on "New Session" or sign-out). */
@@ -654,11 +662,13 @@ export function registerOverlayHandlers(
   // overlay:close — Hide the overlay
   // ============================================
   ipcMain.on('overlay:close', () => {
-    overlayManager.close();
+    // User dismissed the overlay (Esc / close button): give focus back to
+    // the app they were typing in instead of whatever Windows picks.
+    overlayManager.close({ restoreFocusTo: sourceHwnd });
   });
 
   // ============================================
-  // overlay:open-app — Show the main app window (for login)
+  // overlay:open-app — Show the main app window (e.g. to add an API key)
   // ============================================
   ipcMain.on('overlay:open-app', () => {
     appWindowManager.show();

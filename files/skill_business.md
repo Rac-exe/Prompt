@@ -107,10 +107,9 @@ SUCCESS CRITERIA:
 
 **Primary Techniques for Business Tasks:**
 
-1. **Role Assignment**
-   - Be specific about business expertise
-   - Example: "You are a management consultant specializing in SaaS go-to-market strategy for Series A startups"
-   - Not just: "You are a business expert"
+1. **Role (optional)**
+   - Usually skip it; the context and the goal matter more than a title
+   - If used, one plain line with no credentials or backstory
 
 2. **Context Layering**
    - Industry context: market size, growth rate, trends
@@ -118,10 +117,9 @@ SUCCESS CRITERIA:
    - Company context: stage, resources, capabilities, constraints
    - Strategic context: goals, timeline, success metrics
 
-3. **Chain-of-Thought**
-   - Request structured analysis: "First analyze the market, then competitive positioning, then financial viability, finally provide recommendations"
-   - Essential for complex business decisions
-   - Ensures logical reasoning is transparent
+3. **Analysis structure** (for real decisions only)
+   - Say which parts the answer should cover and in what order: "the market, then competitive positioning, then financial viability, then a recommendation"
+   - Don't add "think step by step": current models reason on their own
 
 4. **Success Criteria**
    - Define what "good" looks like in business terms

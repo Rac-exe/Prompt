@@ -576,9 +576,12 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.captureSourceWindow = nativeBinding.captureSourceWindow
 module.exports.checkAccessibilityPermission = nativeBinding.checkAccessibilityPermission
+module.exports.clearAnchor = nativeBinding.clearAnchor
 module.exports.forceFocusWindow = nativeBinding.forceFocusWindow
 module.exports.getActiveWindowTitle = nativeBinding.getActiveWindowTitle
+module.exports.getCaretPosition = nativeBinding.getCaretPosition
 module.exports.pasteTextToWindow = nativeBinding.pasteTextToWindow
 module.exports.replaceAtLastAnchor = nativeBinding.replaceAtLastAnchor
 module.exports.sendEnterToWindow = nativeBinding.sendEnterToWindow

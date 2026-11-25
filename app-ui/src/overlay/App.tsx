@@ -1043,6 +1043,15 @@ const OverlayApp: React.FC = () => {
     }
   }, [turnsByMode]);
 
+  // ── Insert failure notice ─────────────────────────────────────────────────
+  const [insertNotice, setInsertNotice] = useState<string | null>(null);
+  const insertNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showInsertNotice = useCallback((message: string) => {
+    setInsertNotice(message);
+    if (insertNoticeTimer.current) clearTimeout(insertNoticeTimer.current);
+    insertNoticeTimer.current = setTimeout(() => setInsertNotice(null), 6000);
+  }, []);
+
   // ── Section insert (per-section paste without closing overlay) ───────────
   const handleInsertSection = useCallback(async (sectionIdx: number, text: string) => {
     const mode = activeModeRef.current;
@@ -1054,12 +1063,16 @@ const OverlayApp: React.FC = () => {
           [mode]: new Set(prev[mode]).add(sectionIdx),
         }));
       } else {
+        // Never fail silently: put the text on the clipboard and say so.
+        window.electronAPI?.overlay?.copy?.(text);
+        showInsertNotice("Couldn't insert into that app, so the prompt was copied. Press Ctrl+V to paste it.");
       }
     } catch (err) {
       console.error('[Overlay] insert section failed:', err);
       window.electronAPI?.overlay?.copy?.(text);
+      showInsertNotice("Couldn't insert into that app, so the prompt was copied. Press Ctrl+V to paste it.");
     }
-  }, []);
+  }, [showInsertNotice]);
 
   // ── File attachment (per-mode) ───────────────────────────────────────────
   const handleAttachFiles = useCallback((newFiles: AttachedFile[]) => {
@@ -1253,6 +1266,12 @@ const OverlayApp: React.FC = () => {
           ) : (
             <div className="view active" style={{ flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
               <OfflineBanner visible={!isOnline} />
+              {insertNotice && (
+                <div className="offline-banner visible" role="status" aria-live="polite">
+                  <span className="offline-dot" />
+                  <span>{insertNotice}</span>
+                </div>
+              )}
 
               {/* ─────────────── CHAT MODE ─────────────── */}
               <div

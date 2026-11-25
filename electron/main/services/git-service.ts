@@ -43,7 +43,17 @@ export async function isGitRepo(projectPath: string): Promise<boolean> {
 }
 
 export async function getCurrentBranch(projectPath: string): Promise<string> {
-  return gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], projectPath);
+  try {
+    return await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], projectPath);
+  } catch {
+    // A repo with no commits yet (fresh `git init`, or a folder inside one)
+    // has no HEAD to resolve, but it still has a branch name.
+    try {
+      return await gitExec(['symbolic-ref', '--short', 'HEAD'], projectPath);
+    } catch {
+      return 'main';
+    }
+  }
 }
 
 export async function getDefaultBranch(projectPath: string): Promise<string> {

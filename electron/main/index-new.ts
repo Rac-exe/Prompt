@@ -8,7 +8,7 @@ const _devEnvPath = path.join(__dirname, '..', '..', '.env');
 dotenv.config({ path: fs.existsSync(_devEnvPath) ? _devEnvPath : path.join(process.resourcesPath, '.env') });
 
 
-import { app, globalShortcut, ipcMain, session, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, session, shell, systemPreferences } from 'electron';
 
 // Optional: keep all app data in another folder (portable installs, testing).
 // Must run before anything reads app.getPath('userData').
@@ -29,12 +29,13 @@ import { registerAISettingsHandlers } from './ipc-handlers/ai-settings-handlers'
 import { registerSettingsHandlers } from './ipc-handlers/settings-handlers';
 import { registerUserHandlers } from './ipc-handlers/user-handlers';
 import { registerChatHandlers } from './ipc-handlers/chat-handlers';
-import { registerOverlayHandlers, setSourceWindow } from './ipc-handlers/overlay-ipc-handlers';
+import { registerOverlayHandlers, setSourceWindow, getSourceHwnd } from './ipc-handlers/overlay-ipc-handlers';
 import { registerSkillHandlers } from './ipc-handlers/skill-handlers';
-import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle, checkAccessibilityPermission } from './utils/native-bridge';
+import { startHook, stopHook, isNativeBridgeAvailable, TriggerAnchor, getActiveWindowTitle, checkAccessibilityPermission, captureSourceWindow } from './utils/native-bridge';
 import { registerAvatarHandlers } from './ipc-handlers/avatar-handlers';
 import { registerFileUploadHandlers } from './ipc-handlers/file-upload-service';
 import { CodeIntelClient } from './api/code-intel-client';
+import { ServiceManager } from './services/service-manager';
 import { registerProjectHandlers, cleanupProjectHandlers, restoreActiveProject } from './ipc-handlers/project-handlers';
 import { registerSpacesBridgeHandlers } from './ipc-handlers/spaces-bridge-handlers';
 import { initializeParser } from './services/code-parser';
@@ -55,6 +56,7 @@ let systemTray: SystemTray;
 let pythonClient: PythonClient;
 let transcriptionClient: TranscriptionClient;
 let codeIntelClient: CodeIntelClient;
+let serviceManager: ServiceManager | null = null;
 
 function getPythonHttpBaseUrl(): string {
   const raw = (process.env.PYTHON_SERVICE_URL || '').trim();
@@ -133,12 +135,20 @@ function startKeystrokeDetection() {
   }
 }
 
+const TRIGGER_OPEN_DELAY_MS = 80;
+
 function installHook() {
   startHook((anchor: TriggerAnchor) => {
     const title = getActiveWindowTitle();
     console.log(`[Main] @prompt detected — pid=${anchor.hwnd}, triggerLen=${anchor.triggerLen}, title="${title}"`);
     setSourceWindow(anchor.hwnd, title);
-    overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
+    // The hook sees the final "t" before the app does. Taking focus right
+    // away can strand keystrokes still queued for the app (seen with fast
+    // typing and dictation tools), leaving "@pr" on screen and making the
+    // later replace delete real text. Give the app a moment to drain input.
+    setTimeout(() => {
+      overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
+    }, TRIGGER_OPEN_DELAY_MS);
   });
 
   console.log('[Main] Native keyboard hook started');
@@ -151,8 +161,49 @@ function stopKeystrokeDetection() {
 // ============================================
 // OVERLAY CONTROL
 // ============================================
-function toggleOverlay() {
-  overlayManager.toggle(authState.isAuthenticated);
+function isOwnWindow(hwnd: number): boolean {
+  return BrowserWindow.getAllWindows().some(w => {
+    try {
+      return !w.isDestroyed() && Number(w.getNativeWindowHandle().readBigInt64LE(0)) === hwnd;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Ctrl+5. Opening records the app the user is in (so Insert can paste back
+ * into it and Esc can return focus to it), exactly like the @prompt trigger
+ * does. Closing hands focus back to that app.
+ */
+function toggleOverlay(fromHotkey = false) {
+  if (overlayManager.isVisible()) {
+    overlayManager.close({ restoreFocusTo: getSourceHwnd() });
+    return;
+  }
+  // From the tray menu the foreground window is the taskbar, so only the
+  // hotkey captures a source window.
+  if (process.platform === 'win32' && fromHotkey) {
+    // Same short wait as the @prompt trigger: keys typed just before Ctrl+5
+    // may still be queued for the app, and the caret position captured here
+    // is where Insert pastes later.
+    setTimeout(() => {
+      if (overlayManager.isVisible()) return;
+      const title = getActiveWindowTitle();
+      const hwnd = captureSourceWindow();
+      if (hwnd && !isOwnWindow(hwnd)) {
+        console.log(`[Main] Ctrl+5 — source window hwnd=${hwnd}, title="${title}"`);
+        setSourceWindow(hwnd, title);
+        overlayManager.open(authState.isAuthenticated, undefined, undefined, true);
+        return;
+      }
+      setSourceWindow(null, '');
+      overlayManager.open(authState.isAuthenticated);
+    }, TRIGGER_OPEN_DELAY_MS);
+    return;
+  }
+  setSourceWindow(null, '');
+  overlayManager.open(authState.isAuthenticated);
 }
 
 // ============================================
@@ -257,7 +308,7 @@ async function initialize() {
       });
     } catch (e) {
       codeIntelProjectServicesStarted = false;
-      console.warn('[Main] Code intelligence project detection deferred:', e);
+      console.warn('[Main] Code intelligence project detection deferred:', e instanceof Error ? e.message : String(e));
     }
 
     try {
@@ -319,22 +370,38 @@ async function initialize() {
   appWindowManager.preload();
   overlayManager.preload();
 
-  // Open the WebSocket to the local python-service in the background so the
-  // first prompt doesn't wait for the connection.
-  pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
+  // Start the two local services if they aren't already running (bundled
+  // executables in the installed app, the venvs when running from source).
+  // Runs in the background so the hook, hotkey and tray come up immediately.
+  serviceManager = new ServiceManager([
+    { name: 'optimizer', baseUrl: pythonHttpBase, sourceDir: 'python-service', venvDir: 'venv', bundleName: 'prmpt-optimizer' },
+    { name: 'code-intel', baseUrl: codeIntelUrl, sourceDir: 'code-intelligence-service', venvDir: '.venv', bundleName: 'prmpt-code-intel' },
+  ]);
 
   let pythonHealthy = false;
-  try {
-    const isHealthy = await pythonClient.healthCheck();
-    pythonHealthy = isHealthy;
-    if (isHealthy) {
-      console.log('[Main] Python service connected');
-    } else {
-      console.warn('[Main] Python service not available — start it with: npm run python:dev');
+  void serviceManager.ensureRunning().then(async (status) => {
+    console.log('[Main] Local services:', JSON.stringify(status));
+    // Project detection may have run before code-intel was up; retry now.
+    startCodeIntelProjectServices('services-ready').catch(e =>
+      console.warn('[Main] Code intelligence project startup failed:', e)
+    );
+    // Open the WebSocket now so the first prompt doesn't wait for it.
+    pythonClient.connect().catch(e => console.error('[Main] Background connect error:', e));
+    try {
+      pythonHealthy = await pythonClient.healthCheck();
+    } catch {
+      pythonHealthy = false;
     }
-  } catch (error) {
-    console.warn('[Main] Could not connect to Python service');
-  }
+    if (pythonHealthy) {
+      console.log('[Main] Python service connected');
+      appWindowManager.send('python:recovered', {});
+      overlayManager.send('python:recovered', {});
+    } else {
+      console.warn('[Main] Python service not available. From source: npm run python:install, then restart Prmpt');
+      appWindowManager.send('python:unavailable', {});
+      overlayManager.send('python:unavailable', {});
+    }
+  });
 
   // Background health-check loop — detects Python crashes mid-session
   const HEALTH_CHECK_INTERVAL_MS = 30_000;
@@ -431,7 +498,7 @@ async function initialize() {
   // GLOBAL HOTKEY: Ctrl+5 to toggle overlay
   // ============================================
   const registered = globalShortcut.register('CommandOrControl+5', () => {
-    toggleOverlay();
+    toggleOverlay(true);
   });
 
   if (registered) {
@@ -489,6 +556,7 @@ async function initialize() {
 
 async function shutdown() {
   console.log('[Main] Shutting down...');
+  serviceManager?.stopAll();
   stopKeystrokeDetection();
   globalShortcut.unregisterAll();
   cleanupProjectHandlers();

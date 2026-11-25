@@ -31,11 +31,12 @@ import json
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import List, Optional
 
 # ── Storage root ──────────────────────────────────────────────────────────────
-USAGE_DIR = Path(__file__).parent / "storage" / "usage"
+USAGE_DIR = (Path(os.environ["PRMPT_SERVICE_DATA_DIR"]) if os.environ.get("PRMPT_SERVICE_DATA_DIR") else Path(__file__).parent) / "storage" / "usage"
 
 
 # ── Cost table (USD per 1M tokens) ───────────────────────────────────────────

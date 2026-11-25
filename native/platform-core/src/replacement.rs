@@ -22,6 +22,12 @@ pub struct AnchorData {
 
 static LAST_ANCHOR: Mutex<Option<AnchorData>> = Mutex::new(None);
 
+/// Marker put in dwExtraInfo of every key Prmpt injects on Windows, so the
+/// keyboard hook can ignore its own Ctrl+V / Backspace but still see keys
+/// injected by other tools (dictation, AutoHotkey, on-screen keyboards).
+#[allow(dead_code)]
+pub const INJECT_MARKER: usize = 0x5052_4D50; // "PRMP"
+
 pub fn store_anchor(handle: isize, trigger_len: u32) {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -33,7 +39,25 @@ pub fn store_anchor(handle: isize, trigger_len: u32) {
     }
 
     #[cfg(target_os = "windows")]
-    win32::capture_focus_child();
+    win32::capture_focus_child(false);
+}
+
+/// Forget the stored @prompt anchor (and, on Windows, the focused child).
+/// Called when the overlay is opened some other way (Ctrl+5) so a later
+/// insert can never act on a stale trigger in a different window.
+pub fn clear_anchor() {
+    if let Ok(mut g) = LAST_ANCHOR.lock() {
+        *g = None;
+    }
+    #[cfg(target_os = "windows")]
+    win32::clear_focus_child();
+}
+
+/// Remember the focused child of the current foreground window without
+/// storing a trigger anchor (used for Ctrl+5).
+pub fn capture_focus_only() {
+    #[cfg(target_os = "windows")]
+    win32::capture_focus_child(true);
 }
 
 fn take_anchor() -> Option<AnchorData> {
@@ -94,7 +118,7 @@ pub fn send_enter_to_window(handle: isize) -> bool {
 mod win32 {
     use super::*;
     use std::mem::size_of;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, WPARAM};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -103,26 +127,89 @@ mod win32 {
         VK_BACK, VK_CONTROL, VK_RETURN, VK_V,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindow, IsWindow,
-        SendMessageW, SetForegroundWindow, GUITHREADINFO, GW_CHILD, GW_HWNDNEXT,
+        GetAncestor, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, IsWindow,
+        IsWindowVisible, SendMessageW, SetForegroundWindow, GA_ROOT, GUITHREADINFO,
     };
     use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 
     static STORED_FOCUS_HWND: Mutex<Option<isize>> = Mutex::new(None);
-    static RESTORE_CANCELLED: AtomicBool = AtomicBool::new(false);
+    /// Selection (start, end) of the stored edit control, captured for the
+    /// Ctrl+5 path only. Some controls (.NET WinForms TextBox) select all
+    /// their text when they get focus back; restoring this before pasting
+    /// keeps the paste at the user's caret instead of over everything.
+    static STORED_SEL: Mutex<Option<(u32, u32)>> = Mutex::new(None);
 
-    pub fn capture_focus_child() {
+    pub fn clear_focus_child() {
+        if let Ok(mut g) = STORED_FOCUS_HWND.lock() {
+            *g = None;
+        }
+        if let Ok(mut g) = STORED_SEL.lock() {
+            *g = None;
+        }
+    }
+
+    /// `keep_selection`: false for the @prompt trigger, where keystrokes may
+    /// still be queued for the app, so the caret isn't final yet.
+    pub fn capture_focus_child(keep_selection: bool) {
         unsafe {
             let mut gti: GUITHREADINFO = std::mem::zeroed();
             gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+            clear_focus_child();
             if GetGUIThreadInfo(0, &mut gti).is_ok() && !gti.hwndFocus.0.is_null() {
                 let focus = gti.hwndFocus.0 as isize;
                 if let Ok(mut g) = STORED_FOCUS_HWND.lock() {
                     *g = Some(focus);
                 }
+                if keep_selection && is_edit_class(gti.hwndFocus) {
+                    let sel = get_selection(gti.hwndFocus);
+                    if let Ok(mut g) = STORED_SEL.lock() {
+                        *g = Some(sel);
+                    }
+                }
                 println!("[Replacement] Focus child stored: hwnd={focus:#x}");
             }
         }
+    }
+
+    const EM_GETSEL: u32 = 0x00B0;
+    const EM_SETSEL: u32 = 0x00B1;
+    const EM_REPLACESEL: u32 = 0x00C2;
+    const WM_GETTEXT: u32 = 0x000D;
+    const WM_GETTEXTLENGTH: u32 = 0x000E;
+
+    unsafe fn get_selection(hwnd: HWND) -> (u32, u32) {
+        let mut sel_start: u32 = 0;
+        let mut sel_end: u32 = 0;
+        SendMessageW(
+            hwnd, EM_GETSEL,
+            Some(WPARAM(&mut sel_start as *mut u32 as usize)),
+            Some(LPARAM(&mut sel_end as *mut u32 as isize)),
+        );
+        (sel_start, sel_end)
+    }
+
+    /// The control's text as UTF-16 (the units EM_GETSEL/EM_SETSEL use).
+    unsafe fn get_text_utf16(hwnd: HWND) -> Vec<u16> {
+        let len = SendMessageW(hwnd, WM_GETTEXTLENGTH, None, None).0.max(0) as usize;
+        if len == 0 || len > 4_000_000 {
+            return Vec::new();
+        }
+        let mut buf = vec![0u16; len + 1];
+        let got = SendMessageW(
+            hwnd, WM_GETTEXT,
+            Some(WPARAM(buf.len())),
+            Some(LPARAM(buf.as_mut_ptr() as isize)),
+        ).0.max(0) as usize;
+        buf.truncate(got.min(len));
+        buf
+    }
+
+    fn lower_ascii_u16(c: u16) -> u16 {
+        if (0x41..=0x5A).contains(&c) { c + 32 } else { c }
+    }
+
+    fn eq_ignore_case_utf16(a: &[u16], b: &[u16]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| lower_ascii_u16(*x) == lower_ascii_u16(*y))
     }
 
     pub unsafe fn execute_replacement(anchor: AnchorData, text: &str) -> bool {
@@ -141,12 +228,9 @@ mod win32 {
         let class_name = get_class_name(hwnd);
         println!("[Replacement] hwnd={:#x} class={:?}", anchor.handle, class_name);
 
-        if class_name == "Edit" || class_name.starts_with("RichEdit") {
-            if let Some(edit_hwnd) = find_edit_hwnd(hwnd) {
-                return inject_via_edit_messages(edit_hwnd, anchor.trigger_len, text);
-            }
-        }
         if let Some(edit_hwnd) = find_edit_hwnd(hwnd) {
+            // false means "@prompt" isn't in the control's text any more:
+            // don't guess at a position; the caller pastes at the caret.
             return inject_via_edit_messages(edit_hwnd, anchor.trigger_len, text);
         }
 
@@ -168,42 +252,75 @@ mod win32 {
     unsafe fn is_edit_class(hwnd: HWND) -> bool {
         if hwnd.0.is_null() { return false; }
         let c = get_class_name(hwnd);
-        c == "Edit" || c.starts_with("RichEdit")
+        let lower = c.to_ascii_lowercase();
+        // Plain Win32 edit and RichEdit controls, and the .NET WinForms
+        // wrappers around them ("WindowsForms10.EDIT.app...",
+        // "WindowsForms10.RichEdit50W.app..."), which answer the same messages.
+        c == "Edit"
+            || lower.starts_with("richedit")
+            || (lower.starts_with("windowsforms")
+                && (lower.contains(".edit.") || lower.contains(".richedit")))
     }
 
+    /// The edit control the user was typing in. Only ever the control that
+    /// had keyboard focus: guessing "the first Edit child" put text into
+    /// hidden fields (seen in Character Map's dialog).
     unsafe fn find_edit_hwnd(anchor_hwnd: HWND) -> Option<HWND> {
+        let belongs = |h: HWND| {
+            !h.0.is_null()
+                && IsWindow(Some(h)).as_bool()
+                && IsWindowVisible(h).as_bool()
+                && GetAncestor(h, GA_ROOT).0 == anchor_hwnd.0
+        };
+        // 1. The control focused when @prompt was typed.
+        if let Some(fh) = STORED_FOCUS_HWND.lock().ok().and_then(|g| *g) {
+            let h = HWND(fh as *mut _);
+            if belongs(h) && is_edit_class(h) {
+                return Some(h);
+            }
+        }
+        // 2. The control focused now (focus is restored with the window).
         let mut gti: GUITHREADINFO = std::mem::zeroed();
         gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
-        if GetGUIThreadInfo(0, &mut gti).is_ok() && is_edit_class(gti.hwndFocus) {
+        if GetGUIThreadInfo(0, &mut gti).is_ok() && belongs(gti.hwndFocus) && is_edit_class(gti.hwndFocus) {
             return Some(gti.hwndFocus);
         }
         if is_edit_class(anchor_hwnd) {
             return Some(anchor_hwnd);
         }
-        let mut child = GetWindow(anchor_hwnd, GW_CHILD).ok();
-        while let Some(c) = child {
-            if is_edit_class(c) { return Some(c); }
-            child = GetWindow(c, GW_HWNDNEXT).ok();
-        }
         None
     }
 
     unsafe fn inject_via_edit_messages(hwnd: HWND, trigger_len: u32, text: &str) -> bool {
-        const EM_GETSEL: u32 = 0x00B0;
-        const EM_SETSEL: u32 = 0x00B1;
-        const EM_REPLACESEL: u32 = 0x00C2;
-
-        let mut sel_start: u32 = 0;
-        let mut sel_end: u32 = 0;
-        SendMessageW(
-            hwnd, EM_GETSEL,
-            Some(WPARAM(&mut sel_start as *mut u32 as usize)),
-            Some(LPARAM(&mut sel_end as *mut u32 as isize)),
-        );
-
-        let caret = sel_end;
-        let start = caret.saturating_sub(trigger_len);
-        SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(start as usize)), Some(LPARAM(caret as isize)));
+        // Replace exactly the "@prompt" the user typed. The caret is the
+        // first guess, but it can't be trusted on its own: some controls
+        // select all their text when they get focus back, and the user may
+        // have clicked elsewhere. So check the characters there, otherwise
+        // use the last "@prompt" in the text. If there's none, change nothing.
+        let trigger: Vec<u16> = "@prompt".encode_utf16().collect();
+        let content = get_text_utf16(hwnd);
+        let (_, caret) = get_selection(hwnd);
+        let caret = caret as usize;
+        let tl = trigger_len as usize;
+        let at_caret = tl == trigger.len()
+            && caret >= tl
+            && caret <= content.len()
+            && eq_ignore_case_utf16(&content[caret - tl..caret], &trigger);
+        let found = if at_caret {
+            Some(caret - tl)
+        } else if content.len() >= trigger.len() {
+            (0..=content.len() - trigger.len())
+                .rev()
+                .find(|&i| eq_ignore_case_utf16(&content[i..i + trigger.len()], &trigger))
+        } else {
+            None
+        };
+        let Some(start) = found else {
+            eprintln!("[Replacement] No @prompt found in the edit control; not replacing");
+            return false;
+        };
+        let end = start + trigger.len();
+        SendMessageW(hwnd, EM_SETSEL, Some(WPARAM(start)), Some(LPARAM(end as isize)));
 
         let mut utf16: Vec<u16> = text.encode_utf16().collect();
         utf16.push(0);
@@ -280,11 +397,16 @@ mod win32 {
             Err(_) => return false,
         };
 
-        let _ = caret_range.MoveEndpointByUnit(
+        // If the range can't be widened back over the whole trigger, give up
+        // on this path rather than paste without removing "@prompt".
+        match caret_range.MoveEndpointByUnit(
             TextPatternRangeEndpoint_Start,
             TextUnit_Character,
             -(trigger_len as i32),
-        );
+        ) {
+            Ok(moved) if moved == -(trigger_len as i32) => {}
+            _ => return false,
+        }
 
         if caret_range.Select().is_err() {
             return false;
@@ -305,86 +427,195 @@ mod win32 {
         inject_via_clipboard_paste(hwnd, text)
     }
 
+    // ── Clipboard paste with full snapshot/restore ───────────────────────────
+    //
+    // 1. Snapshot every global-memory clipboard format (text, HTML, RTF,
+    //    images as CF_DIB/CF_DIBV5, file lists...) so nothing the user copied
+    //    is lost. GDI-handle formats are skipped; Windows re-synthesises them
+    //    (for example CF_BITMAP from CF_DIB) on restore.
+    // 2. Put our text on the clipboard, marked so Win+V history and the cloud
+    //    clipboard ignore it.
+    // 3. Send Ctrl+V.
+    // 4. After RESTORE_DELAY_MS, restore the snapshot, but only if the
+    //    clipboard still holds our text (sequence number unchanged). If the
+    //    user or an app copied something meanwhile, leave it alone.
+    //
+    // Consecutive pastes (multi-section insert) reuse the first snapshot so
+    // the user's original clipboard is what finally comes back.
+
+    const RESTORE_DELAY_MS: u64 = 700;
+    const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+
+    struct ClipSnapshot {
+        formats: Vec<(u32, Vec<u8>)>,
+    }
+
+    struct PendingRestore {
+        snapshot: ClipSnapshot,
+        generation: u64,
+        our_seq: u32,
+    }
+
+    static PENDING_RESTORE: Mutex<Option<PendingRestore>> = Mutex::new(None);
+    static RESTORE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+    unsafe fn open_clipboard_retry() -> bool {
+        use windows::Win32::System::DataExchange::OpenClipboard;
+        for attempt in 0..15u64 {
+            if OpenClipboard(None).is_ok() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10 + attempt * 5));
+        }
+        eprintln!("[Clipboard] OpenClipboard failed after retries (another app holds it)");
+        false
+    }
+
+    fn is_snapshot_format(fmt: u32) -> bool {
+        // GDI and owner-display handles can't be copied as bytes.
+        const CF_BITMAP: u32 = 2;
+        const CF_METAFILEPICT: u32 = 3;
+        const CF_PALETTE: u32 = 9;
+        const CF_ENHMETAFILE: u32 = 14;
+        const CF_OWNERDISPLAY: u32 = 0x80;
+        const CF_DSPBITMAP: u32 = 0x82;
+        const CF_DSPMETAFILEPICT: u32 = 0x83;
+        const CF_DSPENHMETAFILE: u32 = 0x8E;
+        !matches!(
+            fmt,
+            CF_BITMAP | CF_METAFILEPICT | CF_PALETTE | CF_ENHMETAFILE | CF_OWNERDISPLAY
+                | CF_DSPBITMAP | CF_DSPMETAFILEPICT | CF_DSPENHMETAFILE
+        ) && !(0x0200..=0x03FF).contains(&fmt) // CF_PRIVATE* and CF_GDIOBJ* ranges
+    }
+
+    /// Caller must hold the clipboard open.
+    unsafe fn snapshot_open_clipboard() -> ClipSnapshot {
+        use windows::Win32::System::DataExchange::{EnumClipboardFormats, GetClipboardData};
+        use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+        let mut formats = Vec::new();
+        let mut total = 0usize;
+        let mut fmt = EnumClipboardFormats(0);
+        while fmt != 0 {
+            if is_snapshot_format(fmt) {
+                if let Ok(h) = GetClipboardData(fmt) {
+                    if !h.0.is_null() {
+                        let hglob = HGLOBAL(h.0);
+                        let size = GlobalSize(hglob);
+                        let ptr = GlobalLock(hglob);
+                        if !ptr.is_null() {
+                            if size > 0 && total + size <= MAX_SNAPSHOT_BYTES {
+                                let bytes = std::slice::from_raw_parts(ptr as *const u8, size).to_vec();
+                                total += size;
+                                formats.push((fmt, bytes));
+                            }
+                            let _ = GlobalUnlock(hglob);
+                        }
+                    }
+                }
+            }
+            fmt = EnumClipboardFormats(fmt);
+        }
+        ClipSnapshot { formats }
+    }
+
+    /// Caller must hold the clipboard open (and have emptied it).
+    unsafe fn set_clipboard_bytes(fmt: u32, bytes: &[u8]) -> bool {
+        use windows::Win32::System::DataExchange::SetClipboardData;
+        use windows::Win32::Foundation::GlobalFree;
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+        if fmt == 0 {
+            return false;
+        }
+        let len = bytes.len().max(1);
+        let hmem = match GlobalAlloc(GMEM_MOVEABLE, len) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        let ptr = GlobalLock(hmem);
+        if ptr.is_null() {
+            let _ = GlobalFree(Some(hmem));
+            return false;
+        }
+        if bytes.is_empty() {
+            *(ptr as *mut u8) = 0;
+        } else {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
+        }
+        let _ = GlobalUnlock(hmem);
+        if SetClipboardData(fmt, Some(HANDLE(hmem.0))).is_err() {
+            let _ = GlobalFree(Some(hmem));
+            return false;
+        }
+        true
+    }
+
+    unsafe fn register_format(name: &str) -> u32 {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
+        let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+        RegisterClipboardFormatW(PCWSTR(wide.as_ptr()))
+    }
+
+    fn restore_snapshot(snapshot: &ClipSnapshot) {
+        use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard};
+        unsafe {
+            if !open_clipboard_retry() {
+                return;
+            }
+            let _ = EmptyClipboard();
+            for (fmt, bytes) in &snapshot.formats {
+                let _ = set_clipboard_bytes(*fmt, bytes);
+            }
+            let _ = CloseClipboard();
+        }
+        println!("[Clipboard] Restored {} clipboard format(s)", snapshot.formats.len());
+    }
+
     unsafe fn inject_via_clipboard_paste(hwnd: HWND, text: &str) -> bool {
-        use windows::Win32::System::DataExchange::{
-            CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard,
-            SetClipboardData,
-        };
-        use windows::Win32::System::Memory::{
-            GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
-            GMEM_MOVEABLE,
-        };
+        use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard};
 
         const CF_UNICODETEXT: u32 = 13;
 
-        RESTORE_CANCELLED.store(true, Ordering::SeqCst);
-
         let fg_now = GetForegroundWindow();
         if fg_now.0 != hwnd.0 {
+            eprintln!("[Clipboard] Target is not the foreground window; not pasting");
             return false;
         }
 
-        let mut saved_clipboard: Option<Vec<u16>> = None;
-        let seq_before = GetClipboardSequenceNumber();
-
-        if OpenClipboard(None).is_err() {
+        if !open_clipboard_retry() {
             return false;
         }
 
-        let h = GetClipboardData(CF_UNICODETEXT);
-        if let Ok(handle) = h {
-            if !handle.0.is_null() {
-                let hglob = HGLOBAL(handle.0);
-                let ptr = GlobalLock(hglob);
-                if !ptr.is_null() {
-                    let size = GlobalSize(hglob);
-                    let len_u16 = size / 2;
-                    let slice = std::slice::from_raw_parts(ptr as *const u16, len_u16);
-                    saved_clipboard = Some(slice.to_vec());
-                    let _ = GlobalUnlock(hglob);
-                }
-            }
-        }
+        // Reuse the original snapshot if a restore from a previous paste is
+        // still pending (multi-section insert); otherwise snapshot now.
+        let generation = RESTORE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        let pending = PENDING_RESTORE.lock().ok().and_then(|mut g| g.take());
+        let snapshot = match pending {
+            Some(p) if GetClipboardSequenceNumber() == p.our_seq => p.snapshot,
+            _ => snapshot_open_clipboard(),
+        };
 
         let _ = EmptyClipboard();
         let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        let byte_len = utf16.len() * 2;
-
-        let hmem = match GlobalAlloc(GMEM_MOVEABLE, byte_len) {
-            Ok(h) => h,
-            Err(_) => { let _ = CloseClipboard(); return false; }
-        };
-
-        let ptr = GlobalLock(hmem);
-        if ptr.is_null() {
-            let _ = CloseClipboard();
+        let utf16_bytes = std::slice::from_raw_parts(utf16.as_ptr() as *const u8, utf16.len() * 2);
+        let ok = set_clipboard_bytes(CF_UNICODETEXT, utf16_bytes);
+        if ok {
+            // Keep the transient prompt out of Win+V history and the cloud clipboard.
+            let zero = 0u32.to_le_bytes();
+            let _ = set_clipboard_bytes(register_format("ExcludeClipboardContentFromMonitorProcessing"), &[]);
+            let _ = set_clipboard_bytes(register_format("CanIncludeInClipboardHistory"), &zero);
+            let _ = set_clipboard_bytes(register_format("CanUploadToCloudClipboard"), &zero);
+        }
+        let _ = CloseClipboard();
+        if !ok {
+            restore_snapshot(&snapshot);
             return false;
         }
-        std::ptr::copy_nonoverlapping(utf16.as_ptr() as *const u8, ptr as *mut u8, byte_len);
-        let _ = GlobalUnlock(hmem);
+        let our_seq = GetClipboardSequenceNumber();
 
-        let set_result = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0)));
-        let _ = CloseClipboard();
-
-        if set_result.is_err() { return false; }
-
-        let seq_after = GetClipboardSequenceNumber();
-        if seq_after == seq_before {
-            if OpenClipboard(None).is_ok() {
-                let _ = EmptyClipboard();
-                if let Ok(hmem2) = GlobalAlloc(GMEM_MOVEABLE, byte_len) {
-                    let ptr2 = GlobalLock(hmem2);
-                    if !ptr2.is_null() {
-                        std::ptr::copy_nonoverlapping(utf16.as_ptr() as *const u8, ptr2 as *mut u8, byte_len);
-                        let _ = GlobalUnlock(hmem2);
-                        let _ = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem2.0)));
-                    }
-                }
-                let _ = CloseClipboard();
-            }
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(150));
+        std::thread::sleep(std::time::Duration::from_millis(60));
 
         let paste_inputs = [
             key_vk(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
@@ -392,34 +623,33 @@ mod win32 {
             key_vk(VK_V, KEYEVENTF_KEYUP),
             key_vk(VK_CONTROL, KEYEVENTF_KEYUP),
         ];
-
         let sent = send_inputs(&paste_inputs);
-        if sent == 0 { return false; }
 
-        if let Some(saved) = saved_clipboard {
-            RESTORE_CANCELLED.store(false, Ordering::SeqCst);
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if RESTORE_CANCELLED.load(Ordering::SeqCst) { return; }
-                unsafe {
-                    if OpenClipboard(None).is_ok() {
-                        let _ = EmptyClipboard();
-                        let byte_len = saved.len() * 2;
-                        if let Ok(hmem) = GlobalAlloc(GMEM_MOVEABLE, byte_len) {
-                            let ptr = GlobalLock(hmem);
-                            if !ptr.is_null() {
-                                std::ptr::copy_nonoverlapping(saved.as_ptr() as *const u8, ptr as *mut u8, byte_len);
-                                let _ = GlobalUnlock(hmem);
-                                let _ = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(hmem.0)));
-                            }
-                        }
-                        let _ = CloseClipboard();
+        if let Ok(mut g) = PENDING_RESTORE.lock() {
+            *g = Some(PendingRestore { snapshot, generation, our_seq });
+        }
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(RESTORE_DELAY_MS));
+            let pending = match PENDING_RESTORE.lock() {
+                Ok(mut g) => {
+                    if g.as_ref().map(|p| p.generation == generation).unwrap_or(false) {
+                        g.take()
+                    } else {
+                        None // a newer paste owns the restore
                     }
                 }
-            });
-        }
+                Err(_) => None,
+            };
+            if let Some(p) = pending {
+                if unsafe { GetClipboardSequenceNumber() } == p.our_seq {
+                    restore_snapshot(&p.snapshot);
+                } else {
+                    println!("[Clipboard] Clipboard changed since paste; keeping the new content");
+                }
+            }
+        });
 
-        true
+        sent != 0
     }
 
     fn build_backspace_delete(trigger_len: u32) -> Vec<INPUT> {
@@ -437,7 +667,7 @@ mod win32 {
         INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
-                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 },
+                ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: super::INJECT_MARKER },
             },
         }
     }
@@ -466,7 +696,8 @@ mod win32 {
             let focus_hwnd = STORED_FOCUS_HWND.lock().ok().and_then(|g| *g);
             if let Some(fh) = focus_hwnd {
                 let child = HWND(fh as *mut _);
-                if IsWindow(Some(child)).as_bool() {
+                let same_root = GetAncestor(child, GA_ROOT).0 == target.0;
+                if IsWindow(Some(child)).as_bool() && same_root {
                     let target_thread = GetWindowThreadProcessId(target, None);
                     let our_thread = GetCurrentThreadId();
                     let attached = target_thread != 0
@@ -477,6 +708,19 @@ mod win32 {
                         let _ = AttachThreadInput(our_thread, target_thread, false);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(30));
+                    // If the control selected all its text on getting focus
+                    // back (.NET WinForms TextBox does), put the caret back
+                    // where it was when Ctrl+5 was pressed (see STORED_SEL).
+                    // Any other selection is the user's, so it's left alone.
+                    if let Some((s0, s1)) = STORED_SEL.lock().ok().and_then(|g| *g) {
+                        if is_edit_class(child) {
+                            let len = SendMessageW(child, WM_GETTEXTLENGTH, None, None).0.max(0) as u32;
+                            let now = get_selection(child);
+                            if len > 0 && now == (0, len) && (s0, s1) != now {
+                                SendMessageW(child, EM_SETSEL, Some(WPARAM(s0 as usize)), Some(LPARAM(s1 as isize)));
+                            }
+                        }
+                    }
                 }
             }
 

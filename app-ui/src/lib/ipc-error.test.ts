@@ -306,8 +306,8 @@ describe('hardened cases', () => {
     });
   });
 
-  // ── D3: Real-world Sentry error strings ─────────────────────────────────
-  describe('D3 — real-world Sentry-style errors', () => {
+  // ── D3: Real-world error strings ────────────────────────────────────────
+  describe('D3 — real-world errors', () => {
     it('blocks full Electron IPC native module error', () => {
       const e = new Error(
         "Error invoking remote method 'get-chats': Error: The module '\\\\?\\\\C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Programs\\\\prompt\\\\resources\\\\app.asar.unpacked\\\\node_modules\\\\better-sqlite3\\\\build\\\\Release\\\\better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 115."
@@ -315,7 +315,7 @@ describe('hardened cases', () => {
       expect(friendlyError(e, FALLBACK)).toBe(FALLBACK);
     });
 
-    it('blocks Supabase RLS error with full detail', () => {
+    it('blocks raw database policy error with full detail', () => {
       expect(friendlyError(
         new Error("new row violates row-level security policy for table \"memories\""),
         FALLBACK

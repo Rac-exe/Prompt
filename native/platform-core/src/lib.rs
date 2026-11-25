@@ -109,6 +109,102 @@ pub fn send_enter_to_window(hwnd: i64) -> bool {
     replacement::send_enter_to_window(hwnd as isize)
 }
 
+/// Record the current foreground window as the overlay's source (used when
+/// the overlay is opened with Ctrl+5 instead of the @prompt trigger).
+/// Clears any stale @prompt anchor so a later insert can't act on a trigger
+/// typed earlier in a different window. Returns the window handle (Windows)
+/// or 0 where unsupported.
+#[napi]
+pub fn capture_source_window() -> i64 {
+    replacement::clear_anchor();
+    #[cfg(target_os = "windows")]
+    {
+        replacement::capture_focus_only();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as isize as i64 }
+    }
+    #[cfg(not(target_os = "windows"))]
+    { 0 }
+}
+
+/// Forget the stored @prompt anchor.
+#[napi]
+pub fn clear_anchor() {
+    replacement::clear_anchor();
+}
+
+#[napi(object)]
+pub struct CaretPosition {
+    /// Screen coordinates in physical pixels.
+    pub x: i32,
+    pub y: i32,
+    pub height: i32,
+}
+
+/// Screen position of the text caret in the foreground window, if the app
+/// exposes one (Win32 caret, or the accessibility caret object that
+/// Chromium/Electron apps provide). None means "unknown": fall back to the
+/// mouse position.
+#[napi]
+pub fn get_caret_position() -> Option<CaretPosition> {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        caret::get_caret_position()
+    }
+    #[cfg(not(target_os = "windows"))]
+    { None }
+}
+
+#[cfg(target_os = "windows")]
+mod caret {
+    use super::CaretPosition;
+    use windows::core::Interface;
+    use windows::Win32::Foundation::{HWND, POINT};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::Accessibility::{AccessibleObjectFromWindow, IAccessible};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO, OBJID_CARET,
+    };
+
+    pub unsafe fn get_caret_position() -> Option<CaretPosition> {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() {
+            return None;
+        }
+        let thread = GetWindowThreadProcessId(fg, None);
+        let mut gti: GUITHREADINFO = std::mem::zeroed();
+        gti.cbSize = std::mem::size_of::<GUITHREADINFO>() as u32;
+        if GetGUIThreadInfo(thread, &mut gti).is_err() {
+            return None;
+        }
+
+        // 1. Classic Win32 caret.
+        let r = gti.rcCaret;
+        if !gti.hwndCaret.0.is_null() && (r.bottom - r.top) > 0 {
+            let mut pt = POINT { x: r.left, y: r.top };
+            if ClientToScreen(gti.hwndCaret, &mut pt).as_bool() && !(pt.x == 0 && pt.y == 0) {
+                return Some(CaretPosition { x: pt.x, y: pt.y, height: r.bottom - r.top });
+            }
+        }
+
+        // 2. Accessibility caret (Chromium, Electron, many modern apps).
+        let target: HWND = if !gti.hwndFocus.0.is_null() { gti.hwndFocus } else { fg };
+        let mut raw: *mut core::ffi::c_void = std::ptr::null_mut();
+        if AccessibleObjectFromWindow(target, OBJID_CARET.0 as u32, &IAccessible::IID, &mut raw).is_err()
+            || raw.is_null()
+        {
+            return None;
+        }
+        let acc = IAccessible::from_raw(raw);
+        let (mut x, mut y, mut w, mut h) = (0i32, 0i32, 0i32, 0i32);
+        let child = windows::Win32::System::Variant::VARIANT::from(0i32); // CHILDID_SELF
+        if acc.accLocation(&mut x, &mut y, &mut w, &mut h, &child).is_ok() && h > 0 && !(x == 0 && y == 0) {
+            let _ = w;
+            return Some(CaretPosition { x, y, height: h });
+        }
+        None
+    }
+}
+
 /// Force-focus an Electron window by its native handle.
 /// On Windows: HWND-based foreground steal sequence.
 /// On macOS: NSRunningApplication.activate via osascript.

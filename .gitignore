@@ -12,6 +12,8 @@ code-intelligence-service/**/__pycache__/
 dist/
 build/*.js
 build/*.js.map
+build/services/
+build/pyi-work/
 *.log
 
 # OS files
@@ -32,9 +34,6 @@ Thumbs.db
 .agent/
 .agents/
 .kilocode/
-
-# Supabase CLI cache
-supabase/.temp/
 
 # Environment
 .env
@@ -87,3 +86,11 @@ docs/
 
 # Agent skill lockfile (local tooling)
 skills-lock.json
+
+# Private local material: never commit
+pi-sdk-analysis/
+agent-tools-decode.py
+.prmpt/
+
+# Test env file (only localhost URLs; nothing reads it)
+.env.test

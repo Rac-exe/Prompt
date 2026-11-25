@@ -47,12 +47,22 @@ const activePolls = new Map<string, NodeJS.Timeout>();
 const POLL_INTERVAL_MS = 2_500;
 const POLL_MAX_DURATION_MS = 15 * 60_000; // 15 min hard cap
 
-function clearStatusPoll(projectId: string): void {
+/**
+ * Callers waiting for a project's poll to finish. A restarted poll inherits
+ * them, so cancelling the old timer never leaves an `await startStatusPoll()`
+ * hanging (which surfaced as "reply was never sent" on project:reindex).
+ */
+const pollWaiters = new Map<string, Array<(status: string) => void>>();
+
+function clearStatusPoll(projectId: string, finalStatus = 'stale'): void {
   const timer = activePolls.get(projectId);
   if (timer) {
     clearTimeout(timer);
     activePolls.delete(projectId);
   }
+  const waiters = pollWaiters.get(projectId);
+  pollWaiters.delete(projectId);
+  waiters?.forEach((w) => w(finalStatus));
 }
 
 function isTerminalStatus(status: string | undefined): boolean {
@@ -64,14 +74,24 @@ function isTerminalStatus(status: string | undefined): boolean {
  * Returns a promise that resolves with the final terminal status.
  */
 function startStatusPoll(projectId: string): Promise<string> {
+  // Anyone still waiting on the previous poll gets this poll's result.
+  const carried = pollWaiters.get(projectId) ?? [];
+  pollWaiters.delete(projectId);
   clearStatusPoll(projectId);
 
-  return new Promise((resolve) => {
+  return new Promise((resolveThis) => {
+    const waiters = [...carried, resolveThis];
+    pollWaiters.set(projectId, waiters);
+    const resolve = (status: string) => {
+      if (pollWaiters.get(projectId) === waiters) pollWaiters.delete(projectId);
+      waiters.forEach((w) => w(status));
+    };
     const startedAt = Date.now();
     let lastStatus: string | null = null;
 
     const tick = async () => {
       if (!_client) {
+        activePolls.delete(projectId);
         resolve('stale');
         return;
       }

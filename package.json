@@ -24,7 +24,8 @@
     "code-intel:install": "cd code-intelligence-service && python -m venv .venv && .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt",
     "code-intel:install:mac": "cd code-intelligence-service && python3 -m venv .venv && ./.venv/bin/python -m pip install -r requirements.txt",
     "start": "npm run build && npm run electron",
-    "package:win": "npm run build && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --win --x64",
+    "build:services": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-services.ps1",
+    "package:win": "npm run build && npm run build:services && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --win --x64",
     "package:mac": "npm run build && cross-env NODE_OPTIONS=--max-old-space-size=8192 electron-builder --mac",
     "clean": "rm -rf electron/renderer/app-ui/* dist/",
     "test": "vitest run --config vitest.config.electron.ts",
@@ -47,6 +48,13 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "build/services",
+        "to": "services",
+        "filter": [
+          "**/*"
+        ]
+      },
       {
         "from": "native/platform-core",
         "to": "native/platform-core",
@@ -138,10 +146,9 @@
     "rag",
     "local-first"
   ],
-  "author": "",
+  "author": "Prabhat Bajpai, Aarush Dhingra, Nihal Rahman",
   "license": "MIT",
   "devDependencies": {
-    "@playwright/test": "^1.59.1",
     "@types/express": "^5.0.6",
     "@types/node": "^20.16.0",
     "@types/ws": "^8.18.1",
@@ -149,13 +156,9 @@
     "electron": "32.2.7",
     "electron-builder": "^26.8.1",
     "express": "^5.2.1",
-    "playwright": "^1.59.1",
-    "png-to-ico": "^3.0.1",
-    "sharp": "^0.34.5",
     "tsx": "^4.21.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.5",
-    "ws": "^8.20.0"
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "active-win": "^8.2.1",
@@ -164,8 +167,7 @@
     "chokidar": "^4.0.3",
     "dotenv": "^16.3.1",
     "file-type": "^16.5.4",
-    "tree-sitter-wasms": "0.1.10",
-    "uiohook-napi": "^1.5.4",
-    "web-tree-sitter": "^0.25.10"
+    "web-tree-sitter": "^0.25.10",
+    "ws": "^8.20.0"
   }
 }
